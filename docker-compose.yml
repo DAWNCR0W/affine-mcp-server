@@ -1,0 +1,18 @@
+version: "3.9"
+services:
+  affine-mcp:
+    build: .
+    image: affine-mcp:local
+    container_name: affine-mcp
+    environment:
+      - MCP_TRANSPORT=ws
+      - MCP_WS_PORT=${MCP_WS_PORT-7821}
+      - AFFINE_BASE_URL=${AFFINE_BASE_URL}
+      - AFFINE_API_TOKEN=${AFFINE_API_TOKEN}
+      - AFFINE_COOKIE=${AFFINE_COOKIE}
+      - AFFINE_HEADERS_JSON=${AFFINE_HEADERS_JSON}
+      - AFFINE_GRAPHQL_PATH=${AFFINE_GRAPHQL_PATH-/graphql}
+      - AFFINE_WORKSPACE_ID=${AFFINE_WORKSPACE_ID}
+    ports:
+      - "${MCP_WS_PORT-7821}:7821"
+    restart: unless-stopped
