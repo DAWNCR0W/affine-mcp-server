@@ -7,7 +7,7 @@ const DocId = z.string().min(1, "docId required");
 
 export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
   server.registerTool(
-    "affine_list_docs",
+    "list_docs",
     {
       title: "List Documents",
       description: "List documents in a workspace (GraphQL).",
@@ -19,7 +19,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     async (parsed) => {
-      const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
+      const workspaceId = parsed.workspaceId || defaults.workspaceId;
+      if (!workspaceId) {
+        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+      }
       const query = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
       return { content: [{ type: "text", text: JSON.stringify(data.workspace.docs) }] };
@@ -27,7 +30,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   server.registerTool(
-    "affine_get_doc",
+    "get_doc",
     {
       title: "Get Document",
       description: "Get a document by ID (GraphQL metadata).",
@@ -37,7 +40,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     async (parsed) => {
-      const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
+      const workspaceId = parsed.workspaceId || defaults.workspaceId;
+      if (!workspaceId) {
+        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+      }
       const query = `query GetDoc($workspaceId:String!, $docId:String!){ workspace(id:$workspaceId){ doc(docId:$docId){ id workspaceId title summary public defaultRole createdAt updatedAt } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, docId: parsed.docId });
       return { content: [{ type: "text", text: JSON.stringify(data.workspace.doc) }] };
@@ -45,7 +51,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   server.registerTool(
-    "affine_search_docs",
+    "search_docs",
     {
       title: "Search Documents",
       description: "Search documents in a workspace.",
@@ -57,7 +63,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     async (parsed) => {
       try {
-        const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
+        const workspaceId = parsed.workspaceId || defaults.workspaceId;
+      if (!workspaceId) {
+        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+      }
         const query = `query SearchDocs($workspaceId:String!, $keyword:String!, $limit:Int){ workspace(id:$workspaceId){ searchDocs(input:{ keyword:$keyword, limit:$limit }){ docId title highlight createdAt updatedAt } } }`;
         const data = await gql.request<{ workspace: any }>(query, { workspaceId, keyword: parsed.keyword, limit: parsed.limit });
         return { content: [{ type: "text", text: JSON.stringify(data.workspace?.searchDocs || []) }] };
@@ -70,7 +79,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   server.registerTool(
-    "affine_recent_docs",
+    "recent_docs",
     {
       title: "Recent Documents",
       description: "List recently updated docs in a workspace.",
@@ -82,15 +91,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     async (parsed) => {
-      const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
-      const query = `query RecentDocs($workspaceId:String!, $first:Int, $offset:Int, $after:String){ workspace(id:$workspaceId){ recentlyUpdatedDocs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
+      const workspaceId = parsed.workspaceId || defaults.workspaceId;
+      if (!workspaceId) {
+        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+      }
+      // Note: AFFiNE doesn't have a separate 'recentlyUpdatedDocs' field, just use docs
+      const query = `query RecentDocs($workspaceId:String!, $first:Int, $offset:Int, $after:String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
-      return { content: [{ type: "text", text: JSON.stringify(data.workspace.recentlyUpdatedDocs) }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.workspace.docs) }] };
     }
   );
 
   server.registerTool(
-    "affine_publish_doc",
+    "publish_doc",
     {
       title: "Publish Document",
       description: "Publish a doc (make public).",
@@ -101,7 +114,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     async (parsed) => {
-      const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
+      const workspaceId = parsed.workspaceId || defaults.workspaceId;
+      if (!workspaceId) {
+        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+      }
       const mutation = `mutation PublishDoc($workspaceId:String!,$docId:String!,$mode:PublicDocMode){ publishDoc(workspaceId:$workspaceId, docId:$docId, mode:$mode){ id workspaceId public mode } }`;
       const data = await gql.request<{ publishDoc: any }>(mutation, { workspaceId, docId: parsed.docId, mode: parsed.mode });
       return { content: [{ type: "text", text: JSON.stringify(data.publishDoc) }] };
@@ -109,7 +125,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   server.registerTool(
-    "affine_revoke_doc",
+    "revoke_doc",
     {
       title: "Revoke Document",
       description: "Revoke a doc's public access.",
@@ -119,7 +135,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     async (parsed) => {
-      const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
+      const workspaceId = parsed.workspaceId || defaults.workspaceId;
+      if (!workspaceId) {
+        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+      }
       const mutation = `mutation RevokeDoc($workspaceId:String!,$docId:String!){ revokePublicDoc(workspaceId:$workspaceId, docId:$docId){ id workspaceId public } }`;
       const data = await gql.request<{ revokePublicDoc: any }>(mutation, { workspaceId, docId: parsed.docId });
       return { content: [{ type: "text", text: JSON.stringify(data.revokePublicDoc) }] };

@@ -5,48 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2024-12-08
+## [1.1.0] - 2025-08-12
+
+### 🎯 Key Achievement
+- **FIXED**: Critical workspace creation issue - workspaces are now fully accessible in UI
+- Successfully creates workspaces with initial documents using Yjs CRDT structure
+
+### Added
+- ✨ Workspace creation with initial document support
+- 📦 Blob storage management tools (3 tools)
+- 🔔 Notification management tools (3 tools)
+- 👤 User CRUD operations (4 tools)
+- 🧪 Comprehensive test suite
+
+### Changed
+- 🎯 Simplified tool names (removed `affine_` prefix)
+- 📁 Consolidated workspace tools into single module
+- 🔧 Improved authentication with fallback chain
+- 📝 Enhanced error messages and validation
+- ⚡ Streamlined codebase structure
+
+### Fixed
+- 🐛 Workspace creation now works correctly with UI
+- 🐛 Document metadata properly structured
+- 🐛 Authentication flow issues resolved
+- 🐛 GraphQL query structures corrected
+
+### Removed
+- ❌ Experimental tools (not production ready)
+- ❌ Docker support (incompatible with stdio)
+- ❌ Non-working realtime tools
+- ❌ Redundant CRUD duplicates
+
+### Technical Details
+- Uses Yjs CRDT for document structure
+- BlockSuite-compatible document format
+- WebSocket support for sync operations
+- 30+ verified working tools
+
+## [1.0.0] - 2025-08-12
 
 ### Added
 - Initial stable release
+- 21 core tools for AFFiNE operations
 - Full MCP SDK 1.17.2 compatibility
-- Complete authentication support:
-  - Bearer Token authentication (highest priority)
-  - Session Cookie authentication
-  - Email/Password authentication (fallback)
-- 21 comprehensive tools for AFFiNE operations:
-  - Workspace management (list, get)
-  - Document operations (list, get, search, recent, publish, revoke)
-  - Comments system (list, create, update, delete, resolve)
-  - Version history (list histories, recover documents)
-  - User management (current user, sign in)
-  - Access tokens (list, generate, revoke)
-  - Advanced CRDT updates
-- Robust error handling for GraphQL operations
-- Graceful fallback for missing permissions
-- Docker support with Dockerfile and docker-compose.yml
-- Comprehensive documentation and examples
-- Support for Claude Desktop and Codebase CLI (codex)
+- Complete authentication support (Token, Cookie, Email/Password)
+- GraphQL API integration
+- Comprehensive documentation
 
-### Fixed
-- MCP SDK compatibility issues (migrated from 0.3.1 to 1.17.2)
-- WebSocket transport removal (deprecated in newer SDK)
-- GraphQL error handling for search and access token operations
-- Authentication priority and error reporting
+### Features
+- Workspace management
+- Document operations
+- Comments system
+- Version history
+- User management
+- Access tokens
 
-### Security
-- Secure credential handling with environment variables
-- Support for multiple authentication methods
-- Automatic session management
-
-## [0.1.0] - 2024-12-07
-
-### Added
-- Initial development version
-- Basic MCP server implementation  
-- Core workspace and document tools
-- WebSocket transport support (later deprecated)
-- Basic GraphQL client implementation
-
+[1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
-[0.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v0.1.0

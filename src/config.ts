@@ -12,8 +12,6 @@ export type ServerConfig = {
   email?: string;
   password?: string;
   defaultWorkspaceId?: string;
-  transport: "ws" | "stdio";
-  wsPort: number;
   endpoints: EndpointMap;
 };
 
@@ -50,8 +48,6 @@ export function loadConfig(): ServerConfig {
   }
   const graphqlPath = process.env.AFFINE_GRAPHQL_PATH || "/graphql";
   const defaultWorkspaceId = process.env.AFFINE_WORKSPACE_ID;
-  const transport = (process.env.MCP_TRANSPORT as "ws" | "stdio") || "ws";
-  const wsPort = Number(process.env.MCP_WS_PORT || 7821);
 
   let endpoints = defaultEndpoints;
   const endpointsJson = process.env.AFFINE_ENDPOINTS_JSON;
@@ -63,5 +59,5 @@ export function loadConfig(): ServerConfig {
     }
   }
 
-  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId, transport, wsPort, endpoints };
+  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId, endpoints };
 }

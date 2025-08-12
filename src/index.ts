@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { WebSocketServer } from "ws";
 
 import { loadConfig } from "./config.js";
 import { GraphQLClient } from "./graphqlClient.js";
@@ -9,15 +8,18 @@ import { registerDocTools } from "./tools/docs.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerHistoryTools } from "./tools/history.js";
 import { registerUserTools } from "./tools/user.js";
+import { registerUserCRUDTools } from "./tools/userCRUD.js";
 import { registerUpdateTools } from "./tools/updates.js";
 import { registerAccessTokenTools } from "./tools/accessTokens.js";
+import { registerBlobTools } from "./tools/blobStorage.js";
+import { registerNotificationTools } from "./tools/notifications.js";
 import { loginWithPassword } from "./auth.js";
 import { registerAuthTools } from "./tools/auth.js";
 
 const config = loadConfig();
 
 async function buildServer() {
-  const server = new McpServer({ name: "affine-mcp", version: "1.0.0" });
+  const server = new McpServer({ name: "affine-mcp", version: "1.1.0" });
   
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({ 
@@ -49,17 +51,23 @@ async function buildServer() {
   registerCommentTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerUserTools(server, gql);
+  registerUserCRUDTools(server, gql);
   registerUpdateTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerAccessTokenTools(server, gql);
+  registerBlobTools(server, gql);
+  registerNotificationTools(server, gql);
   registerAuthTools(server, gql, config.baseUrl);
   return server;
 }
 
 async function start() {
-  // Only stdio transport is supported in the latest SDK
+  // stdio transport is the only supported mode in MCP SDK 1.17+
   const server = await buildServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  
+  // The server is now ready to accept stdio communication
+  // It will continue running until the process is terminated
 }
 
 start().catch((err) => {

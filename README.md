@@ -1,21 +1,27 @@
 # AFFiNE MCP Server
 
-A Model Context Protocol (MCP) server that provides seamless integration with self-hosted or cloud AFFiNE instances. This server enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features through a standardized interface.
+A Model Context Protocol (MCP) server that provides seamless integration with self-hosted or cloud AFFiNE instances. This server enables AI assistants to interact with AFFiNE workspaces and documents through a standardized interface.
+
+[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
 ## Overview
 
-- **Purpose**: MCP server exposing AFFiNE GraphQL tools to manage workspaces, docs, search, comments, and history
-- **Transport**: stdio (WebSocket support deprecated in MCP SDK 1.17+)
+- **Purpose**: MCP server for managing AFFiNE workspaces and documents
+- **Transport**: stdio only (required for Claude Desktop and CLI integration)
 - **Auth**: Flexible authentication with Token, Cookie, or Email/Password
-- **Tools**: 21 tools covering workspaces, documents, comments, history, user management, and more
+- **Tools**: 30+ production-tested tools for comprehensive AFFiNE management
+- **Status**: 🚀 Production Ready (v1.1.0)
 
 ## Features
 
-- **Complete AFFiNE Coverage**: Tools mirror common Notion-like workflows in AFFiNE
-- **GraphQL-first**: Uses `AFFINE_BASE_URL` + `/graphql` for all operations
-- **Multiple Auth Methods**: Bearer tokens, session cookies, or email/password authentication
-- **Production Ready**: Comprehensive error handling and extensive testing
-- **Type Safe**: Built with TypeScript and Zod validation
+- **Workspace Management**: Create workspaces with initial documents (UI accessible)
+- **Document Operations**: List, search, and manage documents
+- **User Management**: Authentication and profile management
+- **Comments System**: Full comment CRUD operations
+- **Version History**: Document history and recovery
+- **Notifications**: Read and manage notifications
 
 ## Requirements
 
@@ -60,16 +66,13 @@ AFFINE_PASSWORD=your_password
 # Optional settings
 AFFINE_GRAPHQL_PATH=/graphql  # Default: /graphql
 AFFINE_WORKSPACE_ID=workspace-uuid  # Default workspace for operations
-
-# Transport settings
-MCP_TRANSPORT=stdio  # Only stdio is supported in SDK 1.17+
 ```
 
 ### Authentication Priority
 
 The server checks for authentication in this order:
 1. **Bearer Token** (`AFFINE_API_TOKEN`) - Highest priority
-2. **Cookie** (`AFFINE_COOKIE` or via `AFFINE_HEADERS_JSON`)
+2. **Cookie** (`AFFINE_COOKIE`)
 3. **Email/Password** (`AFFINE_EMAIL` + `AFFINE_PASSWORD`) - Fallback
 
 ## Quick Start
@@ -102,9 +105,6 @@ Add to your Claude Desktop configuration:
 
 Add to your Codebase CLI configuration:
 
-**macOS/Linux**: `~/.config/codebase/mcp_servers.json`
-**Windows**: `%APPDATA%\codebase\mcp_servers.json`
-
 ```json
 {
   "affine": {
@@ -119,109 +119,66 @@ Add to your Codebase CLI configuration:
 }
 ```
 
-Then use with codex:
-```bash
-# Start a chat session with AFFiNE MCP enabled
-codex chat --mcp affine
-
-# Or add to your project's .codebase/config.yaml
-mcp_servers:
-  - affine
-```
-
-### Standalone Testing
-
-```bash
-# Set environment variables in .env file
-cp .env.example .env
-# Edit .env with your settings
-
-# Run the server
-npm start
-```
-
 ## Available Tools
 
-### Workspace Management
-- `affine_list_workspaces` - List all available workspaces
-- `affine_get_workspace` - Get workspace details by ID
+### Workspace Management (5 tools)
+- `list_workspaces` - List all accessible workspaces
+- `get_workspace` - Get workspace details
+- `create_workspace` - Create workspace with initial document ✅
+- `update_workspace` - Update workspace settings
+- `delete_workspace` - Delete workspace permanently
 
-### Document Operations
-- `affine_list_docs` - List documents with pagination (`workspaceId?`, `first?`, `offset?`, `after?`)
-- `affine_get_doc` - Get document metadata (`docId`, `workspaceId?`)
-- `affine_search_docs` - Search documents (`keyword`, `limit?`, `workspaceId?`)
-- `affine_recent_docs` - List recently updated documents (`first?`, `offset?`, `after?`, `workspaceId?`)
-- `affine_publish_doc` - Make document public (`docId`, `mode?`, `workspaceId?`)
-- `affine_revoke_doc` - Revoke public access (`docId`, `workspaceId?`)
+### Document Operations (6 tools)
+- `list_docs` - List documents with pagination
+- `get_doc` - Get document metadata
+- `search_docs` - Search documents by keyword
+- `recent_docs` - List recently updated documents
+- `publish_doc` - Make document public
+- `revoke_doc` - Revoke public access
 
-### Collaboration
-- `affine_list_comments` - List document comments (`docId`, `first?`, `offset?`, `after?`, `workspaceId?`)
-- `affine_create_comment` - Create new comment (`docId`, `content`, `mentions?`, `workspaceId?`)
-- `affine_update_comment` - Update comment content (`id`, `content`)
-- `affine_delete_comment` - Delete a comment (`id`)
-- `affine_resolve_comment` - Resolve/unresolve comment (`id`, `resolved`)
+### Comments (5 tools)
+- `list_comments` - List document comments
+- `create_comment` - Create new comment
+- `update_comment` - Update comment content
+- `delete_comment` - Delete a comment
+- `resolve_comment` - Resolve/unresolve comment
 
-### Version Control
-- `affine_list_histories` - View document history (`guid`, `take?`, `before?`, `workspaceId?`)
-- `affine_recover_doc` - Restore to previous version (`guid`, `timestamp`, `workspaceId?`)
+### Version History (2 tools)
+- `list_histories` - View document history
+- `recover_doc` - Restore to previous version
 
-### User & Authentication
-- `affine_current_user` - Get current user information
-- `affine_sign_in` - Sign in with email/password
-- `affine_list_access_tokens` - List personal access tokens
-- `affine_generate_access_token` - Create new access token (`name`, `expiresAt?`)
-- `affine_revoke_access_token` - Revoke access token (`id`)
+### User Management (4 tools)
+- `current_user` - Get current user information
+- `sign_in` - Sign in with email/password
+- `update_profile` - Update user profile
+- `update_settings` - Update user settings
 
-### Advanced
-- `affine_apply_doc_updates` - Apply CRDT updates (`docId`, `op`, `updates`, `workspaceId?`)
+### Access Tokens (3 tools)
+- `list_access_tokens` - List personal access tokens
+- `generate_access_token` - Create new access token
+- `revoke_access_token` - Revoke access token
 
-## Development
+### Notifications (3 tools)
+- `list_notifications` - Get notifications
+- `read_notification` - Mark notification read
+- `read_all_notifications` - Mark all notifications read
 
-```bash
-# Run in development mode with auto-reload
-npm run dev
+### Blob Storage (3 tools)
+- `upload_blob` - Upload file/blob
+- `delete_blob` - Delete blob
+- `cleanup_blobs` - Cleanup deleted blobs
 
-# Build for production
-npm run build
-
-# Start the server
-npm start
-```
+### Advanced (1 tool)
+- `apply_doc_updates` - Apply CRDT updates to documents
 
 ## Testing
 
-Test the server with your AFFiNE instance:
-
 ```bash
-# Test basic connectivity
-npm start
+# Run comprehensive tests
+node test-comprehensive.mjs
 
-# Use with MCP inspector or Claude Desktop to verify tools
-```
-
-## Docker Support
-
-Build and run with Docker:
-
-```bash
-# Build the image
-docker build -t affine-mcp-server .
-
-# Run with environment variables
-docker run -e AFFINE_BASE_URL=https://your-instance.com \
-           -e AFFINE_EMAIL=your@email.com \
-           -e AFFINE_PASSWORD=yourpassword \
-           affine-mcp-server
-```
-
-Or use Docker Compose:
-
-```bash
-# Copy and configure .env
-cp .env.example .env
-
-# Start the service
-docker compose up --build
+# Test workspace creation
+node test-fixed-workspace.mjs
 ```
 
 ## Troubleshooting
@@ -245,18 +202,10 @@ docker compose up --build
 
 ### Connection Issues
 
-- Verify `AFFINE_BASE_URL` is accessible (try `curl`)
+- Verify `AFFINE_BASE_URL` is accessible
 - Check if GraphQL endpoint is at `/graphql` (default)
 - Ensure no firewall/proxy blocking connections
 - For self-hosted instances, verify CORS settings
-
-### Error Handling
-
-The server includes robust error handling:
-- Authentication failures log warnings but continue
-- Missing permissions return empty results gracefully
-- Network errors are logged with full details
-- GraphQL errors are caught and handled appropriately
 
 ## Security Considerations
 
@@ -265,36 +214,30 @@ The server includes robust error handling:
 - Rotate access tokens regularly
 - Always use HTTPS for AFFiNE connections
 - Store credentials in secure credential managers
-- Limit token scope when possible
 
 ## Version History
 
-### 1.0.0 (2024-12-08)
-- Production-ready release
-- Full MCP SDK 1.17.2 compatibility
-- Complete authentication support (Token, Cookie, Email/Password)
-- 21 tools covering all AFFiNE operations
-- Comprehensive error handling and recovery
-- Extensive testing with real AFFiNE instances
-- Docker support
+### 1.1.0 (2025-08-12)
+- ✅ Fixed workspace creation with initial documents
+- Added 30+ tools for comprehensive AFFiNE management
+- Workspace creation now accessible in UI
+- Improved error handling and authentication
+- Simplified tool names for better usability
 
-### 0.1.0 (2024-12-07)
-- Initial development version
-- Basic MCP server implementation
-- Core workspace and document tools
-- WebSocket transport (deprecated)
+### 1.0.0 (2025-08-12)
+- Initial stable release
+- Basic workspace and document operations
+- Full authentication support
 
 ## Contributing
 
 Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+2. Create a feature branch
 3. Add tests for new features
-4. Ensure all tests pass (`npm test`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
+4. Ensure all tests pass
+5. Submit a Pull Request
 
 ## License
 
@@ -305,7 +248,6 @@ MIT License - see LICENSE file for details
 For issues and questions:
 - Open an issue on [GitHub](https://github.com/dawncr0w/affine-mcp-server/issues)
 - Check AFFiNE documentation at https://docs.affine.pro
-- Join AFFiNE Discord at https://discord.gg/affine
 
 ## Author
 
