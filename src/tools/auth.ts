@@ -1,20 +1,23 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { loginWithPassword } from "../auth.js";
 
-export function registerAuthTools(server: Server, gql: GraphQLClient, baseUrl: string) {
-  server.addTool(
+export function registerAuthTools(server: McpServer, gql: GraphQLClient, baseUrl: string) {
+  server.registerTool(
+    "affine_sign_in",
     {
-      name: "affine_sign_in",
+      title: "Sign In",
       description: "Sign in to AFFiNE using email and password; sets session cookies for subsequent calls.",
-      inputSchema: { type: "object", properties: { email: { type: "string" }, password: { type: "string" } }, required: ["email", "password"] }
+      inputSchema: {
+        email: z.string().email(),
+        password: z.string().min(1)
+      }
     },
-    async (args) => {
-      const parsed = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(args);
+    async (parsed) => {
       const { cookieHeader } = await loginWithPassword(baseUrl, parsed.email, parsed.password);
       gql.setCookie(cookieHeader);
-      return { content: [{ type: "application/json", json: { signedIn: true } }] };
+      return { content: [{ type: "text", text: JSON.stringify({ signedIn: true }) }] };
     }
   );
 }

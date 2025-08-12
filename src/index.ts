@@ -1,7 +1,6 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebSocketServer } from "ws";
-import { WebSocketServerTransport } from "@modelcontextprotocol/sdk/server/websocket.js";
 
 import { loadConfig } from "./config.js";
 import { GraphQLClient } from "./graphqlClient.js";
@@ -18,17 +17,32 @@ import { registerAuthTools } from "./tools/auth.js";
 const config = loadConfig();
 
 async function buildServer() {
-  const server = new Server({ name: "affine-mcp", version: "0.1.0" });
-  const gql = new GraphQLClient({ endpoint: `${config.baseUrl}${config.graphqlPath}`, headers: config.headers, bearer: config.apiToken });
-  if (!config.headers?.Cookie && !config.apiToken && config.email && config.password) {
+  const server = new McpServer({ name: "affine-mcp", version: "1.0.0" });
+  
+  // Initialize GraphQL client with authentication
+  const gql = new GraphQLClient({ 
+    endpoint: `${config.baseUrl}${config.graphqlPath}`, 
+    headers: config.headers, 
+    bearer: config.apiToken 
+  });
+  
+  // Try email/password authentication if no other auth method is configured
+  if (!gql.isAuthenticated() && config.email && config.password) {
+    console.error("No token or cookie provided, attempting email/password authentication...");
     try {
       const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email, config.password);
       gql.setCookie(cookieHeader);
-      // eslint-disable-next-line no-console
-      console.log("Signed in to AFFiNE via email/password; session cookies set.");
+      console.error("Successfully authenticated with email/password");
     } catch (e) {
-      console.warn("Failed to sign in with email/password:", e);
+      console.error("Failed to authenticate with email/password:", e);
+      console.error("WARNING: Continuing without authentication - some operations may fail");
     }
+  }
+  
+  // Log authentication status
+  if (!gql.isAuthenticated()) {
+    console.error("WARNING: No authentication configured. Some operations may fail.");
+    console.error("Please provide one of: AFFINE_API_TOKEN, AFFINE_COOKIE, or AFFINE_EMAIL/AFFINE_PASSWORD");
   }
   registerWorkspaceTools(server, gql);
   registerDocTools(server, gql, { workspaceId: config.defaultWorkspaceId });
@@ -42,23 +56,10 @@ async function buildServer() {
 }
 
 async function start() {
-  if (config.transport === "stdio") {
-    const server = await buildServer();
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    return;
-  }
-
-  const wss = new WebSocketServer({ port: config.wsPort });
-  // For each incoming connection, create a new server instance
-  wss.on("connection", async (socket) => {
-    const server = await buildServer();
-    const transport = new WebSocketServerTransport(socket);
-    await server.connect(transport);
-  });
-
-  // eslint-disable-next-line no-console
-  console.log(`AFFiNE MCP WebSocket server listening on ws://0.0.0.0:${config.wsPort}`);
+  // Only stdio transport is supported in the latest SDK
+  const server = await buildServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
 }
 
 start().catch((err) => {

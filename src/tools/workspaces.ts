@@ -1,31 +1,32 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 
-export function registerWorkspaceTools(server: Server, gql: GraphQLClient) {
-  server.addTool(
+export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
+  server.registerTool(
+    "affine_list_workspaces",
     {
-      name: "affine_list_workspaces",
-      description: "List available AFFiNE workspaces via GraphQL.",
-      inputSchema: { type: "object", properties: {} }
+      title: "List Workspaces",
+      description: "List available AFFiNE workspaces via GraphQL."
     },
     async () => {
       const query = `query ListWorkspaces { workspaces { id public enableAi enableUrlPreview enableDocEmbedding } }`;
       const data = await gql.request<{ workspaces: any[] }>(query);
-      return { content: [{ type: "application/json", json: data.workspaces }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.workspaces) }] };
     }
   );
 
-  server.addTool(
+  server.registerTool(
+    "affine_get_workspace",
     {
-      name: "affine_get_workspace",
+      title: "Get Workspace",
       description: "Get a workspace by id.",
-      inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] }
+      inputSchema: { id: z.string() }
     },
-    async (args) => {
-      const id = String((args as any).id);
+    async ({ id }) => {
       const query = `query GetWorkspace($id: String!) { workspace(id: $id) { id public enableAi enableUrlPreview enableDocEmbedding team role: role permissions: permissions { Workspace_Read Workspace_CreateDoc } } }`;
       const data = await gql.request<{ workspace: any }>(query, { id });
-      return { content: [{ type: "application/json", json: data.workspace }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.workspace) }] };
     }
   );
 }

@@ -1,9 +1,23 @@
 {
   "name": "affine-mcp-server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "MCP server that provides CRUD tools for a self-hosted AFFiNE instance.",
+  "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
+  "author": "dawncr0w",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dawncr0w/affine-mcp-server.git"
+  },
+  "keywords": [
+    "mcp",
+    "affine",
+    "model-context-protocol",
+    "ai",
+    "claude",
+    "knowledge-base"
+  ],
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -11,8 +25,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.3.1",
-    "dotenv": "^16.4.5",
+    "@modelcontextprotocol/sdk": "^1.17.2",
+    "dotenv": "^16.6.1",
     "undici": "^6.19.8",
     "ws": "^8.18.0",
     "zod": "^3.23.8"
@@ -24,4 +38,3 @@
     "typescript": "^5.5.4"
   }
 }
-

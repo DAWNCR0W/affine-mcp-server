@@ -2,11 +2,19 @@ import { fetch } from "undici";
 
 export class GraphQLClient {
   private headers: Record<string, string>;
+  private authenticated: boolean = false;
+  
   constructor(private opts: { endpoint: string; headers?: Record<string, string>; bearer?: string }) {
     this.headers = { ...(opts.headers || {}) };
-    if (opts.bearer) this.headers["Authorization"] = `Bearer ${opts.bearer}`;
-    if (this.headers.Cookie) {
-      // keep as is
+    
+    // Set authentication in priority order
+    if (opts.bearer) {
+      this.headers["Authorization"] = `Bearer ${opts.bearer}`;
+      this.authenticated = true;
+      console.error("Using Bearer token authentication");
+    } else if (this.headers.Cookie) {
+      this.authenticated = true;
+      console.error("Using Cookie authentication");
     }
   }
 
@@ -16,7 +24,12 @@ export class GraphQLClient {
 
   setCookie(cookieHeader: string) {
     this.headers["Cookie"] = cookieHeader;
-    // remove bearer if both present? Keep both; server prefers cookie session.
+    this.authenticated = true;
+    console.error("Session cookies set from email/password login");
+  }
+  
+  isAuthenticated(): boolean {
+    return this.authenticated;
   }
 
   async request<T>(query: string, variables?: Record<string, any>): Promise<T> {
@@ -26,7 +39,7 @@ export class GraphQLClient {
       headers,
       body: JSON.stringify({ query, variables })
     });
-    const json = await res.json();
+    const json = await res.json() as any;
     if (!res.ok || json.errors) {
       const msg = json.errors?.map((e: any) => e.message).join("; ") || res.statusText;
       throw new Error(`GraphQL error: ${msg}`);

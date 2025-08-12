@@ -1,34 +1,58 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 import { z } from "zod";
 
-export function registerAccessTokenTools(server: Server, gql: GraphQLClient) {
-  server.addTool(
-    { name: "affine_list_access_tokens", description: "List personal access tokens (metadata).", inputSchema: { type: "object", properties: {} } },
+export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) {
+  server.registerTool(
+    "affine_list_access_tokens",
+    {
+      title: "List Access Tokens",
+      description: "List personal access tokens (metadata).",
+      inputSchema: {}
+    },
     async () => {
-      const query = `query { accessTokens { id name createdAt expiresAt } }`;
-      const data = await gql.request<{ accessTokens: any[] }>(query);
-      return { content: [{ type: "application/json", json: data.accessTokens }] };
+      try {
+        const query = `query { accessTokens { id name createdAt expiresAt } }`;
+        const data = await gql.request<{ accessTokens: any[] }>(query);
+        return { content: [{ type: "text", text: JSON.stringify(data.accessTokens || []) }] };
+      } catch (error: any) {
+        // Access tokens might not be available for all users
+        console.error("List access tokens error:", error.message);
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
     }
   );
 
-  server.addTool(
-    { name: "affine_generate_access_token", description: "Generate a personal access token (returns token).", inputSchema: { type: "object", properties: { name: { type: "string" }, expiresAt: { type: "string" } }, required: ["name"] } },
-    async (args) => {
-      const parsed = z.object({ name: z.string(), expiresAt: z.string().optional() }).parse(args);
+  server.registerTool(
+    "affine_generate_access_token",
+    {
+      title: "Generate Access Token",
+      description: "Generate a personal access token (returns token).",
+      inputSchema: {
+        name: z.string(),
+        expiresAt: z.string().optional()
+      }
+    },
+    async (parsed) => {
       const mutation = `mutation($input: GenerateAccessTokenInput!){ generateUserAccessToken(input:$input){ id name createdAt expiresAt token } }`;
       const data = await gql.request<{ generateUserAccessToken: any }>(mutation, { input: { name: parsed.name, expiresAt: parsed.expiresAt ?? null } });
-      return { content: [{ type: "application/json", json: data.generateUserAccessToken }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.generateUserAccessToken) }] };
     }
   );
 
-  server.addTool(
-    { name: "affine_revoke_access_token", description: "Revoke a personal access token by id.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-    async (args) => {
-      const parsed = z.object({ id: z.string() }).parse(args);
+  server.registerTool(
+    "affine_revoke_access_token",
+    {
+      title: "Revoke Access Token",
+      description: "Revoke a personal access token by id.",
+      inputSchema: {
+        id: z.string()
+      }
+    },
+    async (parsed) => {
       const mutation = `mutation($id:String!){ revokeUserAccessToken(id:$id) }`;
       const data = await gql.request<{ revokeUserAccessToken: boolean }>(mutation, { id: parsed.id });
-      return { content: [{ type: "application/json", json: { success: data.revokeUserAccessToken } }] };
+      return { content: [{ type: "text", text: JSON.stringify({ success: data.revokeUserAccessToken }) }] };
     }
   );
 }

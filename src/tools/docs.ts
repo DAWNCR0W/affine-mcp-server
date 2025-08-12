@@ -1,123 +1,128 @@
 import { z } from "zod";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
 
-export function registerDocTools(server: Server, gql: GraphQLClient, defaults: { workspaceId?: string }) {
-  server.addTool(
+export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
+  server.registerTool(
+    "affine_list_docs",
     {
-      name: "affine_list_docs",
+      title: "List Documents",
       description: "List documents in a workspace (GraphQL).",
       inputSchema: {
-        type: "object",
-        properties: {
-          workspaceId: { type: "string", description: "Workspace ID (optional if default set)." },
-          first: { type: "number" },
-          offset: { type: "number" },
-          after: { type: "string" }
-        }
+        workspaceId: z.string().describe("Workspace ID (optional if default set).").optional(),
+        first: z.number().optional(),
+        offset: z.number().optional(),
+        after: z.string().optional()
       }
     },
-    async (args) => {
-      const parsed = z
-        .object({ workspaceId: z.string().optional(), first: z.number().optional(), offset: z.number().optional(), after: z.string().optional() })
-        .parse(args);
+    async (parsed) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
       const query = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
-      return { content: [{ type: "application/json", json: data.workspace.docs }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.workspace.docs) }] };
     }
   );
 
-  server.addTool(
+  server.registerTool(
+    "affine_get_doc",
     {
-      name: "affine_get_doc",
+      title: "Get Document",
       description: "Get a document by ID (GraphQL metadata).",
       inputSchema: {
-        type: "object",
-        properties: { workspaceId: { type: "string" }, docId: { type: "string" } },
-        required: ["docId"]
+        workspaceId: z.string().optional(),
+        docId: DocId
       }
     },
-    async (args) => {
-      const parsed = z.object({ workspaceId: z.string().optional(), docId: DocId }).parse(args);
+    async (parsed) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
       const query = `query GetDoc($workspaceId:String!, $docId:String!){ workspace(id:$workspaceId){ doc(docId:$docId){ id workspaceId title summary public defaultRole createdAt updatedAt } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, docId: parsed.docId });
-      return { content: [{ type: "application/json", json: data.workspace.doc }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.workspace.doc) }] };
     }
   );
 
-  server.addTool(
+  server.registerTool(
+    "affine_search_docs",
     {
-      name: "affine_search_docs",
+      title: "Search Documents",
       description: "Search documents in a workspace.",
       inputSchema: {
-        type: "object",
-        properties: {
-          workspaceId: { type: "string" },
-          keyword: { type: "string" },
-          limit: { type: "number" }
-        },
-        required: ["keyword"]
+        workspaceId: z.string().optional(),
+        keyword: z.string().min(1),
+        limit: z.number().optional()
       }
     },
-    async (args) => {
-      const parsed = z.object({ workspaceId: z.string().optional(), keyword: z.string().min(1), limit: z.number().optional() }).parse(args);
-      const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
-      const query = `query SearchDocs($workspaceId:String!, $keyword:String!, $limit:Int){ workspace(id:$workspaceId){ searchDocs(input:{ keyword:$keyword, limit:$limit }){ docId title highlight createdAt updatedAt } } }`;
-      const data = await gql.request<{ workspace: any }>(query, { workspaceId, keyword: parsed.keyword, limit: parsed.limit });
-      return { content: [{ type: "application/json", json: data.workspace.searchDocs }] };
+    async (parsed) => {
+      try {
+        const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
+        const query = `query SearchDocs($workspaceId:String!, $keyword:String!, $limit:Int){ workspace(id:$workspaceId){ searchDocs(input:{ keyword:$keyword, limit:$limit }){ docId title highlight createdAt updatedAt } } }`;
+        const data = await gql.request<{ workspace: any }>(query, { workspaceId, keyword: parsed.keyword, limit: parsed.limit });
+        return { content: [{ type: "text", text: JSON.stringify(data.workspace?.searchDocs || []) }] };
+      } catch (error: any) {
+        // Return empty array on error (search might not be available)
+        console.error("Search docs error:", error.message);
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
     }
   );
 
-  server.addTool(
+  server.registerTool(
+    "affine_recent_docs",
     {
-      name: "affine_recent_docs",
+      title: "Recent Documents",
       description: "List recently updated docs in a workspace.",
       inputSchema: {
-        type: "object",
-        properties: { workspaceId: { type: "string" }, first: { type: "number" }, offset: { type: "number" }, after: { type: "string" } }
+        workspaceId: z.string().optional(),
+        first: z.number().optional(),
+        offset: z.number().optional(),
+        after: z.string().optional()
       }
     },
-    async (args) => {
-      const parsed = z.object({ workspaceId: z.string().optional(), first: z.number().optional(), offset: z.number().optional(), after: z.string().optional() }).parse(args);
+    async (parsed) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
       const query = `query RecentDocs($workspaceId:String!, $first:Int, $offset:Int, $after:String){ workspace(id:$workspaceId){ recentlyUpdatedDocs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
-      return { content: [{ type: "application/json", json: data.workspace.recentlyUpdatedDocs }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.workspace.recentlyUpdatedDocs) }] };
     }
   );
 
-  server.addTool(
+  server.registerTool(
+    "affine_publish_doc",
     {
-      name: "affine_publish_doc",
+      title: "Publish Document",
       description: "Publish a doc (make public).",
-      inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, docId: { type: "string" }, mode: { type: "string" } }, required: ["docId"] }
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string(),
+        mode: z.enum(["Page","Edgeless"]).optional()
+      }
     },
-    async (args) => {
-      const parsed = z.object({ workspaceId: z.string().optional(), docId: z.string(), mode: z.enum(["Page","Edgeless"]).optional() }).parse(args);
+    async (parsed) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
       const mutation = `mutation PublishDoc($workspaceId:String!,$docId:String!,$mode:PublicDocMode){ publishDoc(workspaceId:$workspaceId, docId:$docId, mode:$mode){ id workspaceId public mode } }`;
       const data = await gql.request<{ publishDoc: any }>(mutation, { workspaceId, docId: parsed.docId, mode: parsed.mode });
-      return { content: [{ type: "application/json", json: data.publishDoc }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.publishDoc) }] };
     }
   );
 
-  server.addTool(
+  server.registerTool(
+    "affine_revoke_doc",
     {
-      name: "affine_revoke_doc",
+      title: "Revoke Document",
       description: "Revoke a doc's public access.",
-      inputSchema: { type: "object", properties: { workspaceId: { type: "string" }, docId: { type: "string" } }, required: ["docId"] }
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string()
+      }
     },
-    async (args) => {
-      const parsed = z.object({ workspaceId: z.string().optional(), docId: z.string() }).parse(args);
+    async (parsed) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId || WorkspaceId.parse(parsed.workspaceId);
       const mutation = `mutation RevokeDoc($workspaceId:String!,$docId:String!){ revokePublicDoc(workspaceId:$workspaceId, docId:$docId){ id workspaceId public } }`;
       const data = await gql.request<{ revokePublicDoc: any }>(mutation, { workspaceId, docId: parsed.docId });
-      return { content: [{ type: "application/json", json: data.revokePublicDoc }] };
+      return { content: [{ type: "text", text: JSON.stringify(data.revokePublicDoc) }] };
     }
   );
 }
