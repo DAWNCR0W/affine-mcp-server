@@ -10,12 +10,12 @@
 - `create_doc` – create a new doc (page/surface/note/paragraph minimal structure)
 - `append_paragraph` – append a paragraph block (simple editing example)
 - `delete_doc` – delete a doc and remove it from workspace list
-- 접두사/무접두사 도구명 모두 지원(`affine_*` 및 non-prefixed)
+- Supports both prefixed/non-prefixed tool names (`affine_*` and non-prefixed)
 
 ### 🔧 Technical Improvements
-- NodeNext ESM 해상도 적용(상대 경로 `.js` 임포트 안정화)
-- MCP 응답 포맷 유틸로 SDK 타입 정합성 개선
-- `bin` 제공: `affine-mcp` (stdio 전용)
+- Applied NodeNext ESM resolution (stabilized relative `.js` imports)
+- Improved SDK type consistency with MCP response format utilities
+- Provided `bin`: `affine-mcp` (stdio only)
 
 ### 🧰 Usage (Claude / Codex)
 - Claude Desktop: `command: "affine-mcp"`, `env: { AFFINE_* }`
@@ -44,6 +44,6 @@
 
 ---
 
-Author: dawncr0w
-License: MIT
+Author: dawncr0w  
+License: MIT  
 Repository: https://github.com/dawncr0w/affine-mcp-server
