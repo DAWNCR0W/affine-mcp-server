@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { io } from "socket.io-client";
+import { text } from "../util/mcp.js";
 
 // Generate AFFiNE-style document ID
 function generateDocId(): string {
@@ -132,24 +133,55 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace') {
 
 export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
   // LIST WORKSPACES
+  const listWorkspacesHandler = async () => {
+    try {
+      const query = `query { workspaces { id public enableAi createdAt } }`;
+      const data = await gql.request<{ workspaces: any[] }>(query);
+      return text(data.workspaces || []);
+    } catch (error: any) {
+      return text({ error: error.message });
+    }
+  };
+
   server.registerTool(
     "list_workspaces",
     {
       title: "List Workspaces",
       description: "List all available AFFiNE workspaces"
     },
-    async () => {
-      try {
-        const query = `query { workspaces { id public enableAi createdAt } }`;
-        const data = await gql.request<{ workspaces: any[] }>(query);
-        return { content: [{ type: "text", text: JSON.stringify(data.workspaces || []) }] };
-      } catch (error: any) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }] };
-      }
-    }
+    listWorkspacesHandler as any
+  );
+  server.registerTool(
+    "affine_list_workspaces",
+    {
+      title: "List Workspaces",
+      description: "List all available AFFiNE workspaces"
+    },
+    listWorkspacesHandler
   );
 
   // GET WORKSPACE
+  const getWorkspaceHandler = async ({ id }: { id: string }) => {
+    try {
+      const query = `query GetWorkspace($id: String!) { 
+        workspace(id: $id) { 
+          id 
+          public 
+          enableAi 
+          createdAt
+          permissions { 
+            Workspace_Read 
+            Workspace_CreateDoc 
+          } 
+        } 
+      }`;
+      const data = await gql.request<{ workspace: any }>(query, { id });
+      return text(data.workspace);
+    } catch (error: any) {
+      return text({ error: error.message });
+    }
+  };
+
   server.registerTool(
     "get_workspace",
     {
@@ -159,40 +191,22 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         id: z.string().describe("Workspace ID") 
       }
     },
-    async ({ id }) => {
-      try {
-        const query = `query GetWorkspace($id: String!) { 
-          workspace(id: $id) { 
-            id 
-            public 
-            enableAi 
-            createdAt
-            permissions { 
-              Workspace_Read 
-              Workspace_CreateDoc 
-            } 
-          } 
-        }`;
-        const data = await gql.request<{ workspace: any }>(query, { id });
-        return { content: [{ type: "text", text: JSON.stringify(data.workspace) }] };
-      } catch (error: any) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }] };
+    getWorkspaceHandler as any
+  );
+  server.registerTool(
+    "affine_get_workspace",
+    {
+      title: "Get Workspace",
+      description: "Get details of a specific workspace",
+      inputSchema: { 
+        id: z.string().describe("Workspace ID") 
       }
-    }
+    },
+    getWorkspaceHandler as any
   );
 
   // CREATE WORKSPACE
-  server.registerTool(
-    "create_workspace",
-    {
-      title: "Create Workspace",
-      description: "Create a new workspace with initial document (accessible in UI)",
-      inputSchema: {
-        name: z.string().describe("Workspace name"),
-        avatar: z.string().optional().describe("Avatar emoji or URL")
-      }
-    },
-    async ({ name, avatar }) => {
+  const createWorkspaceHandler = async ({ name, avatar }: { name: string; avatar?: string }) => {
       try {
         // Get endpoint and headers from GraphQL client
         const endpoint = (gql as any).endpoint || process.env.AFFINE_BASE_URL + '/graphql';
@@ -280,7 +294,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
               // Wait longer for sync and disconnect
               setTimeout(() => {
                 socket.disconnect();
-                resolve({ content: [{ type: "text", text: JSON.stringify({
+                resolve(text({
                   ...workspace,
                   name: name,
                   avatar: avatar,
@@ -288,7 +302,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
                   status: "success",
                   message: "Workspace created successfully",
                   url: `${process.env.AFFINE_BASE_URL}/workspace/${workspace.id}`
-                }) }] });
+                }));
               }, 3000);
             }, 1000);
           });
@@ -296,7 +310,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           socket.on('error', () => {
             socket.disconnect();
             // Even if WebSocket fails, workspace was created
-            resolve({ content: [{ type: "text", text: JSON.stringify({
+            resolve(text({
               ...workspace,
               name: name,
               avatar: avatar,
@@ -304,13 +318,13 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
               status: "partial",
               message: "Workspace created (document sync may be pending)",
               url: `${process.env.AFFINE_BASE_URL}/workspace/${workspace.id}`
-            }) }] });
+            }));
           });
           
           // Timeout
           setTimeout(() => {
             socket.disconnect();
-            resolve({ content: [{ type: "text", text: JSON.stringify({
+            resolve(text({
               ...workspace,
               name: name,
               avatar: avatar,
@@ -318,32 +332,54 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
               status: "success",
               message: "Workspace created",
               url: `${process.env.AFFINE_BASE_URL}/workspace/${workspace.id}`
-            }) }] });
+            }));
           }, 10000);
         });
         
       } catch (error: any) {
-        return { content: [{ type: "text", text: JSON.stringify({ 
-          error: error.message,
-          status: "failed"
-        }) }] };
+        return text({ error: error.message, status: "failed" });
       }
-    }
+    };
+
+  server.registerTool(
+    "create_workspace",
+    {
+      title: "Create Workspace",
+      description: "Create a new workspace with initial document (accessible in UI)",
+      inputSchema: {
+        name: z.string().describe("Workspace name"),
+        avatar: z.string().optional().describe("Avatar emoji or URL")
+      }
+    },
+    createWorkspaceHandler as any
+  );
+  server.registerTool(
+    "affine_create_workspace",
+    {
+      title: "Create Workspace",
+      description: "Create a new workspace with initial document (accessible in UI)",
+      inputSchema: {
+        name: z.string().describe("Workspace name"),
+        avatar: z.string().optional().describe("Avatar emoji or URL")
+      }
+    },
+    createWorkspaceHandler as any
+  );
+  server.registerTool(
+    "affine_create_workspace_fixed",
+    {
+      title: "Create Workspace (Fixed)",
+      description: "Create a new workspace with initial document (backward compatible alias)",
+      inputSchema: {
+        name: z.string().describe("Workspace name"),
+        avatar: z.string().optional().describe("Avatar emoji or URL")
+      }
+    },
+    createWorkspaceHandler as any
   );
 
   // UPDATE WORKSPACE
-  server.registerTool(
-    "update_workspace",
-    {
-      title: "Update Workspace",
-      description: "Update workspace settings",
-      inputSchema: {
-        id: z.string().describe("Workspace ID"),
-        public: z.boolean().optional().describe("Make workspace public"),
-        enableAi: z.boolean().optional().describe("Enable AI features")
-      }
-    },
-    async ({ id, public: isPublic, enableAi }) => {
+  const updateWorkspaceHandler = async ({ id, public: isPublic, enableAi }: { id: string; public?: boolean; enableAi?: boolean }) => {
       try {
         const mutation = `
           mutation UpdateWorkspace($input: UpdateWorkspaceInput!) {
@@ -359,24 +395,40 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         
         const data = await gql.request<{ updateWorkspace: any }>(mutation, { input });
         
-        return { content: [{ type: "text", text: JSON.stringify(data.updateWorkspace) }] };
+        return text(data.updateWorkspace);
       } catch (error: any) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }] };
+        return text({ error: error.message });
       }
-    }
+    };
+  server.registerTool(
+    "update_workspace",
+    {
+      title: "Update Workspace",
+      description: "Update workspace settings",
+      inputSchema: {
+        id: z.string().describe("Workspace ID"),
+        public: z.boolean().optional().describe("Make workspace public"),
+        enableAi: z.boolean().optional().describe("Enable AI features")
+      }
+    },
+    updateWorkspaceHandler as any
+  );
+  server.registerTool(
+    "affine_update_workspace",
+    {
+      title: "Update Workspace",
+      description: "Update workspace settings",
+      inputSchema: {
+        id: z.string().describe("Workspace ID"),
+        public: z.boolean().optional().describe("Make workspace public"),
+        enableAi: z.boolean().optional().describe("Enable AI features")
+      }
+    },
+    updateWorkspaceHandler as any
   );
 
   // DELETE WORKSPACE
-  server.registerTool(
-    "delete_workspace",
-    {
-      title: "Delete Workspace",
-      description: "Delete a workspace permanently",
-      inputSchema: {
-        id: z.string().describe("Workspace ID")
-      }
-    },
-    async ({ id }) => {
+  const deleteWorkspaceHandler = async ({ id }: { id: string }) => {
       try {
         const mutation = `
           mutation DeleteWorkspace($id: String!) {
@@ -386,13 +438,31 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         
         const data = await gql.request<{ deleteWorkspace: boolean }>(mutation, { id });
         
-        return { content: [{ type: "text", text: JSON.stringify({ 
-          success: data.deleteWorkspace,
-          message: "Workspace deleted successfully"
-        }) }] };
+        return text({ success: data.deleteWorkspace, message: "Workspace deleted successfully" });
       } catch (error: any) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }] };
+        return text({ error: error.message });
       }
-    }
+    };
+  server.registerTool(
+    "delete_workspace",
+    {
+      title: "Delete Workspace",
+      description: "Delete a workspace permanently",
+      inputSchema: {
+        id: z.string().describe("Workspace ID")
+      }
+    },
+    deleteWorkspaceHandler as any
+  );
+  server.registerTool(
+    "affine_delete_workspace",
+    {
+      title: "Delete Workspace",
+      description: "Delete a workspace permanently",
+      inputSchema: {
+        id: z.string().describe("Workspace ID")
+      }
+    },
+    deleteWorkspaceHandler as any
   );
 }

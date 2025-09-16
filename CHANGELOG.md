@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-09-16
+
+### 🚀 Major
+Document create/edit/delete is now supported. These are synchronized to real AFFiNE docs via WebSocket (Yjs) updates. Tools: `create_doc`, `append_paragraph`, `delete_doc`.
+
+### Added
+- WebSocket-based document tools: `create_doc`, `append_paragraph`, `delete_doc`
+- CLI binary `affine-mcp` for stdio MCP integration (Claude / Codex)
+- Tool aliases: support both prefixed (`affine_*`) and non-prefixed names
+- Published on npm with a one-line global install: `npm i -g affine-mcp-server`
+
+### Changed
+- TypeScript ESM resolution switched to NodeNext for stable `.js` imports in TS
+- Docs updated for npm publish and Codex usage
+
+### Fixed
+- Unified MCP return types with helper to satisfy SDK type constraints
+
 ## [1.1.0] - 2025-08-12
 
 ### 🎯 Key Achievement
@@ -61,5 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - User management
 - Access tokens
 
+[1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
