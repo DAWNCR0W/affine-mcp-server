@@ -8,7 +8,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dawncr0w/affine-mcp-server.git"
+    "url": "git+https://github.com/dawncr0w/affine-mcp-server.git"
   },
   "keywords": [
     "mcp",
