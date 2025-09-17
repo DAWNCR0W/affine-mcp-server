@@ -82,3 +82,18 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
+ 
+## [1.2.1] - 2025-09-17
+
+### Changed
+- Default startup authentication is now asynchronous when using email/password to avoid MCP stdio handshake timeouts. The new env `AFFINE_LOGIN_AT_START` controls behavior (`async` by default, `sync` to block at startup).
+- Docs fully refreshed: clear instructions for Codex CLI and Claude Desktop using npm, npx, and local clone workflows.
+
+### Added
+- README examples for `codex mcp add` with `affine-mcp` and with `npx -p affine-mcp-server affine-mcp`.
+- Local clone usage guide and `npm link` workflow.
+
+### Removed
+- Unnecessary repo artifacts (e.g., `.env.example`, `.dockerignore`).
+
+[1.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.1

@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.2.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
@@ -12,9 +12,9 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Transport: stdio only (Claude Desktop / Codex compatible)
 - Auth: Token, Cookie, or Email/Password (priority order)
 - Tools: 30+ tools plus WebSocket-based document editing
-- Status: Production Ready (v1.2.0)
-
-> New in v1.2.0: Document create/edit/delete is now supported via WebSocket sync. Use `create_doc`, `append_paragraph`, and `delete_doc` to manage real AFFiNE docs.
+- Status: Production Ready (v1.2.1)
+ 
+> New in v1.2.1: Email/Password login no longer blocks MCP startup. The server connects over stdio immediately and performs login asynchronously by default. Use `AFFINE_LOGIN_AT_START=sync` to restore the previous blocking behavior.
 
 ## Features
 
@@ -37,8 +37,8 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 # Global install (recommended)
 npm i -g affine-mcp-server
 
-# Or run ad-hoc with npx
-npx affine-mcp-server
+# Or run ad‑hoc via npx (no install)
+npx -y -p affine-mcp-server affine-mcp -- --version
 ```
 
 The package installs a CLI named `affine-mcp` that runs the MCP server over stdio.
@@ -47,7 +47,7 @@ The package installs a CLI named `affine-mcp` that runs the MCP server over stdi
 
 ## Configuration
 
-Create a `.env` file or set environment variables:
+Set environment variables (recommended) or create a `.env` file:
 
 ```env
 # AFFiNE server URL (required)
@@ -65,6 +65,10 @@ AFFINE_PASSWORD=your_password
 # Optional settings
 AFFINE_GRAPHQL_PATH=/graphql           # Default: /graphql
 AFFINE_WORKSPACE_ID=workspace-uuid     # Default workspace for operations
+
+# Startup auth behavior (optional)
+# AFFINE_LOGIN_AT_START=async           # Default: async (don't block MCP handshake)
+# AFFINE_LOGIN_AT_START=sync            # Block at startup to sign in with email/password
 ```
 
 Authentication priority:
@@ -87,29 +91,38 @@ Add to your Claude Desktop configuration:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://your-affine-instance.com",
-        "AFFINE_COOKIE": "affine_session=...; affine_csrf=..."
+        "AFFINE_EMAIL": "you@example.com",
+        "AFFINE_PASSWORD": "secret!",
+        "AFFINE_LOGIN_AT_START": "async"
       }
     }
   }
 }
 ```
 
+Tips
+- Prefer `AFFINE_COOKIE` or `AFFINE_API_TOKEN` for zero‑latency startup.
+- If your password contains `!` (zsh history expansion), wrap it in single quotes in shells or use the JSON config above.
+
 ### Codex CLI
 
-Codex attaches MCP servers by executing commands over stdio. Depending on your Codex version, use one of these patterns:
+Register the MCP server with Codex:
 
-- Direct flag example:
-  - `codex --mcp affine=affine-mcp --env AFFINE_BASE_URL=https://your-affine-instance.com --env AFFINE_COOKIE='affine_session=...; affine_csrf=...'`
+- Global install path (fastest)
+  - `npm i -g affine-mcp-server`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
 
-- Profile/config based registration (conceptual):
-  - name: `affine`, command: `affine-mcp`, env: `AFFINE_*`
+- Use npx (no global install)
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
 
-General rules:
+- Token or cookie (no startup login)
+  - Token: `codex mcp add affine --env AFFINE_BASE_URL=https://... --env AFFINE_API_TOKEN=... -- affine-mcp`
+  - Cookie: `codex mcp add affine --env AFFINE_BASE_URL=https://... --env "AFFINE_COOKIE=affine_session=...; affine_csrf=..." -- affine-mcp`
+
+Notes
 - MCP name: `affine`
 - Command: `affine-mcp`
-- Env: `AFFINE_BASE_URL` and one auth method (`AFFINE_COOKIE` or `AFFINE_API_TOKEN` or `AFFINE_EMAIL`/`AFFINE_PASSWORD`)
-
-Refer to your Codex CLI docs for the exact config keys/paths.
+- Environment: `AFFINE_BASE_URL` + one auth method (`AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL`/`AFFINE_PASSWORD`)
 
 ## Available Tools
 
@@ -150,14 +163,19 @@ Refer to your Codex CLI docs for the exact config keys/paths.
 ### Advanced
 - `apply_doc_updates` – apply CRDT updates to documents
 
-## Run locally (dev)
+## Use Locally (clone)
 
 ```bash
 git clone https://github.com/dawncr0w/affine-mcp-server.git
 cd affine-mcp-server
 npm install
 npm run build
-npm start
+# Run directly
+node dist/index.js
+
+# Or expose as a global CLI for Codex/Claude without publishing
+npm link
+# Now use `affine-mcp` like a global binary
 ```
 
 ## Troubleshooting
@@ -166,6 +184,7 @@ Authentication
 - Email/Password: ensure your instance allows password auth and credentials are valid
 - Cookie: copy cookies (e.g., `affine_session`, `affine_csrf`) from the browser DevTools after login
 - Token: generate a personal access token; verify it hasn’t expired
+- If using Email/Password and your MCP client shows a startup timeout, ensure `AFFINE_LOGIN_AT_START=async` (default) so login happens after the stdio handshake.
 
 Connection
 - Confirm `AFFINE_BASE_URL` is reachable
@@ -181,6 +200,11 @@ Connection
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.2.1 (2025‑09‑17)
+- Default to asynchronous email/password login after MCP stdio handshake
+- New `AFFINE_LOGIN_AT_START` env (`async` default, `sync` to block at startup)
+- Expanded docs for Codex/Claude using npm, npx, and local clone
 
 ### 1.2.0 (2025‑09‑16)
 - WebSocket-based document tools: `create_doc`, `append_paragraph`, `delete_doc` (create/edit/delete now supported)

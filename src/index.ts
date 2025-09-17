@@ -19,7 +19,7 @@ import { registerAuthTools } from "./tools/auth.js";
 const config = loadConfig();
 
 async function buildServer() {
-  const server = new McpServer({ name: "affine-mcp", version: "1.1.0" });
+  const server = new McpServer({ name: "affine-mcp", version: "1.2.1" });
   
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({ 
@@ -28,16 +28,32 @@ async function buildServer() {
     bearer: config.apiToken 
   });
   
-  // Try email/password authentication if no other auth method is configured
+  // Try email/password authentication if no other auth method is configured.
+  // To avoid startup timeouts in MCP clients, default to async login after the stdio handshake.
   if (!gql.isAuthenticated() && config.email && config.password) {
-    console.error("No token or cookie provided, attempting email/password authentication...");
-    try {
-      const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email, config.password);
-      gql.setCookie(cookieHeader);
-      console.error("Successfully authenticated with email/password");
-    } catch (e) {
-      console.error("Failed to authenticate with email/password:", e);
-      console.error("WARNING: Continuing without authentication - some operations may fail");
+    const mode = (process.env.AFFINE_LOGIN_AT_START || "async").toLowerCase();
+    if (mode === "sync") {
+      console.error("No token/cookie; performing synchronous email/password authentication at startup...");
+      try {
+        const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email, config.password);
+        gql.setCookie(cookieHeader);
+        console.error("Successfully authenticated with email/password");
+      } catch (e) {
+        console.error("Failed to authenticate with email/password:", e);
+        console.error("WARNING: Continuing without authentication - some operations may fail");
+      }
+    } else {
+      console.error("No token/cookie; deferring email/password authentication (async after connect)...");
+      // Fire-and-forget async login so stdio handshake is not delayed.
+      (async () => {
+        try {
+          const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email!, config.password!);
+          gql.setCookie(cookieHeader);
+          console.error("Successfully authenticated with email/password (async)");
+        } catch (e) {
+          console.error("Failed to authenticate with email/password (async):", e);
+        }
+      })();
     }
   }
   
