@@ -1,5 +1,25 @@
 # Release Notes
 
+## Version 1.2.2 (2025-09-18)
+
+### Highlights
+- Robust CLI wrapper (`bin/affine-mcp`) ensures Node executes the ESM entrypoint, fixing shell mis-execution that caused startup errors/timeouts in some environments.
+
+### What Changed
+- Docs: `.env` usage removed; prefer environment variables via shell or app config (Codex/Claude config examples updated).
+- Maintains 1.2.1 behavior: email/password login is asynchronous by default (`AFFINE_LOGIN_AT_START=async`).
+
+### Usage Snippets
+- Codex (global install):
+  - `npm i -g affine-mcp-server`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+- Codex (npx):
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+- Claude Desktop:
+  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!","AFFINE_LOGIN_AT_START":"async"}}}}`
+
+---
+
 ## Version 1.2.1 (2025-09-17)
 
 ### Highlights

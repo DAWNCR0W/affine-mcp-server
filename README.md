@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
 
-[![Version](https://img.shields.io/badge/version-1.2.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.2.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
@@ -14,7 +14,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 30+ tools plus WebSocket-based document editing
 - Status: Production Ready (v1.2.1)
  
-> New in v1.2.1: Email/Password login no longer blocks MCP startup. The server connects over stdio immediately and performs login asynchronously by default. Use `AFFINE_LOGIN_AT_START=sync` to restore the previous blocking behavior.
+> New in v1.2.2: Fixed CLI binary to always run via Node (no shell mis-execution). Startup remains non-blocking for email/password login by default; set `AFFINE_LOGIN_AT_START=sync` to block at startup.
 
 ## Features
 
@@ -43,33 +43,15 @@ npx -y -p affine-mcp-server affine-mcp -- --version
 
 The package installs a CLI named `affine-mcp` that runs the MCP server over stdio.
 
-> Available on npm: install in seconds with `npm i -g affine-mcp-server` and use `affine-mcp` anywhere. No manual build or path setup required.
+Note: From v1.2.2 the CLI wrapper (`bin/affine-mcp`) ensures Node runs the ESM entrypoint, preventing shell from misinterpreting JS.
 
 ## Configuration
 
-Set environment variables (recommended) or create a `.env` file:
+Configure via environment variables (shell or app config). `.env` files are no longer recommended.
 
-```env
-# AFFiNE server URL (required)
-AFFINE_BASE_URL=https://your-affine-instance.com
-
-# Authentication (choose one method):
-# 1) Bearer Token (highest priority)
-AFFINE_API_TOKEN=your_personal_access_token
-# 2) Session Cookie
-AFFINE_COOKIE=affine_session=xxx; affine_csrf=yyy
-# 3) Email/Password (fallback)
-AFFINE_EMAIL=your@email.com
-AFFINE_PASSWORD=your_password
-
-# Optional settings
-AFFINE_GRAPHQL_PATH=/graphql           # Default: /graphql
-AFFINE_WORKSPACE_ID=workspace-uuid     # Default workspace for operations
-
-# Startup auth behavior (optional)
-# AFFINE_LOGIN_AT_START=async           # Default: async (don't block MCP handshake)
-# AFFINE_LOGIN_AT_START=sync            # Block at startup to sign in with email/password
-```
+- Required: `AFFINE_BASE_URL`
+- Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
+- Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (`async` default, `sync` to block)
 
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -184,7 +166,7 @@ Authentication
 - Email/Password: ensure your instance allows password auth and credentials are valid
 - Cookie: copy cookies (e.g., `affine_session`, `affine_csrf`) from the browser DevTools after login
 - Token: generate a personal access token; verify it hasn’t expired
-- If using Email/Password and your MCP client shows a startup timeout, ensure `AFFINE_LOGIN_AT_START=async` (default) so login happens after the stdio handshake.
+- Startup timeouts: v1.2.2 includes a CLI wrapper fix and the default async login to avoid blocking the MCP handshake. Set `AFFINE_LOGIN_AT_START=sync` only if needed.
 
 Connection
 - Confirm `AFFINE_BASE_URL` is reachable
@@ -200,6 +182,11 @@ Connection
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.2.2 (2025‑09‑18)
+- CLI wrapper added to ensure Node runs ESM entry (`bin/affine-mcp`), preventing shell mis-execution
+- Docs cleaned: use env vars via shell/app config; `.env` file no longer recommended
+- MCP startup behavior unchanged from 1.2.1 (async login by default)
 
 ### 1.2.1 (2025‑09‑17)
 - Default to asynchronous email/password login after MCP stdio handshake

@@ -19,7 +19,7 @@ import { registerAuthTools } from "./tools/auth.js";
 const config = loadConfig();
 
 async function buildServer() {
-  const server = new McpServer({ name: "affine-mcp", version: "1.2.1" });
+  const server = new McpServer({ name: "affine-mcp", version: "1.2.2" });
   
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({ 

@@ -1,7 +1,4 @@
-import dotenv from "dotenv";
 import { EndpointMap } from "./types.js";
-
-dotenv.config();
 
 export type ServerConfig = {
   baseUrl: string;

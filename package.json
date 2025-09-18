@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -20,7 +20,7 @@
   ],
   "main": "dist/index.js",
   "bin": {
-    "affine-mcp": "dist/index.js"
+    "affine-mcp": "bin/affine-mcp"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -29,6 +29,7 @@
     "prepublishOnly": "npm run build"
   },
   "files": [
+    "bin",
     "dist",
     "README.md",
     "LICENSE"
@@ -41,7 +42,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.2",
-    "dotenv": "^16.6.1",
     "form-data": "^4.0.4",
     "node-fetch": "^3.3.2",
     "socket.io-client": "^4.8.1",

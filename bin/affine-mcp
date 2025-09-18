@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// Lightweight CLI wrapper to ensure Node runs the ESM entry
+// Resolves to the compiled ESM entrypoint in dist
+import '../dist/index.js';
+

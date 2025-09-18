@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2025-09-18
+
+### Fixed
+- CLI binary now runs through Node via `bin/affine-mcp`, preventing shells from misinterpreting ESM JS files and avoiding false startup timeouts.
+
+### Changed
+- Documentation: removed `.env`-based configuration guidance; recommend environment variables via shell or app configuration.
+- Version badges and examples refreshed; clarified non-blocking login default.
+
+## [1.2.1] - 2025-09-17
+
+### Changed
+- Default startup authentication is now asynchronous when using email/password to avoid MCP stdio handshake timeouts. The new env `AFFINE_LOGIN_AT_START` controls behavior (`async` by default, `sync` to block at startup).
+- Docs fully refreshed: clear instructions for Codex CLI and Claude Desktop using npm, npx, and local clone workflows.
+
+### Added
+- README examples for `codex mcp add` with `affine-mcp` and with `npx -p affine-mcp-server affine-mcp`.
+- Local clone usage guide and `npm link` workflow.
+
+### Removed
+- Unnecessary repo artifacts (e.g., `.env.example`, `.dockerignore`).
+
 ## [1.2.0] - 2025-09-16
 
 ### 🚀 Major
@@ -79,21 +101,8 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.2
+[1.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.1
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
- 
-## [1.2.1] - 2025-09-17
-
-### Changed
-- Default startup authentication is now asynchronous when using email/password to avoid MCP stdio handshake timeouts. The new env `AFFINE_LOGIN_AT_START` controls behavior (`async` by default, `sync` to block at startup).
-- Docs fully refreshed: clear instructions for Codex CLI and Claude Desktop using npm, npx, and local clone workflows.
-
-### Added
-- README examples for `codex mcp add` with `affine-mcp` and with `npx -p affine-mcp-server affine-mcp`.
-- Local clone usage guide and `npm link` workflow.
-
-### Removed
-- Unnecessary repo artifacts (e.g., `.env.example`, `.dockerignore`).
-
-[1.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.1
