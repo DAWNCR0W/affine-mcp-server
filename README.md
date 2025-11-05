@@ -6,6 +6,10 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
+<a href="https://glama.ai/mcp/servers/@DAWNCR0W/affine-mcp-server">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@DAWNCR0W/affine-mcp-server/badge" alt="AFFiNE Server MCP server" />
+</a>
+
 ## Overview
 
 - Purpose: Manage AFFiNE workspaces and documents through MCP
@@ -165,7 +169,7 @@ npm link
 Authentication
 - Email/Password: ensure your instance allows password auth and credentials are valid
 - Cookie: copy cookies (e.g., `affine_session`, `affine_csrf`) from the browser DevTools after login
-- Token: generate a personal access token; verify it hasn’t expired
+- Token: generate a personal access token; verify it hasn't expired
 - Startup timeouts: v1.2.2 includes a CLI wrapper fix and the default async login to avoid blocking the MCP handshake. Set `AFFINE_LOGIN_AT_START=sync` only if needed.
 
 Connection
