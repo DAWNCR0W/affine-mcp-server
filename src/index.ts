@@ -13,6 +13,7 @@ import { registerUpdateTools } from "./tools/updates.js";
 import { registerAccessTokenTools } from "./tools/accessTokens.js";
 import { registerBlobTools } from "./tools/blobStorage.js";
 import { registerNotificationTools } from "./tools/notifications.js";
+import { registerOrganizeTools } from "./tools/organize.js";
 import { loginWithPassword } from "./auth.js";
 import { registerAuthTools } from "./tools/auth.js";
 
@@ -72,6 +73,7 @@ async function buildServer() {
   registerAccessTokenTools(server, gql);
   registerBlobTools(server, gql);
   registerNotificationTools(server, gql);
+  registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerAuthTools(server, gql, config.baseUrl);
   return server;
 }
