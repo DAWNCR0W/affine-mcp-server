@@ -43,6 +43,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.2",
     "form-data": "^4.0.4",
+    "marked": "^17.0.1",
     "node-fetch": "^3.3.2",
     "socket.io-client": "^4.8.1",
     "undici": "^6.19.8",
