@@ -23,6 +23,29 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const cookie = (gql as any).cookie || headers.Cookie || '';
     return { endpoint, cookie };
   }
+
+  let cachedClientVersion: string | undefined;
+  async function getClientVersion(): Promise<string> {
+    const override = process.env.AFFINE_CLIENT_VERSION;
+    if (override && override.trim()) return override.trim();
+    if (cachedClientVersion) return cachedClientVersion;
+
+    try {
+      const data = await gql.request<{ serverConfig: { version: string } }>(
+        "query ServerConfigVersion { serverConfig { version } }"
+      );
+      const version = data?.serverConfig?.version;
+      if (version && typeof version === "string" && version.trim()) {
+        cachedClientVersion = version.trim();
+        return cachedClientVersion;
+      }
+    } catch (error: any) {
+      console.error("Failed to fetch serverConfig.version:", error?.message || error);
+    }
+
+    cachedClientVersion = process.env.AFFINE_APP_VERSION || process.env.AFFINE_VERSION || "0.26.2";
+    return cachedClientVersion;
+  }
   const listDocsHandler = async (parsed: { workspaceId?: string; first?: number; offset?: number; after?: string }) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId;
       if (!workspaceId) {
@@ -254,7 +277,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie);
     try {
-      await joinWorkspace(socket, workspaceId);
+      const clientVersion = await getClientVersion();
+      await joinWorkspace(socket, workspaceId, clientVersion);
 
       // 1) Create doc content
       const docId = generateId();
@@ -382,7 +406,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie);
     try {
-      await joinWorkspace(socket, workspaceId);
+      const clientVersion = await getClientVersion();
+      await joinWorkspace(socket, workspaceId, clientVersion);
       const doc = new Y.Doc();
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
       if (snapshot.missing) {
@@ -482,7 +507,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie);
     try {
-      await joinWorkspace(socket, workspaceId);
+      const clientVersion = await getClientVersion();
+      await joinWorkspace(socket, workspaceId, clientVersion);
       // remove from workspace pages
       const wsDoc = new Y.Doc();
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);

@@ -34,13 +34,26 @@ export async function connectWorkspaceSocket(wsUrl: string, cookie?: string): Pr
   });
 }
 
-export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string) {
+export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string, clientVersionOverride?: string) {
   return new Promise<void>((resolve, reject) => {
+    // AFFiNE validates `clientVersion` on `space:join`. Using a non-version string can
+    // cause the server to never ACK the join, hanging WebSocket-based tools.
+    const clientVersion = (clientVersionOverride && clientVersionOverride.trim()) ||
+      process.env.AFFINE_CLIENT_VERSION ||
+      process.env.AFFINE_APP_VERSION ||
+      process.env.AFFINE_VERSION ||
+      '0.26.2';
+
+    const timeoutMs = Number.parseInt(process.env.AFFINE_JOIN_TIMEOUT_MS || '', 10) || 15000;
+    const timeout = setTimeout(() => reject(new Error('join timeout')), timeoutMs);
+
     socket.emit(
       'space:join',
-      { spaceType: 'workspace', spaceId: workspaceId, clientVersion: 'mcp' },
+      { spaceType: 'workspace', spaceId: workspaceId, clientVersion },
       (ack: any) => {
+        clearTimeout(timeout);
         if (ack?.error) return reject(new Error(ack.error.message || 'join failed'));
+        if (ack?.data?.success === false) return reject(new Error('join failed'));
         resolve();
       }
     );
@@ -79,4 +92,3 @@ export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string
 export function deleteDoc(socket: WorkspaceSocket, workspaceId: string, docId: string) {
   socket.emit('space:delete-doc', { spaceType: 'workspace', spaceId: workspaceId, docId });
 }
-
