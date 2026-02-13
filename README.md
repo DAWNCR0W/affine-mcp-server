@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
 
-[![Version](https://img.shields.io/badge/version-1.2.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -16,10 +16,10 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio only (Claude Desktop / Codex compatible)
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 30 focused tools with WebSocket-based document editing
+- Tools: 31 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.2.2: Fixed CLI binary to always run via Node (no shell mis-execution). Startup remains non-blocking for email/password login by default; set `AFFINE_LOGIN_AT_START=sync` to block at startup.
+> New in v1.3.0: Added `append_block` for slash-command style blocks (heading/list/todo/code/divider/quote), removed duplicated aliases/non-core tools, and added CI + manifest quality gates.
 
 ## Features
 
@@ -49,7 +49,7 @@ npx -y -p affine-mcp-server affine-mcp -- --version
 
 The package installs a CLI named `affine-mcp` that runs the MCP server over stdio.
 
-Note: From v1.2.2 the CLI wrapper (`bin/affine-mcp`) ensures Node runs the ESM entrypoint, preventing shell from misinterpreting JS.
+Note: From v1.2.2+ the CLI wrapper (`bin/affine-mcp`) ensures Node runs the ESM entrypoint, preventing shell from misinterpreting JS.
 
 ## Configuration
 
@@ -179,7 +179,7 @@ Authentication
 - Email/Password: ensure your instance allows password auth and credentials are valid
 - Cookie: copy cookies (e.g., `affine_session`, `affine_csrf`) from the browser DevTools after login
 - Token: generate a personal access token; verify it hasn't expired
-- Startup timeouts: v1.2.2 includes a CLI wrapper fix and the default async login to avoid blocking the MCP handshake. Set `AFFINE_LOGIN_AT_START=sync` only if needed.
+- Startup timeouts: v1.2.2+ includes a CLI wrapper fix and default async login to avoid blocking the MCP handshake. Set `AFFINE_LOGIN_AT_START=sync` only if needed.
 
 Connection
 - Confirm `AFFINE_BASE_URL` is reachable
@@ -195,6 +195,12 @@ Connection
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.3.0 (2026‑02‑13)
+- Added `append_block` for slash-command style editing (`heading/list/todo/code/divider/quote`)
+- Tool surface simplified to 31 canonical tools (duplicate aliases removed)
+- Added CI + manifest parity verification (`npm run test:tool-manifest`, `npm run ci`)
+- Added open-source community health docs and issue/PR templates
 
 ### 1.2.2 (2025‑09‑18)
 - CLI wrapper added to ensure Node runs ESM entry (`bin/affine-mcp`), preventing shell mis-execution

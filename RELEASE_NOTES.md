@@ -1,5 +1,22 @@
 # Release Notes
 
+## Version 1.3.0 (2026-02-13)
+
+### Highlights
+- Added slash-command style block insertion with `append_block` (`heading/list/todo/code/divider/quote`).
+- Simplified public MCP tool surface to 31 canonical tools by removing duplicated aliases and unstable low-value tools.
+- Added release quality gates: CI workflow, tool manifest parity verification, and package dry-run checks.
+
+### What Changed
+- New tool: `append_block` implemented in `/src/tools/docs.ts`, aligned with AFFiNE block model (`affine:*` + `prop:type`).
+- Test hardening: `test-comprehensive.mjs` now validates runtime tools against `tool-manifest.json` and executes the new block types.
+- Packaging/CI: `npm run ci`, `npm run test:tool-manifest`, `npm run pack:check`; publish workflow now runs full validation.
+- Open-source readiness: added `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue templates, and PR template.
+
+### Validation Evidence
+- `npm run ci` passed.
+- `npm run test:comprehensive` passed with 31/31 tools invoked, 37/37 checks passed, blocked=0, failed=0.
+
 ## Version 1.2.2 (2025-09-18)
 
 ### Highlights

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-02-13
+
 ### Added
 - Open-source community health files: `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`.
 - GitHub community templates: bug/feature issue templates and PR template.
@@ -123,4 +125,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.2.2...HEAD
+[1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.3.0...HEAD
