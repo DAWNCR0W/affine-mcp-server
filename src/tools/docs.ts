@@ -20,6 +20,14 @@ const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "bookmark",
   "image",
   "attachment",
+  "embed_youtube",
+  "embed_github",
+  "embed_figma",
+  "embed_loom",
+  "embed_html",
+  "embed_linked_doc",
+  "embed_synced_doc",
+  "embed_iframe",
 ] as const;
 type AppendBlockCanonicalType = typeof APPEND_BLOCK_CANONICAL_TYPE_VALUES[number];
 
@@ -60,6 +68,10 @@ type AppendBlockInput = {
   type: string;
   text?: string;
   url?: string;
+  pageId?: string;
+  iframeUrl?: string;
+  html?: string;
+  design?: string;
   sourceId?: string;
   name?: string;
   mimeType?: string;
@@ -86,6 +98,10 @@ type NormalizedAppendBlockInput = {
   placement?: AppendPlacement;
   text: string;
   url: string;
+  pageId: string;
+  iframeUrl: string;
+  html: string;
+  design: string;
   sourceId: string;
   name: string;
   mimeType: string;
@@ -313,7 +329,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (raw.language !== undefined && normalized.strict) {
         throw new Error("The 'language' field can only be used with type='code'.");
       }
-      const allowsCaption = normalized.type === "bookmark" || normalized.type === "image" || normalized.type === "attachment";
+      const allowsCaption =
+        normalized.type === "bookmark" ||
+        normalized.type === "image" ||
+        normalized.type === "attachment" ||
+        normalized.type.startsWith("embed_");
       if (raw.caption !== undefined && !allowsCaption && normalized.strict) {
         throw new Error("The 'caption' field is not valid for this block type.");
       }
@@ -325,15 +345,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("Divider blocks do not accept text.");
     }
 
-    if (normalized.type === "bookmark") {
+    const requiresUrl = [
+      "bookmark",
+      "embed_youtube",
+      "embed_github",
+      "embed_figma",
+      "embed_loom",
+      "embed_iframe",
+    ] as const;
+    const urlAllowedTypes = [...requiresUrl] as readonly string[];
+    if (urlAllowedTypes.includes(normalized.type)) {
       if (!normalized.url) {
-        throw new Error("Bookmark blocks require a non-empty url.");
+        throw new Error(`${normalized.type} blocks require a non-empty url.`);
       }
       try {
         new URL(normalized.url);
       } catch {
-        throw new Error(`Invalid url for bookmark block: '${normalized.url}'.`);
+        throw new Error(`Invalid url for ${normalized.type} block: '${normalized.url}'.`);
       }
+    }
+
+    if (normalized.type === "bookmark") {
       if (!(APPEND_BLOCK_BOOKMARK_STYLE_VALUES as readonly string[]).includes(normalized.bookmarkStyle)) {
         throw new Error(`Invalid bookmark style '${normalized.bookmarkStyle}'.`);
       }
@@ -341,8 +373,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (raw.bookmarkStyle !== undefined && normalized.strict) {
         throw new Error("The 'bookmarkStyle' field can only be used with type='bookmark'.");
       }
-      if (raw.url !== undefined && normalized.strict) {
-        throw new Error("The 'url' field can only be used with type='bookmark' in this profile.");
+      if (raw.url !== undefined && !urlAllowedTypes.includes(normalized.type) && normalized.strict) {
+        throw new Error("The 'url' field is not valid for this block type.");
       }
     }
 
@@ -370,6 +402,30 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("The 'latex' field can only be used with type='latex'.");
     }
 
+    if (normalized.type === "embed_linked_doc" || normalized.type === "embed_synced_doc") {
+      if (!normalized.pageId) {
+        throw new Error(`${normalized.type} blocks require pageId.`);
+      }
+    } else if (raw.pageId !== undefined && normalized.strict) {
+      throw new Error("The 'pageId' field can only be used with linked/synced doc embed types.");
+    }
+
+    if (normalized.type === "embed_html") {
+      if (!normalized.html && !normalized.design && normalized.strict) {
+        throw new Error("embed_html blocks require html or design.");
+      }
+    } else if ((raw.html !== undefined || raw.design !== undefined) && normalized.strict) {
+      throw new Error("The 'html'/'design' fields can only be used with type='embed_html'.");
+    }
+
+    if (normalized.type === "embed_iframe") {
+      if (raw.iframeUrl !== undefined && !normalized.iframeUrl && normalized.strict) {
+        throw new Error("embed_iframe iframeUrl cannot be empty when provided.");
+      }
+    } else if (raw.iframeUrl !== undefined && normalized.strict) {
+      throw new Error("The 'iframeUrl' field can only be used with type='embed_iframe'.");
+    }
+
     if (normalized.type === "table") {
       if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > 20) {
         throw new Error("table rows must be an integer between 1 and 20.");
@@ -393,6 +449,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
     const placement = normalizePlacement(parsed.placement);
     const url = (parsed.url ?? "").trim();
+    const pageId = (parsed.pageId ?? "").trim();
+    const iframeUrl = (parsed.iframeUrl ?? "").trim();
+    const html = parsed.html ?? "";
+    const design = parsed.design ?? "";
     const sourceId = (parsed.sourceId ?? "").trim();
     const name = (parsed.name ?? "attachment").trim() || "attachment";
     const mimeType = (parsed.mimeType ?? "application/octet-stream").trim() || "application/octet-stream";
@@ -409,6 +469,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       placement,
       text: parsed.text ?? "",
       url,
+      pageId,
+      iframeUrl,
+      html,
+      design,
       sourceId,
       name,
       mimeType,
@@ -680,6 +744,146 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("prop:rotate", 0);
         block.set("prop:footnoteIdentifier", null);
         return { blockId, block, flavour: "affine:attachment" };
+      }
+      case "embed_youtube": {
+        setSysFields(block, blockId, "affine:embed-youtube");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "video");
+        block.set("prop:url", normalized.url);
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:image", null);
+        block.set("prop:title", null);
+        block.set("prop:description", null);
+        block.set("prop:creator", null);
+        block.set("prop:creatorUrl", null);
+        block.set("prop:creatorImage", null);
+        block.set("prop:videoId", null);
+        return { blockId, block, flavour: "affine:embed-youtube" };
+      }
+      case "embed_github": {
+        setSysFields(block, blockId, "affine:embed-github");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "horizontal");
+        block.set("prop:owner", "");
+        block.set("prop:repo", "");
+        block.set("prop:githubType", "issue");
+        block.set("prop:githubId", "");
+        block.set("prop:url", normalized.url);
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:image", null);
+        block.set("prop:status", null);
+        block.set("prop:statusReason", null);
+        block.set("prop:title", null);
+        block.set("prop:description", null);
+        block.set("prop:createdAt", null);
+        block.set("prop:assignees", null);
+        return { blockId, block, flavour: "affine:embed-github" };
+      }
+      case "embed_figma": {
+        setSysFields(block, blockId, "affine:embed-figma");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "figma");
+        block.set("prop:url", normalized.url);
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:title", null);
+        block.set("prop:description", null);
+        return { blockId, block, flavour: "affine:embed-figma" };
+      }
+      case "embed_loom": {
+        setSysFields(block, blockId, "affine:embed-loom");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "video");
+        block.set("prop:url", normalized.url);
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:image", null);
+        block.set("prop:title", null);
+        block.set("prop:description", null);
+        block.set("prop:videoId", null);
+        return { blockId, block, flavour: "affine:embed-loom" };
+      }
+      case "embed_html": {
+        setSysFields(block, blockId, "affine:embed-html");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "html");
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:html", normalized.html || undefined);
+        block.set("prop:design", normalized.design || undefined);
+        return { blockId, block, flavour: "affine:embed-html" };
+      }
+      case "embed_linked_doc": {
+        setSysFields(block, blockId, "affine:embed-linked-doc");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "horizontal");
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:pageId", normalized.pageId);
+        block.set("prop:title", undefined);
+        block.set("prop:description", undefined);
+        block.set("prop:footnoteIdentifier", null);
+        return { blockId, block, flavour: "affine:embed-linked-doc" };
+      }
+      case "embed_synced_doc": {
+        setSysFields(block, blockId, "affine:embed-synced-doc");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,800,100]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:style", "syncedDoc");
+        block.set("prop:caption", normalized.caption ?? undefined);
+        block.set("prop:pageId", normalized.pageId);
+        block.set("prop:scale", undefined);
+        block.set("prop:preFoldHeight", undefined);
+        block.set("prop:title", undefined);
+        block.set("prop:description", undefined);
+        return { blockId, block, flavour: "affine:embed-synced-doc" };
+      }
+      case "embed_iframe": {
+        setSysFields(block, blockId, "affine:embed-iframe");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:scale", 1);
+        block.set("prop:url", normalized.url);
+        block.set("prop:iframeUrl", normalized.iframeUrl || normalized.url);
+        block.set("prop:width", undefined);
+        block.set("prop:height", undefined);
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:title", null);
+        block.set("prop:description", null);
+        return { blockId, block, flavour: "affine:embed-iframe" };
       }
     }
   }
@@ -1081,6 +1285,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     type: string;
     text?: string;
     url?: string;
+    pageId?: string;
+    iframeUrl?: string;
+    html?: string;
+    design?: string;
     sourceId?: string;
     name?: string;
     mimeType?: string;
@@ -1116,9 +1324,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment. Legacy aliases remain supported."),
+        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe. Legacy aliases remain supported."),
         text: z.string().optional().describe("Block content text"),
         url: z.string().optional().describe("URL for bookmark/embeds"),
+        pageId: z.string().optional().describe("Target page/doc id for linked/synced doc embeds"),
+        iframeUrl: z.string().optional().describe("Override iframe src for embed_iframe"),
+        html: z.string().optional().describe("Raw html for embed_html"),
+        design: z.string().optional().describe("Design payload for embed_html"),
         sourceId: z.string().optional().describe("Blob source id for image/attachment"),
         name: z.string().optional().describe("Attachment file name"),
         mimeType: z.string().optional().describe("Attachment mime type"),

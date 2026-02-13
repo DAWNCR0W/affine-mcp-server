@@ -115,6 +115,36 @@ const STEP3_CASES = [
     args: { type: 'embed_github', url: 'https://github.com/microsoft/typescript/issues/1' },
     expect: { flavour: 'affine:embed-github' },
   },
+  {
+    name: 'embed figma',
+    args: { type: 'embed_figma', url: 'https://www.figma.com/file/abcdef/Sample?node-id=1%3A2' },
+    expect: { flavour: 'affine:embed-figma' },
+  },
+  {
+    name: 'embed loom',
+    args: { type: 'embed_loom', url: 'https://www.loom.com/share/1234567890abcdef' },
+    expect: { flavour: 'affine:embed-loom' },
+  },
+  {
+    name: 'embed iframe',
+    args: { type: 'embed_iframe', url: 'https://example.com' },
+    expect: { flavour: 'affine:embed-iframe' },
+  },
+  {
+    name: 'embed html',
+    args: { type: 'embed_html', html: '<div>hello embed html</div>' },
+    expect: { flavour: 'affine:embed-html' },
+  },
+  {
+    name: 'embed linked doc',
+    args: { type: 'embed_linked_doc', pageId: '__PAGE_ID__' },
+    expect: { flavour: 'affine:embed-linked-doc' },
+  },
+  {
+    name: 'embed synced doc',
+    args: { type: 'embed_synced_doc', pageId: '__PAGE_ID__' },
+    expect: { flavour: 'affine:embed-synced-doc' },
+  },
 ];
 
 const STEP4_CASES = [
@@ -175,6 +205,7 @@ async function main() {
   let workspaceId = '';
   let docId = '';
   let blobKey = '';
+  let linkedPageId = '';
 
   try {
     await client.connect(transport);
@@ -207,6 +238,12 @@ async function main() {
     docId = doc?.docId;
     if (!docId) throw new Error('create_doc did not return docId');
 
+    if (PROFILE === 'step3' || PROFILE === 'step4') {
+      const linkedDoc = await callTool('create_doc', { workspaceId, title: `append-linked-${PROFILE}` });
+      linkedPageId = linkedDoc?.docId || '';
+      if (!linkedPageId) throw new Error('create_doc for linked page did not return docId');
+    }
+
     if (PROFILE !== 'step1') {
       if (!names.includes('upload_blob')) {
         throw new Error("Required tool 'upload_blob' is not registered.");
@@ -225,7 +262,9 @@ async function main() {
       const caseArgs =
         blobKey && testCase.args?.sourceId === '__BLOB_KEY__'
           ? { ...testCase.args, sourceId: blobKey }
-          : testCase.args;
+          : linkedPageId && testCase.args?.pageId === '__PAGE_ID__'
+            ? { ...testCase.args, pageId: linkedPageId }
+            : testCase.args;
       const payload = { workspaceId, docId, ...caseArgs };
       const result = await callTool('append_block', payload);
       if (!result?.appended || !result?.blockId) {
