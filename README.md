@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 32 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.4.0: Added `read_doc` for document content snapshots (blocks + plain text), plus Cursor setup/troubleshooting guidance.
+> New in v1.5.0: `append_block` now supports 30 verified block profiles, including database/data_view and edgeless (`frame`, `edgeless_text`, `surface_ref`, `note`) insertion paths.
 
 ## Features
 
@@ -166,7 +166,7 @@ If you prefer `npx`:
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
 - `append_paragraph` – append a paragraph block (WebSocket)
-- `append_block` – append slash-command style blocks (`heading/list/todo/code/divider/quote`)
+- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
@@ -242,6 +242,11 @@ Workspace visibility
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.5.0 (2026‑02‑13)
+- Expanded `append_block` from Step1 to Step4 profiles: canonical text/list/code/divider/callout/latex/table/bookmark/media/embed plus `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note`
+- Added strict field validation and canonical parent enforcement for page/note/surface containers
+- Added local integration runner coverage for all 30 append_block cases against a live AFFINE server
 
 ### 1.4.0 (2026‑02‑13)
 - Added `read_doc` for reading document block snapshot + plain text

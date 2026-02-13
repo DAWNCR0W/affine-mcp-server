@@ -1,5 +1,30 @@
 # Release Notes
 
+## Version 1.5.0 (2026-02-13)
+
+### Highlights
+- Completed `append_block` expansion Step1~Step4 with live AFFINE server validation.
+- Added database/edgeless append support: `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note`.
+- Hardened validation/parent resolution rules to match AFFINE block container constraints.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Expanded canonical append types and strict input validation schema.
+  - Added surface auto-resolution and parent-type guardrails for page/note/surface paths.
+  - Switched Step4 block payload internals to Yjs-native values to prevent runtime write failures.
+- `scripts/test-append-block-expansion.mjs`
+  - Added Step4 integration cases and runtime placeholder chaining (`__FRAME_ID__`).
+  - Increased end-to-end append verification to 30 cases.
+- Runtime/manifest version metadata updated to `1.5.0`.
+
+### Validation Evidence
+- `APPEND_BLOCK_PROFILE=step1 node scripts/test-append-block-expansion.mjs` passed (10/10).
+- `APPEND_BLOCK_PROFILE=step2 node scripts/test-append-block-expansion.mjs` passed (16/16).
+- `APPEND_BLOCK_PROFILE=step3 node scripts/test-append-block-expansion.mjs` passed (24/24).
+- `APPEND_BLOCK_PROFILE=step4 node scripts/test-append-block-expansion.mjs` passed (30/30).
+- `npm run ci` passed.
+- `npm run test:comprehensive` passed with 32/32 tools called and 38/38 checks passed.
+
 ## Version 1.4.0 (2026-02-13)
 
 ### Highlights
