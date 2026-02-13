@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-02-13
+
+### Added
+- `append_block` Step4 types: `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note`.
+- Local integration coverage for all append profiles (`step1`..`step4`) in `scripts/test-append-block-expansion.mjs`.
+
+### Changed
+- `append_block` canonical type set expanded to 30 verified cases with stricter field validation and parent-container checks.
+- Step4 creation payloads now use Yjs-native value types (`Y.Map`/`Y.Array`) to avoid runtime serialization failures.
+
+### Fixed
+- Resolved `Unexpected content type` failures while appending database/edgeless blocks.
+- Aligned `surface_ref` caption validation with block creation behavior.
+
 ## [1.4.0] - 2026-02-13
 
 ### Added
@@ -137,6 +151,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
+[1.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.5.0
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.5.0...HEAD
