@@ -10,6 +10,10 @@
     "type": "git",
     "url": "git+https://github.com/dawncr0w/affine-mcp-server.git"
   },
+  "bugs": {
+    "url": "https://github.com/dawncr0w/affine-mcp-server/issues"
+  },
+  "homepage": "https://github.com/dawncr0w/affine-mcp-server#readme",
   "keywords": [
     "mcp",
     "affine",
@@ -23,10 +27,16 @@
     "affine-mcp": "bin/affine-mcp"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{ recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm run build"
+    "test": "npm run test:tool-manifest",
+    "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
+    "test:comprehensive": "node test-comprehensive.mjs",
+    "pack:check": "npm pack --dry-run",
+    "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
+    "prepublishOnly": "npm run ci"
   },
   "files": [
     "bin",
