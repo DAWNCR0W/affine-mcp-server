@@ -11,15 +11,6 @@ export function registerUserTools(server: McpServer, gql: GraphQLClient) {
   };
 
   server.registerTool(
-    "affine_current_user",
-    {
-      title: "Current User",
-      description: "Get current signed-in user.",
-      inputSchema: {}
-    },
-    currentUserHandler as any
-  );
-  server.registerTool(
     "current_user",
     {
       title: "Current User",

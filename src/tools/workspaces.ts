@@ -4,8 +4,8 @@ import { GraphQLClient } from "../graphqlClient.js";
 import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
-import { io } from "socket.io-client";
 import { text } from "../util/mcp.js";
+import { connectWorkspaceSocket, joinWorkspace, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
 
 // Generate AFFiNE-style document ID
 function generateDocId(): string {
@@ -151,14 +151,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
     },
     listWorkspacesHandler as any
   );
-  server.registerTool(
-    "affine_list_workspaces",
-    {
-      title: "List Workspaces",
-      description: "List all available AFFiNE workspaces"
-    },
-    listWorkspacesHandler
-  );
 
   // GET WORKSPACE
   const getWorkspaceHandler = async ({ id }: { id: string }) => {
@@ -184,17 +176,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
 
   server.registerTool(
     "get_workspace",
-    {
-      title: "Get Workspace",
-      description: "Get details of a specific workspace",
-      inputSchema: { 
-        id: z.string().describe("Workspace ID") 
-      }
-    },
-    getWorkspaceHandler as any
-  );
-  server.registerTool(
-    "affine_get_workspace",
     {
       title: "Get Workspace",
       description: "Get details of a specific workspace",
@@ -263,77 +244,39 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         }
         
         const workspace = result.data.createWorkspace;
-        
-        // Now create the actual document via WebSocket
-        const wsUrl = endpoint.replace('https://', 'wss://').replace('http://', 'ws://').replace('/graphql', '');
-        
-        return new Promise((resolve) => {
-          const socket = io(wsUrl, {
-            transports: ['websocket'],
-            path: '/socket.io/',
-            extraHeaders: cookie ? { Cookie: cookie } : undefined
-          });
-          
-          socket.on('connect', () => {
-            // Join the workspace
-            socket.emit('space:join', {
-              spaceType: 'workspace',
-              spaceId: workspace.id
-            });
-            
-            // Send the document update
-            setTimeout(() => {
-              const docUpdateBase64 = Buffer.from(docUpdate).toString('base64');
-              socket.emit('space:push-doc-update', {
-                spaceType: 'workspace',
-                spaceId: workspace.id,
-                docId: firstDocId,
-                update: docUpdateBase64
-              });
-              
-              // Wait longer for sync and disconnect
-              setTimeout(() => {
-                socket.disconnect();
-                resolve(text({
-                  ...workspace,
-                  name: name,
-                  avatar: avatar,
-                  firstDocId: firstDocId,
-                  status: "success",
-                  message: "Workspace created successfully",
-                  url: `${process.env.AFFINE_BASE_URL}/workspace/${workspace.id}`
-                }));
-              }, 3000);
-            }, 1000);
-          });
-          
-          socket.on('error', () => {
+        const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+        const baseUrl = process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '');
+
+        try {
+          const socket = await connectWorkspaceSocket(wsUrl, cookie);
+          try {
+            await joinWorkspace(socket, workspace.id);
+            const docUpdateBase64 = Buffer.from(docUpdate).toString('base64');
+            await pushDocUpdate(socket, workspace.id, firstDocId, docUpdateBase64);
+          } finally {
             socket.disconnect();
-            // Even if WebSocket fails, workspace was created
-            resolve(text({
-              ...workspace,
-              name: name,
-              avatar: avatar,
-              firstDocId: firstDocId,
-              status: "partial",
-              message: "Workspace created (document sync may be pending)",
-              url: `${process.env.AFFINE_BASE_URL}/workspace/${workspace.id}`
-            }));
+          }
+        } catch (_wsError) {
+          // Keep workspace creation successful even if initial websocket sync fails.
+          return text({
+            ...workspace,
+            name,
+            avatar,
+            firstDocId,
+            status: "partial",
+            message: "Workspace created (document sync may be pending)",
+            url: `${baseUrl}/workspace/${workspace.id}`
           });
-          
-          // Timeout
-          setTimeout(() => {
-            socket.disconnect();
-            resolve(text({
-              ...workspace,
-              name: name,
-              avatar: avatar,
-              firstDocId: firstDocId,
-              status: "success",
-              message: "Workspace created",
-              url: `${process.env.AFFINE_BASE_URL}/workspace/${workspace.id}`
-            }));
-          }, 10000);
+        }
+
+        return text({
+          ...workspace,
+          name,
+          avatar,
+          firstDocId,
+          status: "success",
+          message: "Workspace created successfully",
+          url: `${baseUrl}/workspace/${workspace.id}`
         });
         
       } catch (error: any) {
@@ -353,30 +296,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
     },
     createWorkspaceHandler as any
   );
-  server.registerTool(
-    "affine_create_workspace",
-    {
-      title: "Create Workspace",
-      description: "Create a new workspace with initial document (accessible in UI)",
-      inputSchema: {
-        name: z.string().describe("Workspace name"),
-        avatar: z.string().optional().describe("Avatar emoji or URL")
-      }
-    },
-    createWorkspaceHandler as any
-  );
-  server.registerTool(
-    "affine_create_workspace_fixed",
-    {
-      title: "Create Workspace (Fixed)",
-      description: "Create a new workspace with initial document (backward compatible alias)",
-      inputSchema: {
-        name: z.string().describe("Workspace name"),
-        avatar: z.string().optional().describe("Avatar emoji or URL")
-      }
-    },
-    createWorkspaceHandler as any
-  );
 
   // UPDATE WORKSPACE
   const updateWorkspaceHandler = async ({ id, public: isPublic, enableAi }: { id: string; public?: boolean; enableAi?: boolean }) => {
@@ -386,12 +305,14 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
             updateWorkspace(input: $input) {
               id
               public
+              enableAi
             }
           }
         `;
         
         const input: any = { id };
         if (isPublic !== undefined) input.public = isPublic;
+        if (enableAi !== undefined) input.enableAi = enableAi;
         
         const data = await gql.request<{ updateWorkspace: any }>(mutation, { input });
         
@@ -402,19 +323,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
     };
   server.registerTool(
     "update_workspace",
-    {
-      title: "Update Workspace",
-      description: "Update workspace settings",
-      inputSchema: {
-        id: z.string().describe("Workspace ID"),
-        public: z.boolean().optional().describe("Make workspace public"),
-        enableAi: z.boolean().optional().describe("Enable AI features")
-      }
-    },
-    updateWorkspaceHandler as any
-  );
-  server.registerTool(
-    "affine_update_workspace",
     {
       title: "Update Workspace",
       description: "Update workspace settings",
@@ -445,17 +353,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
     };
   server.registerTool(
     "delete_workspace",
-    {
-      title: "Delete Workspace",
-      description: "Delete a workspace permanently",
-      inputSchema: {
-        id: z.string().describe("Workspace ID")
-      }
-    },
-    deleteWorkspaceHandler as any
-  );
-  server.registerTool(
-    "affine_delete_workspace",
     {
       title: "Delete Workspace",
       description: "Delete a workspace permanently",

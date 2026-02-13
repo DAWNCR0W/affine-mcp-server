@@ -7,6 +7,31 @@ import * as Y from "yjs";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
+const APPEND_BLOCK_TYPE_VALUES = [
+  "paragraph",
+  "heading1",
+  "heading2",
+  "heading3",
+  "quote",
+  "bulleted_list",
+  "numbered_list",
+  "todo",
+  "code",
+  "divider",
+] as const;
+type AppendBlockType = typeof APPEND_BLOCK_TYPE_VALUES[number];
+const AppendBlockType = z.enum(APPEND_BLOCK_TYPE_VALUES);
+
+function blockVersion(flavour: string): number {
+  switch (flavour) {
+    case "affine:page":
+      return 2;
+    case "affine:surface":
+      return 5;
+    default:
+      return 1;
+  }
+}
 
 export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
   // helpers
@@ -23,6 +48,184 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const cookie = (gql as any).cookie || headers.Cookie || '';
     return { endpoint, cookie };
   }
+
+  function makeText(content: string): Y.Text {
+    const yText = new Y.Text();
+    if (content.length > 0) {
+      yText.insert(0, content);
+    }
+    return yText;
+  }
+
+  function setSysFields(block: Y.Map<any>, blockId: string, flavour: string): void {
+    block.set("sys:id", blockId);
+    block.set("sys:flavour", flavour);
+    block.set("sys:version", blockVersion(flavour));
+  }
+
+  function findBlockIdByFlavour(blocks: Y.Map<any>, flavour: string): string | null {
+    for (const [, value] of blocks) {
+      const block = value as Y.Map<any>;
+      if (block?.get && block.get("sys:flavour") === flavour) {
+        return String(block.get("sys:id"));
+      }
+    }
+    return null;
+  }
+
+  function ensureNoteBlock(blocks: Y.Map<any>): string {
+    const existingNoteId = findBlockIdByFlavour(blocks, "affine:note");
+    if (existingNoteId) {
+      return existingNoteId;
+    }
+
+    const pageId = findBlockIdByFlavour(blocks, "affine:page");
+    if (!pageId) {
+      throw new Error("Document has no page block; unable to insert content.");
+    }
+
+    const noteId = generateId();
+    const note = new Y.Map<any>();
+    setSysFields(note, noteId, "affine:note");
+    note.set("sys:parent", pageId);
+    note.set("sys:children", new Y.Array<string>());
+    note.set("prop:xywh", "[0,0,800,95]");
+    note.set("prop:index", "a0");
+    note.set("prop:hidden", false);
+    note.set("prop:displayMode", "both");
+    const background = new Y.Map<any>();
+    background.set("light", "#ffffff");
+    background.set("dark", "#252525");
+    note.set("prop:background", background);
+    blocks.set(noteId, note);
+
+    const page = blocks.get(pageId) as Y.Map<any>;
+    let pageChildren = page.get("sys:children") as Y.Array<string> | undefined;
+    if (!(pageChildren instanceof Y.Array)) {
+      pageChildren = new Y.Array<string>();
+      page.set("sys:children", pageChildren);
+    }
+    pageChildren.push([noteId]);
+    return noteId;
+  }
+
+  function createBlock(
+    noteId: string,
+    parsed: { type: AppendBlockType; text?: string; checked?: boolean; language?: string; caption?: string }
+  ): { blockId: string; block: Y.Map<any>; flavour: string; blockType?: string } {
+    const blockId = generateId();
+    const block = new Y.Map<any>();
+    const content = parsed.text ?? "";
+
+    switch (parsed.type) {
+      case "paragraph":
+      case "heading1":
+      case "heading2":
+      case "heading3":
+      case "quote": {
+        setSysFields(block, blockId, "affine:paragraph");
+        block.set("sys:parent", noteId);
+        block.set("sys:children", new Y.Array<string>());
+        const blockType =
+          parsed.type === "heading1"
+            ? "h1"
+            : parsed.type === "heading2"
+              ? "h2"
+              : parsed.type === "heading3"
+                ? "h3"
+                : parsed.type === "quote"
+                  ? "quote"
+                  : "text";
+        block.set("prop:type", blockType);
+        block.set("prop:text", makeText(content));
+        return { blockId, block, flavour: "affine:paragraph", blockType };
+      }
+      case "bulleted_list":
+      case "numbered_list":
+      case "todo": {
+        setSysFields(block, blockId, "affine:list");
+        block.set("sys:parent", noteId);
+        block.set("sys:children", new Y.Array<string>());
+        const blockType =
+          parsed.type === "bulleted_list"
+            ? "bulleted"
+            : parsed.type === "numbered_list"
+              ? "numbered"
+              : "todo";
+        block.set("prop:type", blockType);
+        if (blockType === "todo") {
+          block.set("prop:checked", Boolean(parsed.checked));
+        }
+        block.set("prop:text", makeText(content));
+        return { blockId, block, flavour: "affine:list", blockType };
+      }
+      case "code": {
+        setSysFields(block, blockId, "affine:code");
+        block.set("sys:parent", noteId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:language", (parsed.language || "txt").toLowerCase());
+        if (parsed.caption) {
+          block.set("prop:caption", parsed.caption);
+        }
+        block.set("prop:text", makeText(content));
+        return { blockId, block, flavour: "affine:code" };
+      }
+      case "divider": {
+        setSysFields(block, blockId, "affine:divider");
+        block.set("sys:parent", noteId);
+        block.set("sys:children", new Y.Array<string>());
+        return { blockId, block, flavour: "affine:divider" };
+      }
+    }
+  }
+
+  async function appendBlockInternal(parsed: {
+    workspaceId?: string;
+    docId: string;
+    type: AppendBlockType;
+    text?: string;
+    checked?: boolean;
+    language?: string;
+    caption?: string;
+  }) {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (snapshot.missing) {
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      }
+
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const noteId = ensureNoteBlock(blocks);
+      const { blockId, block, flavour, blockType } = createBlock(noteId, parsed);
+
+      blocks.set(blockId, block);
+      const note = blocks.get(noteId) as Y.Map<any>;
+      let noteChildren = note.get("sys:children") as Y.Array<string> | undefined;
+      if (!(noteChildren instanceof Y.Array)) {
+        noteChildren = new Y.Array<string>();
+        note.set("sys:children", noteChildren);
+      }
+      noteChildren.push([blockId]);
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return { appended: true, blockId, flavour, blockType };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
   const listDocsHandler = async (parsed: { workspaceId?: string; first?: number; offset?: number; after?: string }) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId;
       if (!workspaceId) {
@@ -34,20 +237,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     };
   server.registerTool(
     "list_docs",
-    {
-      title: "List Documents",
-      description: "List documents in a workspace (GraphQL).",
-      inputSchema: {
-        workspaceId: z.string().describe("Workspace ID (optional if default set).").optional(),
-        first: z.number().optional(),
-        offset: z.number().optional(),
-        after: z.string().optional()
-      }
-    },
-    listDocsHandler as any
-  );
-  server.registerTool(
-    "affine_list_docs",
     {
       title: "List Documents",
       description: "List documents in a workspace (GraphQL).",
@@ -82,99 +271,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     getDocHandler as any
   );
-  server.registerTool(
-    "affine_get_doc",
-    {
-      title: "Get Document",
-      description: "Get a document by ID (GraphQL metadata).",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: DocId
-      }
-    },
-    getDocHandler as any
-  );
-
-  const searchDocsHandler = async (parsed: { workspaceId?: string; keyword: string; limit?: number }) => {
-      try {
-        const workspaceId = parsed.workspaceId || defaults.workspaceId;
-      if (!workspaceId) {
-        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
-      }
-        const query = `query SearchDocs($workspaceId:String!, $keyword:String!, $limit:Int){ workspace(id:$workspaceId){ searchDocs(input:{ keyword:$keyword, limit:$limit }){ docId title highlight createdAt updatedAt } } }`;
-        const data = await gql.request<{ workspace: any }>(query, { workspaceId, keyword: parsed.keyword, limit: parsed.limit });
-        return text(data.workspace?.searchDocs || []);
-      } catch (error: any) {
-        // Return empty array on error (search might not be available)
-        console.error("Search docs error:", error.message);
-        return text([]);
-      }
-    };
-  server.registerTool(
-    "search_docs",
-    {
-      title: "Search Documents",
-      description: "Search documents in a workspace.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        keyword: z.string().min(1),
-        limit: z.number().optional()
-      }
-    },
-    searchDocsHandler as any
-  );
-  server.registerTool(
-    "affine_search_docs",
-    {
-      title: "Search Documents",
-      description: "Search documents in a workspace.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        keyword: z.string().min(1),
-        limit: z.number().optional()
-      }
-    },
-    searchDocsHandler as any
-  );
-
-  const recentDocsHandler = async (parsed: { workspaceId?: string; first?: number; offset?: number; after?: string }) => {
-      const workspaceId = parsed.workspaceId || defaults.workspaceId;
-      if (!workspaceId) {
-        throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
-      }
-      // Note: AFFiNE doesn't have a separate 'recentlyUpdatedDocs' field, just use docs
-      const query = `query RecentDocs($workspaceId:String!, $first:Int, $offset:Int, $after:String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
-      const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
-      return text(data.workspace.docs);
-    };
-  server.registerTool(
-    "recent_docs",
-    {
-      title: "Recent Documents",
-      description: "List recently updated docs in a workspace.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        first: z.number().optional(),
-        offset: z.number().optional(),
-        after: z.string().optional()
-      }
-    },
-    recentDocsHandler as any
-  );
-  server.registerTool(
-    "affine_recent_docs",
-    {
-      title: "Recent Documents",
-      description: "List recently updated docs in a workspace.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        first: z.number().optional(),
-        offset: z.number().optional(),
-        after: z.string().optional()
-      }
-    },
-    recentDocsHandler as any
-  );
 
   const publishDocHandler = async (parsed: { workspaceId?: string; docId: string; mode?: "Page" | "Edgeless" }) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId;
@@ -187,19 +283,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     };
   server.registerTool(
     "publish_doc",
-    {
-      title: "Publish Document",
-      description: "Publish a doc (make public).",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        mode: z.enum(["Page","Edgeless"]).optional()
-      }
-    },
-    publishDocHandler as any
-  );
-  server.registerTool(
-    "affine_publish_doc",
     {
       title: "Publish Document",
       description: "Publish a doc (make public).",
@@ -233,18 +316,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     revokeDocHandler as any
   );
-  server.registerTool(
-    "affine_revoke_doc",
-    {
-      title: "Revoke Document",
-      description: "Revoke a doc's public access.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string()
-      }
-    },
-    revokeDocHandler as any
-  );
 
   // CREATE DOC (high-level)
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string }) => {
@@ -262,8 +333,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const blocks = ydoc.getMap('blocks');
       const pageId = generateId();
       const page = new Y.Map();
-      page.set('sys:id', pageId);
-      page.set('sys:flavour', 'affine:page');
+      setSysFields(page, pageId, "affine:page");
       const titleText = new Y.Text();
       titleText.insert(0, parsed.title || 'Untitled');
       page.set('prop:title', titleText);
@@ -273,22 +343,28 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const surfaceId = generateId();
       const surface = new Y.Map();
-      surface.set('sys:id', surfaceId);
-      surface.set('sys:flavour', 'affine:surface');
+      setSysFields(surface, surfaceId, "affine:surface");
       surface.set('sys:parent', pageId);
       surface.set('sys:children', new Y.Array());
+      const elements = new Y.Map<any>();
+      elements.set("type", "$blocksuite:internal:native$");
+      elements.set("value", new Y.Map<any>());
+      surface.set("prop:elements", elements);
       blocks.set(surfaceId, surface);
       children.push([surfaceId]);
 
       const noteId = generateId();
       const note = new Y.Map();
-      note.set('sys:id', noteId);
-      note.set('sys:flavour', 'affine:note');
+      setSysFields(note, noteId, "affine:note");
       note.set('sys:parent', pageId);
-      note.set('prop:displayMode', 'DocAndEdgeless');
-      note.set('prop:xywh', '[0,0,800,600]');
+      note.set('prop:displayMode', 'both');
+      note.set('prop:xywh', '[0,0,800,95]');
       note.set('prop:index', 'a0');
-      note.set('prop:lockedBySelf', false);
+      note.set('prop:hidden', false);
+      const background = new Y.Map<any>();
+      background.set("light", "#ffffff");
+      background.set("dark", "#252525");
+      note.set("prop:background", background);
       const noteChildren = new Y.Array();
       note.set('sys:children', noteChildren);
       blocks.set(noteId, note);
@@ -297,8 +373,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (parsed.content) {
         const paraId = generateId();
         const para = new Y.Map();
-        para.set('sys:id', paraId);
-        para.set('sys:flavour', 'affine:paragraph');
+        setSysFields(para, paraId, "affine:paragraph");
         para.set('sys:parent', noteId);
         para.set('sys:children', new Y.Array());
         para.set('prop:type', 'text');
@@ -360,92 +435,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     createDocHandler as any
   );
-  server.registerTool(
-    'affine_create_doc',
-    {
-      title: 'Create Document',
-      description: 'Create a new AFFiNE document with optional content',
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        title: z.string().optional(),
-        content: z.string().optional(),
-      },
-    },
-    createDocHandler as any
-  );
 
   // APPEND PARAGRAPH
   const appendParagraphHandler = async (parsed: { workspaceId?: string; docId: string; text: string }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error('workspaceId is required');
-    const { endpoint, cookie } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const doc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
-      if (snapshot.missing) {
-        Y.applyUpdate(doc, Buffer.from(snapshot.missing, 'base64'));
-      }
-      const prevSV = Y.encodeStateVector(doc);
-      const blocks = doc.getMap('blocks') as Y.Map<any>;
-      // find a note block
-      let noteId: string | null = null;
-      for (const [key, val] of blocks) {
-        const m = val as any;
-        if (m?.get && m.get('sys:flavour') === 'affine:note') {
-          noteId = m.get('sys:id');
-          break;
-        }
-      }
-      if (!noteId) {
-        // fallback: create a note under existing page
-        let pageId: string | null = null;
-        for (const [key, val] of blocks) {
-          const m = val as any;
-          if (m?.get && m.get('sys:flavour') === 'affine:page') {
-            pageId = m.get('sys:id');
-            break;
-          }
-        }
-        if (!pageId) throw new Error('Doc has no page block');
-        const note = new Y.Map();
-        noteId = generateId();
-        note.set('sys:id', noteId);
-        note.set('sys:flavour', 'affine:note');
-        note.set('sys:parent', pageId);
-        note.set('prop:displayMode', 'DocAndEdgeless');
-        note.set('prop:xywh', '[0,0,800,600]');
-        note.set('prop:index', 'a0');
-        note.set('prop:lockedBySelf', false);
-        note.set('sys:children', new Y.Array());
-        blocks.set(noteId, note);
-        const page = blocks.get(pageId) as any;
-        const children = page.get('sys:children') as Y.Array<string>;
-        children.push([noteId]);
-      }
-      const paragraphId = generateId();
-      const para = new Y.Map();
-      para.set('sys:id', paragraphId);
-      para.set('sys:flavour', 'affine:paragraph');
-      para.set('sys:parent', noteId);
-      para.set('sys:children', new Y.Array());
-      para.set('prop:type', 'text');
-      const ptext = new Y.Text();
-      ptext.insert(0, parsed.text);
-      para.set('prop:text', ptext);
-      blocks.set(paragraphId, para);
-      const note = blocks.get(noteId) as any;
-      const noteChildren = note.get('sys:children') as Y.Array<string>;
-      noteChildren.push([paragraphId]);
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      const deltaB64 = Buffer.from(delta).toString('base64');
-      await pushDocUpdate(socket, workspaceId, parsed.docId, deltaB64);
-      return text({ appended: true, paragraphId });
-    } finally {
-      socket.disconnect();
-    }
+    const result = await appendBlockInternal({
+      workspaceId: parsed.workspaceId,
+      docId: parsed.docId,
+      type: "paragraph",
+      text: parsed.text,
+    });
+    return text({ appended: result.appended, paragraphId: result.blockId });
   };
   server.registerTool(
     'append_paragraph',
@@ -460,18 +459,40 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     appendParagraphHandler as any
   );
+
+  const appendBlockHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    type: AppendBlockType;
+    text?: string;
+    checked?: boolean;
+    language?: string;
+    caption?: string;
+  }) => {
+    const result = await appendBlockInternal(parsed);
+    return text({
+      appended: result.appended,
+      blockId: result.blockId,
+      flavour: result.flavour,
+      type: result.blockType || null,
+    });
+  };
   server.registerTool(
-    'affine_append_paragraph',
+    "append_block",
     {
-      title: 'Append Paragraph',
-      description: 'Append a text paragraph block to a document',
+      title: "Append Block",
+      description: "Append a slash-command style block (heading/list/todo/code/divider/quote) to a document.",
       inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        text: z.string(),
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        type: AppendBlockType.describe("Block type to append"),
+        text: z.string().optional().describe("Block content text"),
+        checked: z.boolean().optional().describe("Todo state when type is todo"),
+        language: z.string().optional().describe("Code language when type is code"),
+        caption: z.string().optional().describe("Code caption when type is code"),
       },
     },
-    appendParagraphHandler as any
+    appendBlockHandler as any
   );
 
   // DELETE DOC
@@ -510,15 +531,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   };
   server.registerTool(
     'delete_doc',
-    {
-      title: 'Delete Document',
-      description: 'Delete a document and remove from workspace list',
-      inputSchema: { workspaceId: z.string().optional(), docId: z.string() },
-    },
-    deleteDocHandler as any
-  );
-  server.registerTool(
-    'affine_delete_doc',
     {
       title: 'Delete Document',
       description: 'Delete a document and remove from workspace list',

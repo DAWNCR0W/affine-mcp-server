@@ -9,7 +9,6 @@ import { registerCommentTools } from "./tools/comments.js";
 import { registerHistoryTools } from "./tools/history.js";
 import { registerUserTools } from "./tools/user.js";
 import { registerUserCRUDTools } from "./tools/userCRUD.js";
-import { registerUpdateTools } from "./tools/updates.js";
 import { registerAccessTokenTools } from "./tools/accessTokens.js";
 import { registerBlobTools } from "./tools/blobStorage.js";
 import { registerNotificationTools } from "./tools/notifications.js";
@@ -68,7 +67,6 @@ async function buildServer() {
   registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerUserTools(server, gql);
   registerUserCRUDTools(server, gql);
-  registerUpdateTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerAccessTokenTools(server, gql);
   registerBlobTools(server, gql);
   registerNotificationTools(server, gql);

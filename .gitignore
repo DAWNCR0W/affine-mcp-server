@@ -44,6 +44,7 @@ coverage/
 tmp/
 temp/
 *.tmp
+comprehensive-test-results-*.json
 
 # Package artifacts
 *.tgz

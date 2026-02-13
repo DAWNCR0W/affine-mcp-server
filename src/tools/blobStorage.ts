@@ -2,42 +2,80 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import FormData from "form-data";
+import fetch from "node-fetch";
+
+function decodeBlobContent(content: string): Buffer {
+  const normalized = content.trim().replace(/\s+/g, "");
+  const base64Like = normalized.length > 0 && normalized.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(normalized);
+  if (base64Like) {
+    try {
+      const decoded = Buffer.from(normalized, "base64");
+      if (decoded.length > 0) {
+        return decoded;
+      }
+    } catch {
+      // Fallback to UTF-8 text below.
+    }
+  }
+  return Buffer.from(content, "utf8");
+}
 
 export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
   // UPLOAD BLOB/FILE
   const uploadBlobHandler = async ({ workspaceId, content, filename, contentType }: { workspaceId: string; content: string; filename?: string; contentType?: string }) => {
     try {
-      // Note: Actual file upload requires multipart form data
-      // This is a simplified version that returns structured data
-      const blobId = `blob_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+      const endpoint = (gql as any).endpoint || `${process.env.AFFINE_BASE_URL || "http://localhost:3010"}/graphql`;
+      const headers = (gql as any).headers || {};
+      const cookie = (gql as any).cookie || headers.Cookie || "";
+      const payload = decodeBlobContent(content);
+      const safeFilename = filename || `blob-${Date.now()}.bin`;
+      const mime = contentType || "application/octet-stream";
+
+      const form = new FormData();
+      form.append("operations", JSON.stringify({
+        query: `mutation SetBlob($workspaceId: String!, $blob: Upload!) {
+          setBlob(workspaceId: $workspaceId, blob: $blob)
+        }`,
+        variables: {
+          workspaceId,
+          blob: null
+        }
+      }));
+      form.append("map", JSON.stringify({ "0": ["variables.blob"] }));
+      form.append("0", payload, { filename: safeFilename, contentType: mime });
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          ...headers,
+          Cookie: cookie,
+          ...form.getHeaders(),
+        },
+        body: form as any,
+      });
+      const result = await response.json() as any;
+      if (result.errors?.length) {
+        throw new Error(result.errors[0].message);
+      }
+      const blobKey = result.data?.setBlob;
+      if (!blobKey) {
+        throw new Error("Upload succeeded but no blob key was returned.");
+      }
+
       return text({
-        id: blobId,
+        id: blobKey,
+        key: blobKey,
         workspaceId,
-        filename: filename || "unnamed",
-        contentType: contentType || "application/octet-stream",
-        size: content.length,
-        uploadedAt: new Date().toISOString(),
-        note: "Blob metadata created. Use AFFiNE UI for actual file upload."
+        filename: safeFilename,
+        contentType: mime,
+        size: payload.length,
+        uploadedAt: new Date().toISOString()
       });
     } catch (error: any) {
       return text({ error: error.message });
     }
   };
-  server.registerTool(
-    "affine_upload_blob",
-    {
-      title: "Upload Blob",
-      description: "Upload a file or blob to workspace storage.",
-      inputSchema: {
-        workspaceId: z.string().describe("Workspace ID"),
-        content: z.string().describe("Base64 encoded content or text"),
-        filename: z.string().optional().describe("Filename"),
-        contentType: z.string().optional().describe("MIME type")
-      }
-    },
-    uploadBlobHandler as any
-  );
   server.registerTool(
     "upload_blob",
     {
@@ -74,19 +112,6 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
     }
   };
   server.registerTool(
-    "affine_delete_blob",
-    {
-      title: "Delete Blob",
-      description: "Delete a blob/file from workspace storage.",
-      inputSchema: {
-        workspaceId: z.string().describe("Workspace ID"),
-        key: z.string().describe("Blob key/ID to delete"),
-        permanently: z.boolean().optional().describe("Delete permanently")
-      }
-    },
-    deleteBlobHandler as any
-  );
-  server.registerTool(
     "delete_blob",
     {
       title: "Delete Blob",
@@ -109,7 +134,7 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
         }
       `;
       
-      const data = await gql.request<{ releaseDeletedBlobs: number }>(mutation, {
+      const data = await gql.request<{ releaseDeletedBlobs: boolean }>(mutation, {
         workspaceId
       });
       
@@ -118,17 +143,6 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
       return text({ error: error.message });
     }
   };
-  server.registerTool(
-    "affine_cleanup_blobs",
-    {
-      title: "Cleanup Deleted Blobs",
-      description: "Permanently remove deleted blobs to free up storage.",
-      inputSchema: {
-        workspaceId: z.string().describe("Workspace ID")
-      }
-    },
-    cleanupBlobsHandler as any
-  );
   server.registerTool(
     "cleanup_blobs",
     {

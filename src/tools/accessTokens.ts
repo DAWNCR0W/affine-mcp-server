@@ -6,23 +6,14 @@ import { text } from "../util/mcp.js";
 export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) {
   const listAccessTokensHandler = async () => {
     try {
-      const query = `query { accessTokens { id name createdAt expiresAt } }`;
-      const data = await gql.request<{ accessTokens: any[] }>(query);
-      return text(data.accessTokens || []);
+      const query = `query { currentUser { accessTokens { id name createdAt expiresAt } } }`;
+      const data = await gql.request<{ currentUser: { accessTokens: any[] } }>(query);
+      return text(data.currentUser?.accessTokens || []);
     } catch (error: any) {
       console.error("List access tokens error:", error.message);
-      return text([]);
+      return text({ error: error.message });
     }
   };
-  server.registerTool(
-    "affine_list_access_tokens",
-    {
-      title: "List Access Tokens",
-      description: "List personal access tokens (metadata).",
-      inputSchema: {}
-    },
-    listAccessTokensHandler as any
-  );
   server.registerTool(
     "list_access_tokens",
     {
@@ -38,18 +29,6 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
     const data = await gql.request<{ generateUserAccessToken: any }>(mutation, { input: { name: parsed.name, expiresAt: parsed.expiresAt ?? null } });
     return text(data.generateUserAccessToken);
   };
-  server.registerTool(
-    "affine_generate_access_token",
-    {
-      title: "Generate Access Token",
-      description: "Generate a personal access token (returns token).",
-      inputSchema: {
-        name: z.string(),
-        expiresAt: z.string().optional()
-      }
-    },
-    generateAccessTokenHandler as any
-  );
   server.registerTool(
     "generate_access_token",
     {
@@ -68,17 +47,6 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
     const data = await gql.request<{ revokeUserAccessToken: boolean }>(mutation, { id: parsed.id });
     return text({ success: data.revokeUserAccessToken });
   };
-  server.registerTool(
-    "affine_revoke_access_token",
-    {
-      title: "Revoke Access Token",
-      description: "Revoke a personal access token by id.",
-      inputSchema: {
-        id: z.string()
-      }
-    },
-    revokeAccessTokenHandler as any
-  );
   server.registerTool(
     "revoke_access_token",
     {

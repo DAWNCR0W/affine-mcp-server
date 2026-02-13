@@ -5,32 +5,43 @@ import { text } from "../util/mcp.js";
 
 export function registerNotificationTools(server: McpServer, gql: GraphQLClient) {
   // LIST NOTIFICATIONS
-  const listNotificationsHandler = async ({ first = 20, unreadOnly = false }: { first?: number; unreadOnly?: boolean }) => {
+  const listNotificationsHandler = async ({ first = 20, offset, after, unreadOnly = false }: { first?: number; offset?: number; after?: string; unreadOnly?: boolean }) => {
     try {
       const query = `
-        query GetNotifications($first: Int!) {
+        query GetNotifications($pagination: PaginationInput!) {
           currentUser {
-            notifications(first: $first) {
-              nodes {
-                id
-                type
-                title
-                body
-                read
-                createdAt
+            notifications(pagination: $pagination) {
+              edges {
+                cursor
+                node {
+                  id
+                  type
+                  body
+                  read
+                  level
+                  createdAt
+                  updatedAt
+                }
               }
               totalCount
               pageInfo {
                 hasNextPage
+                endCursor
               }
             }
           }
         }
       `;
       
-      const data = await gql.request<{ currentUser: { notifications: any } }>(query, { first });
+      const data = await gql.request<{ currentUser: { notifications: any } }>(query, {
+        pagination: {
+          first,
+          offset,
+          after
+        }
+      });
       
-      let notifications = data.currentUser?.notifications?.nodes || [];
+      let notifications = (data.currentUser?.notifications?.edges || []).map((edge: any) => edge.node);
       if (unreadOnly) {
         notifications = notifications.filter((n: any) => !n.read);
       }
@@ -41,67 +52,18 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
     }
   };
   server.registerTool(
-    "affine_list_notifications",
-    {
-      title: "List Notifications",
-      description: "Get user notifications.",
-      inputSchema: {
-        first: z.number().optional().describe("Number of notifications to fetch"),
-        unreadOnly: z.boolean().optional().describe("Show only unread notifications")
-      }
-    },
-    listNotificationsHandler as any
-  );
-  server.registerTool(
     "list_notifications",
     {
       title: "List Notifications",
       description: "Get user notifications.",
       inputSchema: {
         first: z.number().optional().describe("Number of notifications to fetch"),
+        offset: z.number().optional().describe("Offset for pagination"),
+        after: z.string().optional().describe("Cursor for pagination"),
         unreadOnly: z.boolean().optional().describe("Show only unread notifications")
       }
     },
     listNotificationsHandler as any
-  );
-
-  // MARK NOTIFICATION AS READ
-  const readNotificationHandler = async ({ id }: { id: string }) => {
-    try {
-      const mutation = `
-        mutation ReadNotification($id: String!) {
-          readNotification(id: $id)
-        }
-      `;
-      
-      const data = await gql.request<{ readNotification: boolean }>(mutation, { id });
-      
-      return text({ success: data.readNotification, notificationId: id });
-    } catch (error: any) {
-      return text({ error: error.message });
-    }
-  };
-  server.registerTool(
-    "affine_read_notification",
-    {
-      title: "Mark Notification Read",
-      description: "Mark a notification as read.",
-      inputSchema: {
-        id: z.string().describe("Notification ID")
-      }
-    },
-    readNotificationHandler as any
-  );
-  server.registerTool(
-    "read_notification",
-    {
-      title: "Mark Notification Read",
-      description: "Mark a notification as read.",
-      inputSchema: {
-        id: z.string().describe("Notification ID")
-      }
-    },
-    readNotificationHandler as any
   );
 
   // MARK ALL NOTIFICATIONS READ
@@ -120,15 +82,6 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
       return text({ error: error.message });
     }
   };
-  server.registerTool(
-    "affine_read_all_notifications",
-    {
-      title: "Mark All Notifications Read",
-      description: "Mark all notifications as read.",
-      inputSchema: {}
-    },
-    readAllNotificationsHandler as any
-  );
   server.registerTool(
     "read_all_notifications",
     {

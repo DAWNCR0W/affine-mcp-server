@@ -12,21 +12,6 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     return text(data.workspace.comments);
   };
   server.registerTool(
-    "affine_list_comments",
-    {
-      title: "List Comments",
-      description: "List comments of a doc (with replies).",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        first: z.number().optional(),
-        offset: z.number().optional(),
-        after: z.string().optional()
-      }
-    },
-    listCommentsHandler as any
-  );
-  server.registerTool(
     "list_comments",
     {
       title: "List Comments",
@@ -42,30 +27,16 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     listCommentsHandler as any
   );
 
-  const createCommentHandler = async (parsed: { workspaceId?: string; docId: string; docTitle?: string; docMode?: "Page"|"Edgeless"; content: any; mentions?: string[] }) => {
+  const createCommentHandler = async (parsed: { workspaceId?: string; docId: string; docTitle?: string; docMode?: "Page"|"Edgeless"|"page"|"edgeless"; content: any; mentions?: string[] }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
     if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
     const mutation = `mutation CreateComment($input: CommentCreateInput!){ createComment(input:$input){ id content createdAt updatedAt resolved } }`;
-    const input = { content: parsed.content, docId: parsed.docId, workspaceId, docTitle: parsed.docTitle || "", docMode: parsed.docMode || "Page", mentions: parsed.mentions };
+    const normalizedDocMode = (parsed.docMode || 'page').toLowerCase() === 'edgeless' ? 'edgeless' : 'page';
+    const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
+    const input = { content: normalizedContent, docId: parsed.docId, workspaceId, docTitle: parsed.docTitle || "", docMode: normalizedDocMode, mentions: parsed.mentions };
     const data = await gql.request<{ createComment: any }>(mutation, { input });
     return text(data.createComment);
   };
-  server.registerTool(
-    "affine_create_comment",
-    {
-      title: "Create Comment",
-      description: "Create a comment on a doc.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        docTitle: z.string().optional(),
-        docMode: z.enum(["Page","Edgeless"]).optional(),
-        content: z.any(),
-        mentions: z.array(z.string()).optional()
-      }
-    },
-    createCommentHandler as any
-  );
   server.registerTool(
     "create_comment",
     {
@@ -75,7 +46,7 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
         workspaceId: z.string().optional(),
         docId: z.string(),
         docTitle: z.string().optional(),
-        docMode: z.enum(["Page","Edgeless"]).optional(),
+        docMode: z.enum(["Page","Edgeless","page","edgeless"]).optional(),
         content: z.any(),
         mentions: z.array(z.string()).optional()
       }
@@ -88,18 +59,6 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: parsed.content } });
     return text({ success: data.updateComment });
   };
-  server.registerTool(
-    "affine_update_comment",
-    {
-      title: "Update Comment",
-      description: "Update a comment content.",
-      inputSchema: {
-        id: z.string(),
-        content: z.any()
-      }
-    },
-    updateCommentHandler as any
-  );
   server.registerTool(
     "update_comment",
     {
@@ -119,17 +78,6 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     return text({ success: data.deleteComment });
   };
   server.registerTool(
-    "affine_delete_comment",
-    {
-      title: "Delete Comment",
-      description: "Delete a comment by id.",
-      inputSchema: {
-        id: z.string()
-      }
-    },
-    deleteCommentHandler as any
-  );
-  server.registerTool(
     "delete_comment",
     {
       title: "Delete Comment",
@@ -146,18 +94,6 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     const data = await gql.request<{ resolveComment: boolean }>(mutation, { input: parsed });
     return text({ success: data.resolveComment });
   };
-  server.registerTool(
-    "affine_resolve_comment",
-    {
-      title: "Resolve Comment",
-      description: "Resolve or unresolve a comment.",
-      inputSchema: {
-        id: z.string(),
-        resolved: z.boolean()
-      }
-    },
-    resolveCommentHandler as any
-  );
   server.registerTool(
     "resolve_comment",
     {
