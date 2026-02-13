@@ -7,20 +7,66 @@ import * as Y from "yjs";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
-const APPEND_BLOCK_TYPE_VALUES = [
+const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "paragraph",
-  "heading1",
-  "heading2",
-  "heading3",
+  "heading",
   "quote",
-  "bulleted_list",
-  "numbered_list",
-  "todo",
+  "list",
   "code",
   "divider",
 ] as const;
-type AppendBlockType = typeof APPEND_BLOCK_TYPE_VALUES[number];
-const AppendBlockType = z.enum(APPEND_BLOCK_TYPE_VALUES);
+type AppendBlockCanonicalType = typeof APPEND_BLOCK_CANONICAL_TYPE_VALUES[number];
+
+const APPEND_BLOCK_LEGACY_ALIAS_MAP = {
+  heading1: "heading",
+  heading2: "heading",
+  heading3: "heading",
+  bulleted_list: "list",
+  numbered_list: "list",
+  todo: "list",
+} as const;
+type AppendBlockLegacyType = keyof typeof APPEND_BLOCK_LEGACY_ALIAS_MAP;
+type AppendBlockTypeInput = AppendBlockCanonicalType | AppendBlockLegacyType;
+
+const APPEND_BLOCK_LIST_STYLE_VALUES = ["bulleted", "numbered", "todo"] as const;
+type AppendBlockListStyle = typeof APPEND_BLOCK_LIST_STYLE_VALUES[number];
+const AppendBlockListStyle = z.enum(APPEND_BLOCK_LIST_STYLE_VALUES);
+
+type AppendPlacement = {
+  parentId?: string;
+  afterBlockId?: string;
+  beforeBlockId?: string;
+  index?: number;
+};
+
+type AppendBlockInput = {
+  workspaceId?: string;
+  docId: string;
+  type: string;
+  text?: string;
+  checked?: boolean;
+  language?: string;
+  caption?: string;
+  level?: number;
+  style?: AppendBlockListStyle;
+  strict?: boolean;
+  placement?: AppendPlacement;
+};
+
+type NormalizedAppendBlockInput = {
+  workspaceId?: string;
+  docId: string;
+  type: AppendBlockCanonicalType;
+  strict: boolean;
+  placement?: AppendPlacement;
+  text: string;
+  headingLevel: 1 | 2 | 3 | 4 | 5 | 6;
+  listStyle: AppendBlockListStyle;
+  checked: boolean;
+  language: string;
+  caption?: string;
+  legacyType?: AppendBlockLegacyType;
+};
 
 function blockVersion(flavour: string): number {
   switch (flavour) {
@@ -134,86 +180,298 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return noteId;
   }
 
+  function normalizeBlockTypeInput(typeInput: string): {
+    type: AppendBlockCanonicalType;
+    legacyType?: AppendBlockLegacyType;
+    headingLevelFromAlias?: 1 | 2 | 3;
+    listStyleFromAlias?: AppendBlockListStyle;
+  } {
+    const key = typeInput.trim().toLowerCase();
+    if ((APPEND_BLOCK_CANONICAL_TYPE_VALUES as readonly string[]).includes(key)) {
+      return { type: key as AppendBlockCanonicalType };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(APPEND_BLOCK_LEGACY_ALIAS_MAP, key)) {
+      const legacyType = key as AppendBlockLegacyType;
+      const type = APPEND_BLOCK_LEGACY_ALIAS_MAP[legacyType];
+      const listStyleFromAlias =
+        legacyType === "bulleted_list"
+          ? "bulleted"
+          : legacyType === "numbered_list"
+            ? "numbered"
+            : legacyType === "todo"
+              ? "todo"
+              : undefined;
+      const headingLevelFromAlias =
+        legacyType === "heading1"
+          ? 1
+          : legacyType === "heading2"
+            ? 2
+            : legacyType === "heading3"
+              ? 3
+              : undefined;
+      return { type, legacyType, headingLevelFromAlias, listStyleFromAlias };
+    }
+
+    const supported = [
+      ...APPEND_BLOCK_CANONICAL_TYPE_VALUES,
+      ...Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
+    ].join(", ");
+    throw new Error(`Unsupported append_block type '${typeInput}'. Supported types: ${supported}`);
+  }
+
+  function normalizePlacement(placement: AppendPlacement | undefined): AppendPlacement | undefined {
+    if (!placement) return undefined;
+
+    const normalized: AppendPlacement = {};
+    if (placement.parentId?.trim()) normalized.parentId = placement.parentId.trim();
+    if (placement.afterBlockId?.trim()) normalized.afterBlockId = placement.afterBlockId.trim();
+    if (placement.beforeBlockId?.trim()) normalized.beforeBlockId = placement.beforeBlockId.trim();
+    if (placement.index !== undefined) normalized.index = placement.index;
+
+    const hasAfter = Boolean(normalized.afterBlockId);
+    const hasBefore = Boolean(normalized.beforeBlockId);
+    if (hasAfter && hasBefore) {
+      throw new Error("placement.afterBlockId and placement.beforeBlockId are mutually exclusive.");
+    }
+    if (normalized.index !== undefined) {
+      if (!Number.isInteger(normalized.index) || normalized.index < 0) {
+        throw new Error("placement.index must be an integer greater than or equal to 0.");
+      }
+      if (hasAfter || hasBefore) {
+        throw new Error("placement.index cannot be used with placement.afterBlockId/beforeBlockId.");
+      }
+    }
+
+    if (!normalized.parentId && !normalized.afterBlockId && !normalized.beforeBlockId && normalized.index === undefined) {
+      return undefined;
+    }
+    return normalized;
+  }
+
+  function validateNormalizedAppendBlockInput(normalized: NormalizedAppendBlockInput, raw: AppendBlockInput): void {
+    if (normalized.type === "heading") {
+      if (!Number.isInteger(normalized.headingLevel) || normalized.headingLevel < 1 || normalized.headingLevel > 6) {
+        throw new Error("Heading level must be an integer from 1 to 6.");
+      }
+    } else if (raw.level !== undefined && normalized.strict) {
+      throw new Error("The 'level' field can only be used with type='heading'.");
+    }
+
+    if (normalized.type === "list") {
+      if (!(APPEND_BLOCK_LIST_STYLE_VALUES as readonly string[]).includes(normalized.listStyle)) {
+        throw new Error(`Invalid list style '${normalized.listStyle}'.`);
+      }
+      if (normalized.listStyle !== "todo" && raw.checked !== undefined && normalized.strict) {
+        throw new Error("The 'checked' field can only be used when list style is 'todo'.");
+      }
+    } else {
+      if (raw.style !== undefined && normalized.strict) {
+        throw new Error("The 'style' field can only be used with type='list'.");
+      }
+      if (raw.checked !== undefined && normalized.strict) {
+        throw new Error("The 'checked' field can only be used with type='list' (style='todo').");
+      }
+    }
+
+    if (normalized.type !== "code") {
+      if ((raw.language !== undefined || raw.caption !== undefined) && normalized.strict) {
+        throw new Error("The 'language'/'caption' fields can only be used with type='code'.");
+      }
+    } else if (normalized.language.length > 64) {
+      throw new Error("Code language is too long (max 64 chars).");
+    }
+
+    if (normalized.type === "divider" && raw.text && raw.text.length > 0 && normalized.strict) {
+      throw new Error("Divider blocks do not accept text.");
+    }
+  }
+
+  function normalizeAppendBlockInput(parsed: AppendBlockInput): NormalizedAppendBlockInput {
+    const strict = parsed.strict !== false;
+    const typeInfo = normalizeBlockTypeInput(parsed.type);
+    const headingLevelCandidate = parsed.level ?? typeInfo.headingLevelFromAlias ?? 1;
+    const headingLevelNumber = Number(headingLevelCandidate);
+    const headingLevel = Math.max(1, Math.min(6, headingLevelNumber)) as 1 | 2 | 3 | 4 | 5 | 6;
+    const listStyle = typeInfo.listStyleFromAlias ?? parsed.style ?? "bulleted";
+    const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
+    const placement = normalizePlacement(parsed.placement);
+
+    const normalized: NormalizedAppendBlockInput = {
+      workspaceId: parsed.workspaceId,
+      docId: parsed.docId,
+      type: typeInfo.type,
+      strict,
+      placement,
+      text: parsed.text ?? "",
+      headingLevel,
+      listStyle,
+      checked: Boolean(parsed.checked),
+      language,
+      caption: parsed.caption,
+      legacyType: typeInfo.legacyType,
+    };
+
+    validateNormalizedAppendBlockInput(normalized, parsed);
+    return normalized;
+  }
+
+  function findBlockById(blocks: Y.Map<any>, blockId: string): Y.Map<any> | null {
+    const value = blocks.get(blockId);
+    if (value instanceof Y.Map) return value;
+    return null;
+  }
+
+  function ensureChildrenArray(block: Y.Map<any>): Y.Array<any> {
+    const current = block.get("sys:children");
+    if (current instanceof Y.Array) return current;
+    const created = new Y.Array<any>();
+    block.set("sys:children", created);
+    return created;
+  }
+
+  function indexOfChild(children: Y.Array<any>, blockId: string): number {
+    let index = -1;
+    children.forEach((entry: unknown, i: number) => {
+      if (index >= 0) return;
+      if (typeof entry === "string") {
+        if (entry === blockId) index = i;
+        return;
+      }
+      if (Array.isArray(entry)) {
+        for (const child of entry) {
+          if (child === blockId) {
+            index = i;
+            return;
+          }
+        }
+      }
+    });
+    return index;
+  }
+
+  function resolveInsertContext(blocks: Y.Map<any>, normalized: NormalizedAppendBlockInput): {
+    parentId: string;
+    parentBlock: Y.Map<any>;
+    children: Y.Array<any>;
+    insertIndex: number;
+  } {
+    const placement = normalized.placement;
+    let parentId: string | undefined;
+    let referenceBlockId: string | undefined;
+    let mode: "append" | "index" | "after" | "before" = "append";
+
+    if (placement?.afterBlockId) {
+      mode = "after";
+      referenceBlockId = placement.afterBlockId;
+      const referenceBlock = findBlockById(blocks, referenceBlockId);
+      if (!referenceBlock) throw new Error(`placement.afterBlockId '${referenceBlockId}' was not found.`);
+      const refParentId = referenceBlock.get("sys:parent");
+      if (typeof refParentId !== "string" || !refParentId) {
+        throw new Error(`Block '${referenceBlockId}' has no parent.`);
+      }
+      parentId = refParentId;
+    } else if (placement?.beforeBlockId) {
+      mode = "before";
+      referenceBlockId = placement.beforeBlockId;
+      const referenceBlock = findBlockById(blocks, referenceBlockId);
+      if (!referenceBlock) throw new Error(`placement.beforeBlockId '${referenceBlockId}' was not found.`);
+      const refParentId = referenceBlock.get("sys:parent");
+      if (typeof refParentId !== "string" || !refParentId) {
+        throw new Error(`Block '${referenceBlockId}' has no parent.`);
+      }
+      parentId = refParentId;
+    } else if (placement?.parentId) {
+      mode = placement.index !== undefined ? "index" : "append";
+      parentId = placement.parentId;
+    }
+
+    parentId = parentId || ensureNoteBlock(blocks);
+    const parentBlock = findBlockById(blocks, parentId);
+    if (!parentBlock) {
+      throw new Error(`Target parent block '${parentId}' was not found.`);
+    }
+    const parentFlavour = parentBlock.get("sys:flavour");
+    if (normalized.strict && (parentFlavour === "affine:page" || parentFlavour === "affine:surface")) {
+      throw new Error(`Cannot append '${normalized.type}' directly under '${parentFlavour}'. Set placement.parentId to a content container.`);
+    }
+
+    const children = ensureChildrenArray(parentBlock);
+    let insertIndex = children.length;
+    if (mode === "after" || mode === "before") {
+      const idx = indexOfChild(children, referenceBlockId as string);
+      if (idx < 0) {
+        throw new Error(`Reference block '${referenceBlockId}' is not a child of parent '${parentId}'.`);
+      }
+      insertIndex = mode === "after" ? idx + 1 : idx;
+    } else if (mode === "index") {
+      const requestedIndex = placement?.index ?? children.length;
+      if (requestedIndex > children.length && normalized.strict) {
+        throw new Error(`placement.index ${requestedIndex} is out of range (max ${children.length}).`);
+      }
+      insertIndex = Math.min(requestedIndex, children.length);
+    }
+
+    return { parentId, parentBlock, children, insertIndex };
+  }
+
   function createBlock(
-    noteId: string,
-    parsed: { type: AppendBlockType; text?: string; checked?: boolean; language?: string; caption?: string }
+    parentId: string,
+    normalized: NormalizedAppendBlockInput
   ): { blockId: string; block: Y.Map<any>; flavour: string; blockType?: string } {
     const blockId = generateId();
     const block = new Y.Map<any>();
-    const content = parsed.text ?? "";
+    const content = normalized.text;
 
-    switch (parsed.type) {
+    switch (normalized.type) {
       case "paragraph":
-      case "heading1":
-      case "heading2":
-      case "heading3":
+      case "heading":
       case "quote": {
         setSysFields(block, blockId, "affine:paragraph");
-        block.set("sys:parent", noteId);
+        block.set("sys:parent", parentId);
         block.set("sys:children", new Y.Array<string>());
         const blockType =
-          parsed.type === "heading1"
-            ? "h1"
-            : parsed.type === "heading2"
-              ? "h2"
-              : parsed.type === "heading3"
-                ? "h3"
-                : parsed.type === "quote"
-                  ? "quote"
-                  : "text";
+          normalized.type === "heading"
+            ? (`h${normalized.headingLevel}` as const)
+            : normalized.type === "quote"
+              ? "quote"
+              : "text";
         block.set("prop:type", blockType);
         block.set("prop:text", makeText(content));
         return { blockId, block, flavour: "affine:paragraph", blockType };
       }
-      case "bulleted_list":
-      case "numbered_list":
-      case "todo": {
+      case "list": {
         setSysFields(block, blockId, "affine:list");
-        block.set("sys:parent", noteId);
+        block.set("sys:parent", parentId);
         block.set("sys:children", new Y.Array<string>());
-        const blockType =
-          parsed.type === "bulleted_list"
-            ? "bulleted"
-            : parsed.type === "numbered_list"
-              ? "numbered"
-              : "todo";
-        block.set("prop:type", blockType);
-        if (blockType === "todo") {
-          block.set("prop:checked", Boolean(parsed.checked));
-        }
+        block.set("prop:type", normalized.listStyle);
+        block.set("prop:checked", normalized.listStyle === "todo" ? normalized.checked : false);
         block.set("prop:text", makeText(content));
-        return { blockId, block, flavour: "affine:list", blockType };
+        return { blockId, block, flavour: "affine:list", blockType: normalized.listStyle };
       }
       case "code": {
         setSysFields(block, blockId, "affine:code");
-        block.set("sys:parent", noteId);
+        block.set("sys:parent", parentId);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:language", (parsed.language || "txt").toLowerCase());
-        if (parsed.caption) {
-          block.set("prop:caption", parsed.caption);
+        block.set("prop:language", normalized.language);
+        if (normalized.caption) {
+          block.set("prop:caption", normalized.caption);
         }
         block.set("prop:text", makeText(content));
         return { blockId, block, flavour: "affine:code" };
       }
       case "divider": {
         setSysFields(block, blockId, "affine:divider");
-        block.set("sys:parent", noteId);
+        block.set("sys:parent", parentId);
         block.set("sys:children", new Y.Array<string>());
         return { blockId, block, flavour: "affine:divider" };
       }
     }
   }
 
-  async function appendBlockInternal(parsed: {
-    workspaceId?: string;
-    docId: string;
-    type: AppendBlockType;
-    text?: string;
-    checked?: boolean;
-    language?: string;
-    caption?: string;
-  }) {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+  async function appendBlockInternal(parsed: AppendBlockInput) {
+    const normalized = normalizeAppendBlockInput(parsed);
+    const workspaceId = normalized.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
 
     const { endpoint, cookie } = await getCookieAndEndpoint();
@@ -223,29 +481,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       await joinWorkspace(socket, workspaceId);
 
       const doc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      const snapshot = await loadDoc(socket, workspaceId, normalized.docId);
       if (snapshot.missing) {
         Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       }
 
       const prevSV = Y.encodeStateVector(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
-      const noteId = ensureNoteBlock(blocks);
-      const { blockId, block, flavour, blockType } = createBlock(noteId, parsed);
+      const context = resolveInsertContext(blocks, normalized);
+      const { blockId, block, flavour, blockType } = createBlock(context.parentId, normalized);
 
       blocks.set(blockId, block);
-      const note = blocks.get(noteId) as Y.Map<any>;
-      let noteChildren = note.get("sys:children") as Y.Array<string> | undefined;
-      if (!(noteChildren instanceof Y.Array)) {
-        noteChildren = new Y.Array<string>();
-        note.set("sys:children", noteChildren);
+      if (context.insertIndex >= context.children.length) {
+        context.children.push([blockId]);
+      } else {
+        context.children.insert(context.insertIndex, [blockId]);
       }
-      noteChildren.push([blockId]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
-      return { appended: true, blockId, flavour, blockType };
+      return { appended: true, blockId, flavour, blockType, normalizedType: normalized.type, legacyType: normalized.legacyType || null };
     } finally {
       socket.disconnect();
     }
@@ -607,11 +863,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   const appendBlockHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
-    type: AppendBlockType;
+    type: string;
     text?: string;
     checked?: boolean;
     language?: string;
     caption?: string;
+    level?: number;
+    style?: AppendBlockListStyle;
+    strict?: boolean;
+    placement?: AppendPlacement;
   }) => {
     const result = await appendBlockInternal(parsed);
     return text({
@@ -619,21 +879,35 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       blockId: result.blockId,
       flavour: result.flavour,
       type: result.blockType || null,
+      normalizedType: result.normalizedType,
+      legacyType: result.legacyType,
     });
   };
   server.registerTool(
     "append_block",
     {
       title: "Append Block",
-      description: "Append a slash-command style block (heading/list/todo/code/divider/quote) to a document.",
+      description: "Append document blocks with canonical types and legacy aliases (supports placement + strict validation).",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        type: AppendBlockType.describe("Block type to append"),
+        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider. Legacy aliases remain supported."),
         text: z.string().optional().describe("Block content text"),
+        level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
+        style: AppendBlockListStyle.optional().describe("List style for type=list"),
         checked: z.boolean().optional().describe("Todo state when type is todo"),
         language: z.string().optional().describe("Code language when type is code"),
         caption: z.string().optional().describe("Code caption when type is code"),
+        strict: z.boolean().optional().describe("Strict validation mode (default true)"),
+        placement: z
+          .object({
+            parentId: z.string().optional(),
+            afterBlockId: z.string().optional(),
+            beforeBlockId: z.string().optional(),
+            index: z.number().int().min(0).optional(),
+          })
+          .optional()
+          .describe("Optional insertion target/position"),
       },
     },
     appendBlockHandler as any
