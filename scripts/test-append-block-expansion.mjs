@@ -159,6 +159,26 @@ const STEP4_CASES = [
     args: { type: 'data_view' },
     expect: { flavour: 'affine:data-view' },
   },
+  {
+    name: 'note',
+    args: { type: 'note', width: 840, height: 160, background: '#fff5cc' },
+    expect: { flavour: 'affine:note' },
+  },
+  {
+    name: 'frame',
+    args: { type: 'frame', text: 'step4 frame', width: 720, height: 280, background: '#f5f5f5' },
+    expect: { flavour: 'affine:frame' },
+  },
+  {
+    name: 'edgeless_text',
+    args: { type: 'edgeless_text', text: 'step4 edgeless', width: 260, height: 90 },
+    expect: { flavour: 'affine:edgeless-text' },
+  },
+  {
+    name: 'surface_ref',
+    args: { type: 'surface_ref', reference: '__FRAME_ID__', refFlavour: 'affine:frame', caption: 'frame ref' },
+    expect: { flavour: 'affine:surface-ref' },
+  },
 ];
 
 const PROFILE_CASES = {
@@ -206,6 +226,7 @@ async function main() {
   let docId = '';
   let blobKey = '';
   let linkedPageId = '';
+  let frameBlockId = '';
 
   try {
     await client.connect(transport);
@@ -259,16 +280,26 @@ async function main() {
     }
 
     for (const testCase of PROFILE_CASES[PROFILE]) {
-      const caseArgs =
-        blobKey && testCase.args?.sourceId === '__BLOB_KEY__'
-          ? { ...testCase.args, sourceId: blobKey }
-          : linkedPageId && testCase.args?.pageId === '__PAGE_ID__'
-            ? { ...testCase.args, pageId: linkedPageId }
-            : testCase.args;
+      const caseArgs = { ...(testCase.args || {}) };
+      if (caseArgs.sourceId === '__BLOB_KEY__') {
+        if (!blobKey) throw new Error(`Case '${testCase.name}' requires blobKey but upload_blob was not executed`);
+        caseArgs.sourceId = blobKey;
+      }
+      if (caseArgs.pageId === '__PAGE_ID__') {
+        if (!linkedPageId) throw new Error(`Case '${testCase.name}' requires linked pageId but it was not created`);
+        caseArgs.pageId = linkedPageId;
+      }
+      if (caseArgs.reference === '__FRAME_ID__') {
+        if (!frameBlockId) throw new Error(`Case '${testCase.name}' requires frame block id from a prior frame case`);
+        caseArgs.reference = frameBlockId;
+      }
       const payload = { workspaceId, docId, ...caseArgs };
       const result = await callTool('append_block', payload);
       if (!result?.appended || !result?.blockId) {
         throw new Error(`append_block did not return blockId for case '${testCase.name}'`);
+      }
+      if (caseArgs.type === 'frame') {
+        frameBlockId = result.blockId;
       }
       appended.push({
         caseName: testCase.name,

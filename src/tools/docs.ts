@@ -28,6 +28,12 @@ const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "embed_linked_doc",
   "embed_synced_doc",
   "embed_iframe",
+  "database",
+  "data_view",
+  "surface_ref",
+  "frame",
+  "edgeless_text",
+  "note",
 ] as const;
 type AppendBlockCanonicalType = typeof APPEND_BLOCK_CANONICAL_TYPE_VALUES[number];
 
@@ -72,6 +78,11 @@ type AppendBlockInput = {
   iframeUrl?: string;
   html?: string;
   design?: string;
+  reference?: string;
+  refFlavour?: string;
+  width?: number;
+  height?: number;
+  background?: string;
   sourceId?: string;
   name?: string;
   mimeType?: string;
@@ -102,6 +113,11 @@ type NormalizedAppendBlockInput = {
   iframeUrl: string;
   html: string;
   design: string;
+  reference: string;
+  refFlavour: string;
+  width: number;
+  height: number;
+  background: string;
   sourceId: string;
   name: string;
   mimeType: string;
@@ -231,6 +247,38 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return noteId;
   }
 
+  function ensureSurfaceBlock(blocks: Y.Map<any>): string {
+    const existingSurfaceId = findBlockIdByFlavour(blocks, "affine:surface");
+    if (existingSurfaceId) {
+      return existingSurfaceId;
+    }
+
+    const pageId = findBlockIdByFlavour(blocks, "affine:page");
+    if (!pageId) {
+      throw new Error("Document has no page block; unable to create/find surface.");
+    }
+
+    const surfaceId = generateId();
+    const surface = new Y.Map<any>();
+    setSysFields(surface, surfaceId, "affine:surface");
+    surface.set("sys:parent", pageId);
+    surface.set("sys:children", new Y.Array<string>());
+    const elements = new Y.Map<any>();
+    elements.set("type", "$blocksuite:internal:native$");
+    elements.set("value", new Y.Map<any>());
+    surface.set("prop:elements", elements);
+    blocks.set(surfaceId, surface);
+
+    const page = blocks.get(pageId) as Y.Map<any>;
+    let pageChildren = page.get("sys:children") as Y.Array<string> | undefined;
+    if (!(pageChildren instanceof Y.Array)) {
+      pageChildren = new Y.Array<string>();
+      page.set("sys:children", pageChildren);
+    }
+    pageChildren.push([surfaceId]);
+    return surfaceId;
+  }
+
   function normalizeBlockTypeInput(typeInput: string): {
     type: AppendBlockCanonicalType;
     legacyType?: AppendBlockLegacyType;
@@ -333,6 +381,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         normalized.type === "bookmark" ||
         normalized.type === "image" ||
         normalized.type === "attachment" ||
+        normalized.type === "surface_ref" ||
         normalized.type.startsWith("embed_");
       if (raw.caption !== undefined && !allowsCaption && normalized.strict) {
         throw new Error("The 'caption' field is not valid for this block type.");
@@ -426,6 +475,32 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("The 'iframeUrl' field can only be used with type='embed_iframe'.");
     }
 
+    if (normalized.type === "surface_ref") {
+      if (!normalized.reference) {
+        throw new Error("surface_ref blocks require 'reference' (target element/block id).");
+      }
+      if (!normalized.refFlavour) {
+        throw new Error("surface_ref blocks require 'refFlavour' (for example affine:frame).");
+      }
+    } else if ((raw.reference !== undefined || raw.refFlavour !== undefined) && normalized.strict) {
+      throw new Error("The 'reference'/'refFlavour' fields can only be used with type='surface_ref'.");
+    }
+
+    if (normalized.type === "frame" || normalized.type === "edgeless_text" || normalized.type === "note") {
+      if (!Number.isInteger(normalized.width) || normalized.width < 1 || normalized.width > 10000) {
+        throw new Error(`${normalized.type} width must be an integer between 1 and 10000.`);
+      }
+      if (!Number.isInteger(normalized.height) || normalized.height < 1 || normalized.height > 10000) {
+        throw new Error(`${normalized.type} height must be an integer between 1 and 10000.`);
+      }
+    } else if ((raw.width !== undefined || raw.height !== undefined) && normalized.strict) {
+      throw new Error("The 'width'/'height' fields are only valid for frame/edgeless_text/note.");
+    }
+
+    if (normalized.type !== "frame" && normalized.type !== "note" && raw.background !== undefined && normalized.strict) {
+      throw new Error("The 'background' field is only valid for frame/note.");
+    }
+
     if (normalized.type === "table") {
       if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > 20) {
         throw new Error("table rows must be an integer between 1 and 20.");
@@ -453,6 +528,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const iframeUrl = (parsed.iframeUrl ?? "").trim();
     const html = parsed.html ?? "";
     const design = parsed.design ?? "";
+    const reference = (parsed.reference ?? "").trim();
+    const refFlavour = (parsed.refFlavour ?? "").trim();
+    const width = Number.isFinite(parsed.width) ? Math.max(1, Math.floor(parsed.width as number)) : 100;
+    const height = Number.isFinite(parsed.height) ? Math.max(1, Math.floor(parsed.height as number)) : 100;
+    const background = (parsed.background ?? "transparent").trim() || "transparent";
     const sourceId = (parsed.sourceId ?? "").trim();
     const name = (parsed.name ?? "attachment").trim() || "attachment";
     const mimeType = (parsed.mimeType ?? "application/octet-stream").trim() || "application/octet-stream";
@@ -473,6 +553,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       iframeUrl,
       html,
       design,
+      reference,
+      refFlavour,
+      width,
+      height,
+      background,
       sourceId,
       name,
       mimeType,
@@ -564,14 +649,43 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentId = placement.parentId;
     }
 
-    parentId = parentId || ensureNoteBlock(blocks);
+    if (!parentId) {
+      if (normalized.type === "frame" || normalized.type === "edgeless_text") {
+        parentId = ensureSurfaceBlock(blocks);
+      } else if (normalized.type === "note") {
+        parentId = findBlockIdByFlavour(blocks, "affine:page") || undefined;
+        if (!parentId) {
+          throw new Error("Document has no page block; unable to insert note.");
+        }
+      } else {
+        parentId = ensureNoteBlock(blocks);
+      }
+    }
     const parentBlock = findBlockById(blocks, parentId);
     if (!parentBlock) {
       throw new Error(`Target parent block '${parentId}' was not found.`);
     }
     const parentFlavour = parentBlock.get("sys:flavour");
-    if (normalized.strict && (parentFlavour === "affine:page" || parentFlavour === "affine:surface")) {
-      throw new Error(`Cannot append '${normalized.type}' directly under '${parentFlavour}'. Set placement.parentId to a content container.`);
+    if (normalized.strict) {
+      if (parentFlavour === "affine:page" && normalized.type !== "note") {
+        throw new Error(`Cannot append '${normalized.type}' directly under 'affine:page'.`);
+      }
+      if (
+        parentFlavour === "affine:surface" &&
+        normalized.type !== "frame" &&
+        normalized.type !== "edgeless_text"
+      ) {
+        throw new Error(`Cannot append '${normalized.type}' directly under 'affine:surface'.`);
+      }
+      if (normalized.type === "note" && parentFlavour !== "affine:page") {
+        throw new Error("note blocks must be appended under affine:page.");
+      }
+      if (
+        (normalized.type === "frame" || normalized.type === "edgeless_text") &&
+        parentFlavour !== "affine:surface"
+      ) {
+        throw new Error(`${normalized.type} blocks must be appended under affine:surface.`);
+      }
     }
 
     const children = ensureChildrenArray(parentBlock);
@@ -884,6 +998,89 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("prop:title", null);
         block.set("prop:description", null);
         return { blockId, block, flavour: "affine:embed-iframe" };
+      }
+      case "database": {
+        setSysFields(block, blockId, "affine:database");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:views", new Y.Array<any>());
+        block.set("prop:title", makeText(content));
+        block.set("prop:cells", new Y.Map<any>());
+        block.set("prop:columns", new Y.Array<any>());
+        block.set("prop:comments", undefined);
+        return { blockId, block, flavour: "affine:database" };
+      }
+      case "data_view": {
+        setSysFields(block, blockId, "affine:data-view");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:views", new Y.Array<any>());
+        block.set("prop:title", content || "");
+        block.set("prop:columns", new Y.Array<any>());
+        block.set("prop:cells", new Y.Map<any>());
+        return { blockId, block, flavour: "affine:data-view" };
+      }
+      case "surface_ref": {
+        setSysFields(block, blockId, "affine:surface-ref");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:reference", normalized.reference);
+        block.set("prop:caption", normalized.caption ?? "");
+        block.set("prop:refFlavour", normalized.refFlavour);
+        block.set("prop:comments", undefined);
+        return { blockId, block, flavour: "affine:surface-ref" };
+      }
+      case "frame": {
+        setSysFields(block, blockId, "affine:frame");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:title", makeText(content || "Frame"));
+        block.set("prop:background", normalized.background);
+        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:index", "a0");
+        block.set("prop:childElementIds", new Y.Map<any>());
+        block.set("prop:presentationIndex", "a0");
+        block.set("prop:lockedBySelf", false);
+        return { blockId, block, flavour: "affine:frame" };
+      }
+      case "edgeless_text": {
+        setSysFields(block, blockId, "affine:edgeless-text");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:index", "a0");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:scale", 1);
+        block.set("prop:rotate", 0);
+        block.set("prop:hasMaxWidth", false);
+        block.set("prop:comments", undefined);
+        block.set("prop:color", "black");
+        block.set("prop:fontFamily", "Inter");
+        block.set("prop:fontStyle", "normal");
+        block.set("prop:fontWeight", "regular");
+        block.set("prop:textAlign", "left");
+        return { blockId, block, flavour: "affine:edgeless-text" };
+      }
+      case "note": {
+        setSysFields(block, blockId, "affine:note");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:background", normalized.background);
+        block.set("prop:index", "a0");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:hidden", false);
+        block.set("prop:displayMode", "both");
+        const edgeless = new Y.Map<any>();
+        const style = new Y.Map<any>();
+        style.set("borderRadius", 8);
+        style.set("borderSize", 1);
+        style.set("borderStyle", "solid");
+        style.set("shadowType", "none");
+        edgeless.set("style", style);
+        block.set("prop:edgeless", edgeless);
+        block.set("prop:comments", undefined);
+        return { blockId, block, flavour: "affine:note" };
       }
     }
   }
@@ -1289,6 +1486,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     iframeUrl?: string;
     html?: string;
     design?: string;
+    reference?: string;
+    refFlavour?: string;
+    width?: number;
+    height?: number;
+    background?: string;
     sourceId?: string;
     name?: string;
     mimeType?: string;
@@ -1324,13 +1526,18 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe. Legacy aliases remain supported."),
+        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe|database|data_view|surface_ref|frame|edgeless_text|note. Legacy aliases remain supported."),
         text: z.string().optional().describe("Block content text"),
         url: z.string().optional().describe("URL for bookmark/embeds"),
         pageId: z.string().optional().describe("Target page/doc id for linked/synced doc embeds"),
         iframeUrl: z.string().optional().describe("Override iframe src for embed_iframe"),
         html: z.string().optional().describe("Raw html for embed_html"),
         design: z.string().optional().describe("Design payload for embed_html"),
+        reference: z.string().optional().describe("Target id for surface_ref"),
+        refFlavour: z.string().optional().describe("Target flavour for surface_ref (e.g. affine:frame)"),
+        width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note"),
+        height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note"),
+        background: z.string().optional().describe("Background for frame/note"),
         sourceId: z.string().optional().describe("Blob source id for image/attachment"),
         name: z.string().optional().describe("Attachment file name"),
         mimeType: z.string().optional().describe("Attachment mime type"),
