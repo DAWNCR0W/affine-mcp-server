@@ -1,0 +1,62 @@
+name: Bug Report
+description: Report a reproducible bug
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue. Please provide enough detail to reproduce the bug.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: A clear and concise summary of the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps To Reproduce
+      description: Exact steps to reproduce the issue.
+      placeholder: |
+        1. Set env ...
+        2. Run command ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      placeholder: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      placeholder: What actually happened?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: affine-mcp-server Version
+      placeholder: e.g. 1.2.2
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, AFFiNE version, deployment type.
+      placeholder: macOS 15, Node 20, AFFiNE self-hosted ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Paste relevant logs or screenshots.

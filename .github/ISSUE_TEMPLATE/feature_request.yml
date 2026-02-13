@@ -1,0 +1,38 @@
+name: Feature Request
+description: Suggest an idea or improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem are you trying to solve?
+      placeholder: Describe the pain point.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: What behavior/API/tool should be added or changed?
+      placeholder: Describe your proposal.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      placeholder: Any alternatives or workarounds you've considered.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who benefits and why this should be prioritized.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: This request is for affine-mcp-server (not AFFiNE core product behavior).
+          required: true

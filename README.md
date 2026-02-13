@@ -4,6 +4,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 
 [![Version](https://img.shields.io/badge/version-1.2.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
+[![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
 <a href="https://glama.ai/mcp/servers/@DAWNCR0W/affine-mcp-server">
@@ -15,19 +16,20 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio only (Claude Desktop / Codex compatible)
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 30+ tools plus WebSocket-based document editing
-- Status: Production Ready (v1.2.1)
+- Tools: 30 focused tools with WebSocket-based document editing
+- Status: Active
  
 > New in v1.2.2: Fixed CLI binary to always run via Node (no shell mis-execution). Startup remains non-blocking for email/password login by default; set `AFFINE_LOGIN_AT_START=sync` to block at startup.
 
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
-- Documents: list/get/search/publish/revoke + create/append paragraph/delete (WebSocket‑based) — added in v1.2.0
+- Documents: list/get/publish/revoke + create/append paragraph/delete (WebSocket‑based)
 - Comments: full CRUD and resolve
-- Version History: list and recover
-- Users & Tokens: profile/settings and personal access tokens
+- Version History: list
+- Users & Tokens: current user, sign in, profile/settings, and personal access tokens
 - Notifications: list and mark as read
+- Blob storage: upload/delete/cleanup
 
 ## Requirements
 
@@ -122,32 +124,28 @@ Notes
 ### Documents
 - `list_docs` – list documents with pagination
 - `get_doc` – get document metadata
-- `search_docs` – search documents by keyword
-- `recent_docs` – list recently updated documents
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
 - `append_paragraph` – append a paragraph block (WebSocket)
+- `append_block` – append slash-command style blocks (`heading/list/todo/code/divider/quote`)
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
 - `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment`
 
 ### Version History
-- `list_histories`, `recover_doc`
+- `list_histories`
 
 ### Users & Tokens
 - `current_user`, `sign_in`, `update_profile`, `update_settings`
 - `list_access_tokens`, `generate_access_token`, `revoke_access_token`
 
 ### Notifications
-- `list_notifications`, `read_notification`, `read_all_notifications`
+- `list_notifications`, `read_all_notifications`
 
 ### Blob Storage
 - `upload_blob`, `delete_blob`, `cleanup_blobs`
-
-### Advanced
-- `apply_doc_updates` – apply CRDT updates to documents
 
 ## Use Locally (clone)
 
@@ -163,6 +161,17 @@ node dist/index.js
 npm link
 # Now use `affine-mcp` like a global binary
 ```
+
+## Quality Gates
+
+```bash
+npm run build
+npm run test:tool-manifest
+npm run pack:check
+```
+
+- `tool-manifest.json` is the source of truth for publicly exposed tool names.
+- CI validates that `registerTool(...)` declarations match the manifest exactly.
 
 ## Troubleshooting
 
@@ -199,7 +208,7 @@ Connection
 
 ### 1.2.0 (2025‑09‑16)
 - WebSocket-based document tools: `create_doc`, `append_paragraph`, `delete_doc` (create/edit/delete now supported)
-- Tool aliases: both `affine_*` and non‑prefixed names
+- Tool aliases introduced at the time (`affine_*` + non-prefixed names). They were removed later to reduce duplication.
 - ESM resolution: NodeNext; improved build stability
 - CLI binary: `affine-mcp` for easy `npm i -g` usage
 
@@ -216,11 +225,16 @@ Connection
 ## Contributing
 
 Contributions are welcome!
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new features
-4. Ensure all tests pass
-5. Submit a Pull Request
+1. Read `CONTRIBUTING.md`
+2. Run `npm run ci` locally before opening PR
+3. Keep tool changes synced with `tool-manifest.json`
+4. Use issue/PR templates in `.github/`
+
+## Community Health
+
+- Code of Conduct: `CODE_OF_CONDUCT.md`
+- Security policy: `SECURITY.md`
+- Contributing guide: `CONTRIBUTING.md`
 
 ## License
 
