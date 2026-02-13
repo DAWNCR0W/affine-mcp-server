@@ -190,6 +190,14 @@ class ComprehensiveRunner {
     await this.callTool('append_block', { workspaceId, docId, type: 'todo', text: 'Todo item from append_block', checked: true });
     await this.callTool('append_block', { workspaceId, docId, type: 'code', text: 'console.log(\"append_block\");', language: 'javascript' });
     await this.callTool('append_block', { workspaceId, docId, type: 'divider' });
+    await this.callTool('read_doc', { workspaceId, docId }, parsed => {
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('read_doc did not return JSON payload');
+      }
+      if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
+        throw new Error('read_doc returned no blocks');
+      }
+    });
 
     await this.callTool('list_comments', { workspaceId, docId, first: 20 });
     await this.callTool('create_comment', {

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `read_doc` tool to read document block snapshots and plain text via WebSocket.
+
+### Changed
+- README now includes Cursor MCP setup examples and explicit troubleshooting for `Method not found` JSON-RPC misuse.
+- README now documents that browser local-storage workspaces are not accessible via server APIs.
+
+### Fixed
+- Runtime MCP server metadata version in `src/index.ts` updated to `1.3.0`.
+
 ## [1.3.0] - 2026-02-13
 
 ### Added
@@ -16,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool manifest (`tool-manifest.json`) and static verification script (`npm run test:tool-manifest`).
 
 ### Changed
-- Tool surface simplified to 30 canonical tools with no duplicated alias names.
+- Tool surface simplified to 31 canonical tools with no duplicated alias names.
 - Comprehensive integration test script now validates runtime tool list against `tool-manifest.json`.
 - Package metadata improved (`bugs`, `homepage`) and new quality scripts (`npm run ci`, `npm run pack:check`).
 

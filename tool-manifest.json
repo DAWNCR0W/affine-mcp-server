@@ -23,6 +23,7 @@
     "list_workspaces",
     "publish_doc",
     "read_all_notifications",
+    "read_doc",
     "resolve_comment",
     "revoke_access_token",
     "revoke_doc",
