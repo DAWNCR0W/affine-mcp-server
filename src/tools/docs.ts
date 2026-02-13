@@ -57,6 +57,31 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return yText;
   }
 
+  function asText(value: unknown): string {
+    if (value instanceof Y.Text) return value.toString();
+    if (typeof value === "string") return value;
+    return "";
+  }
+
+  function childIdsFrom(value: unknown): string[] {
+    if (!(value instanceof Y.Array)) return [];
+    const childIds: string[] = [];
+    value.forEach((entry: unknown) => {
+      if (typeof entry === "string") {
+        childIds.push(entry);
+        return;
+      }
+      if (Array.isArray(entry)) {
+        for (const child of entry) {
+          if (typeof child === "string") {
+            childIds.push(child);
+          }
+        }
+      }
+    });
+    return childIds;
+  }
+
   function setSysFields(block: Y.Map<any>, blockId: string, flavour: string): void {
     block.set("sys:id", blockId);
     block.set("sys:flavour", flavour);
@@ -270,6 +295,125 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     getDocHandler as any
+  );
+
+  const readDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+
+      if (!snapshot.missing) {
+        return text({
+          docId: parsed.docId,
+          title: null,
+          exists: false,
+          blockCount: 0,
+          blocks: [],
+          plainText: "",
+        });
+      }
+
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const pageId = findBlockIdByFlavour(blocks, "affine:page");
+      const noteId = findBlockIdByFlavour(blocks, "affine:note");
+      const visited = new Set<string>();
+      const blockRows: Array<{
+        id: string;
+        parentId: string | null;
+        flavour: string | null;
+        type: string | null;
+        text: string | null;
+        checked: boolean | null;
+        language: string | null;
+        childIds: string[];
+      }> = [];
+      const plainTextLines: string[] = [];
+      let title = "";
+
+      const visit = (blockId: string) => {
+        if (visited.has(blockId)) return;
+        visited.add(blockId);
+
+        const raw = blocks.get(blockId);
+        if (!(raw instanceof Y.Map)) return;
+
+        const flavour = raw.get("sys:flavour");
+        const parentId = raw.get("sys:parent");
+        const type = raw.get("prop:type");
+        const textValue = asText(raw.get("prop:text"));
+        const language = raw.get("prop:language");
+        const checked = raw.get("prop:checked");
+        const childIds = childIdsFrom(raw.get("sys:children"));
+
+        if (flavour === "affine:page") {
+          title = asText(raw.get("prop:title")) || title;
+        }
+        if (textValue.length > 0) {
+          plainTextLines.push(textValue);
+        }
+
+        blockRows.push({
+          id: blockId,
+          parentId: typeof parentId === "string" ? parentId : null,
+          flavour: typeof flavour === "string" ? flavour : null,
+          type: typeof type === "string" ? type : null,
+          text: textValue.length > 0 ? textValue : null,
+          checked: typeof checked === "boolean" ? checked : null,
+          language: typeof language === "string" ? language : null,
+          childIds,
+        });
+
+        for (const childId of childIds) {
+          visit(childId);
+        }
+      };
+
+      if (pageId) {
+        visit(pageId);
+      } else if (noteId) {
+        visit(noteId);
+      }
+      for (const [id] of blocks) {
+        const blockId = String(id);
+        if (!visited.has(blockId)) {
+          visit(blockId);
+        }
+      }
+
+      return text({
+        docId: parsed.docId,
+        title: title || null,
+        exists: true,
+        blockCount: blockRows.length,
+        blocks: blockRows,
+        plainText: plainTextLines.join("\n"),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "read_doc",
+    {
+      title: "Read Document Content",
+      description: "Read document block content via WebSocket snapshot (blocks + plain text).",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    readDocHandler as any
   );
 
   const publishDocHandler = async (parsed: { workspaceId?: string; docId: string; mode?: "Page" | "Edgeless" }) => {

@@ -16,7 +16,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio only (Claude Desktop / Codex compatible)
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 31 focused tools with WebSocket-based document editing
+- Tools: 32 focused tools with WebSocket-based document editing
 - Status: Active
  
 > New in v1.3.0: Added `append_block` for slash-command style blocks (heading/list/todo/code/divider/quote), removed duplicated aliases/non-core tools, and added CI + manifest quality gates.
@@ -24,7 +24,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
-- Documents: list/get/publish/revoke + create/append paragraph/delete (WebSocket‑based)
+- Documents: list/get/read/publish/revoke + create/append paragraph/delete (WebSocket‑based)
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -112,6 +112,43 @@ Notes
 - Command: `affine-mcp`
 - Environment: `AFFINE_BASE_URL` + one auth method (`AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL`/`AFFINE_PASSWORD`)
 
+### Cursor
+
+Cursor also supports MCP over stdio with `mcp.json`.
+
+Project-local (`.cursor/mcp.json`) example:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://your-affine-instance.com",
+        "AFFINE_API_TOKEN": "apt_xxx"
+      }
+    }
+  }
+}
+```
+
+If you prefer `npx`:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "npx",
+      "args": ["-y", "-p", "affine-mcp-server", "affine-mcp"],
+      "env": {
+        "AFFINE_BASE_URL": "https://your-affine-instance.com",
+        "AFFINE_API_TOKEN": "apt_xxx"
+      }
+    }
+  }
+}
+```
+
 ## Available Tools
 
 ### Workspace
@@ -124,6 +161,7 @@ Notes
 ### Documents
 - `list_docs` – list documents with pagination
 - `get_doc` – get document metadata
+- `read_doc` – read document block content and plain text snapshot (WebSocket)
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
@@ -186,6 +224,15 @@ Connection
 - GraphQL endpoint default is `/graphql`
 - Check firewall/proxy rules; verify CORS if self‑hosted
 
+Method not found
+- MCP tool names (for example `list_workspaces`) are not JSON-RPC top-level method names.
+- Use an MCP client (`tools/list`, `tools/call`) instead of sending direct JSON-RPC calls like `{\"method\":\"list_workspaces\"}`.
+- From v1.3.0, only canonical tool names are exposed (legacy `affine_*` aliases were removed).
+
+Workspace visibility
+- This MCP server can access server-backed workspaces only (AFFiNE cloud/self-hosted).
+- Browser local-storage workspaces are client-side data, so they are not visible via server GraphQL/WebSocket APIs.
+
 ## Security Considerations
 
 - Never commit `.env` with secrets
@@ -195,6 +242,11 @@ Connection
 - Store credentials in a secrets manager
 
 ## Version History
+
+### Unreleased
+- Added `read_doc` for reading document block snapshot + plain text
+- Added Cursor setup examples and troubleshooting notes for JSON-RPC method usage
+- Added explicit local-storage workspace limitation notes
 
 ### 1.3.0 (2026‑02‑13)
 - Added `append_block` for slash-command style editing (`heading/list/todo/code/divider/quote`)
