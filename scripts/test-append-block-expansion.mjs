@@ -157,7 +157,7 @@ const STEP4_CASES = [
   {
     name: 'data_view',
     args: { type: 'data_view' },
-    expect: { flavour: 'affine:data-view' },
+    expect: { flavour: 'affine:database' },
   },
   {
     name: 'note',

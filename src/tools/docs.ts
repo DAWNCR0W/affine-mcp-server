@@ -1011,14 +1011,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return { blockId, block, flavour: "affine:database" };
       }
       case "data_view": {
-        setSysFields(block, blockId, "affine:data-view");
+        // AFFiNE 0.26.x currently crashes on raw affine:data-view render path.
+        // Keep API compatibility for type="data_view" by mapping it to the stable database block.
+        setSysFields(block, blockId, "affine:database");
         block.set("sys:parent", parentId);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:views", new Y.Array<any>());
-        block.set("prop:title", content || "");
-        block.set("prop:columns", new Y.Array<any>());
+        block.set("prop:title", makeText(content));
         block.set("prop:cells", new Y.Map<any>());
-        return { blockId, block, flavour: "affine:data-view" };
+        block.set("prop:columns", new Y.Array<any>());
+        block.set("prop:comments", undefined);
+        return { blockId, block, flavour: "affine:database", blockType: "data_view_fallback" };
       }
       case "surface_ref": {
         setSysFields(block, blockId, "affine:surface-ref");
