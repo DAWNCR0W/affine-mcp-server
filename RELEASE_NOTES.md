@@ -12,6 +12,7 @@
   - Expanded canonical append types and strict input validation schema.
   - Added surface auto-resolution and parent-type guardrails for page/note/surface paths.
   - Switched Step4 block payload internals to Yjs-native values to prevent runtime write failures.
+  - Added `data_view -> database` safety fallback to avoid AFFiNE 0.26.x runtime crashes on raw `affine:data-view` blocks.
 - `scripts/test-append-block-expansion.mjs`
   - Added Step4 integration cases and runtime placeholder chaining (`__FRAME_ID__`).
   - Increased end-to-end append verification to 30 cases.

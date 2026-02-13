@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 32 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.5.0: `append_block` now supports 30 verified block profiles, including database/data_view and edgeless (`frame`, `edgeless_text`, `surface_ref`, `note`) insertion paths.
+> New in v1.5.0: `append_block` now supports 30 verified block profiles, including database/edgeless (`frame`, `edgeless_text`, `surface_ref`, `note`) insertion paths. For stability on AFFiNE 0.26.x, `type=\"data_view\"` is currently mapped to a database block.
 
 ## Features
 
@@ -166,7 +166,7 @@ If you prefer `npx`:
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
 - `append_paragraph` – append a paragraph block (WebSocket)
-- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control
+- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
@@ -244,7 +244,7 @@ Workspace visibility
 ## Version History
 
 ### 1.5.0 (2026‑02‑13)
-- Expanded `append_block` from Step1 to Step4 profiles: canonical text/list/code/divider/callout/latex/table/bookmark/media/embed plus `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note`
+- Expanded `append_block` from Step1 to Step4 profiles: canonical text/list/code/divider/callout/latex/table/bookmark/media/embed plus `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note` (`data_view` currently mapped to database for stability)
 - Added strict field validation and canonical parent enforcement for page/note/surface containers
 - Added local integration runner coverage for all 30 append_block cases against a live AFFINE server
 

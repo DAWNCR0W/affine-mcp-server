@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Resolved `Unexpected content type` failures while appending database/edgeless blocks.
 - Aligned `surface_ref` caption validation with block creation behavior.
+- Prevented AFFiNE UI runtime crashes from `type=data_view` by mapping it to stable `affine:database` output.
 
 ## [1.4.0] - 2026-02-13
 
