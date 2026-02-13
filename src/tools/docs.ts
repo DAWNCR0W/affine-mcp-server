@@ -310,7 +310,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
 
-      if (!snapshot.missing && !snapshot.state) {
+      if (!snapshot.missing) {
         return text({
           docId: parsed.docId,
           title: null,
@@ -322,12 +322,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
 
       const doc = new Y.Doc();
-      if (snapshot.missing) {
-        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      }
-      if (snapshot.state) {
-        Y.applyUpdate(doc, Buffer.from(snapshot.state, "base64"));
-      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const pageId = findBlockIdByFlavour(blocks, "affine:page");
