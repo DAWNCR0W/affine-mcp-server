@@ -14,6 +14,12 @@ const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "list",
   "code",
   "divider",
+  "callout",
+  "latex",
+  "table",
+  "bookmark",
+  "image",
+  "attachment",
 ] as const;
 type AppendBlockCanonicalType = typeof APPEND_BLOCK_CANONICAL_TYPE_VALUES[number];
 
@@ -31,6 +37,15 @@ type AppendBlockTypeInput = AppendBlockCanonicalType | AppendBlockLegacyType;
 const APPEND_BLOCK_LIST_STYLE_VALUES = ["bulleted", "numbered", "todo"] as const;
 type AppendBlockListStyle = typeof APPEND_BLOCK_LIST_STYLE_VALUES[number];
 const AppendBlockListStyle = z.enum(APPEND_BLOCK_LIST_STYLE_VALUES);
+const APPEND_BLOCK_BOOKMARK_STYLE_VALUES = [
+  "vertical",
+  "horizontal",
+  "list",
+  "cube",
+  "citation",
+] as const;
+type AppendBlockBookmarkStyle = typeof APPEND_BLOCK_BOOKMARK_STYLE_VALUES[number];
+const AppendBlockBookmarkStyle = z.enum(APPEND_BLOCK_BOOKMARK_STYLE_VALUES);
 
 type AppendPlacement = {
   parentId?: string;
@@ -44,11 +59,21 @@ type AppendBlockInput = {
   docId: string;
   type: string;
   text?: string;
+  url?: string;
+  sourceId?: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  embed?: boolean;
+  rows?: number;
+  columns?: number;
+  latex?: string;
   checked?: boolean;
   language?: string;
   caption?: string;
   level?: number;
   style?: AppendBlockListStyle;
+  bookmarkStyle?: AppendBlockBookmarkStyle;
   strict?: boolean;
   placement?: AppendPlacement;
 };
@@ -60,8 +85,18 @@ type NormalizedAppendBlockInput = {
   strict: boolean;
   placement?: AppendPlacement;
   text: string;
+  url: string;
+  sourceId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  embed: boolean;
+  rows: number;
+  columns: number;
+  latex: string;
   headingLevel: 1 | 2 | 3 | 4 | 5 | 6;
   listStyle: AppendBlockListStyle;
+  bookmarkStyle: AppendBlockBookmarkStyle;
   checked: boolean;
   language: string;
   caption?: string;
@@ -275,8 +310,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     if (normalized.type !== "code") {
-      if ((raw.language !== undefined || raw.caption !== undefined) && normalized.strict) {
-        throw new Error("The 'language'/'caption' fields can only be used with type='code'.");
+      if (raw.language !== undefined && normalized.strict) {
+        throw new Error("The 'language' field can only be used with type='code'.");
+      }
+      const allowsCaption = normalized.type === "bookmark" || normalized.type === "image" || normalized.type === "attachment";
+      if (raw.caption !== undefined && !allowsCaption && normalized.strict) {
+        throw new Error("The 'caption' field is not valid for this block type.");
       }
     } else if (normalized.language.length > 64) {
       throw new Error("Code language is too long (max 64 chars).");
@@ -284,6 +323,62 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
     if (normalized.type === "divider" && raw.text && raw.text.length > 0 && normalized.strict) {
       throw new Error("Divider blocks do not accept text.");
+    }
+
+    if (normalized.type === "bookmark") {
+      if (!normalized.url) {
+        throw new Error("Bookmark blocks require a non-empty url.");
+      }
+      try {
+        new URL(normalized.url);
+      } catch {
+        throw new Error(`Invalid url for bookmark block: '${normalized.url}'.`);
+      }
+      if (!(APPEND_BLOCK_BOOKMARK_STYLE_VALUES as readonly string[]).includes(normalized.bookmarkStyle)) {
+        throw new Error(`Invalid bookmark style '${normalized.bookmarkStyle}'.`);
+      }
+    } else {
+      if (raw.bookmarkStyle !== undefined && normalized.strict) {
+        throw new Error("The 'bookmarkStyle' field can only be used with type='bookmark'.");
+      }
+      if (raw.url !== undefined && normalized.strict) {
+        throw new Error("The 'url' field can only be used with type='bookmark' in this profile.");
+      }
+    }
+
+    if (normalized.type === "image" || normalized.type === "attachment") {
+      if (!normalized.sourceId) {
+        throw new Error(`${normalized.type} blocks require sourceId (use upload_blob first).`);
+      }
+      if (normalized.type === "attachment" && (!normalized.name || !normalized.mimeType)) {
+        throw new Error("attachment blocks require valid name and mimeType.");
+      }
+    } else if (raw.sourceId !== undefined && normalized.strict) {
+      throw new Error("The 'sourceId' field can only be used with type='image' or type='attachment'.");
+    } else if (
+      (raw.name !== undefined || raw.mimeType !== undefined || raw.embed !== undefined || raw.size !== undefined) &&
+      normalized.strict
+    ) {
+      throw new Error("The 'name'/'mimeType'/'embed'/'size' fields are only valid for image/attachment blocks.");
+    }
+
+    if (normalized.type === "latex") {
+      if (!normalized.latex && normalized.strict) {
+        throw new Error("latex blocks require a non-empty 'latex' value in strict mode.");
+      }
+    } else if (raw.latex !== undefined && normalized.strict) {
+      throw new Error("The 'latex' field can only be used with type='latex'.");
+    }
+
+    if (normalized.type === "table") {
+      if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > 20) {
+        throw new Error("table rows must be an integer between 1 and 20.");
+      }
+      if (!Number.isInteger(normalized.columns) || normalized.columns < 1 || normalized.columns > 20) {
+        throw new Error("table columns must be an integer between 1 and 20.");
+      }
+    } else if ((raw.rows !== undefined || raw.columns !== undefined) && normalized.strict) {
+      throw new Error("The 'rows'/'columns' fields can only be used with type='table'.");
     }
   }
 
@@ -294,8 +389,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const headingLevelNumber = Number(headingLevelCandidate);
     const headingLevel = Math.max(1, Math.min(6, headingLevelNumber)) as 1 | 2 | 3 | 4 | 5 | 6;
     const listStyle = typeInfo.listStyleFromAlias ?? parsed.style ?? "bulleted";
+    const bookmarkStyle = parsed.bookmarkStyle ?? "horizontal";
     const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
     const placement = normalizePlacement(parsed.placement);
+    const url = (parsed.url ?? "").trim();
+    const sourceId = (parsed.sourceId ?? "").trim();
+    const name = (parsed.name ?? "attachment").trim() || "attachment";
+    const mimeType = (parsed.mimeType ?? "application/octet-stream").trim() || "application/octet-stream";
+    const size = Number.isFinite(parsed.size) ? Math.max(0, Math.floor(parsed.size as number)) : 0;
+    const rows = Number.isInteger(parsed.rows) ? (parsed.rows as number) : 3;
+    const columns = Number.isInteger(parsed.columns) ? (parsed.columns as number) : 3;
+    const latex = (parsed.latex ?? "").trim();
 
     const normalized: NormalizedAppendBlockInput = {
       workspaceId: parsed.workspaceId,
@@ -304,8 +408,18 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       strict,
       placement,
       text: parsed.text ?? "",
+      url,
+      sourceId,
+      name,
+      mimeType,
+      size,
+      embed: Boolean(parsed.embed),
+      rows,
+      columns,
+      latex,
       headingLevel,
       listStyle,
+      bookmarkStyle,
       checked: Boolean(parsed.checked),
       language,
       caption: parsed.caption,
@@ -465,6 +579,107 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:parent", parentId);
         block.set("sys:children", new Y.Array<string>());
         return { blockId, block, flavour: "affine:divider" };
+      }
+      case "callout": {
+        setSysFields(block, blockId, "affine:callout");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:icon", { type: "emoji", unicode: "💡" });
+        block.set("prop:backgroundColorName", "grey");
+        block.set("prop:text", makeText(content));
+        return { blockId, block, flavour: "affine:callout" };
+      }
+      case "latex": {
+        setSysFields(block, blockId, "affine:latex");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:xywh", "[0,0,16,16]");
+        block.set("prop:index", "a0");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:scale", 1);
+        block.set("prop:rotate", 0);
+        block.set("prop:latex", normalized.latex);
+        return { blockId, block, flavour: "affine:latex" };
+      }
+      case "table": {
+        setSysFields(block, blockId, "affine:table");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        const rows: Record<string, { rowId: string; order: string; backgroundColor?: string }> = {};
+        const columns: Record<string, { columnId: string; order: string; backgroundColor?: string; width?: number }> = {};
+        const cells: Record<string, { text: Y.Text }> = {};
+
+        for (let i = 0; i < normalized.rows; i++) {
+          const rowId = generateId();
+          rows[rowId] = { rowId, order: `r${String(i).padStart(4, "0")}` };
+        }
+        for (let i = 0; i < normalized.columns; i++) {
+          const columnId = generateId();
+          columns[columnId] = { columnId, order: `c${String(i).padStart(4, "0")}` };
+        }
+        for (const rowId of Object.keys(rows)) {
+          for (const columnId of Object.keys(columns)) {
+            cells[`${rowId}:${columnId}`] = { text: makeText("") };
+          }
+        }
+
+        block.set("prop:rows", rows);
+        block.set("prop:columns", columns);
+        block.set("prop:cells", cells);
+        block.set("prop:comments", undefined);
+        block.set("prop:textAlign", undefined);
+        return { blockId, block, flavour: "affine:table" };
+      }
+      case "bookmark": {
+        setSysFields(block, blockId, "affine:bookmark");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:style", normalized.bookmarkStyle);
+        block.set("prop:url", normalized.url);
+        block.set("prop:caption", normalized.caption ?? null);
+        block.set("prop:description", null);
+        block.set("prop:icon", null);
+        block.set("prop:image", null);
+        block.set("prop:title", null);
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:index", "a0");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:footnoteIdentifier", null);
+        return { blockId, block, flavour: "affine:bookmark" };
+      }
+      case "image": {
+        setSysFields(block, blockId, "affine:image");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:caption", normalized.caption ?? "");
+        block.set("prop:sourceId", normalized.sourceId);
+        block.set("prop:width", 0);
+        block.set("prop:height", 0);
+        block.set("prop:size", normalized.size || -1);
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:index", "a0");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        return { blockId, block, flavour: "affine:image" };
+      }
+      case "attachment": {
+        setSysFields(block, blockId, "affine:attachment");
+        block.set("sys:parent", parentId);
+        block.set("sys:children", new Y.Array<string>());
+        block.set("prop:name", normalized.name);
+        block.set("prop:size", normalized.size);
+        block.set("prop:type", normalized.mimeType);
+        block.set("prop:sourceId", normalized.sourceId);
+        block.set("prop:caption", normalized.caption ?? undefined);
+        block.set("prop:embed", normalized.embed);
+        block.set("prop:style", "horizontalThin");
+        block.set("prop:index", "a0");
+        block.set("prop:xywh", "[0,0,0,0]");
+        block.set("prop:lockedBySelf", false);
+        block.set("prop:rotate", 0);
+        block.set("prop:footnoteIdentifier", null);
+        return { blockId, block, flavour: "affine:attachment" };
       }
     }
   }
@@ -865,11 +1080,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     docId: string;
     type: string;
     text?: string;
+    url?: string;
+    sourceId?: string;
+    name?: string;
+    mimeType?: string;
+    size?: number;
+    embed?: boolean;
+    rows?: number;
+    columns?: number;
+    latex?: string;
     checked?: boolean;
     language?: string;
     caption?: string;
     level?: number;
     style?: AppendBlockListStyle;
+    bookmarkStyle?: AppendBlockBookmarkStyle;
     strict?: boolean;
     placement?: AppendPlacement;
   }) => {
@@ -891,10 +1116,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider. Legacy aliases remain supported."),
+        type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment. Legacy aliases remain supported."),
         text: z.string().optional().describe("Block content text"),
+        url: z.string().optional().describe("URL for bookmark/embeds"),
+        sourceId: z.string().optional().describe("Blob source id for image/attachment"),
+        name: z.string().optional().describe("Attachment file name"),
+        mimeType: z.string().optional().describe("Attachment mime type"),
+        size: z.number().optional().describe("Attachment/image file size in bytes"),
+        embed: z.boolean().optional().describe("Attachment embed mode"),
+        rows: z.number().int().min(1).max(20).optional().describe("Table row count"),
+        columns: z.number().int().min(1).max(20).optional().describe("Table column count"),
+        latex: z.string().optional().describe("Latex expression"),
         level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
         style: AppendBlockListStyle.optional().describe("List style for type=list"),
+        bookmarkStyle: AppendBlockBookmarkStyle.optional().describe("Bookmark card style"),
         checked: z.boolean().optional().describe("Todo state when type is todo"),
         language: z.string().optional().describe("Code language when type is code"),
         caption: z.string().optional().describe("Code caption when type is code"),

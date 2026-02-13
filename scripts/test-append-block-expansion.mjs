@@ -80,6 +80,27 @@ const STEP2_CASES = [
     args: { type: 'table', rows: 2, columns: 2 },
     expect: { flavour: 'affine:table' },
   },
+  {
+    name: 'bookmark',
+    args: { type: 'bookmark', url: 'https://affine.pro', caption: 'site' },
+    expect: { flavour: 'affine:bookmark' },
+  },
+  {
+    name: 'image',
+    args: { type: 'image', sourceId: '__BLOB_KEY__', caption: 'step2 image' },
+    expect: { flavour: 'affine:image' },
+  },
+  {
+    name: 'attachment',
+    args: {
+      type: 'attachment',
+      sourceId: '__BLOB_KEY__',
+      name: 'step2.txt',
+      mimeType: 'text/plain',
+      size: 9,
+    },
+    expect: { flavour: 'affine:attachment' },
+  },
 ];
 
 const STEP3_CASES = [
@@ -153,6 +174,7 @@ async function main() {
   const appended = [];
   let workspaceId = '';
   let docId = '';
+  let blobKey = '';
 
   try {
     await client.connect(transport);
@@ -185,8 +207,26 @@ async function main() {
     docId = doc?.docId;
     if (!docId) throw new Error('create_doc did not return docId');
 
+    if (PROFILE !== 'step1') {
+      if (!names.includes('upload_blob')) {
+        throw new Error("Required tool 'upload_blob' is not registered.");
+      }
+      const upload = await callTool('upload_blob', {
+        workspaceId,
+        content: 'step2file',
+        filename: 'step2.txt',
+        contentType: 'text/plain',
+      });
+      blobKey = upload?.key || upload?.id || '';
+      if (!blobKey) throw new Error('upload_blob did not return key/id');
+    }
+
     for (const testCase of PROFILE_CASES[PROFILE]) {
-      const payload = { workspaceId, docId, ...testCase.args };
+      const caseArgs =
+        blobKey && testCase.args?.sourceId === '__BLOB_KEY__'
+          ? { ...testCase.args, sourceId: blobKey }
+          : testCase.args;
+      const payload = { workspaceId, docId, ...caseArgs };
       const result = await callTool('append_block', payload);
       if (!result?.appended || !result?.blockId) {
         throw new Error(`append_block did not return blockId for case '${testCase.name}'`);
