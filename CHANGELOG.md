@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Open-source community health files: `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`.
+- GitHub community templates: bug/feature issue templates and PR template.
+- CI workflow (`.github/workflows/ci.yml`) and Dependabot config.
+- Tool manifest (`tool-manifest.json`) and static verification script (`npm run test:tool-manifest`).
+
+### Changed
+- Tool surface simplified to 30 canonical tools with no duplicated alias names.
+- Comprehensive integration test script now validates runtime tool list against `tool-manifest.json`.
+- Package metadata improved (`bugs`, `homepage`) and new quality scripts (`npm run ci`, `npm run pack:check`).
+
+### Removed
+- Duplicated alias tools (`affine_*`) and low-value/unstable tools from default surface.
+- Deprecated `src/tools/updates.ts` and legacy workspace fixed alias tooling.
+
 ## [1.2.2] - 2025-09-18
 
 ### Fixed
@@ -106,3 +123,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.2.2...HEAD
