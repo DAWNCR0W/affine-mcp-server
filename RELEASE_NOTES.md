@@ -1,5 +1,21 @@
 # Release Notes
 
+## Version 1.4.0 (2026-02-13)
+
+### Highlights
+- Added `read_doc` to read actual document content (block snapshot + plain text), not only metadata.
+- Added integration guides and troubleshooting for Cursor MCP setup and JSON-RPC method usage.
+- Clarified local-storage workspace limitation (server APIs can access only server-backed workspaces).
+
+### What Changed
+- New tool: `read_doc` in `src/tools/docs.ts` with WebSocket snapshot parsing and block traversal.
+- Tool manifest and comprehensive tests updated for 32-tool surface validation.
+- Runtime server version metadata updated to `1.4.0`.
+
+### Validation Evidence
+- `npm run ci` passed.
+- `npm run test:comprehensive` passed against local AFFINE server with 32/32 tools called and 38/38 checks passed.
+
 ## Version 1.3.0 (2026-02-13)
 
 ### Highlights
