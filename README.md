@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 32 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.3.0: Added `append_block` for slash-command style blocks (heading/list/todo/code/divider/quote), removed duplicated aliases/non-core tools, and added CI + manifest quality gates.
+> New in v1.4.0: Added `read_doc` for document content snapshots (blocks + plain text), plus Cursor setup/troubleshooting guidance.
 
 ## Features
 
@@ -243,7 +243,7 @@ Workspace visibility
 
 ## Version History
 
-### Unreleased
+### 1.4.0 (2026‑02‑13)
 - Added `read_doc` for reading document block snapshot + plain text
 - Added Cursor setup examples and troubleshooting notes for JSON-RPC method usage
 - Added explicit local-storage workspace limitation notes

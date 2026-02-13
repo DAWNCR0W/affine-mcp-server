@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-02-13
+
 ### Added
 - `read_doc` tool to read document block snapshots and plain text via WebSocket.
 
@@ -15,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README now documents that browser local-storage workspaces are not accessible via server APIs.
 
 ### Fixed
-- Runtime MCP server metadata version in `src/index.ts` updated to `1.3.0`.
+- Runtime MCP server metadata version in `src/index.ts` updated to `1.4.0`.
 
 ## [1.3.0] - 2026-02-13
 
@@ -135,5 +137,6 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
 [1.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.0.0
+[1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.4.0...HEAD
