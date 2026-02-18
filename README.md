@@ -53,7 +53,51 @@ Note: From v1.2.2+ the CLI wrapper (`bin/affine-mcp`) ensures Node runs the ESM 
 
 ## Configuration
 
-Configure via environment variables (shell or app config). `.env` files are no longer recommended.
+### Interactive login (recommended)
+
+The easiest way to configure credentials:
+
+```bash
+npm i -g affine-mcp-server
+affine-mcp login
+```
+
+This stores credentials in `~/.config/affine-mcp/config` (mode 600). The MCP server reads them automatically — no environment variables needed.
+
+**AFFiNE Cloud** (`app.affine.pro`): you'll be prompted to paste an API token from Settings → Integrations → MCP Server.
+
+**Self-hosted instances**: you can choose between email/password (recommended — auto-generates an API token) or pasting a token manually.
+
+```
+$ affine-mcp login
+Affine MCP Server — Login
+
+Affine URL [https://app.affine.pro]: https://my-affine.example.com
+
+Auth method — [1] Email/password (recommended)  [2] Paste API token: 1
+Email: user@example.com
+Password: ****
+Signing in...
+✓ Signed in as: User Name <user@example.com>
+
+Generating API token...
+✓ Created token: ut_abc123... (name: affine-mcp-2026-02-18)
+
+Detecting workspaces...
+  Found 1 workspace: abc-def-123  (by User Name, 1 member, 2/10/2026)
+  Auto-selected.
+
+✓ Saved to /home/user/.config/affine-mcp/config (mode 600)
+The MCP server will use these credentials automatically.
+```
+
+Other CLI commands:
+- `affine-mcp status` — show current config and test connection
+- `affine-mcp logout` — remove stored credentials
+
+### Environment variables
+
+You can also configure via environment variables (they override the config file):
 
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -62,7 +106,41 @@ Configure via environment variables (shell or app config). `.env` files are no l
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
 
+> **Cloudflare note**: `AFFINE_EMAIL`/`AFFINE_PASSWORD` auth requires programmatic access to `/api/auth/sign-in`. AFFiNE Cloud (`app.affine.pro`) is behind Cloudflare, which blocks these requests. Use `AFFINE_API_TOKEN` for cloud, or use `affine-mcp login` which handles this automatically. Email/password works for self-hosted instances without Cloudflare.
+
 ## Quick Start
+
+### Claude Code
+
+After running `affine-mcp login`, add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp"
+    }
+  }
+}
+```
+
+No `env` block needed — the server reads `~/.config/affine-mcp/config` automatically.
+
+If you prefer explicit env vars instead of the config file:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
+      }
+    }
+  }
+}
+```
 
 ### Claude Desktop
 
@@ -78,7 +156,23 @@ Add to your Claude Desktop configuration:
     "affine": {
       "command": "affine-mcp",
       "env": {
-        "AFFINE_BASE_URL": "https://your-affine-instance.com",
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
+      }
+    }
+  }
+}
+```
+
+Or with email/password for self-hosted instances (not supported on AFFiNE Cloud — see Cloudflare note above):
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://your-self-hosted-affine.com",
         "AFFINE_EMAIL": "you@example.com",
         "AFFINE_PASSWORD": "secret!",
         "AFFINE_LOGIN_AT_START": "async"
@@ -89,28 +183,21 @@ Add to your Claude Desktop configuration:
 ```
 
 Tips
-- Prefer `AFFINE_COOKIE` or `AFFINE_API_TOKEN` for zero‑latency startup.
+- Prefer `affine-mcp login` or `AFFINE_API_TOKEN` for zero‑latency startup.
 - If your password contains `!` (zsh history expansion), wrap it in single quotes in shells or use the JSON config above.
 
 ### Codex CLI
 
 Register the MCP server with Codex:
 
-- Global install path (fastest)
-  - `npm i -g affine-mcp-server`
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+- With config file (after `affine-mcp login`):
+  - `codex mcp add affine -- affine-mcp`
 
-- Use npx (no global install)
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+- With API token:
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://app.affine.pro --env AFFINE_API_TOKEN=ut_xxx -- affine-mcp`
 
-- Token or cookie (no startup login)
-  - Token: `codex mcp add affine --env AFFINE_BASE_URL=https://... --env AFFINE_API_TOKEN=... -- affine-mcp`
-  - Cookie: `codex mcp add affine --env AFFINE_BASE_URL=https://... --env "AFFINE_COOKIE=affine_session=...; affine_csrf=..." -- affine-mcp`
-
-Notes
-- MCP name: `affine`
-- Command: `affine-mcp`
-- Environment: `AFFINE_BASE_URL` + one auth method (`AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL`/`AFFINE_PASSWORD`)
+- With email/password (self-hosted only):
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-self-hosted-affine.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
 
 ### Cursor
 
@@ -124,8 +211,8 @@ Project-local (`.cursor/mcp.json`) example:
     "affine": {
       "command": "affine-mcp",
       "env": {
-        "AFFINE_BASE_URL": "https://your-affine-instance.com",
-        "AFFINE_API_TOKEN": "apt_xxx"
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
       }
     }
   }
@@ -141,8 +228,8 @@ If you prefer `npx`:
       "command": "npx",
       "args": ["-y", "-p", "affine-mcp-server", "affine-mcp"],
       "env": {
-        "AFFINE_BASE_URL": "https://your-affine-instance.com",
-        "AFFINE_API_TOKEN": "apt_xxx"
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
       }
     }
   }
@@ -214,9 +301,10 @@ npm run pack:check
 ## Troubleshooting
 
 Authentication
-- Email/Password: ensure your instance allows password auth and credentials are valid
+- **Cloudflare (403 "Just a moment...")**: AFFiNE Cloud (`app.affine.pro`) uses Cloudflare protection, which blocks programmatic sign-in via `/api/auth/sign-in`. Use `AFFINE_API_TOKEN` instead, or run `affine-mcp login` which guides you through the right method automatically. Email/password auth only works for self-hosted instances.
+- Email/Password: only works on self-hosted instances without Cloudflare. Ensure your instance allows password auth and credentials are valid.
 - Cookie: copy cookies (e.g., `affine_session`, `affine_csrf`) from the browser DevTools after login
-- Token: generate a personal access token; verify it hasn't expired
+- Token: generate a personal access token; verify it hasn't expired. Run `affine-mcp status` to test.
 - Startup timeouts: v1.2.2+ includes a CLI wrapper fix and default async login to avoid blocking the MCP handshake. Set `AFFINE_LOGIN_AT_START=sync` only if needed.
 
 Connection
