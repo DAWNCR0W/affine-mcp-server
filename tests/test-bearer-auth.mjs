@@ -87,13 +87,15 @@ async function main() {
     AFFINE_EMAIL: EMAIL,
     AFFINE_PASSWORD: PASSWORD,
     AFFINE_LOGIN_AT_START: 'sync',
+    // Isolate from local config file — pure email/password for token generation.
+    XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
   }, 'pw-session');
 
   let bearerToken;
   let tokenId;
   try {
-    await call(pwClient, 'sign_in', { email: EMAIL, password: PASSWORD });
-
+    // Authentication already happened at startup via AFFINE_LOGIN_AT_START=sync.
+    // No explicit sign_in needed — go straight to token generation.
     const tokenResult = await call(pwClient, 'generate_access_token', {
       name: `e2e-bearer-test-${Date.now()}`,
     });
@@ -112,7 +114,9 @@ async function main() {
   const { client: bearerClient, transport: bearerTransport } = await launchMCP({
     AFFINE_BASE_URL: BASE_URL,
     AFFINE_API_TOKEN: bearerToken,
-    // Intentionally NO AFFINE_EMAIL, NO AFFINE_PASSWORD, NO AFFINE_LOGIN_AT_START
+    // Intentionally NO AFFINE_EMAIL, NO AFFINE_PASSWORD, NO AFFINE_LOGIN_AT_START.
+    // Isolate from local config file — pure bearer token auth.
+    XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
   }, 'bearer-session');
 
   const state = {

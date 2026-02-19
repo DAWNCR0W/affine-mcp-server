@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * E2E test: create workspace → doc → database → columns → rows via MCP tools.
+ * E2E test: EMAIL/PASSWORD auth mode.
+ *
+ * Authenticates via AFFINE_EMAIL + AFFINE_PASSWORD (sync login at startup),
+ * then creates workspace → doc → database → columns → rows.
  *
  * Outputs tests/test-database-state.json with all IDs and content for Playwright.
- *
- * Follows the same pattern as test-comprehensive.mjs.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +35,7 @@ function parseContent(result) {
 
 async function main() {
   console.log('=== MCP Database Creation Test ===');
+  console.log(`Auth mode: email/password (sync login at startup)`);
   console.log(`Server: ${MCP_SERVER_PATH}`);
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Email: ${EMAIL}`);
@@ -49,6 +51,9 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
+      // Isolate from local config file (~/.config/affine-mcp/config) which may
+      // contain an API token — we want pure email/password auth for this test.
+      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
     },
     stderr: 'pipe',
   });
@@ -104,10 +109,11 @@ async function main() {
   }
 
   try {
-    // 1. Sign in
-    await call('sign_in', { email: EMAIL, password: PASSWORD });
+    // Authentication already happened at startup via AFFINE_LOGIN_AT_START=sync.
+    // No explicit sign_in call needed — this test verifies the email/password
+    // auto-login path, not the sign_in MCP tool.
 
-    // 2. Create workspace
+    // 1. Create workspace
     const timestamp = Date.now();
     state.workspaceName = `mcp-db-test-${timestamp}`;
     const ws = await call('create_workspace', { name: state.workspaceName });
@@ -115,7 +121,7 @@ async function main() {
     if (!state.workspaceId) throw new Error('create_workspace did not return workspace id');
     console.log(`  Workspace ID: ${state.workspaceId}`);
 
-    // 3. Create doc
+    // 2. Create doc
     state.docTitle = 'MCP Database Test Doc';
     const doc = await call('create_doc', {
       workspaceId: state.workspaceId,
@@ -126,7 +132,7 @@ async function main() {
     if (!state.docId) throw new Error('create_doc did not return docId');
     console.log(`  Doc ID: ${state.docId}`);
 
-    // 4. Create database block
+    // 3. Create database block
     const dbBlock = await call('append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -137,7 +143,7 @@ async function main() {
     console.log(`  Database Block ID: ${state.databaseBlockId}`);
     await settle();
 
-    // 5. Add columns
+    // 4. Add columns
     const columnDefs = [
       { name: 'Name', type: 'rich-text' },
       { name: 'Status', type: 'select', options: ['Active', 'Inactive', 'Pending'] },
@@ -165,7 +171,7 @@ async function main() {
       await settle();
     }
 
-    // 6. Add rows
+    // 5. Add rows
     const rowDefs = [
       { Name: 'Build feature', Status: 'Active', Priority: 1, Done: true },
       { Name: 'Write tests', Status: 'Pending', Priority: 2, Done: false },
