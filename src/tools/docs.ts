@@ -3044,11 +3044,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             continue;
           }
           case "number": {
-            cellValue.set("value", Number(value));
+            const num = Number(value);
+            if (Number.isNaN(num)) {
+              throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
+            }
+            cellValue.set("value", num);
             break;
           }
           case "checkbox": {
-            cellValue.set("value", Boolean(value));
+            let bool: boolean;
+            if (typeof value === "boolean") {
+              bool = value;
+            } else if (typeof value === "string") {
+              const lower = value.toLowerCase().trim();
+              bool = lower === "true" || lower === "1" || lower === "yes";
+            } else {
+              bool = !!value;
+            }
+            cellValue.set("value", bool);
             break;
           }
           case "select": {
@@ -3064,7 +3077,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             break;
           }
           case "date": {
-            cellValue.set("value", Number(value));
+            const ts = Number(value);
+            if (Number.isNaN(ts)) {
+              throw new Error(`Column "${col.name}": expected a timestamp number, got ${JSON.stringify(value)}`);
+            }
+            cellValue.set("value", ts);
             break;
           }
           case "link": {
