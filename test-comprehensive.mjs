@@ -61,6 +61,7 @@ class ComprehensiveRunner {
 
     this.workspaceId = null;
     this.docId = null;
+    this.markdownDocId = null;
     this.commentId = null;
     this.tokenId = null;
     this.blobKey = null;
@@ -173,6 +174,16 @@ class ComprehensiveRunner {
     await this.callTool('create_doc', { workspaceId, title: 'Main Doc', content: 'main content' }, parsed => {
       this.docId = parsed?.docId || null;
     });
+    await this.callTool(
+      'create_doc_from_markdown',
+      {
+        workspaceId,
+        markdown: '# Markdown Doc\\n\\n- [x] Imported todo\\n\\n```ts\\nconsole.log(\"hello\")\\n```',
+      },
+      parsed => {
+        this.markdownDocId = parsed?.docId || null;
+      }
+    );
 
     const docId = this.docId;
     if (!docId) {
@@ -216,6 +227,21 @@ class ComprehensiveRunner {
     await this.callTool('append_block', { workspaceId, docId, type: 'todo', text: 'Todo item from append_block', checked: true });
     await this.callTool('append_block', { workspaceId, docId, type: 'code', text: 'console.log(\"append_block\");', language: 'javascript' });
     await this.callTool('append_block', { workspaceId, docId, type: 'divider' });
+    await this.callTool('append_markdown', {
+      workspaceId,
+      docId,
+      markdown: '## Appended Heading\\n\\n- appended list item\\n\\n[link](https://example.com)',
+    });
+    await this.callTool('export_doc_markdown', {
+      workspaceId,
+      docId,
+      includeFrontmatter: true,
+    });
+    await this.callTool('replace_doc_with_markdown', {
+      workspaceId,
+      docId,
+      markdown: '# Replaced Content\\n\\nParagraph after replace.',
+    });
     await this.callTool('read_doc', { workspaceId, docId }, parsed => {
       if (!parsed || typeof parsed !== 'object') {
         throw new Error('read_doc did not return JSON payload');

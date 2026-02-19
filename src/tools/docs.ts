@@ -4,9 +4,13 @@ import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
+import { parseMarkdownToOperations } from "../markdown/parse.js";
+import { renderBlocksToMarkdown } from "../markdown/render.js";
+import type { MarkdownOperation, MarkdownRenderableBlock } from "../markdown/types.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
+const MarkdownContent = z.string().min(1, "markdown required");
 const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "paragraph",
   "heading",
@@ -99,6 +103,7 @@ type AppendBlockInput = {
   bookmarkStyle?: AppendBlockBookmarkStyle;
   strict?: boolean;
   placement?: AppendPlacement;
+  tableData?: string[][];
 };
 
 type NormalizedAppendBlockInput = {
@@ -133,6 +138,19 @@ type NormalizedAppendBlockInput = {
   language: string;
   caption?: string;
   legacyType?: AppendBlockLegacyType;
+  tableData?: string[][];
+};
+
+type CreateDocInput = {
+  workspaceId?: string;
+  title?: string;
+  content?: string;
+};
+
+type CreateDocResult = {
+  workspaceId: string;
+  docId: string;
+  title: string;
 };
 
 function blockVersion(flavour: string): number {
@@ -608,8 +626,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (!Number.isInteger(normalized.columns) || normalized.columns < 1 || normalized.columns > 20) {
         throw new Error("table columns must be an integer between 1 and 20.");
       }
+      if (normalized.tableData) {
+        if (!Array.isArray(normalized.tableData) || normalized.tableData.length !== normalized.rows) {
+          throw new Error("tableData row count must match table rows.");
+        }
+        for (const row of normalized.tableData) {
+          if (!Array.isArray(row) || row.length !== normalized.columns) {
+            throw new Error("tableData column count must match table columns.");
+          }
+        }
+      }
     } else if ((raw.rows !== undefined || raw.columns !== undefined) && normalized.strict) {
       throw new Error("The 'rows'/'columns' fields can only be used with type='table'.");
+    } else if (raw.tableData !== undefined && normalized.strict) {
+      throw new Error("The 'tableData' field can only be used with type='table'.");
     }
   }
 
@@ -640,6 +670,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const rows = Number.isInteger(parsed.rows) ? (parsed.rows as number) : 3;
     const columns = Number.isInteger(parsed.columns) ? (parsed.columns as number) : 3;
     const latex = (parsed.latex ?? "").trim();
+    const tableData = Array.isArray(parsed.tableData) ? parsed.tableData : undefined;
 
     const normalized: NormalizedAppendBlockInput = {
       workspaceId: parsed.workspaceId,
@@ -673,6 +704,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       language,
       caption: parsed.caption,
       legacyType: typeInfo.legacyType,
+      tableData,
     };
 
     validateNormalizedAppendBlockInput(normalized, parsed);
@@ -885,19 +917,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:children", new Y.Array<string>());
         const rows: Record<string, { rowId: string; order: string; backgroundColor?: string }> = {};
         const columns: Record<string, { columnId: string; order: string; backgroundColor?: string; width?: number }> = {};
-        const cells: Record<string, { text: Y.Text }> = {};
+        const cells: Record<string, { text: string }> = {};
+        const rowIds: string[] = [];
+        const columnIds: string[] = [];
+        const tableData = normalized.tableData ?? [];
 
         for (let i = 0; i < normalized.rows; i++) {
           const rowId = generateId();
           rows[rowId] = { rowId, order: `r${String(i).padStart(4, "0")}` };
+          rowIds.push(rowId);
         }
         for (let i = 0; i < normalized.columns; i++) {
           const columnId = generateId();
           columns[columnId] = { columnId, order: `c${String(i).padStart(4, "0")}` };
+          columnIds.push(columnId);
         }
-        for (const rowId of Object.keys(rows)) {
-          for (const columnId of Object.keys(columns)) {
-            cells[`${rowId}:${columnId}`] = { text: makeText("") };
+        for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex += 1) {
+          const rowId = rowIds[rowIndex];
+          for (let columnIndex = 0; columnIndex < columnIds.length; columnIndex += 1) {
+            const columnId = columnIds[columnIndex];
+            const cellText = tableData[rowIndex]?.[columnIndex] ?? "";
+            cells[`${rowId}:${columnId}`] = { text: cellText };
           }
         }
 
@@ -1221,6 +1261,519 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
       return { appended: true, blockId, flavour, blockType, normalizedType: normalized.type, legacyType: normalized.legacyType || null };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  function mergeWarnings(...sources: string[][]): string[] {
+    const deduped = new Set<string>();
+    for (const source of sources) {
+      for (const warning of source) {
+        deduped.add(warning);
+      }
+    }
+    return [...deduped];
+  }
+
+  function markdownOperationToAppendInput(
+    operation: MarkdownOperation,
+    docId: string,
+    workspaceId?: string,
+    strict: boolean = true,
+    placement?: AppendPlacement
+  ): AppendBlockInput {
+    switch (operation.type) {
+      case "heading":
+        return {
+          workspaceId,
+          docId,
+          type: "heading",
+          text: operation.text,
+          level: operation.level,
+          strict,
+          placement,
+        };
+      case "paragraph":
+        return {
+          workspaceId,
+          docId,
+          type: "paragraph",
+          text: operation.text,
+          strict,
+          placement,
+        };
+      case "quote":
+        return {
+          workspaceId,
+          docId,
+          type: "quote",
+          text: operation.text,
+          strict,
+          placement,
+        };
+      case "list":
+        return {
+          workspaceId,
+          docId,
+          type: "list",
+          text: operation.text,
+          style: operation.style,
+          checked: operation.checked,
+          strict,
+          placement,
+        };
+      case "code":
+        return {
+          workspaceId,
+          docId,
+          type: "code",
+          text: operation.text,
+          language: operation.language,
+          strict,
+          placement,
+        };
+      case "divider":
+        return {
+          workspaceId,
+          docId,
+          type: "divider",
+          strict,
+          placement,
+        };
+      case "table":
+        return {
+          workspaceId,
+          docId,
+          type: "table",
+          rows: operation.rows,
+          columns: operation.columns,
+          tableData: operation.tableData,
+          strict,
+          placement,
+        };
+      case "bookmark":
+        return {
+          workspaceId,
+          docId,
+          type: "bookmark",
+          url: operation.url,
+          caption: operation.caption,
+          strict,
+          placement,
+        };
+      default: {
+        const exhaustiveCheck: never = operation;
+        throw new Error(`Unsupported markdown operation type: ${(exhaustiveCheck as any).type}`);
+      }
+    }
+  }
+
+  function collectDescendantBlockIds(blocks: Y.Map<any>, startIds: string[]): string[] {
+    const result: string[] = [];
+    const visited = new Set<string>();
+    const stack = [...startIds];
+
+    while (stack.length > 0) {
+      const current = stack.pop() as string;
+      if (visited.has(current)) {
+        continue;
+      }
+      visited.add(current);
+      result.push(current);
+      const block = findBlockById(blocks, current);
+      if (!block) {
+        continue;
+      }
+      const children = childIdsFrom(block.get("sys:children"));
+      for (const childId of children) {
+        stack.push(childId);
+      }
+    }
+
+    return result;
+  }
+
+  function asStringOrNull(value: unknown): string | null {
+    if (typeof value === "string") {
+      return value;
+    }
+    return null;
+  }
+
+  function richTextValueToString(value: unknown): string {
+    if (value instanceof Y.Text) {
+      return value.toString();
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      return value
+        .map((entry) => {
+          if (typeof entry === "string") {
+            return entry;
+          }
+          if (entry && typeof entry === "object" && typeof (entry as any).insert === "string") {
+            return (entry as any).insert as string;
+          }
+          return "";
+        })
+        .join("");
+    }
+    if (value && typeof value === "object" && typeof (value as any).insert === "string") {
+      return (value as any).insert as string;
+    }
+    return "";
+  }
+
+  function mapEntries(value: unknown): Array<[string, any]> {
+    if (value instanceof Y.Map) {
+      const entries: Array<[string, any]> = [];
+      value.forEach((mapValue: unknown, key: string) => {
+        entries.push([key, mapValue]);
+      });
+      return entries;
+    }
+    if (value && typeof value === "object") {
+      return Object.entries(value as Record<string, any>);
+    }
+    return [];
+  }
+
+  function extractTableData(block: Y.Map<any>): string[][] | null {
+    const rowsValue = block.get("prop:rows");
+    const columnsValue = block.get("prop:columns");
+    const cellsValue = block.get("prop:cells");
+
+    const rowEntries = mapEntries(rowsValue)
+      .map(([rowId, payload]) => ({
+        rowId,
+        order:
+          payload && typeof payload === "object" && typeof (payload as any).order === "string"
+            ? (payload as any).order
+            : rowId,
+      }))
+      .sort((a, b) => a.order.localeCompare(b.order));
+
+    const columnEntries = mapEntries(columnsValue)
+      .map(([columnId, payload]) => ({
+        columnId,
+        order:
+          payload && typeof payload === "object" && typeof (payload as any).order === "string"
+            ? (payload as any).order
+            : columnId,
+      }))
+      .sort((a, b) => a.order.localeCompare(b.order));
+
+    if (rowEntries.length === 0 || columnEntries.length === 0) {
+      return null;
+    }
+
+    const cells = new Map<string, string>();
+    for (const [cellKey, payload] of mapEntries(cellsValue)) {
+      if (payload instanceof Y.Map) {
+        cells.set(cellKey, richTextValueToString(payload.get("text")));
+        continue;
+      }
+      if (payload && typeof payload === "object" && "text" in payload) {
+        cells.set(cellKey, richTextValueToString((payload as any).text));
+      }
+    }
+
+    const tableData: string[][] = [];
+    for (const { rowId } of rowEntries) {
+      const row: string[] = [];
+      for (const { columnId } of columnEntries) {
+        row.push(cells.get(`${rowId}:${columnId}`) ?? "");
+      }
+      tableData.push(row);
+    }
+
+    return tableData;
+  }
+
+  function collectDocForMarkdown(doc: Y.Doc): {
+    title: string;
+    tags: string[];
+    rootBlockIds: string[];
+    blocksById: Map<string, MarkdownRenderableBlock>;
+  } {
+    const meta = doc.getMap("meta");
+    const tags = getStringArray(getTagArray(meta));
+
+    const blocks = doc.getMap("blocks") as Y.Map<any>;
+    const pageId = findBlockIdByFlavour(blocks, "affine:page");
+    const noteId = findBlockIdByFlavour(blocks, "affine:note");
+    const blocksById = new Map<string, MarkdownRenderableBlock>();
+    const visited = new Set<string>();
+
+    let title = "";
+    const rootBlockIds: string[] = [];
+    if (pageId) {
+      const pageBlock = findBlockById(blocks, pageId);
+      if (pageBlock) {
+        title = asText(pageBlock.get("prop:title"));
+        rootBlockIds.push(...childIdsFrom(pageBlock.get("sys:children")));
+      }
+    } else if (noteId) {
+      rootBlockIds.push(noteId);
+    }
+
+    if (rootBlockIds.length === 0) {
+      for (const [id] of blocks) {
+        rootBlockIds.push(String(id));
+      }
+    }
+
+    const visit = (blockId: string) => {
+      if (visited.has(blockId)) {
+        return;
+      }
+      visited.add(blockId);
+
+      const block = findBlockById(blocks, blockId);
+      if (!block) {
+        return;
+      }
+
+      const childIds = childIdsFrom(block.get("sys:children"));
+      const entry: MarkdownRenderableBlock = {
+        id: blockId,
+        parentId: asStringOrNull(block.get("sys:parent")),
+        flavour: asStringOrNull(block.get("sys:flavour")),
+        type: asStringOrNull(block.get("prop:type")),
+        text: asText(block.get("prop:text")) || null,
+        checked: typeof block.get("prop:checked") === "boolean" ? Boolean(block.get("prop:checked")) : null,
+        language: asStringOrNull(block.get("prop:language")),
+        childIds,
+        url: asStringOrNull(block.get("prop:url")),
+        sourceId: asStringOrNull(block.get("prop:sourceId")),
+        caption: asStringOrNull(block.get("prop:caption")),
+        tableData: block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null,
+      };
+      blocksById.set(blockId, entry);
+
+      for (const childId of childIds) {
+        visit(childId);
+      }
+    };
+
+    for (const rootId of rootBlockIds) {
+      visit(rootId);
+    }
+
+    for (const [id] of blocks) {
+      visit(String(id));
+    }
+
+    return {
+      title,
+      tags,
+      rootBlockIds,
+      blocksById,
+    };
+  }
+
+  async function applyMarkdownOperationsInternal(parsed: {
+    workspaceId: string;
+    docId: string;
+    operations: MarkdownOperation[];
+    strict?: boolean;
+    placement?: AppendPlacement;
+    replaceExisting?: boolean;
+  }): Promise<{
+    appendedCount: number;
+    skippedCount: number;
+    blockIds: string[];
+  }> {
+    const strict = parsed.strict !== false;
+    const replaceExisting = parsed.replaceExisting === true;
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+
+    try {
+      await joinWorkspace(socket, parsed.workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, parsed.workspaceId, parsed.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document ${parsed.docId} was not found in workspace ${parsed.workspaceId}.`);
+      }
+
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      let anchorPlacement: AppendPlacement | undefined = parsed.placement;
+      let lastInsertedBlockId: string | undefined;
+      let replaceParentId: string | undefined;
+      let skippedCount = 0;
+      const blockIds: string[] = [];
+
+      if (replaceExisting) {
+        replaceParentId = ensureNoteBlock(blocks);
+        const noteBlock = findBlockById(blocks, replaceParentId);
+        if (!noteBlock) {
+          throw new Error("Unable to resolve note block for markdown replacement.");
+        }
+        const noteChildren = ensureChildrenArray(noteBlock);
+        const existingChildren = childIdsFrom(noteChildren);
+        const descendantBlockIds = collectDescendantBlockIds(blocks, existingChildren);
+        for (const descendantId of descendantBlockIds) {
+          blocks.delete(descendantId);
+        }
+        if (noteChildren.length > 0) {
+          noteChildren.delete(0, noteChildren.length);
+        }
+      }
+
+      for (const operation of parsed.operations) {
+        const placement =
+          lastInsertedBlockId
+            ? { afterBlockId: lastInsertedBlockId }
+            : replaceParentId
+              ? { parentId: replaceParentId }
+              : anchorPlacement;
+        const appendInput = markdownOperationToAppendInput(
+          operation,
+          parsed.docId,
+          parsed.workspaceId,
+          strict,
+          placement
+        );
+
+        try {
+          const normalized = normalizeAppendBlockInput(appendInput);
+          const context = resolveInsertContext(blocks, normalized);
+          const { blockId, block } = createBlock(context.parentId, normalized);
+          blocks.set(blockId, block);
+          if (context.insertIndex >= context.children.length) {
+            context.children.push([blockId]);
+          } else {
+            context.children.insert(context.insertIndex, [blockId]);
+          }
+          blockIds.push(blockId);
+          lastInsertedBlockId = blockId;
+          if (!replaceParentId) {
+            anchorPlacement = { afterBlockId: blockId };
+          }
+        } catch {
+          skippedCount += 1;
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return {
+        appendedCount: blockIds.length,
+        skippedCount,
+        blockIds,
+      };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  async function createDocInternal(parsed: CreateDocInput): Promise<CreateDocResult> {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const docId = generateId();
+      const title = parsed.title || "Untitled";
+      const ydoc = new Y.Doc();
+      const blocks = ydoc.getMap("blocks");
+      const pageId = generateId();
+      const page = new Y.Map();
+      setSysFields(page, pageId, "affine:page");
+      const titleText = new Y.Text();
+      titleText.insert(0, title);
+      page.set("prop:title", titleText);
+      const children = new Y.Array();
+      page.set("sys:children", children);
+      blocks.set(pageId, page);
+
+      const surfaceId = generateId();
+      const surface = new Y.Map();
+      setSysFields(surface, surfaceId, "affine:surface");
+      surface.set("sys:parent", pageId);
+      surface.set("sys:children", new Y.Array());
+      const elements = new Y.Map<any>();
+      elements.set("type", "$blocksuite:internal:native$");
+      elements.set("value", new Y.Map<any>());
+      surface.set("prop:elements", elements);
+      blocks.set(surfaceId, surface);
+      children.push([surfaceId]);
+
+      const noteId = generateId();
+      const note = new Y.Map();
+      setSysFields(note, noteId, "affine:note");
+      note.set("sys:parent", pageId);
+      note.set("prop:displayMode", "both");
+      note.set("prop:xywh", "[0,0,800,95]");
+      note.set("prop:index", "a0");
+      note.set("prop:hidden", false);
+      const background = new Y.Map<any>();
+      background.set("light", "#ffffff");
+      background.set("dark", "#252525");
+      note.set("prop:background", background);
+      const noteChildren = new Y.Array();
+      note.set("sys:children", noteChildren);
+      blocks.set(noteId, note);
+      children.push([noteId]);
+
+      if (parsed.content) {
+        const paraId = generateId();
+        const para = new Y.Map();
+        setSysFields(para, paraId, "affine:paragraph");
+        para.set("sys:parent", noteId);
+        para.set("sys:children", new Y.Array());
+        para.set("prop:type", "text");
+        const paragraphText = new Y.Text();
+        paragraphText.insert(0, parsed.content);
+        para.set("prop:text", paragraphText);
+        blocks.set(paraId, para);
+        noteChildren.push([paraId]);
+      }
+
+      const meta = ydoc.getMap("meta");
+      meta.set("id", docId);
+      meta.set("title", title);
+      meta.set("createDate", Date.now());
+      meta.set("tags", new Y.Array());
+
+      const updateFull = Y.encodeStateAsUpdate(ydoc);
+      const updateBase64 = Buffer.from(updateFull).toString("base64");
+      await pushDocUpdate(socket, workspaceId, docId, updateBase64);
+
+      const wsDoc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (snapshot.missing) {
+        Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      }
+      const prevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+      let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
+      if (!pages) {
+        pages = new Y.Array();
+        wsMeta.set("pages", pages);
+      }
+      const entry = new Y.Map();
+      entry.set("id", docId);
+      entry.set("title", title);
+      entry.set("createDate", Date.now());
+      entry.set("tags", new Y.Array());
+      pages.push([entry as any]);
+      const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
+      const wsDeltaBase64 = Buffer.from(wsDelta).toString("base64");
+      await pushDocUpdate(socket, workspaceId, workspaceId, wsDeltaBase64);
+
+      return { workspaceId, docId, title };
     } finally {
       socket.disconnect();
     }
@@ -1837,108 +2390,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   // CREATE DOC (high-level)
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
-    const { endpoint, cookie } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
-    try {
-      await joinWorkspace(socket, workspaceId);
-
-      // 1) Create doc content
-      const docId = generateId();
-      const ydoc = new Y.Doc();
-      const blocks = ydoc.getMap('blocks');
-      const pageId = generateId();
-      const page = new Y.Map();
-      setSysFields(page, pageId, "affine:page");
-      const titleText = new Y.Text();
-      titleText.insert(0, parsed.title || 'Untitled');
-      page.set('prop:title', titleText);
-      const children = new Y.Array();
-      page.set('sys:children', children);
-      blocks.set(pageId, page);
-
-      const surfaceId = generateId();
-      const surface = new Y.Map();
-      setSysFields(surface, surfaceId, "affine:surface");
-      surface.set('sys:parent', pageId);
-      surface.set('sys:children', new Y.Array());
-      const elements = new Y.Map<any>();
-      elements.set("type", "$blocksuite:internal:native$");
-      elements.set("value", new Y.Map<any>());
-      surface.set("prop:elements", elements);
-      blocks.set(surfaceId, surface);
-      children.push([surfaceId]);
-
-      const noteId = generateId();
-      const note = new Y.Map();
-      setSysFields(note, noteId, "affine:note");
-      note.set('sys:parent', pageId);
-      note.set('prop:displayMode', 'both');
-      note.set('prop:xywh', '[0,0,800,95]');
-      note.set('prop:index', 'a0');
-      note.set('prop:hidden', false);
-      const background = new Y.Map<any>();
-      background.set("light", "#ffffff");
-      background.set("dark", "#252525");
-      note.set("prop:background", background);
-      const noteChildren = new Y.Array();
-      note.set('sys:children', noteChildren);
-      blocks.set(noteId, note);
-      children.push([noteId]);
-
-      if (parsed.content) {
-        const paraId = generateId();
-        const para = new Y.Map();
-        setSysFields(para, paraId, "affine:paragraph");
-        para.set('sys:parent', noteId);
-        para.set('sys:children', new Y.Array());
-        para.set('prop:type', 'text');
-        const ptext = new Y.Text();
-        ptext.insert(0, parsed.content);
-        para.set('prop:text', ptext);
-        blocks.set(paraId, para);
-        noteChildren.push([paraId]);
-      }
-
-      const meta = ydoc.getMap('meta');
-      meta.set('id', docId);
-      meta.set('title', parsed.title || 'Untitled');
-      meta.set('createDate', Date.now());
-      meta.set('tags', new Y.Array());
-
-      const updateFull = Y.encodeStateAsUpdate(ydoc);
-      const updateBase64 = Buffer.from(updateFull).toString('base64');
-      await pushDocUpdate(socket, workspaceId, docId, updateBase64);
-
-      // 2) Update workspace root pages list
-      const wsDoc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (snapshot.missing) {
-        Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, 'base64'));
-      }
-      const prevSV = Y.encodeStateVector(wsDoc);
-      const wsMeta = wsDoc.getMap('meta');
-      let pages = wsMeta.get('pages') as Y.Array<Y.Map<any>> | undefined;
-      if (!pages) {
-        pages = new Y.Array();
-        wsMeta.set('pages', pages);
-      }
-      const entry = new Y.Map();
-      entry.set('id', docId);
-      entry.set('title', parsed.title || 'Untitled');
-      entry.set('createDate', Date.now());
-      entry.set('tags', new Y.Array());
-      pages.push([entry as any]);
-      const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
-      const wsDeltaB64 = Buffer.from(wsDelta).toString('base64');
-      await pushDocUpdate(socket, workspaceId, workspaceId, wsDeltaB64);
-
-      return text({ docId, title: parsed.title || 'Untitled' });
-    } finally {
-      socket.disconnect();
-    }
+    const created = await createDocInternal(parsed);
+    return text({ docId: created.docId, title: created.title });
   };
   server.registerTool(
     'create_doc',
@@ -2067,6 +2520,281 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     appendBlockHandler as any
+  );
+
+  const exportDocMarkdownHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    includeFrontmatter?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) {
+        return text({
+          docId: parsed.docId,
+          title: null,
+          tags: [],
+          exists: false,
+          markdown: "",
+          warnings: [`Document ${parsed.docId} was not found in workspace ${workspaceId}.`],
+          lossy: false,
+          stats: {
+            blockCount: 0,
+            unsupportedCount: 0,
+          },
+        });
+      }
+
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const collected = collectDocForMarkdown(doc);
+      const rendered = renderBlocksToMarkdown({
+        rootBlockIds: collected.rootBlockIds,
+        blocksById: collected.blocksById,
+      });
+
+      let markdown = rendered.markdown;
+      if (parsed.includeFrontmatter) {
+        const escapedTitle = (collected.title || "Untitled").replace(/\"/g, "\\\"");
+        const frontmatterLines = [
+          "---",
+          `docId: \"${parsed.docId}\"`,
+          `title: \"${escapedTitle}\"`,
+          "tags:",
+          ...(collected.tags.length > 0 ? collected.tags.map(tag => `  - \"${tag.replace(/\"/g, "\\\"")}\"`) : ["  -"]),
+          `lossy: ${rendered.lossy ? "true" : "false"}`,
+          "---",
+        ];
+        markdown = `${frontmatterLines.join("\n")}\n\n${markdown}`;
+      }
+
+      return text({
+        docId: parsed.docId,
+        title: collected.title || null,
+        tags: collected.tags,
+        exists: true,
+        markdown,
+        warnings: rendered.warnings,
+        lossy: rendered.lossy,
+        stats: rendered.stats,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "export_doc_markdown",
+    {
+      title: "Export Document Markdown",
+      description: "Export AFFiNE document content to markdown.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        includeFrontmatter: z.boolean().optional(),
+      },
+    },
+    exportDocMarkdownHandler as any
+  );
+
+  const createDocFromMarkdownHandler = async (parsed: {
+    workspaceId?: string;
+    title?: string;
+    markdown: string;
+    strict?: boolean;
+  }) => {
+    const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
+    let operations = [...parsedMarkdown.operations];
+    let title = (parsed.title ?? "").trim();
+    if (!title && operations.length > 0) {
+      const first = operations[0];
+      if (first.type === "heading" && first.level === 1) {
+        title = first.text.trim() || "Untitled";
+        operations = operations.slice(1);
+      }
+    }
+    if (!title) {
+      title = "Untitled";
+    }
+
+    const created = await createDocInternal({
+      workspaceId: parsed.workspaceId,
+      title,
+    });
+
+    let applied = {
+      appendedCount: 0,
+      skippedCount: 0,
+      blockIds: [] as string[],
+    };
+
+    if (operations.length > 0) {
+      applied = await applyMarkdownOperationsInternal({
+        workspaceId: created.workspaceId,
+        docId: created.docId,
+        operations,
+        strict: parsed.strict,
+      });
+    }
+
+    const applyWarnings =
+      applied.skippedCount > 0
+        ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
+        : [];
+
+    return text({
+      workspaceId: created.workspaceId,
+      docId: created.docId,
+      title: created.title,
+      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
+      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      stats: {
+        parsedBlocks: parsedMarkdown.operations.length,
+        appliedBlocks: applied.appendedCount,
+        skippedBlocks: applied.skippedCount,
+      },
+    });
+  };
+  server.registerTool(
+    "create_doc_from_markdown",
+    {
+      title: "Create Document From Markdown",
+      description: "Create a new AFFiNE document and import markdown content.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        title: z.string().optional(),
+        markdown: MarkdownContent.describe("Markdown content to import"),
+        strict: z.boolean().optional(),
+      },
+    },
+    createDocFromMarkdownHandler as any
+  );
+
+  const appendMarkdownHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    markdown: string;
+    strict?: boolean;
+    placement?: AppendPlacement;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
+    const applied = await applyMarkdownOperationsInternal({
+      workspaceId,
+      docId: parsed.docId,
+      operations: parsedMarkdown.operations,
+      strict: parsed.strict,
+      placement: parsed.placement,
+    });
+
+    const applyWarnings =
+      applied.skippedCount > 0
+        ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
+        : [];
+
+    return text({
+      workspaceId,
+      docId: parsed.docId,
+      appended: applied.appendedCount > 0,
+      appendedCount: applied.appendedCount,
+      blockIds: applied.blockIds,
+      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
+      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      stats: {
+        parsedBlocks: parsedMarkdown.operations.length,
+        appliedBlocks: applied.appendedCount,
+        skippedBlocks: applied.skippedCount,
+      },
+    });
+  };
+  server.registerTool(
+    "append_markdown",
+    {
+      title: "Append Markdown",
+      description: "Append markdown content to an existing AFFiNE document.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        markdown: MarkdownContent.describe("Markdown content to append"),
+        strict: z.boolean().optional(),
+        placement: z
+          .object({
+            parentId: z.string().optional(),
+            afterBlockId: z.string().optional(),
+            beforeBlockId: z.string().optional(),
+            index: z.number().int().min(0).optional(),
+          })
+          .optional()
+          .describe("Optional insertion target/position"),
+      },
+    },
+    appendMarkdownHandler as any
+  );
+
+  const replaceDocWithMarkdownHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    markdown: string;
+    strict?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
+    const applied = await applyMarkdownOperationsInternal({
+      workspaceId,
+      docId: parsed.docId,
+      operations: parsedMarkdown.operations,
+      strict: parsed.strict,
+      replaceExisting: true,
+    });
+
+    const applyWarnings =
+      applied.skippedCount > 0
+        ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
+        : [];
+
+    return text({
+      workspaceId,
+      docId: parsed.docId,
+      replaced: true,
+      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
+      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      stats: {
+        parsedBlocks: parsedMarkdown.operations.length,
+        appliedBlocks: applied.appendedCount,
+        skippedBlocks: applied.skippedCount,
+      },
+    });
+  };
+  server.registerTool(
+    "replace_doc_with_markdown",
+    {
+      title: "Replace Document With Markdown",
+      description: "Replace the main note content of a document with markdown content.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        markdown: MarkdownContent.describe("Markdown content to replace with"),
+        strict: z.boolean().optional(),
+      },
+    },
+    replaceDocWithMarkdownHandler as any
   );
 
   // DELETE DOC

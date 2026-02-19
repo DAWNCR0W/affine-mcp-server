@@ -16,7 +16,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio only (Claude Desktop / Codex compatible)
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 32 focused tools with WebSocket-based document editing
+- Tools: 41 focused tools with WebSocket-based document editing
 - Status: Active
  
 > New in v1.5.0: `append_block` now supports 30 verified block profiles, including database/edgeless (`frame`, `edgeless_text`, `surface_ref`, `note`) insertion paths. For stability on AFFiNE 0.26.x, `type=\"data_view\"` is currently mapped to a database block.
@@ -24,7 +24,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
-- Documents: list/get/read/publish/revoke + create/append paragraph/delete (WebSocket‑based)
+- Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export (WebSocket‑based)
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -164,14 +164,18 @@ If you prefer `npx`:
 - `list_docs_by_tag` – list documents by tag
 - `get_doc` – get document metadata
 - `read_doc` – read document block content and plain text snapshot (WebSocket)
+- `export_doc_markdown` – export document content as markdown
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
+- `create_doc_from_markdown` – create a document from markdown content
 - `create_tag` – create a reusable workspace-level tag
 - `add_tag_to_doc` – attach a tag to a document
 - `remove_tag_from_doc` – detach a tag from a document
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
+- `append_markdown` – append markdown content to an existing document
+- `replace_doc_with_markdown` – replace the main note content with markdown content
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
