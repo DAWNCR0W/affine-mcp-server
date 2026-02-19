@@ -174,10 +174,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }
 
   async function getCookieAndEndpoint() {
-    const endpoint = (gql as any).endpoint || process.env.AFFINE_BASE_URL + '/graphql';
-    const headers = (gql as any).headers || {};
-    const cookie = (gql as any).cookie || headers.Cookie || '';
-    return { endpoint, cookie };
+    const endpoint = gql.endpoint;
+    const cookie = gql.cookie;
+    const bearer = gql.bearer;
+    return { endpoint, cookie, bearer };
   }
 
   function makeText(content: string): Y.Text {
@@ -1233,9 +1233,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const workspaceId = normalized.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
 
@@ -1589,9 +1589,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }> {
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
 
     try {
       await joinWorkspace(socket, parsed.workspaceId);
@@ -1678,9 +1678,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   async function createDocInternal(parsed: CreateDocInput): Promise<CreateDocResult> {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
 
@@ -1790,9 +1790,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const tagsByDocId = new Map<string, string[]>();
       try {
-        const { endpoint, cookie } = await getCookieAndEndpoint();
+        const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-        const socket = await connectWorkspaceSocket(wsUrl, cookie);
+        const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
         try {
           await joinWorkspace(socket, workspaceId);
           const snapshot = await loadDoc(socket, workspaceId, workspaceId);
@@ -1854,9 +1854,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
     }
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
@@ -1925,9 +1925,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const tag = normalizeTag(parsed.tag);
     const ignoreCase = parsed.ignoreCase ?? true;
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
@@ -1984,9 +1984,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
     const tag = normalizeTag(parsed.tag);
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
@@ -2032,9 +2032,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
     const tag = normalizeTag(parsed.tag);
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
 
@@ -2123,9 +2123,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
     const tag = normalizeTag(parsed.tag);
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
 
@@ -2226,9 +2226,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
     }
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
@@ -2532,9 +2532,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
     }
 
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
 
     try {
       await joinWorkspace(socket, workspaceId);
@@ -2801,9 +2801,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   const deleteDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error('workspaceId is required');
-    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
       // remove from workspace pages
