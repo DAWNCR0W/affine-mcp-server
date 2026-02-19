@@ -2840,4 +2840,163 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     deleteDocHandler as any
   );
+
+  // ADD DATABASE ROW
+  const addDatabaseRowHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    cells: Record<string, unknown>;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error("Document not found");
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      // Find the database block
+      const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
+      if (!dbBlock) throw new Error(`Database block '${parsed.databaseBlockId}' not found`);
+      const dbFlavour = dbBlock.get("sys:flavour");
+      if (dbFlavour !== "affine:database") {
+        throw new Error(`Block '${parsed.databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
+      }
+
+      // Read column definitions to map names → IDs and get types
+      const columnsRaw = dbBlock.get("prop:columns");
+      const columnDefs: Array<{ id: string; name: string; type: string }> = [];
+      if (columnsRaw instanceof Y.Array) {
+        columnsRaw.forEach((col: any) => {
+          const id = col instanceof Y.Map ? col.get("id") : col?.id;
+          const name = col instanceof Y.Map ? col.get("name") : col?.name;
+          const type = col instanceof Y.Map ? col.get("type") : col?.type;
+          if (id) columnDefs.push({ id: String(id), name: String(name || ""), type: String(type || "rich-text") });
+        });
+      }
+
+      // Build lookup: column name → column def, column id → column def
+      const colByName = new Map<string, { id: string; type: string }>();
+      const colById = new Map<string, { id: string; type: string }>();
+      for (const col of columnDefs) {
+        if (col.name) colByName.set(col.name, { id: col.id, type: col.type });
+        colById.set(col.id, { id: col.id, type: col.type });
+      }
+
+      // Create a new paragraph block as the row child of the database
+      const rowBlockId = generateId();
+      const rowBlock = new Y.Map<any>();
+      setSysFields(rowBlock, rowBlockId, "affine:paragraph");
+      rowBlock.set("sys:parent", parsed.databaseBlockId);
+      rowBlock.set("sys:children", new Y.Array<string>());
+      rowBlock.set("prop:type", "text");
+      rowBlock.set("prop:text", makeText(""));
+      blocks.set(rowBlockId, rowBlock);
+
+      // Add row block to database's children
+      const dbChildren = ensureChildrenArray(dbBlock);
+      dbChildren.push([rowBlockId]);
+
+      // Populate cells map on the database block
+      const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
+      if (!(cellsMap instanceof Y.Map)) {
+        throw new Error("Database block has no cells map");
+      }
+
+      // Create row cell map
+      const rowCells = new Y.Map<any>();
+      for (const [key, value] of Object.entries(parsed.cells)) {
+        // Resolve column: try by name first, then by ID
+        const col = colByName.get(key) || colById.get(key);
+        if (!col) {
+          throw new Error(`Column '${key}' not found. Available columns: ${columnDefs.map(c => c.name || c.id).join(", ")}`);
+        }
+
+        // Create cell value based on column type
+        const cellValue = new Y.Map<any>();
+        cellValue.set("columnId", col.id);
+        switch (col.type) {
+          case "rich-text":
+          case "title": {
+            const yText = makeText(String(value ?? ""));
+            cellValue.set("value", yText);
+            break;
+          }
+          case "number": {
+            cellValue.set("value", Number(value));
+            break;
+          }
+          case "checkbox": {
+            cellValue.set("value", Boolean(value));
+            break;
+          }
+          case "select": {
+            // Select stores a string ID; pass the value as-is
+            cellValue.set("value", String(value ?? ""));
+            break;
+          }
+          case "multi-select": {
+            // Multi-select stores an array of string IDs
+            const arr = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
+            cellValue.set("value", arr);
+            break;
+          }
+          case "date": {
+            cellValue.set("value", Number(value));
+            break;
+          }
+          case "link": {
+            cellValue.set("value", String(value ?? ""));
+            break;
+          }
+          default: {
+            // Fallback: store as-is for unknown types
+            if (typeof value === "string") {
+              cellValue.set("value", makeText(value));
+            } else {
+              cellValue.set("value", value);
+            }
+          }
+        }
+        rowCells.set(col.id, cellValue);
+      }
+      cellsMap.set(rowBlockId, rowCells);
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        added: true,
+        rowBlockId,
+        databaseBlockId: parsed.databaseBlockId,
+        cellCount: Object.keys(parsed.cells).length,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_row",
+    {
+      title: "Add Database Row",
+      description: "Add a row to an AFFiNE database block. Provide cell values mapped by column name or column ID.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value"),
+      },
+    },
+    addDatabaseRowHandler as any
+  );
 }

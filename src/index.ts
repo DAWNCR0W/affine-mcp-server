@@ -28,16 +28,21 @@ const config = loadConfig();
 // Startup diagnostics (visible in Claude Code MCP server logs via stderr)
 import { existsSync } from "fs";
 import { CONFIG_FILE } from "./config.js";
+const debug = !!process.env.AFFINE_DEBUG;
 console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
 console.error(`[affine-mcp] Endpoint: ${config.baseUrl}${config.graphqlPath}`);
-console.error(`[affine-mcp] Auth: ${config.apiToken ? 'token ' + config.apiToken.slice(0, 10) + '...' : 'none'}`);
-console.error(`[affine-mcp] Cookie: ${config.cookie ? config.cookie.slice(0, 20) + '...' : 'none'}`);
-console.error(`[affine-mcp] Email: ${config.email || '(none)'}`);
+console.error(`[affine-mcp] Auth: ${config.apiToken ? 'token set' : 'none'}`);
+console.error(`[affine-mcp] Cookie: ${config.cookie ? 'set' : 'none'}`);
+console.error(`[affine-mcp] Email: ${config.email ? config.email.replace(/^[^@]+/, '***') : '(none)'}`);
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId || '(none)'}`);
+if (debug) {
+  if (config.apiToken) console.error(`[affine-debug] Token prefix: ${config.apiToken.slice(0, 10)}...`);
+  if (config.cookie) console.error(`[affine-debug] Cookie prefix: ${config.cookie.slice(0, 20)}...`);
+  if (config.email) console.error(`[affine-debug] Email: ${config.email}`);
+}
 
 async function buildServer() {
   const server = new McpServer({ name: "affine-mcp", version: "1.5.0" });
-
 
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
