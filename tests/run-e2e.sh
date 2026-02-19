@@ -4,9 +4,10 @@
 #   1. Start AFFiNE via Docker Compose
 #   2. Wait for health + acquire credentials
 #   3. Build the MCP server
-#   4. Run MCP database creation test
-#   5. Run Playwright UI verification
-#   6. Tear down Docker (on exit)
+#   4. Run MCP database creation test (email/password auth)
+#   5. Run MCP bearer token auth test
+#   6. Run Playwright UI verification (both auth modes)
+#   7. Tear down Docker (on exit)
 #
 set -euo pipefail
 
@@ -54,7 +55,12 @@ echo ""
 echo "=== Running MCP database creation test ==="
 node "$SCRIPT_DIR/test-database-creation.mjs"
 
-# --- Step 5: Run Playwright verification ---
+# --- Step 5: Run MCP bearer token auth test ---
+echo ""
+echo "=== Running MCP bearer token auth test ==="
+node "$SCRIPT_DIR/test-bearer-auth.mjs"
+
+# --- Step 6: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 npx playwright test --config "$SCRIPT_DIR/playwright/playwright.config.ts"

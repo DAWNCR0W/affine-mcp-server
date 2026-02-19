@@ -36,6 +36,7 @@
     "test:comprehensive": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
     "test:db-create": "node tests/test-database-creation.mjs",
+    "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
