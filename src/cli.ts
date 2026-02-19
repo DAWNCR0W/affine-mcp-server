@@ -6,54 +6,27 @@ import { loginWithPassword } from "./auth.js";
 
 function ask(prompt: string, hidden = false): Promise<string> {
   return new Promise((resolve) => {
-    if (hidden && process.stdin.isTTY) {
-      // TTY raw-mode: read chars one-by-one, echo '*'
-      process.stderr.write(prompt);
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      process.stdin.setEncoding("utf8");
-      let input = "";
-      const onData = (ch: string) => {
-        const c = ch.charCodeAt(0);
-        if (ch === "\r" || ch === "\n") {
-          // Enter
-          process.stdin.setRawMode(false);
-          process.stdin.pause();
-          process.stdin.removeListener("data", onData);
-          process.stderr.write("\n");
-          resolve(input.trim());
-        } else if (c === 3) {
-          // Ctrl+C
-          process.stdin.setRawMode(false);
-          process.stderr.write("\n");
-          process.exit(130);
-        } else if (c === 127 || c === 8) {
-          // Backspace
-          if (input.length > 0) {
-            input = input.slice(0, -1);
-            process.stderr.write("\b \b");
-          }
-        } else if (c >= 32) {
-          input += ch;
-          process.stderr.write("*");
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stderr,
+      terminal: process.stdin.isTTY ?? false,
+    });
+    if (hidden) {
+      // Suppress character echo by overriding _writeToOutput.
+      // This is the standard Node.js technique used by npm, yarn, etc.
+      // It works reliably across platforms and TTY/non-TTY environments.
+      (rl as any)._writeToOutput = (str: string) => {
+        // Only write the prompt itself, suppress typed characters
+        if (str.includes(prompt)) {
+          process.stderr.write(prompt);
         }
       };
-      process.stdin.on("data", onData);
-    } else if (hidden) {
-      // Piped stdin — no echo by default
-      const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: false });
-      process.stderr.write(prompt);
-      rl.once("line", (answer) => {
-        rl.close();
-        resolve((answer || "").trim());
-      });
-    } else {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-      rl.question(prompt, (answer) => {
-        rl.close();
-        resolve(answer.trim());
-      });
     }
+    rl.question(prompt, (answer) => {
+      rl.close();
+      if (hidden) process.stderr.write("\n");
+      resolve((answer || "").trim());
+    });
   });
 }
 

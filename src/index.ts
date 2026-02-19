@@ -31,14 +31,15 @@ import { CONFIG_FILE } from "./config.js";
 const debug = !!process.env.AFFINE_DEBUG;
 console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
 console.error(`[affine-mcp] Endpoint: ${config.baseUrl}${config.graphqlPath}`);
-console.error(`[affine-mcp] Auth: ${config.apiToken ? 'token set' : 'none'}`);
-console.error(`[affine-mcp] Cookie: ${config.cookie ? 'set' : 'none'}`);
-console.error(`[affine-mcp] Email: ${config.email ? config.email.replace(/^[^@]+/, '***') : '(none)'}`);
-console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId || '(none)'}`);
+const hasAuth = !!(config.apiToken || config.cookie || (config.email && config.password));
+console.error(`[affine-mcp] Auth: ${hasAuth ? 'configured' : 'not configured'}`);
+console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 if (debug) {
+  console.error(`[affine-debug] Auth method: ${config.apiToken ? 'token' : config.cookie ? 'cookie' : config.email ? 'email/password' : 'none'}`);
   if (config.apiToken) console.error(`[affine-debug] Token prefix: ${config.apiToken.slice(0, 10)}...`);
   if (config.cookie) console.error(`[affine-debug] Cookie prefix: ${config.cookie.slice(0, 20)}...`);
   if (config.email) console.error(`[affine-debug] Email: ${config.email}`);
+  if (config.defaultWorkspaceId) console.error(`[affine-debug] Workspace: ${config.defaultWorkspaceId}`);
 }
 
 async function buildServer() {
