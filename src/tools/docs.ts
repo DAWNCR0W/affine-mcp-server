@@ -2841,6 +2841,92 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     deleteDocHandler as any
   );
 
+  // ── helpers for database select columns ──
+
+  /** Read column definitions including select options from a database block */
+  function readColumnDefs(dbBlock: Y.Map<any>): Array<{
+    id: string; name: string; type: string;
+    options: Array<{ id: string; value: string; color: string }>;
+    raw: any;
+  }> {
+    const columnsRaw = dbBlock.get("prop:columns");
+    const defs: Array<{
+      id: string; name: string; type: string;
+      options: Array<{ id: string; value: string; color: string }>;
+      raw: any;
+    }> = [];
+    if (!(columnsRaw instanceof Y.Array)) return defs;
+    columnsRaw.forEach((col: any) => {
+      const id = col instanceof Y.Map ? col.get("id") : col?.id;
+      const name = col instanceof Y.Map ? col.get("name") : col?.name;
+      const type = col instanceof Y.Map ? col.get("type") : col?.type;
+      // Read select/multi-select options
+      const data = col instanceof Y.Map ? col.get("data") : col?.data;
+      let options: Array<{ id: string; value: string; color: string }> = [];
+      if (data) {
+        const rawOpts = data instanceof Y.Map ? data.get("options") : data?.options;
+        if (Array.isArray(rawOpts)) {
+          options = rawOpts.map((o: any) => ({
+            id: String(o?.id ?? o?.get?.("id") ?? ""),
+            value: String(o?.value ?? o?.get?.("value") ?? ""),
+            color: String(o?.color ?? o?.get?.("color") ?? ""),
+          }));
+        } else if (rawOpts instanceof Y.Array) {
+          rawOpts.forEach((o: any) => {
+            options.push({
+              id: String(o instanceof Y.Map ? o.get("id") : o?.id ?? ""),
+              value: String(o instanceof Y.Map ? o.get("value") : o?.value ?? ""),
+              color: String(o instanceof Y.Map ? o.get("color") : o?.color ?? ""),
+            });
+          });
+        }
+      }
+      if (id) defs.push({ id: String(id), name: String(name || ""), type: String(type || "rich-text"), options, raw: col });
+    });
+    return defs;
+  }
+
+  const SELECT_COLORS = [
+    "var(--affine-tag-blue)", "var(--affine-tag-green)", "var(--affine-tag-red)",
+    "var(--affine-tag-orange)", "var(--affine-tag-purple)", "var(--affine-tag-yellow)",
+    "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
+  ];
+
+  /** Find or create a select option for a column, mutating the column's data in place */
+  function resolveSelectOptionId(
+    col: { raw: any; options: Array<{ id: string; value: string; color: string }> },
+    valueText: string
+  ): string {
+    // Try exact match first
+    const existing = col.options.find(o => o.value === valueText);
+    if (existing) return existing.id;
+    // Create new option
+    const newId = generateId();
+    const colorIdx = col.options.length % SELECT_COLORS.length;
+    const newOpt = { id: newId, value: valueText, color: SELECT_COLORS[colorIdx] };
+    col.options.push(newOpt);
+    // Mutate the raw column's data to include the new option
+    const rawCol = col.raw;
+    if (rawCol instanceof Y.Map) {
+      let data = rawCol.get("data");
+      if (!(data instanceof Y.Map)) {
+        data = new Y.Map<any>();
+        rawCol.set("data", data);
+      }
+      let opts = data.get("options");
+      if (!(opts instanceof Y.Array)) {
+        opts = new Y.Array<any>();
+        data.set("options", opts);
+      }
+      const optMap = new Y.Map<any>();
+      optMap.set("id", newId);
+      optMap.set("value", valueText);
+      optMap.set("color", SELECT_COLORS[colorIdx]);
+      opts.push([optMap]);
+    }
+    return newId;
+  }
+
   // ADD DATABASE ROW
   const addDatabaseRowHandler = async (parsed: {
     workspaceId?: string;
@@ -2873,25 +2959,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         throw new Error(`Block '${parsed.databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
       }
 
-      // Read column definitions to map names → IDs and get types
-      const columnsRaw = dbBlock.get("prop:columns");
-      const columnDefs: Array<{ id: string; name: string; type: string }> = [];
-      if (columnsRaw instanceof Y.Array) {
-        columnsRaw.forEach((col: any) => {
-          const id = col instanceof Y.Map ? col.get("id") : col?.id;
-          const name = col instanceof Y.Map ? col.get("name") : col?.name;
-          const type = col instanceof Y.Map ? col.get("type") : col?.type;
-          if (id) columnDefs.push({ id: String(id), name: String(name || ""), type: String(type || "rich-text") });
-        });
+      // Read column definitions with select options
+      const columnDefs = readColumnDefs(dbBlock);
+
+      // Build lookups
+      const colByName = new Map<string, typeof columnDefs[0]>();
+      const colById = new Map<string, typeof columnDefs[0]>();
+      for (const col of columnDefs) {
+        if (col.name) colByName.set(col.name, col);
+        colById.set(col.id, col);
       }
 
-      // Build lookup: column name → column def, column id → column def
-      const colByName = new Map<string, { id: string; type: string }>();
-      const colById = new Map<string, { id: string; type: string }>();
-      for (const col of columnDefs) {
-        if (col.name) colByName.set(col.name, { id: col.id, type: col.type });
-        colById.set(col.id, { id: col.id, type: col.type });
-      }
+      // Identify the title column (first column, or type === "title")
+      const titleCol = columnDefs.find(c => c.type === "title") || null;
 
       // Create a new paragraph block as the row child of the database
       const rowBlockId = generateId();
@@ -2900,7 +2980,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       rowBlock.set("sys:parent", parsed.databaseBlockId);
       rowBlock.set("sys:children", new Y.Array<string>());
       rowBlock.set("prop:type", "text");
-      rowBlock.set("prop:text", makeText(""));
+      // Title column value goes on the paragraph block's text
+      const titleValue = titleCol ? parsed.cells[titleCol.name] ?? parsed.cells[titleCol.id] ?? "" : "";
+      rowBlock.set("prop:text", makeText(String(titleValue)));
       blocks.set(rowBlockId, rowBlock);
 
       // Add row block to database's children
@@ -2922,15 +3004,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           throw new Error(`Column '${key}' not found. Available columns: ${columnDefs.map(c => c.name || c.id).join(", ")}`);
         }
 
+        // Skip the title column — already stored on the paragraph block
+        if (titleCol && col.id === titleCol.id) continue;
+
         // Create cell value based on column type
         const cellValue = new Y.Map<any>();
         cellValue.set("columnId", col.id);
         switch (col.type) {
-          case "rich-text":
-          case "title": {
+          case "rich-text": {
             const yText = makeText(String(value ?? ""));
             cellValue.set("value", yText);
             break;
+          }
+          case "title": {
+            // Handled above on the paragraph block; skip
+            continue;
           }
           case "number": {
             cellValue.set("value", Number(value));
@@ -2941,14 +3029,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             break;
           }
           case "select": {
-            // Select stores a string ID; pass the value as-is
-            cellValue.set("value", String(value ?? ""));
+            // Resolve option ID by label text; auto-create if needed
+            const optionId = resolveSelectOptionId(col, String(value ?? ""));
+            cellValue.set("value", optionId);
             break;
           }
           case "multi-select": {
-            // Multi-select stores an array of string IDs
-            const arr = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
-            cellValue.set("value", arr);
+            const labels = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
+            const ids = labels.map(lbl => resolveSelectOptionId(col, lbl));
+            cellValue.set("value", ids);
             break;
           }
           case "date": {
@@ -2960,7 +3049,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             break;
           }
           default: {
-            // Fallback: store as-is for unknown types
+            // Fallback: store as rich-text
             if (typeof value === "string") {
               cellValue.set("value", makeText(value));
             } else {
@@ -2989,14 +3078,128 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "add_database_row",
     {
       title: "Add Database Row",
-      description: "Add a row to an AFFiNE database block. Provide cell values mapped by column name or column ID.",
+      description: "Add a row to an AFFiNE database block. Provide cell values mapped by column name or column ID. Title column text is stored on the row paragraph block. Select columns auto-create options by label.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value"),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. For select columns, pass the display label (option auto-created if new)."),
       },
     },
     addDatabaseRowHandler as any
+  );
+
+  // ADD DATABASE COLUMN
+  const addDatabaseColumnHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    name: string;
+    type: string;
+    options?: string[];
+    width?: number;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error("Document not found");
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
+      if (!dbBlock) throw new Error(`Database block '${parsed.databaseBlockId}' not found`);
+      if (dbBlock.get("sys:flavour") !== "affine:database") {
+        throw new Error("Block is not a database");
+      }
+
+      const columns = dbBlock.get("prop:columns");
+      if (!(columns instanceof Y.Array)) throw new Error("Database has no columns array");
+
+      // Check for duplicate name
+      const existingDefs = readColumnDefs(dbBlock);
+      if (existingDefs.some(c => c.name === parsed.name)) {
+        throw new Error(`Column '${parsed.name}' already exists`);
+      }
+
+      const columnId = generateId();
+      const column = new Y.Map<any>();
+      column.set("id", columnId);
+      column.set("name", parsed.name);
+      column.set("type", parsed.type || "rich-text");
+      column.set("width", parsed.width || 200);
+
+      // For select/multi-select, create options
+      if ((parsed.type === "select" || parsed.type === "multi-select") && parsed.options?.length) {
+        const data = new Y.Map<any>();
+        const opts = new Y.Array<any>();
+        for (let i = 0; i < parsed.options.length; i++) {
+          const optMap = new Y.Map<any>();
+          optMap.set("id", generateId());
+          optMap.set("value", parsed.options[i]);
+          optMap.set("color", SELECT_COLORS[i % SELECT_COLORS.length]);
+          opts.push([optMap]);
+        }
+        data.set("options", opts);
+        column.set("data", data);
+      }
+
+      columns.push([column]);
+
+      // Also add the column to all existing views so it's visible
+      const views = dbBlock.get("prop:views");
+      if (views instanceof Y.Array) {
+        views.forEach((view: any) => {
+          if (view instanceof Y.Map) {
+            const viewColumns = view.get("columns");
+            if (viewColumns instanceof Y.Array) {
+              const viewCol = new Y.Map<any>();
+              viewCol.set("id", columnId);
+              viewCol.set("hide", false);
+              viewCol.set("width", parsed.width || 200);
+              viewColumns.push([viewCol]);
+            }
+          }
+        });
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        added: true,
+        columnId,
+        name: parsed.name,
+        type: parsed.type || "rich-text",
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_column",
+    {
+      title: "Add Database Column",
+      description: "Add a column to an existing AFFiNE database block. Supports rich-text, select, multi-select, number, checkbox, link, date types.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        name: z.string().min(1).describe("Column display name"),
+        type: z.enum(["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"]).default("rich-text").describe("Column type"),
+        options: z.array(z.string()).optional().describe("Predefined options for select/multi-select columns"),
+        width: z.number().optional().describe("Column width in pixels (default 200)"),
+      },
+    },
+    addDatabaseColumnHandler as any
   );
 }
