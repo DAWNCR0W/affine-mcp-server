@@ -178,6 +178,32 @@ class ComprehensiveRunner {
     if (!docId) {
       throw new Error('create_doc did not return docId');
     }
+    const tagName = `mcp-tag-${Date.now()}`;
+
+    await this.callTool('create_tag', { workspaceId, tag: tagName });
+    await this.callTool('add_tag_to_doc', { workspaceId, docId, tag: tagName });
+    await this.callTool('list_tags', { workspaceId }, parsed => {
+      const tags = Array.isArray(parsed?.tags) ? parsed.tags : [];
+      if (!tags.some(entry => entry?.name === tagName)) {
+        throw new Error('list_tags did not include created tag');
+      }
+    });
+    await this.callTool('list_docs_by_tag', { workspaceId, tag: tagName }, parsed => {
+      const docs = Array.isArray(parsed?.docs) ? parsed.docs : [];
+      if (!docs.some(entry => entry?.id === docId)) {
+        throw new Error('list_docs_by_tag did not include tagged doc');
+      }
+    });
+    await this.callTool('list_docs', { workspaceId, first: 20 }, parsed => {
+      const edges = Array.isArray(parsed?.edges) ? parsed.edges : [];
+      const mainDoc = edges.map(edge => edge?.node).find(node => node?.id === docId);
+      if (!mainDoc) {
+        throw new Error('list_docs did not include created doc');
+      }
+      if (!Array.isArray(mainDoc.tags) || !mainDoc.tags.includes(tagName)) {
+        throw new Error('list_docs did not include tags for created doc');
+      }
+    });
 
     await this.callTool('get_doc', { workspaceId, docId });
     await this.callTool('publish_doc', { workspaceId, docId });
@@ -197,7 +223,11 @@ class ComprehensiveRunner {
       if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
         throw new Error('read_doc returned no blocks');
       }
+      if (!Array.isArray(parsed.tags) || !parsed.tags.includes(tagName)) {
+        throw new Error('read_doc tags did not include assigned tag');
+      }
     });
+    await this.callTool('remove_tag_from_doc', { workspaceId, docId, tag: tagName });
 
     await this.callTool('list_comments', { workspaceId, docId, first: 20 });
     await this.callTool('create_comment', {

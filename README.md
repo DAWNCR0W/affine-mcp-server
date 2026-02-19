@@ -159,12 +159,17 @@ If you prefer `npx`:
 - `delete_workspace` – delete workspace permanently
 
 ### Documents
-- `list_docs` – list documents with pagination
+- `list_docs` – list documents with pagination (includes `node.tags`)
+- `list_tags` – list all tags in a workspace
+- `list_docs_by_tag` – list documents by tag
 - `get_doc` – get document metadata
 - `read_doc` – read document block content and plain text snapshot (WebSocket)
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
+- `create_tag` – create a reusable workspace-level tag
+- `add_tag_to_doc` – attach a tag to a document
+- `remove_tag_from_doc` – detach a tag from a document
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
 - `delete_doc` – delete a document (WebSocket)

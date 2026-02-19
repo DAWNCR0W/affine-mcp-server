@@ -195,6 +195,106 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return childIds;
   }
 
+  function normalizeTag(rawTag: string): string {
+    const normalized = rawTag.trim();
+    if (!normalized) {
+      throw new Error("tag is required");
+    }
+    return normalized;
+  }
+
+  function getStringArray(value: unknown): string[] {
+    if (!(value instanceof Y.Array)) {
+      return [];
+    }
+    const values: string[] = [];
+    value.forEach((entry: unknown) => {
+      if (typeof entry === "string") {
+        values.push(entry);
+      }
+    });
+    return values;
+  }
+
+  function getTagArray(target: Y.Map<any>, key: string = "tags"): Y.Array<string> | null {
+    const value = target.get(key);
+    if (!(value instanceof Y.Array)) {
+      return null;
+    }
+    return value as Y.Array<string>;
+  }
+
+  function ensureTagArray(target: Y.Map<any>, key: string = "tags"): Y.Array<string> {
+    const existing = getTagArray(target, key);
+    if (existing) {
+      return existing;
+    }
+    const next = new Y.Array<string>();
+    target.set(key, next);
+    return next;
+  }
+
+  function hasTag(tagValues: string[], tag: string, ignoreCase: boolean): boolean {
+    const normalizedTag = ignoreCase ? tag.toLocaleLowerCase() : tag;
+    return tagValues.some((entry) => (ignoreCase ? entry.toLocaleLowerCase() : entry) === normalizedTag);
+  }
+
+  function findTagIndex(tags: Y.Array<string>, tag: string, ignoreCase: boolean): number {
+    const normalizedTag = ignoreCase ? tag.toLocaleLowerCase() : tag;
+    let index = -1;
+    tags.forEach((entry: unknown, i: number) => {
+      if (index >= 0 || typeof entry !== "string") {
+        return;
+      }
+      const current = ignoreCase ? entry.toLocaleLowerCase() : entry;
+      if (current === normalizedTag) {
+        index = i;
+      }
+    });
+    return index;
+  }
+
+  type WorkspacePageEntry = {
+    index: number;
+    id: string;
+    title: string | null;
+    createDate: number | null;
+    updatedDate: number | null;
+    entry: Y.Map<any>;
+    tagsArray: Y.Array<string> | null;
+  };
+
+  function getWorkspacePageEntries(meta: Y.Map<any>): WorkspacePageEntry[] {
+    const pages = meta.get("pages");
+    if (!(pages instanceof Y.Array)) {
+      return [];
+    }
+
+    const entries: WorkspacePageEntry[] = [];
+    pages.forEach((value: unknown, index: number) => {
+      if (!(value instanceof Y.Map)) {
+        return;
+      }
+      const id = value.get("id");
+      if (typeof id !== "string" || id.length === 0) {
+        return;
+      }
+      const title = value.get("title");
+      const createDate = value.get("createDate");
+      const updatedDate = value.get("updatedDate");
+      entries.push({
+        index,
+        id,
+        title: typeof title === "string" ? title : null,
+        createDate: typeof createDate === "number" ? createDate : null,
+        updatedDate: typeof updatedDate === "number" ? updatedDate : null,
+        entry: value,
+        tagsArray: getTagArray(value),
+      });
+    });
+    return entries;
+  }
+
   function setSysFields(block: Y.Map<any>, blockId: string, flavour: string): void {
     block.set("sys:id", blockId);
     block.set("sys:flavour", flavour);
@@ -1133,7 +1233,52 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       const query = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
       const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
-      return text(data.workspace.docs);
+      const docs = data.workspace.docs;
+
+      const tagsByDocId = new Map<string, string[]>();
+      try {
+        const { endpoint, cookie } = await getCookieAndEndpoint();
+        const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+        const socket = await connectWorkspaceSocket(wsUrl, cookie);
+        try {
+          await joinWorkspace(socket, workspaceId);
+          const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+          if (snapshot.missing) {
+            const wsDoc = new Y.Doc();
+            Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+            const meta = wsDoc.getMap("meta");
+            const pages = getWorkspacePageEntries(meta);
+            for (const page of pages) {
+              tagsByDocId.set(page.id, getStringArray(page.tagsArray));
+            }
+          }
+        } finally {
+          socket.disconnect();
+        }
+      } catch {
+        // Keep list_docs available even when workspace snapshot fetch fails.
+      }
+
+      const mergedDocs = {
+        ...docs,
+        edges: Array.isArray(docs?.edges)
+          ? docs.edges.map((edge: any) => {
+              const node = edge?.node;
+              if (!node || typeof node.id !== "string") {
+                return edge;
+              }
+              return {
+                ...edge,
+                node: {
+                  ...node,
+                  tags: tagsByDocId.get(node.id) || [],
+                },
+              };
+            })
+          : [],
+      };
+
+      return text(mergedDocs);
     };
   server.registerTool(
     "list_docs",
@@ -1148,6 +1293,356 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     },
     listDocsHandler as any
+  );
+
+  const listTagsHandler = async (parsed: { workspaceId?: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!snapshot.missing) {
+        return text({ workspaceId, totalTags: 0, tags: [] });
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const pages = getWorkspacePageEntries(meta);
+
+      const tagCounts = new Map<string, number>();
+      for (const tag of getStringArray(getTagArray(meta))) {
+        const normalized = tag.trim();
+        if (!normalized || tagCounts.has(normalized)) {
+          continue;
+        }
+        tagCounts.set(normalized, 0);
+      }
+
+      for (const page of pages) {
+        const uniqueTags = new Set<string>();
+        for (const tag of getStringArray(page.tagsArray)) {
+          const normalized = tag.trim();
+          if (!normalized) {
+            continue;
+          }
+          uniqueTags.add(normalized);
+        }
+        for (const tag of uniqueTags) {
+          tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+        }
+      }
+
+      const tags = [...tagCounts.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([name, docCount]) => ({ name, docCount }));
+
+      return text({
+        workspaceId,
+        totalTags: tags.length,
+        tags,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "list_tags",
+    {
+      title: "List Tags",
+      description: "List all tags in a workspace and the number of docs attached to each tag.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+      },
+    },
+    listTagsHandler as any
+  );
+
+  const listDocsByTagHandler = async (parsed: { workspaceId?: string; tag: string; ignoreCase?: boolean }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const tag = normalizeTag(parsed.tag);
+    const ignoreCase = parsed.ignoreCase ?? true;
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!snapshot.missing) {
+        return text({ workspaceId, tag, ignoreCase, totalDocs: 0, docs: [] });
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const pages = getWorkspacePageEntries(meta);
+      const docs = pages
+        .map((page) => {
+          const tags = getStringArray(page.tagsArray);
+          return {
+            id: page.id,
+            title: page.title,
+            createDate: page.createDate,
+            updatedDate: page.updatedDate,
+            tags,
+          };
+        })
+        .filter((page) => hasTag(page.tags, tag, ignoreCase));
+
+      return text({
+        workspaceId,
+        tag,
+        ignoreCase,
+        totalDocs: docs.length,
+        docs,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "list_docs_by_tag",
+    {
+      title: "List Documents By Tag",
+      description: "List documents that contain the requested tag.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        tag: z.string().min(1).describe("Tag name"),
+        ignoreCase: z.boolean().optional().describe("Case-insensitive tag matching (default: true)."),
+      },
+    },
+    listDocsByTagHandler as any
+  );
+
+  const createTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const tag = normalizeTag(parsed.tag);
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!snapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(wsDoc);
+      const meta = wsDoc.getMap("meta");
+      const registry = ensureTagArray(meta);
+
+      if (findTagIndex(registry, tag, true) >= 0) {
+        return text({ workspaceId, tag, created: false });
+      }
+
+      registry.push([tag]);
+      const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
+      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+      return text({ workspaceId, tag, created: true });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "create_tag",
+    {
+      title: "Create Tag",
+      description: "Create a workspace-level tag entry for future reuse.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        tag: z.string().min(1).describe("Tag name"),
+      },
+    },
+    createTagHandler as any
+  );
+
+  const addTagToDocHandler = async (parsed: { workspaceId?: string; docId: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const tag = normalizeTag(parsed.tag);
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const wsSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
+      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+      const page = getWorkspacePageEntries(wsMeta).find((entry) => entry.id === parsed.docId);
+      if (!page) {
+        throw new Error(`docId ${parsed.docId} is not present in workspace ${workspaceId}`);
+      }
+
+      const pageTags = ensureTagArray(page.entry);
+      const existedInDoc = findTagIndex(pageTags, tag, true) >= 0;
+      if (!existedInDoc) {
+        pageTags.push([tag]);
+      }
+
+      const registry = ensureTagArray(wsMeta);
+      const existedInRegistry = findTagIndex(registry, tag, true) >= 0;
+      if (!existedInRegistry) {
+        registry.push([tag]);
+      }
+
+      if (!existedInDoc || !existedInRegistry) {
+        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+      }
+
+      let docMetaSynced = false;
+      let warning: string | null = null;
+      const docSnapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!docSnapshot.missing) {
+        warning = `Document ${parsed.docId} snapshot not found; workspace tag map was updated only.`;
+      } else {
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
+        const docPrevSV = Y.encodeStateVector(doc);
+        const docMeta = doc.getMap("meta");
+        const docTags = ensureTagArray(docMeta);
+        const existedInDocMeta = findTagIndex(docTags, tag, true) >= 0;
+        if (!existedInDocMeta) {
+          docTags.push([tag]);
+          const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
+          await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
+        }
+        docMetaSynced = true;
+      }
+
+      return text({
+        workspaceId,
+        docId: parsed.docId,
+        tag,
+        added: !existedInDoc,
+        tags: getStringArray(pageTags),
+        docMetaSynced,
+        warning,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_tag_to_doc",
+    {
+      title: "Add Tag To Document",
+      description: "Add a tag to a document.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        tag: z.string().min(1).describe("Tag name"),
+      },
+    },
+    addTagToDocHandler as any
+  );
+
+  const removeTagFromDocHandler = async (parsed: { workspaceId?: string; docId: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const tag = normalizeTag(parsed.tag);
+
+    const { endpoint, cookie } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const wsSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
+      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+      const page = getWorkspacePageEntries(wsMeta).find((entry) => entry.id === parsed.docId);
+      if (!page) {
+        throw new Error(`docId ${parsed.docId} is not present in workspace ${workspaceId}`);
+      }
+
+      const pageTags = ensureTagArray(page.entry);
+      const pageTagIndex = findTagIndex(pageTags, tag, true);
+      if (pageTagIndex >= 0) {
+        pageTags.delete(pageTagIndex, 1);
+        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+      }
+
+      let docMetaSynced = false;
+      let warning: string | null = null;
+      const docSnapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!docSnapshot.missing) {
+        warning = `Document ${parsed.docId} snapshot not found; workspace tag map was updated only.`;
+      } else {
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
+        const docPrevSV = Y.encodeStateVector(doc);
+        const docMeta = doc.getMap("meta");
+        const docTags = ensureTagArray(docMeta);
+        const docTagIndex = findTagIndex(docTags, tag, true);
+        if (docTagIndex >= 0) {
+          docTags.delete(docTagIndex, 1);
+          const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
+          await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
+        }
+        docMetaSynced = true;
+      }
+
+      return text({
+        workspaceId,
+        docId: parsed.docId,
+        tag,
+        removed: pageTagIndex >= 0,
+        tags: getStringArray(pageTags),
+        docMetaSynced,
+        warning,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "remove_tag_from_doc",
+    {
+      title: "Remove Tag From Document",
+      description: "Remove a tag from a document.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        tag: z.string().min(1).describe("Tag name"),
+      },
+    },
+    removeTagFromDocHandler as any
   );
 
   const getDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
@@ -1189,6 +1684,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return text({
           docId: parsed.docId,
           title: null,
+          tags: [],
           exists: false,
           blockCount: 0,
           blocks: [],
@@ -1199,6 +1695,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
+      const meta = doc.getMap("meta");
+      const tags = getStringArray(getTagArray(meta));
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const pageId = findBlockIdByFlavour(blocks, "affine:page");
       const noteId = findBlockIdByFlavour(blocks, "affine:note");
@@ -1269,6 +1767,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       return text({
         docId: parsed.docId,
         title: title || null,
+        tags,
         exists: true,
         blockCount: blockRows.length,
         blocks: blockRows,
