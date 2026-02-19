@@ -1,0 +1,196 @@
+#!/usr/bin/env node
+/**
+ * E2E test: create workspace → doc → database → columns → rows via MCP tools.
+ *
+ * Outputs tests/test-database-state.json with all IDs and content for Playwright.
+ *
+ * Follows the same pattern as test-comprehensive.mjs.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
+const STATE_OUTPUT_PATH = path.resolve(__dirname, 'test-database-state.json');
+
+const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
+const EMAIL = process.env.AFFINE_ADMIN_EMAIL || process.env.AFFINE_EMAIL || 'test@affine.local';
+const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWORD || 'TestPass1!@#';
+const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
+
+function parseContent(result) {
+  const text = result?.content?.[0]?.text;
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function main() {
+  console.log('=== MCP Database Creation Test ===');
+  console.log(`Server: ${MCP_SERVER_PATH}`);
+  console.log(`Base URL: ${BASE_URL}`);
+  console.log(`Email: ${EMAIL}`);
+  console.log();
+
+  const client = new Client({ name: 'affine-mcp-db-test', version: '1.0.0' });
+  const transport = new StdioClientTransport({
+    command: 'node',
+    args: [MCP_SERVER_PATH],
+    cwd: path.resolve(__dirname, '..'),
+    env: {
+      AFFINE_BASE_URL: BASE_URL,
+      AFFINE_EMAIL: EMAIL,
+      AFFINE_PASSWORD: PASSWORD,
+      AFFINE_LOGIN_AT_START: 'sync',
+    },
+    stderr: 'pipe',
+  });
+
+  transport.stderr?.on('data', chunk => {
+    process.stderr.write(`[mcp-server] ${chunk}`);
+  });
+
+  await client.connect(transport);
+  console.log('Connected to MCP server');
+
+  const state = {
+    baseUrl: BASE_URL,
+    email: EMAIL,
+    workspaceId: null,
+    workspaceName: null,
+    docId: null,
+    docTitle: null,
+    databaseBlockId: null,
+    columns: [],
+    rows: [],
+  };
+
+  async function call(toolName, args = {}) {
+    console.log(`  → ${toolName}(${JSON.stringify(args)})`);
+    const result = await client.callTool(
+      { name: toolName, arguments: args },
+      undefined,
+      { timeout: TOOL_TIMEOUT_MS },
+    );
+    const parsed = parseContent(result);
+
+    // Check for errors
+    if (parsed && typeof parsed === 'object' && parsed.error) {
+      throw new Error(`${toolName} failed: ${parsed.error}`);
+    }
+    if (typeof parsed === 'string' && /^(GraphQL error:|Error:)/i.test(parsed)) {
+      throw new Error(`${toolName} failed: ${parsed}`);
+    }
+
+    console.log(`    ✓ OK`);
+    return parsed;
+  }
+
+  try {
+    // 1. Sign in
+    await call('sign_in', { email: EMAIL, password: PASSWORD });
+
+    // 2. Create workspace
+    const timestamp = Date.now();
+    state.workspaceName = `mcp-db-test-${timestamp}`;
+    const ws = await call('create_workspace', { name: state.workspaceName });
+    state.workspaceId = ws?.id;
+    if (!state.workspaceId) throw new Error('create_workspace did not return workspace id');
+    console.log(`  Workspace ID: ${state.workspaceId}`);
+
+    // 3. Create doc
+    state.docTitle = 'MCP Database Test Doc';
+    const doc = await call('create_doc', {
+      workspaceId: state.workspaceId,
+      title: state.docTitle,
+      content: '',
+    });
+    state.docId = doc?.docId;
+    if (!state.docId) throw new Error('create_doc did not return docId');
+    console.log(`  Doc ID: ${state.docId}`);
+
+    // 4. Create database block
+    const dbBlock = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'database',
+    });
+    state.databaseBlockId = dbBlock?.blockId;
+    if (!state.databaseBlockId) throw new Error('append_block(database) did not return blockId');
+    console.log(`  Database Block ID: ${state.databaseBlockId}`);
+
+    // 5. Add columns
+    const columnDefs = [
+      { name: 'Name', type: 'rich-text' },
+      { name: 'Status', type: 'select', options: ['Active', 'Inactive', 'Pending'] },
+      { name: 'Priority', type: 'number' },
+      { name: 'Done', type: 'checkbox' },
+    ];
+
+    for (const colDef of columnDefs) {
+      const colArgs = {
+        workspaceId: state.workspaceId,
+        docId: state.docId,
+        databaseBlockId: state.databaseBlockId,
+        columnName: colDef.name,
+        columnType: colDef.type,
+      };
+      if (colDef.options) {
+        colArgs.options = colDef.options;
+      }
+      const colResult = await call('add_database_column', colArgs);
+      state.columns.push({
+        name: colDef.name,
+        type: colDef.type,
+        columnId: colResult?.columnId || null,
+      });
+    }
+
+    // 6. Add rows
+    const rowDefs = [
+      { Name: 'Build feature', Status: 'Active', Priority: 1, Done: true },
+      { Name: 'Write tests', Status: 'Pending', Priority: 2, Done: false },
+      { Name: 'Deploy release', Status: 'Inactive', Priority: 3, Done: false },
+    ];
+
+    for (const rowDef of rowDefs) {
+      const rowResult = await call('add_database_row', {
+        workspaceId: state.workspaceId,
+        docId: state.docId,
+        databaseBlockId: state.databaseBlockId,
+        cells: rowDef,
+      });
+      state.rows.push({
+        cells: rowDef,
+        rowId: rowResult?.rowBlockId || null,
+      });
+    }
+
+    // Write state file
+    fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
+    console.log();
+    console.log(`State written to: ${STATE_OUTPUT_PATH}`);
+    console.log();
+    console.log('=== All database creation steps passed ===');
+  } catch (err) {
+    console.error();
+    console.error(`FAILED: ${err.message}`);
+    // Write partial state on failure for debugging
+    fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify({ ...state, error: err.message }, null, 2));
+    process.exit(1);
+  } finally {
+    await transport.close();
+  }
+}
+
+main().catch(err => {
+  console.error('Test runner error:', err);
+  process.exit(1);
+});

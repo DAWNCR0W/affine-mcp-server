@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: affine_test_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-affine}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-affine_test_pw_123}
+      POSTGRES_DB: ${DB_DATABASE:-affine}
+    volumes:
+      - affine_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: affine_test_redis
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  affine_migration:
+    image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
+    container_name: affine_test_migration
+    command: ['node', './scripts/self-host-predeploy.js']
+    environment:
+      NODE_OPTIONS: '--import=./scripts/register.js'
+      AFFINE_CONFIG_PATH: /root/.affine/config
+      DATABASE_URL: postgresql://${DB_USERNAME:-affine}:${DB_PASSWORD:-affine_test_pw_123}@postgres:5432/${DB_DATABASE:-affine}
+      REDIS_SERVER_HOST: redis
+    volumes:
+      - affine_config:/root/.affine/config
+      - affine_storage:/root/.affine/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  affine:
+    image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
+    container_name: affine_test_app
+    restart: unless-stopped
+    ports:
+      - '${PORT:-3010}:3010'
+    environment:
+      NODE_OPTIONS: '--import=./scripts/register.js'
+      AFFINE_CONFIG_PATH: /root/.affine/config
+      DATABASE_URL: postgresql://${DB_USERNAME:-affine}:${DB_PASSWORD:-affine_test_pw_123}@postgres:5432/${DB_DATABASE:-affine}
+      REDIS_SERVER_HOST: redis
+      AFFINE_ADMIN_EMAIL: ${AFFINE_ADMIN_EMAIL:-test@affine.local}
+      AFFINE_ADMIN_PASSWORD: ${AFFINE_ADMIN_PASSWORD:-TestPass1!@#}
+      AFFINE_SERVER_HOST: 0.0.0.0
+      AFFINE_SERVER_PORT: 3010
+    volumes:
+      - affine_config:/root/.affine/config
+      - affine_storage:/root/.affine/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      affine_migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:3010/ || exit 1']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  affine_postgres_data:
+  affine_config:
+  affine_storage:
