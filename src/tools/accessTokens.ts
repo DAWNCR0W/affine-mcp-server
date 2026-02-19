@@ -33,7 +33,7 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
     "generate_access_token",
     {
       title: "Generate Access Token",
-      description: "Generate a personal access token (returns token).",
+      description: "Generate a personal access token. Warning: the response contains the full plaintext token. Store it securely and do not display it in chat.",
       inputSchema: {
         name: z.string(),
         expiresAt: z.string().optional()

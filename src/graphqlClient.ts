@@ -2,6 +2,12 @@ import { fetch } from "undici";
 
 const debug = !!process.env.AFFINE_DEBUG;
 
+/** Strip HTML tags and truncate to a safe length for error messages. */
+function sanitizeErrorBody(s: string, max = 200): string {
+  const stripped = s.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  return stripped.length > max ? stripped.slice(0, max) + "..." : stripped;
+}
+
 function log(...args: any[]) {
   if (debug) console.error("[affine-debug]", ...args);
 }
@@ -91,7 +97,7 @@ export class GraphQLClient {
     // Guard against non-JSON responses (Cloudflare challenges, HTML error pages)
     if (!contentType.includes("application/json") && !contentType.includes("application/graphql")) {
       const body = await res.text();
-      const snippet = body.slice(0, 300).replace(/\n/g, " ");
+      const snippet = sanitizeErrorBody(body);
       throw new Error(
         `GraphQL endpoint returned non-JSON response (${res.status} ${res.statusText}, ` +
         `Content-Type: ${contentType || "(none)"}). Body: ${snippet}`
@@ -107,13 +113,13 @@ export class GraphQLClient {
       } catch {
         body = await res.text().catch(() => "(unreadable body)");
       }
-      throw new Error(`GraphQL HTTP ${res.status}: ${body}`);
+      throw new Error(`GraphQL HTTP ${res.status}: ${sanitizeErrorBody(body)}`);
     }
 
     const json = await res.json() as any;
     if (json.errors) {
       const msg = json.errors.map((e: any) => e.message).join("; ");
-      throw new Error(`GraphQL error: ${msg}`);
+      throw new Error(`GraphQL error: ${sanitizeErrorBody(msg)}`);
     }
     return json.data as T;
   }

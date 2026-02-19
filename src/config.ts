@@ -84,6 +84,17 @@ export function loadConfig(): ServerConfig {
   if (headersJson) {
     try {
       headers = JSON.parse(headersJson);
+      if (headers) {
+        const sensitiveKeys = Object.keys(headers).filter(
+          (k) => /^(authorization|cookie)$/i.test(k)
+        );
+        if (sensitiveKeys.length) {
+          console.warn(
+            `WARNING: AFFINE_HEADERS_JSON contains sensitive key(s): ${sensitiveKeys.join(", ")}. ` +
+            `These may conflict with built-in auth and are not protected by debug-logging guards.`
+          );
+        }
+      }
     } catch (e) {
       console.warn("Failed to parse AFFINE_HEADERS_JSON; ignoring.");
     }

@@ -17,8 +17,10 @@ export async function loginWithPassword(baseUrl: string, email: string, password
     body: JSON.stringify({ email, password })
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Sign-in failed: ${res.status} ${text}`);
+    const raw = await res.text().catch(() => "");
+    const sanitized = raw.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+    const truncated = sanitized.length > 200 ? sanitized.slice(0, 200) + "..." : sanitized;
+    throw new Error(`Sign-in failed: ${res.status} ${truncated}`);
   }
   const anyHeaders = res.headers as any;
   let setCookies: string[] = [];

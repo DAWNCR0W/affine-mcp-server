@@ -33,6 +33,11 @@ console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 
 console.error(`[affine-mcp] Endpoint: ${config.baseUrl}${config.graphqlPath}`);
 const hasAuth = !!(config.apiToken || config.cookie || (config.email && config.password));
 console.error(`[affine-mcp] Auth: ${hasAuth ? 'configured' : 'not configured'}`);
+if (hasAuth && config.baseUrl.startsWith("http://")
+    && !config.baseUrl.includes("localhost")
+    && !config.baseUrl.includes("127.0.0.1")) {
+  console.error("WARNING: Credentials configured over plain HTTP. Use HTTPS for remote servers.");
+}
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 if (debug) {
   console.error(`[affine-debug] Auth method: ${config.apiToken ? 'token' : config.cookie ? 'cookie' : config.email ? 'email/password' : 'none'}`);
@@ -65,13 +70,22 @@ async function buildServer() {
       } catch (e) {
         console.error("Failed to authenticate with email/password:", e);
         console.error("WARNING: Continuing without authentication - some operations may fail");
+      } finally {
+        // Clear credentials from memory after authentication attempt
+        config.password = undefined;
+        config.email = undefined;
       }
     } else {
       console.error("No token/cookie; deferring email/password authentication (async after connect)...");
+      // Capture credentials before clearing — async login needs them.
+      const loginEmail = config.email!;
+      const loginPassword = config.password!;
+      config.password = undefined;
+      config.email = undefined;
       // Fire-and-forget async login so stdio handshake is not delayed.
       (async () => {
         try {
-          const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email!, config.password!);
+          const { cookieHeader } = await loginWithPassword(config.baseUrl, loginEmail, loginPassword);
           gql.setCookie(cookieHeader);
           console.error("Successfully authenticated with email/password (async)");
         } catch (e) {
