@@ -1,6 +1,8 @@
 {
   "version": "1.5.0",
   "tools": [
+    "add_database_column",
+    "add_database_row",
     "add_tag_to_doc",
     "append_block",
     "append_markdown",
