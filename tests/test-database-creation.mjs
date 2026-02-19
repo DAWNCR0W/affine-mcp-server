@@ -19,7 +19,7 @@ const STATE_OUTPUT_PATH = path.resolve(__dirname, 'test-database-state.json');
 
 const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
 const EMAIL = process.env.AFFINE_ADMIN_EMAIL || process.env.AFFINE_EMAIL || 'test@affine.local';
-const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWORD || 'TestPass1!@#';
+const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWORD || 'TestPass123';
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 
 function parseContent(result) {
@@ -72,6 +72,9 @@ async function main() {
     rows: [],
   };
 
+  // Small delay to let the server commit Yjs updates between sequential operations
+  const settle = (ms = 500) => new Promise(r => setTimeout(r, ms));
+
   async function call(toolName, args = {}) {
     console.log(`  → ${toolName}(${JSON.stringify(args)})`);
     const result = await client.callTool(
@@ -79,13 +82,20 @@ async function main() {
       undefined,
       { timeout: TOOL_TIMEOUT_MS },
     );
+
+    // Check for MCP-level errors (isError flag on the result)
+    if (result?.isError) {
+      const errText = result?.content?.[0]?.text || 'Unknown MCP error';
+      throw new Error(`${toolName} MCP error: ${errText}`);
+    }
+
     const parsed = parseContent(result);
 
-    // Check for errors
+    // Check for application-level errors
     if (parsed && typeof parsed === 'object' && parsed.error) {
       throw new Error(`${toolName} failed: ${parsed.error}`);
     }
-    if (typeof parsed === 'string' && /^(GraphQL error:|Error:)/i.test(parsed)) {
+    if (typeof parsed === 'string' && /^(GraphQL error:|Error:|MCP error)/i.test(parsed)) {
       throw new Error(`${toolName} failed: ${parsed}`);
     }
 
@@ -125,6 +135,7 @@ async function main() {
     state.databaseBlockId = dbBlock?.blockId;
     if (!state.databaseBlockId) throw new Error('append_block(database) did not return blockId');
     console.log(`  Database Block ID: ${state.databaseBlockId}`);
+    await settle();
 
     // 5. Add columns
     const columnDefs = [
@@ -139,8 +150,8 @@ async function main() {
         workspaceId: state.workspaceId,
         docId: state.docId,
         databaseBlockId: state.databaseBlockId,
-        columnName: colDef.name,
-        columnType: colDef.type,
+        name: colDef.name,
+        type: colDef.type,
       };
       if (colDef.options) {
         colArgs.options = colDef.options;
@@ -151,6 +162,7 @@ async function main() {
         type: colDef.type,
         columnId: colResult?.columnId || null,
       });
+      await settle();
     }
 
     // 6. Add rows
@@ -171,6 +183,7 @@ async function main() {
         cells: rowDef,
         rowId: rowResult?.rowBlockId || null,
       });
+      await settle();
     }
 
     // Write state file

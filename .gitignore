@@ -48,6 +48,7 @@ comprehensive-test-results-*.json
 
 # E2E test artifacts
 tests/test-database-state.json
+tests/playwright-auth-state.json
 tests/playwright/test-results/
 tests/playwright/playwright-report.json
 

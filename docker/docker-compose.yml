@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -32,7 +30,6 @@ services:
     container_name: affine_test_migration
     command: ['node', './scripts/self-host-predeploy.js']
     environment:
-      NODE_OPTIONS: '--import=./scripts/register.js'
       AFFINE_CONFIG_PATH: /root/.affine/config
       DATABASE_URL: postgresql://${DB_USERNAME:-affine}:${DB_PASSWORD:-affine_test_pw_123}@postgres:5432/${DB_DATABASE:-affine}
       REDIS_SERVER_HOST: redis
@@ -52,12 +49,9 @@ services:
     ports:
       - '${PORT:-3010}:3010'
     environment:
-      NODE_OPTIONS: '--import=./scripts/register.js'
       AFFINE_CONFIG_PATH: /root/.affine/config
       DATABASE_URL: postgresql://${DB_USERNAME:-affine}:${DB_PASSWORD:-affine_test_pw_123}@postgres:5432/${DB_DATABASE:-affine}
       REDIS_SERVER_HOST: redis
-      AFFINE_ADMIN_EMAIL: ${AFFINE_ADMIN_EMAIL:-test@affine.local}
-      AFFINE_ADMIN_PASSWORD: ${AFFINE_ADMIN_PASSWORD:-TestPass1!@#}
       AFFINE_SERVER_HOST: 0.0.0.0
       AFFINE_SERVER_PORT: 3010
     volumes:

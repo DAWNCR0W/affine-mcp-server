@@ -4,6 +4,7 @@
  *
  * Exports:
  *   waitForHealthy(baseUrl, maxRetries, intervalMs) — polls GET / until 200
+ *   ensureAdminUser(baseUrl, email, password)       — creates admin via setup endpoint (idempotent)
  *   acquireCredentials(baseUrl, email, password)     — signs in, returns {cookie, baseUrl, email}
  *
  * CLI mode: reads AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL, AFFINE_ADMIN_PASSWORD
@@ -31,6 +32,31 @@ export async function waitForHealthy(baseUrl, maxRetries = 60, intervalMs = 5000
     }
   }
   throw new Error(`AFFiNE not healthy after ${maxRetries} attempts at ${url}`);
+}
+
+/**
+ * Create the admin user via AFFiNE's setup endpoint.
+ * This is required on fresh self-hosted instances (v0.26+).
+ * Idempotent: if the user already exists, sign-in will still work.
+ */
+export async function ensureAdminUser(baseUrl, email, password) {
+  const url = `${baseUrl.replace(/\/$/, '')}/api/setup/create-admin-user`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.ok) {
+      console.error(`[setup] Admin user created: ${email}`);
+    } else {
+      const body = await res.text().catch(() => '');
+      // 403 or "user already exists" means already set up — that's fine
+      console.error(`[setup] Setup endpoint returned ${res.status} (may already exist): ${body.slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.error(`[setup] Setup endpoint unreachable (may already exist): ${err.message}`);
+  }
 }
 
 /**
@@ -80,11 +106,14 @@ const isCLI = process.argv[1] &&
 if (isCLI) {
   const baseUrl = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
   const email = process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
-  const password = process.env.AFFINE_ADMIN_PASSWORD || 'TestPass1!@#';
+  const password = process.env.AFFINE_ADMIN_PASSWORD || 'TestPass123';
 
   try {
     console.error('[credentials] Waiting for AFFiNE to become healthy...');
     await waitForHealthy(baseUrl);
+
+    console.error('[credentials] Ensuring admin user exists...');
+    await ensureAdminUser(baseUrl, email, password);
 
     console.error('[credentials] Signing in...');
     const creds = await acquireCredentials(baseUrl, email, password);

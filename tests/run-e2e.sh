@@ -18,7 +18,7 @@ COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 # --- Configuration ---
 export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:3010}"
 export AFFINE_ADMIN_EMAIL="${AFFINE_ADMIN_EMAIL:-test@affine.local}"
-export AFFINE_ADMIN_PASSWORD="${AFFINE_ADMIN_PASSWORD:-TestPass1!@#}"
+export AFFINE_ADMIN_PASSWORD="${AFFINE_ADMIN_PASSWORD:-TestPass123}"
 
 # --- Cleanup on exit ---
 cleanup() {
