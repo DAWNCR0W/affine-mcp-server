@@ -14,29 +14,57 @@ class CliError extends Error {
 }
 
 function ask(prompt: string, hidden = false): Promise<string> {
+  if (hidden && process.stdin.isTTY) {
+    return readHidden(prompt);
+  }
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stderr,
       terminal: process.stdin.isTTY ?? false,
     });
-    if (hidden) {
-      (rl as any)._writeToOutput = (str: string) => {
-        if (str.includes(prompt)) {
-          process.stderr.write(prompt);
-        }
-      };
-    }
     rl.question(prompt, (answer) => {
       rl.close();
-      if (hidden) {
-        process.stderr.write("\n");
-        // Only strip trailing newline/carriage return for passwords — preserve spaces
-        resolve((answer || "").replace(/[\r\n]+$/, ""));
-      } else {
-        resolve((answer || "").trim());
-      }
+      resolve((answer || "").trim());
     });
+  });
+}
+
+/** Read a line with echo disabled using raw-mode stdin (no private API hacks). */
+function readHidden(prompt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    process.stderr.write(prompt);
+    const buf: string[] = [];
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    const onData = (ch: string) => {
+      switch (ch) {
+        case "\r":
+        case "\n":
+          cleanup();
+          process.stderr.write("\n");
+          resolve(buf.join(""));
+          break;
+        case "\u0003": // Ctrl-C
+          cleanup();
+          process.stderr.write("\n");
+          reject(new CliError("Aborted."));
+          break;
+        case "\u007F": // Backspace
+        case "\b":
+          buf.pop();
+          break;
+        default:
+          buf.push(ch);
+      }
+    };
+    const cleanup = () => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeListener("data", onData);
+    };
+    process.stdin.on("data", onData);
   });
 }
 
