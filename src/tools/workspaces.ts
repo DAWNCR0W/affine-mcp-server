@@ -190,9 +190,10 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
   const createWorkspaceHandler = async ({ name, avatar }: { name: string; avatar?: string }) => {
       try {
         // Get endpoint and headers from GraphQL client
-        const endpoint = (gql as any).endpoint || process.env.AFFINE_BASE_URL + '/graphql';
-        const headers = (gql as any).headers || {};
-        const cookie = (gql as any).cookie || headers.Cookie || '';
+        const endpoint = gql.endpoint;
+        const headers = gql.headers;
+        const cookie = gql.cookie;
+        const bearer = gql.bearer;
         
         // Create initial workspace data
         const { workspaceUpdate, firstDocId, docUpdate } = createInitialWorkspaceData(name);
@@ -248,7 +249,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         const baseUrl = process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '');
 
         try {
-          const socket = await connectWorkspaceSocket(wsUrl, cookie);
+          const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
           try {
             await joinWorkspace(socket, workspace.id);
             const docUpdateBase64 = Buffer.from(docUpdate).toString('base64');
