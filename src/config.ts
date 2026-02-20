@@ -35,7 +35,7 @@ const defaultEndpoints: EndpointMap = {
 
 /** Config file location: ~/.config/affine-mcp/config */
 export const CONFIG_DIR = path.join(
-  process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "~", ".config"),
+  process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
   "affine-mcp"
 );
 export const CONFIG_FILE = path.join(CONFIG_DIR, "config");
