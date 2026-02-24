@@ -12,12 +12,15 @@ export function wsUrlFromGraphQLEndpoint(endpoint: string): string {
     .replace(/\/graphql\/?$/, '');
 }
 
-export async function connectWorkspaceSocket(wsUrl: string, cookie?: string): Promise<WorkspaceSocket> {
+export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bearer?: string): Promise<WorkspaceSocket> {
   return new Promise((resolve, reject) => {
+    const extraHeaders: Record<string, string> = {};
+    if (cookie) extraHeaders['Cookie'] = cookie;
+    if (bearer) extraHeaders['Authorization'] = `Bearer ${bearer}`;
     const socket = io(wsUrl, {
       transports: ['websocket'],
       path: '/socket.io/',
-      extraHeaders: cookie ? { Cookie: cookie } : undefined,
+      extraHeaders: Object.keys(extraHeaders).length ? extraHeaders : undefined,
       autoConnect: true
     });
     const timeout = setTimeout(() => {
