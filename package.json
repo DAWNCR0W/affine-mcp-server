@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -34,6 +34,10 @@
     "test": "npm run test:tool-manifest",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
     "test:comprehensive": "node test-comprehensive.mjs",
+    "test:e2e": "bash tests/run-e2e.sh",
+    "test:db-create": "node tests/test-database-creation.mjs",
+    "test:bearer": "node tests/test-bearer-auth.mjs",
+    "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
     "prepublishOnly": "npm run ci"
@@ -53,6 +57,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.2",
     "form-data": "^4.0.4",
+    "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "socket.io-client": "^4.8.1",
     "undici": "^7.21.0",
@@ -60,6 +65,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^25.2.3",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4"

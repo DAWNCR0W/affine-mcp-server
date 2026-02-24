@@ -1,5 +1,40 @@
 # Release Notes
 
+## Version 1.6.0 (2026-02-24)
+
+### Highlights
+- Expanded the MCP surface from 32 to 43 tools with tag workflows, markdown roundtrip workflows, and direct database row/column editing tools.
+- Added interactive CLI account setup and diagnostics commands (`login`, `status`, `logout`) with secure local config storage.
+- Added Docker-based E2E verification (email/password + bearer token auth modes) and Playwright UI checks in CI.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Added tag operations: `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`.
+  - Added markdown conversion workflows: `export_doc_markdown`, `create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`.
+  - Added database workflow tools: `add_database_column`, `add_database_row`.
+  - Enriched `list_docs` output with `node.tags`.
+- `src/cli.ts`, `src/config.ts`, `src/index.ts`
+  - Added CLI subcommands and config-file lifecycle (`~/.config/affine-mcp/config`).
+  - Switched runtime version metadata to a single `VERSION` source derived from `package.json`.
+- `src/graphqlClient.ts`, `src/ws.ts`, `src/auth.ts`
+  - Added stricter timeout/error handling, sanitized non-JSON response reporting, and bearer header support for WebSocket joins.
+  - Added cookie/header safety guards against CR/LF injection.
+- `src/tools/workspaces.ts`, `src/tools/blobStorage.ts`
+  - Replaced ad-hoc `(gql as any)` access with typed `GraphQLClient` getters and consistent bearer/cookie propagation.
+- `test-comprehensive.mjs`
+  - Extended the integration matrix to validate tag and markdown workflows end-to-end.
+- `package.json`, `package-lock.json`
+  - Added dedicated test commands (`test:e2e`, `test:db-create`, `test:bearer`, `test:playwright`) and required dependencies for markdown parsing and Playwright.
+- `tests/*`, `docker/*`, `.github/workflows/e2e.yml`
+  - Added reproducible local+CI E2E pipeline for AFFiNE startup, MCP workflows, and UI verification.
+- `.gitignore`
+  - Added ignore entries for generated E2E state files and Playwright outputs.
+
+### Validation Evidence
+- `npm run ci` passed (`npm run build` + `npm run test:tool-manifest` + `npm run pack:check`).
+- `npm run test:tool-manifest` reported `ok: true`, `count: 43`, `version: 1.6.0`.
+- `npm pack --dry-run` produced `affine-mcp-server-1.6.0.tgz` (dry-run artifact).
+
 ## Version 1.5.0 (2026-02-13)
 
 ### Highlights

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-02-24
+
+### Added
+- 11 new document workflow tools: `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `export_doc_markdown`, `create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`, `add_database_column`, `add_database_row`.
+- Interactive CLI subcommands: `affine-mcp login`, `affine-mcp status`, `affine-mcp logout`.
+- End-to-end verification pipeline with Docker and Playwright (`tests/run-e2e.sh`, `.github/workflows/e2e.yml`).
+- New npm test commands: `test:e2e`, `test:db-create`, `test:bearer`, `test:playwright`.
+
+### Changed
+- Tool surface expanded from 32 to 43 canonical tools.
+- Runtime server version now resolves from `package.json` through `src/config.ts` (`VERSION`) and is reused by runtime/CLI user-agent headers.
+- Authentication/bootstrap flow supports config-file fallback (`~/.config/affine-mcp/config`) and Bearer headers across GraphQL/WebSocket paths.
+- `list_docs` now enriches each document node with tags from workspace metadata snapshots.
+- Added markdown and E2E test dependencies in package metadata (`markdown-it`, `@types/markdown-it`, `@playwright/test`).
+- `workspaces` and `blobStorage` tools now use typed `GraphQLClient` accessors and shared bearer/cookie propagation.
+- `test-comprehensive.mjs` now asserts tag workflows and markdown roundtrip workflows.
+
+### Fixed
+- Hardened GraphQL/auth error handling for redirects, non-JSON responses, and timeout boundaries.
+- Added CR/LF guardrails for cookie/header handling to prevent header-injection edge cases.
+- Added `.gitignore` rules for generated E2E and Playwright artifacts.
+
 ## [1.5.0] - 2026-02-13
 
 ### Added
@@ -155,4 +177,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.5.0
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.5.0...HEAD
+[1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.6.0...HEAD

@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -16,15 +16,16 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio only (Claude Desktop / Codex compatible)
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 32 focused tools with WebSocket-based document editing
+- Tools: 43 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.5.0: `append_block` now supports 30 verified block profiles, including database/edgeless (`frame`, `edgeless_text`, `surface_ref`, `note`) insertion paths. For stability on AFFiNE 0.26.x, `type=\"data_view\"` is currently mapped to a database block.
+> New in v1.6.0: Added tag workflows, markdown import/export/replace workflows, and direct database editing tools (`add_database_column`, `add_database_row`) with end-to-end validation coverage.
 
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
-- Documents: list/get/read/publish/revoke + create/append paragraph/delete (WebSocket‑based)
+- Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
+- Database workflows: create database blocks, then add columns/rows via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -53,7 +54,51 @@ Note: From v1.2.2+ the CLI wrapper (`bin/affine-mcp`) ensures Node runs the ESM 
 
 ## Configuration
 
-Configure via environment variables (shell or app config). `.env` files are no longer recommended.
+### Interactive login (recommended)
+
+The easiest way to configure credentials:
+
+```bash
+npm i -g affine-mcp-server
+affine-mcp login
+```
+
+This stores credentials in `~/.config/affine-mcp/config` (mode 600). The MCP server reads them automatically — no environment variables needed.
+
+**AFFiNE Cloud** (`app.affine.pro`): you'll be prompted to paste an API token from Settings → Integrations → MCP Server.
+
+**Self-hosted instances**: you can choose between email/password (recommended — auto-generates an API token) or pasting a token manually.
+
+```
+$ affine-mcp login
+Affine MCP Server — Login
+
+Affine URL [https://app.affine.pro]: https://my-affine.example.com
+
+Auth method — [1] Email/password (recommended)  [2] Paste API token: 1
+Email: user@example.com
+Password: ****
+Signing in...
+✓ Signed in as: User Name <user@example.com>
+
+Generating API token...
+✓ Created token: ut_abc123... (name: affine-mcp-2026-02-18)
+
+Detecting workspaces...
+  Found 1 workspace: abc-def-123  (by User Name, 1 member, 2/10/2026)
+  Auto-selected.
+
+✓ Saved to /home/user/.config/affine-mcp/config (mode 600)
+The MCP server will use these credentials automatically.
+```
+
+Other CLI commands:
+- `affine-mcp status` — show current config and test connection
+- `affine-mcp logout` — remove stored credentials
+
+### Environment variables
+
+You can also configure via environment variables (they override the config file):
 
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -62,7 +107,41 @@ Configure via environment variables (shell or app config). `.env` files are no l
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
 
+> **Cloudflare note**: `AFFINE_EMAIL`/`AFFINE_PASSWORD` auth requires programmatic access to `/api/auth/sign-in`. AFFiNE Cloud (`app.affine.pro`) is behind Cloudflare, which blocks these requests. Use `AFFINE_API_TOKEN` for cloud, or use `affine-mcp login` which handles this automatically. Email/password works for self-hosted instances without Cloudflare.
+
 ## Quick Start
+
+### Claude Code
+
+After running `affine-mcp login`, add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp"
+    }
+  }
+}
+```
+
+No `env` block needed — the server reads `~/.config/affine-mcp/config` automatically.
+
+If you prefer explicit env vars instead of the config file:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
+      }
+    }
+  }
+}
+```
 
 ### Claude Desktop
 
@@ -78,7 +157,23 @@ Add to your Claude Desktop configuration:
     "affine": {
       "command": "affine-mcp",
       "env": {
-        "AFFINE_BASE_URL": "https://your-affine-instance.com",
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
+      }
+    }
+  }
+}
+```
+
+Or with email/password for self-hosted instances (not supported on AFFiNE Cloud — see Cloudflare note above):
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://your-self-hosted-affine.com",
         "AFFINE_EMAIL": "you@example.com",
         "AFFINE_PASSWORD": "secret!",
         "AFFINE_LOGIN_AT_START": "async"
@@ -89,28 +184,21 @@ Add to your Claude Desktop configuration:
 ```
 
 Tips
-- Prefer `AFFINE_COOKIE` or `AFFINE_API_TOKEN` for zero‑latency startup.
+- Prefer `affine-mcp login` or `AFFINE_API_TOKEN` for zero‑latency startup.
 - If your password contains `!` (zsh history expansion), wrap it in single quotes in shells or use the JSON config above.
 
 ### Codex CLI
 
 Register the MCP server with Codex:
 
-- Global install path (fastest)
-  - `npm i -g affine-mcp-server`
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+- With config file (after `affine-mcp login`):
+  - `codex mcp add affine -- affine-mcp`
 
-- Use npx (no global install)
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+- With API token:
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://app.affine.pro --env AFFINE_API_TOKEN=ut_xxx -- affine-mcp`
 
-- Token or cookie (no startup login)
-  - Token: `codex mcp add affine --env AFFINE_BASE_URL=https://... --env AFFINE_API_TOKEN=... -- affine-mcp`
-  - Cookie: `codex mcp add affine --env AFFINE_BASE_URL=https://... --env "AFFINE_COOKIE=affine_session=...; affine_csrf=..." -- affine-mcp`
-
-Notes
-- MCP name: `affine`
-- Command: `affine-mcp`
-- Environment: `AFFINE_BASE_URL` + one auth method (`AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL`/`AFFINE_PASSWORD`)
+- With email/password (self-hosted only):
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-self-hosted-affine.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
 
 ### Cursor
 
@@ -124,8 +212,8 @@ Project-local (`.cursor/mcp.json`) example:
     "affine": {
       "command": "affine-mcp",
       "env": {
-        "AFFINE_BASE_URL": "https://your-affine-instance.com",
-        "AFFINE_API_TOKEN": "apt_xxx"
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
       }
     }
   }
@@ -141,8 +229,8 @@ If you prefer `npx`:
       "command": "npx",
       "args": ["-y", "-p", "affine-mcp-server", "affine-mcp"],
       "env": {
-        "AFFINE_BASE_URL": "https://your-affine-instance.com",
-        "AFFINE_API_TOKEN": "apt_xxx"
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx"
       }
     }
   }
@@ -159,14 +247,25 @@ If you prefer `npx`:
 - `delete_workspace` – delete workspace permanently
 
 ### Documents
-- `list_docs` – list documents with pagination
+- `list_docs` – list documents with pagination (includes `node.tags`)
+- `list_tags` – list all tags in a workspace
+- `list_docs_by_tag` – list documents by tag
 - `get_doc` – get document metadata
 - `read_doc` – read document block content and plain text snapshot (WebSocket)
+- `export_doc_markdown` – export document content as markdown
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
+- `create_doc_from_markdown` – create a document from markdown content
+- `create_tag` – create a reusable workspace-level tag
+- `add_tag_to_doc` – attach a tag to a document
+- `remove_tag_from_doc` – detach a tag from a document
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
+- `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
+- `add_database_row` – add a row to a database block with values mapped by column name/ID
+- `append_markdown` – append markdown content to an existing document
+- `replace_doc_with_markdown` – replace the main note content with markdown content
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
@@ -210,13 +309,16 @@ npm run pack:check
 
 - `tool-manifest.json` is the source of truth for publicly exposed tool names.
 - CI validates that `registerTool(...)` declarations match the manifest exactly.
+- For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
+- Additional focused runners: `npm run test:db-create`, `npm run test:bearer`, `npm run test:playwright`.
 
 ## Troubleshooting
 
 Authentication
-- Email/Password: ensure your instance allows password auth and credentials are valid
+- **Cloudflare (403 "Just a moment...")**: AFFiNE Cloud (`app.affine.pro`) uses Cloudflare protection, which blocks programmatic sign-in via `/api/auth/sign-in`. Use `AFFINE_API_TOKEN` instead, or run `affine-mcp login` which guides you through the right method automatically. Email/password auth only works for self-hosted instances.
+- Email/Password: only works on self-hosted instances without Cloudflare. Ensure your instance allows password auth and credentials are valid.
 - Cookie: copy cookies (e.g., `affine_session`, `affine_csrf`) from the browser DevTools after login
-- Token: generate a personal access token; verify it hasn't expired
+- Token: generate a personal access token; verify it hasn't expired. Run `affine-mcp status` to test.
 - Startup timeouts: v1.2.2+ includes a CLI wrapper fix and default async login to avoid blocking the MCP handshake. Set `AFFINE_LOGIN_AT_START=sync` only if needed.
 
 Connection
@@ -242,6 +344,13 @@ Workspace visibility
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.6.0 (2026‑02‑24)
+- Added 11 document workflow tools: tags (`list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`), markdown roundtrip (`export_doc_markdown`, `create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`), and database operations (`add_database_column`, `add_database_row`)
+- Added interactive CLI commands: `affine-mcp login`, `affine-mcp status`, `affine-mcp logout`
+- Added Docker + Playwright E2E pipeline and CI workflow for auth/database regression checks
+- Tool surface increased from 32 to 43 canonical tools
+- Added release test commands (`test:e2e`, `test:db-create`, `test:bearer`, `test:playwright`) and package dependencies for markdown conversion + Playwright
 
 ### 1.5.0 (2026‑02‑13)
 - Expanded `append_block` from Step1 to Step4 profiles: canonical text/list/code/divider/callout/latex/table/bookmark/media/embed plus `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note` (`data_view` currently mapped to database for stability)
