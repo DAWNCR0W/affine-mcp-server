@@ -237,6 +237,70 @@ If you prefer `npx`:
 }
 ```
 
+### Remote Server
+
+If you want to host the server remotely (e.g., using Render, Railway, Docker, or a VPS) and connect via HTTP MCP (Streamable HTTP on `/mcp`) instead of local `stdio`, run the server in HTTP mode.
+
+#### Environment variables (HTTP mode)
+
+Required:
+- `MCP_TRANSPORT=http`
+- `AFFINE_BASE_URL` (example: `https://app.affine.pro`)
+- One auth method:
+- `AFFINE_API_TOKEN` (recommended), or `AFFINE_COOKIE`, or `AFFINE_EMAIL` + `AFFINE_PASSWORD`
+
+Recommended for remote/public deployments:
+- `AFFINE_MCP_HTTP_HOST=0.0.0.0`
+- `AFFINE_MCP_HTTP_TOKEN=<strong-random-token>` (protects `/mcp`, `/sse`, `/messages`)
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<comma-separated-origins>` (for browser clients)
+
+Optional:
+- `PORT` (defaults to `3000`; many platforms like Render inject this automatically)
+- `AFFINE_WORKSPACE_ID`
+- `AFFINE_GRAPHQL_PATH` (defaults to `/graphql`)
+- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` (testing only)
+
+```bash
+# Export your configuration first
+export MCP_TRANSPORT=http
+export AFFINE_API_TOKEN="your_token..."
+export AFFINE_MCP_HTTP_HOST="0.0.0.0" # Default: 127.0.0.1
+export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
+export PORT=3000
+
+# Start in HTTP mode (Streamable HTTP on /mcp)
+npm run start:http
+# OR manually:
+# MCP_TRANSPORT=http node dist/index.js
+# ("sse" is still accepted at /sse)
+```
+
+#### Recommended presets
+
+Local testing (HTTP mode):
+- `MCP_TRANSPORT=http`
+- `AFFINE_MCP_HTTP_HOST=127.0.0.1`
+- `AFFINE_MCP_HTTP_TOKEN=<token>` (recommended even locally)
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=http://localhost:3000` (if testing from a browser app)
+
+Docker / container runtime:
+- `MCP_TRANSPORT=http`
+- `AFFINE_MCP_HTTP_HOST=0.0.0.0`
+- `PORT=3000` (or container/platform port)
+- `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your app origin(s)>`
+
+Render / Railway / VPS (public endpoint):
+- `MCP_TRANSPORT=http`
+- `AFFINE_MCP_HTTP_HOST=0.0.0.0`
+- `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your client origin(s)>`
+
+Endpoints currently available:
+- `/mcp` - MCP server (Streamable HTTP)
+- `/sse` - SSE endpoint (old protocol compatible)
+- `/messages` - Messages endpoint (old protocol compatible)
+
 ## Available Tools
 
 ### Workspace
