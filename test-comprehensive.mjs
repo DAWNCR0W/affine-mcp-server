@@ -227,6 +227,30 @@ class ComprehensiveRunner {
     await this.callTool('append_block', { workspaceId, docId, type: 'todo', text: 'Todo item from append_block', checked: true });
     await this.callTool('append_block', { workspaceId, docId, type: 'code', text: 'console.log(\"append_block\");', language: 'javascript' });
     await this.callTool('append_block', { workspaceId, docId, type: 'divider' });
+    let databaseBlockId = null;
+    await this.callTool('append_block', { workspaceId, docId, type: 'database' }, parsed => {
+      databaseBlockId = parsed?.blockId || null;
+    });
+    if (!databaseBlockId) {
+      throw new Error('append_block(database) did not return blockId');
+    }
+    const databaseColumnName = `Status-${Date.now()}`;
+    await this.callTool('add_database_column', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      name: databaseColumnName,
+      type: 'select',
+      options: ['Todo', 'Done'],
+    });
+    await this.callTool('add_database_row', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      cells: {
+        [databaseColumnName]: 'Todo',
+      },
+    });
     await this.callTool('append_markdown', {
       workspaceId,
       docId,

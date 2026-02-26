@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createRequire } from "module";
-import { EndpointMap } from "./types.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
@@ -17,20 +16,6 @@ export type ServerConfig = {
   email?: string;
   password?: string;
   defaultWorkspaceId?: string;
-  endpoints: EndpointMap;
-};
-
-const defaultEndpoints: EndpointMap = {
-  listWorkspaces: { method: "GET", path: "/api/workspaces" },
-  listDocs: { method: "GET", path: "/api/workspaces/:workspaceId/docs" },
-  getDoc: { method: "GET", path: "/api/docs/:docId" },
-  createDoc: { method: "POST", path: "/api/workspaces/:workspaceId/docs" },
-  updateDoc: { method: "PATCH", path: "/api/docs/:docId" },
-  deleteDoc: { method: "DELETE", path: "/api/docs/:docId" },
-  searchDocs: {
-    method: "GET",
-    path: "/api/workspaces/:workspaceId/search"
-  }
 };
 
 /** Config file location: ~/.config/affine-mcp/config */
@@ -145,16 +130,5 @@ export function loadConfig(): ServerConfig {
   }
   const graphqlPath = env("AFFINE_GRAPHQL_PATH", file, "/graphql")!;
   const defaultWorkspaceId = env("AFFINE_WORKSPACE_ID", file);
-
-  let endpoints = defaultEndpoints;
-  const endpointsJson = process.env.AFFINE_ENDPOINTS_JSON;
-  if (endpointsJson) {
-    try {
-      endpoints = { ...defaultEndpoints, ...JSON.parse(endpointsJson) } as EndpointMap;
-    } catch (e) {
-      console.warn("Failed to parse AFFINE_ENDPOINTS_JSON; using defaults.");
-    }
-  }
-
-  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId, endpoints };
+  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId };
 }

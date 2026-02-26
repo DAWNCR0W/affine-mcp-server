@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.1] - 2025-09-17
 
 ### Changed
-- Default startup authentication is now asynchronous when using email/password to avoid MCP stdio handshake timeouts. The new env `AFFINE_LOGIN_AT_START` controls behavior (`async` by default, `sync` to block at startup).
+- Default startup authentication is now asynchronous when using email/password to avoid MCP stdio handshake timeouts. Use `AFFINE_LOGIN_AT_START=sync` only when blocking startup is required.
 - Docs fully refreshed: clear instructions for Codex CLI and Claude Desktop using npm, npx, and local clone workflows.
 
 ### Added

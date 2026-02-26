@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
-import { z } from "zod";
 import { text } from "../util/mcp.js";
 
 export function registerUserTools(server: McpServer, gql: GraphQLClient) {
