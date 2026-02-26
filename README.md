@@ -102,7 +102,7 @@ You can also configure via environment variables (they override the config file)
 
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
-- Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (`async` default, `sync` to block)
+- Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (set `sync` only when you must block startup)
 
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -175,8 +175,7 @@ Or with email/password for self-hosted instances (not supported on AFFiNE Cloud 
       "env": {
         "AFFINE_BASE_URL": "https://your-self-hosted-affine.com",
         "AFFINE_EMAIL": "you@example.com",
-        "AFFINE_PASSWORD": "secret!",
-        "AFFINE_LOGIN_AT_START": "async"
+        "AFFINE_PASSWORD": "secret!"
       }
     }
   }
@@ -198,7 +197,7 @@ Register the MCP server with Codex:
   - `codex mcp add affine --env AFFINE_BASE_URL=https://app.affine.pro --env AFFINE_API_TOKEN=ut_xxx -- affine-mcp`
 
 - With email/password (self-hosted only):
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-self-hosted-affine.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-self-hosted-affine.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- affine-mcp`
 
 ### Cursor
 
@@ -375,7 +374,7 @@ Workspace visibility
 
 ### 1.2.1 (2025‑09‑17)
 - Default to asynchronous email/password login after MCP stdio handshake
-- New `AFFINE_LOGIN_AT_START` env (`async` default, `sync` to block at startup)
+- `AFFINE_LOGIN_AT_START` supports `sync` when you need blocking startup (default is non-blocking)
 - Expanded docs for Codex/Claude using npm, npx, and local clone
 
 ### 1.2.0 (2025‑09‑16)

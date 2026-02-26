@@ -101,16 +101,16 @@
 
 ### What Changed
 - Docs: `.env` usage removed; prefer environment variables via shell or app config (Codex/Claude config examples updated).
-- Maintains 1.2.1 behavior: email/password login is asynchronous by default (`AFFINE_LOGIN_AT_START=async`).
+- Maintains 1.2.1 behavior: email/password login is asynchronous by default.
 
 ### Usage Snippets
 - Codex (global install):
   - `npm i -g affine-mcp-server`
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- affine-mcp`
 - Codex (npx):
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- npx -y -p affine-mcp-server affine-mcp`
 - Claude Desktop:
-  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!","AFFINE_LOGIN_AT_START":"async"}}}}`
+  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!"}}}}`
 
 ---
 
@@ -118,7 +118,7 @@
 
 ### Highlights
 - Prevent MCP startup timeouts: email/password login now defaults to asynchronous after the stdio handshake.
-- New env toggle: `AFFINE_LOGIN_AT_START=async|sync` (default: `async`).
+- New env toggle: set `AFFINE_LOGIN_AT_START=sync` only when startup must block.
 - Documentation overhaul for Codex and Claude with npm, npx, and local clone usage.
 
 ### What Changed
@@ -128,11 +128,11 @@
 ### Usage Snippets
 - Codex (global install):
   - `npm i -g affine-mcp-server`
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- affine-mcp`
 - Codex (npx):
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- npx -y -p affine-mcp-server affine-mcp`
 - Claude Desktop:
-  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!","AFFINE_LOGIN_AT_START":"async"}}}}`
+  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!"}}}}`
 - Local clone:
   - `git clone ... && cd affine-mcp-server && npm i && npm run build && node dist/index.js`
 

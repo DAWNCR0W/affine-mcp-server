@@ -18,14 +18,14 @@ function generateDocId(): string {
 }
 
 // Create initial workspace data with a document
-function createInitialWorkspaceData(workspaceName: string = 'New Workspace') {
+function createInitialWorkspaceData(workspaceName: string = 'New Workspace', avatar: string = '') {
   // Create workspace root YDoc
   const rootDoc = new Y.Doc();
   
   // Set workspace metadata
   const meta = rootDoc.getMap('meta');
   meta.set('name', workspaceName);
-  meta.set('avatar', '');
+  meta.set('avatar', avatar);
   
   // Create pages array with initial document
   const pages = new Y.Array();
@@ -196,7 +196,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         const bearer = gql.bearer;
         
         // Create initial workspace data
-        const { workspaceUpdate, firstDocId, docUpdate } = createInitialWorkspaceData(name);
+        const { workspaceUpdate, firstDocId, docUpdate } = createInitialWorkspaceData(name, avatar || '');
         
         // Only send workspace update - document will be created separately
         const initData = Buffer.from(workspaceUpdate);
