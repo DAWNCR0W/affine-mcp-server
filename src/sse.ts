@@ -5,9 +5,11 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 
-export async function startHttpMcpServer(createMcpServer: () => Promise<McpServer>, port: number) {
+export async function startHttpMcpServer(
+  createMcpServer: () => Promise<McpServer>,
+  port: number,
+) {
   // --- HTTP host binding ---
   // AFFINE_MCP_HTTP_HOST: network interface to bind (default: "127.0.0.1" — loopback only).
   // Set to "0.0.0.0" for Docker / remote deployments (Render, Railway, etc.).
@@ -21,11 +23,14 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
   if (!httpAuthToken && host === "0.0.0.0") {
     console.warn(
       "[affine-mcp] WARNING: HTTP MCP server is bound to 0.0.0.0 without AFFINE_MCP_HTTP_TOKEN. " +
-        "The endpoint is unprotected. Set AFFINE_MCP_HTTP_TOKEN for public deployments."
+        "The endpoint is unprotected. Set AFFINE_MCP_HTTP_TOKEN for public deployments.",
     );
   }
 
-  const app = createMcpExpressApp({ host });
+  // Use a plain Express app here so it can fully control JSON parser ordering/limits.
+  // `createMcpExpressApp()` installs its own JSON parser first, which can enforce
+  // a smaller default limit before the intended 50mb parser runs on /mcp.
+  const app = express();
   const jsonBody = express.json({ limit: "50mb" });
 
   // --- CORS origin allowlist ---
@@ -34,7 +39,8 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
   // Default (no env set): only loopback addresses (localhost / 127.0.0.1 / ::1) are allowed.
   //
   // CORS is applied per-route (/mcp, /sse, /messages) — not globally — to minimise attack surface.
-  const allowAnyOrigin = process.env.AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS === "true";
+  const allowAnyOrigin =
+    process.env.AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS === "true";
   const allowedOrigins = (process.env.AFFINE_MCP_HTTP_ALLOWED_ORIGINS || "")
     .split(",")
     .map((o) => o.trim())
@@ -45,7 +51,11 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
     try {
       const { protocol, hostname } = new URL(origin);
       if (protocol !== "http:" && protocol !== "https:") return false;
-      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+      return (
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname === "::1"
+      );
     } catch {
       return false;
     }
@@ -57,10 +67,13 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
       // CORS is a browser mechanism only; the token guard covers programmatic access.
       if (!origin) return callback(null, true);
       if (allowAnyOrigin) return callback(null, true);
-      const allowed = allowedOrigins.length > 0 ? allowedOrigins.includes(origin) : isLoopbackOrigin(origin);
-      return allowed ? callback(null, true) : callback(new Error("Origin not allowed"));
-
-      
+      const allowed =
+        allowedOrigins.length > 0
+          ? allowedOrigins.includes(origin)
+          : isLoopbackOrigin(origin);
+      return allowed
+        ? callback(null, true)
+        : callback(new Error("Origin not allowed"));
     },
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "mcp-session-id"],
@@ -72,7 +85,8 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
   const corsMiddleware = (req: Request, res: Response, next: NextFunction) => {
     cors(corsOptions)(req, res, (err) => {
       if (err) {
-        if (!res.headersSent) res.status(403).send("Forbidden: Origin not allowed");
+        if (!res.headersSent)
+          res.status(403).send("Forbidden: Origin not allowed");
         return;
       }
       if (res.headersSent || res.writableEnded) return;
@@ -81,27 +95,32 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
   };
 
   // Validates the Bearer token on all non-preflight requests.
+  // The auth scheme match is case-insensitive for client compatibility.
   // OPTIONS is allowed through so CORS preflight can complete before auth is checked.
   const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
     if (req.method === "OPTIONS") return next();
     if (!httpAuthToken) return next();
 
     const authHeader = req.headers["authorization"];
-    const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
+    const queryToken =
+      typeof req.query.token === "string" ? req.query.token : undefined;
     let token: string | undefined;
 
     if (authHeader !== undefined) {
       // Normalize string | string[] to string (HTTP spec allows duplicate headers).
       const raw = Array.isArray(authHeader) ? authHeader[0] : authHeader;
-      if (raw.startsWith("Bearer ")) {
-        token = raw.slice(7);
+      const bearerMatch = /^Bearer\s+(.+)$/i.exec(raw);
+      if (bearerMatch) {
+        token = bearerMatch[1];
       } else {
         // Strictly reject non-Bearer schemes to avoid accidentally accepting Basic / Digest.
         console.warn(
           "[affine-mcp] Authorization header is not Bearer scheme. " +
-            "Expected: 'Authorization: Bearer <token>'."
+            "Expected: 'Authorization: Bearer <token>'.",
         );
-        res.status(401).send("Unauthorized: Use 'Authorization: Bearer <token>'");
+        res
+          .status(401)
+          .send("Unauthorized: Use 'Authorization: Bearer <token>'");
         return;
       }
     } else if (queryToken !== undefined) {
@@ -119,7 +138,10 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
   app.options("/sse", corsMiddleware);
   app.options("/messages", corsMiddleware);
 
-  const transports: Record<string, StreamableHTTPServerTransport | SSEServerTransport> = {};
+  const transports: Record<
+    string,
+    StreamableHTTPServerTransport | SSEServerTransport
+  > = {};
 
   // ===========================================================================
   // STREAMABLE HTTP TRANSPORT — MCP protocol 2025-03-26
@@ -147,7 +169,10 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
         if (!isInitializeRequest(req.body)) {
           res.status(400).json({
             jsonrpc: "2.0",
-            error: { code: -32000, message: "Bad Request: Not an initialize request" },
+            error: {
+              code: -32000,
+              message: "Bad Request: Not an initialize request",
+            },
             id: null,
           });
           return;
@@ -156,7 +181,9 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
-            console.error(`[affine-mcp] StreamableHTTP session initialized: ${sid}`);
+            console.error(
+              `[affine-mcp] StreamableHTTP session initialized: ${sid}`,
+            );
             transports[sid] = transport;
           },
         });
@@ -174,7 +201,11 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
       } else {
         res.status(400).json({
           jsonrpc: "2.0",
-          error: { code: -32000, message: "Bad Request: No valid session ID or not an initialize request" },
+          error: {
+            code: -32000,
+            message:
+              "Bad Request: No valid session ID or not an initialize request",
+          },
           id: null,
         });
         return;
@@ -220,44 +251,64 @@ export async function startHttpMcpServer(createMcpServer: () => Promise<McpServe
 
       const server = await createMcpServer();
       await server.connect(transport);
-      console.error(`[affine-mcp] Legacy SSE session established: ${sessionId}`);
+      console.error(
+        `[affine-mcp] Legacy SSE session established: ${sessionId}`,
+      );
     } catch (e) {
       console.error("[affine-mcp] Error establishing legacy SSE stream:", e);
-      if (!res.headersSent) res.status(500).send("Error establishing SSE stream");
+      if (!res.headersSent)
+        res.status(500).send("Error establishing SSE stream");
     }
   });
 
-  app.post("/messages", corsMiddleware, authMiddleware, jsonBody, async (req, res) => {
-    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : undefined;
-    if (!sessionId) {
-      res.status(400).send("Missing sessionId parameter");
-      return;
-    }
+  app.post(
+    "/messages",
+    corsMiddleware,
+    authMiddleware,
+    jsonBody,
+    async (req, res) => {
+      const sessionId =
+        typeof req.query.sessionId === "string"
+          ? req.query.sessionId
+          : undefined;
+      if (!sessionId) {
+        res.status(400).send("Missing sessionId parameter");
+        return;
+      }
 
-    const transport = transports[sessionId];
-    if (!(transport instanceof SSEServerTransport)) {
-      res.status(400).json({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Bad Request: Session uses a different transport protocol" },
-        id: null,
-      });
-      return;
-    }
+      const transport = transports[sessionId];
+      if (!(transport instanceof SSEServerTransport)) {
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Bad Request: Session uses a different transport protocol",
+          },
+          id: null,
+        });
+        return;
+      }
 
-    try {
-      // @ts-ignore — intentional: SSEServerTransport retained for backward compat only
-      await transport.handlePostMessage(req, res, req.body);
-    } catch (e) {
-      console.error("[affine-mcp] Error handling legacy SSE message:", e);
-      if (!res.headersSent) res.status(500).send("Error handling POST message");
-    }
-  });
+      try {
+        // @ts-ignore — intentional: SSEServerTransport retained for backward compat only
+        await transport.handlePostMessage(req, res, req.body);
+      } catch (e) {
+        console.error("[affine-mcp] Error handling legacy SSE message:", e);
+        if (!res.headersSent)
+          res.status(500).send("Error handling POST message");
+      }
+    },
+  );
 
   const server = app.listen(port, host, () => {
     const displayHost = host === "0.0.0.0" ? "localhost" : host;
     console.error(`[affine-mcp] MCP server listening on ${host}:${port}`);
-    console.error(`[affine-mcp] Streamable HTTP (2025-03-26): http://${displayHost}:${port}/mcp`);
-    console.error(`[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${port}/sse`);
+    console.error(
+      `[affine-mcp] Streamable HTTP (2025-03-26): http://${displayHost}:${port}/mcp`,
+    );
+    console.error(
+      `[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${port}/sse`,
+    );
   });
 
   // Graceful shutdown: stop accepting new connections, then close active transports.
