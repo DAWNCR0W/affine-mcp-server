@@ -1,8 +1,8 @@
 # AFFiNE MCP Server
 
-A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
+A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.7.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -14,12 +14,12 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 ## Overview
 
 - Purpose: Manage AFFiNE workspaces and documents through MCP
-- Transport: stdio only (Claude Desktop / Codex compatible)
+- Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
 - Tools: 43 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.6.0: Added tag workflows, markdown import/export/replace workflows, and direct database editing tools (`add_database_column`, `add_database_row`) with end-to-end validation coverage.
+> New in v1.7.0: Added remote HTTP MCP support (`/mcp`) with token/CORS controls, while retaining legacy SSE compatibility (`/sse`, `/messages`) for older clients.
 
 ## Features
 
@@ -372,6 +372,7 @@ npm run pack:check
 
 - `tool-manifest.json` is the source of truth for publicly exposed tool names.
 - CI validates that `registerTool(...)` declarations match the manifest exactly.
+- For full tool-surface verification, run `npm run test:comprehensive`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
 - Additional focused runners: `npm run test:db-create`, `npm run test:bearer`, `npm run test:playwright`.
 
@@ -407,6 +408,14 @@ Workspace visibility
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.7.0 (2026‑02‑27)
+- Added Streamable HTTP MCP support on `/mcp` for remote hosting while keeping legacy SSE compatibility paths (`/sse`, `/messages`)
+- Added HTTP deployment controls: `AFFINE_MCP_HTTP_HOST`, `AFFINE_MCP_HTTP_TOKEN`, `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`, `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS`
+- Added `npm run start:http` for one-command HTTP mode startup
+- Hardened HTTP request handling with explicit 50MB parser application and case-insensitive Bearer auth parsing
+- Expanded docs with remote deployment/security presets (Docker, Render, Railway, VPS)
+- Verified full release checks with `npm run ci`, `npm run test:e2e`, and `npm run test:comprehensive`
 
 ### 1.6.0 (2026‑02‑24)
 - Added 11 document workflow tools: tags (`list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`), markdown roundtrip (`export_doc_markdown`, `create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`), and database operations (`add_database_column`, `add_database_row`)
