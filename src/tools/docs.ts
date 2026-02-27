@@ -50,7 +50,6 @@ const APPEND_BLOCK_LEGACY_ALIAS_MAP = {
   todo: "list",
 } as const;
 type AppendBlockLegacyType = keyof typeof APPEND_BLOCK_LEGACY_ALIAS_MAP;
-type AppendBlockTypeInput = AppendBlockCanonicalType | AppendBlockLegacyType;
 
 const APPEND_BLOCK_LIST_STYLE_VALUES = ["bulleted", "numbered", "todo"] as const;
 type AppendBlockListStyle = typeof APPEND_BLOCK_LIST_STYLE_VALUES[number];

@@ -1,8 +1,8 @@
 # AFFiNE MCP Server
 
-A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio.
+A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.7.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -14,12 +14,12 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 ## Overview
 
 - Purpose: Manage AFFiNE workspaces and documents through MCP
-- Transport: stdio only (Claude Desktop / Codex compatible)
+- Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
 - Tools: 43 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.6.0: Added tag workflows, markdown import/export/replace workflows, and direct database editing tools (`add_database_column`, `add_database_row`) with end-to-end validation coverage.
+> New in v1.7.0: Added remote HTTP MCP support (`/mcp`) with token/CORS controls, while retaining legacy SSE compatibility (`/sse`, `/messages`) for older clients.
 
 ## Features
 
@@ -102,7 +102,7 @@ You can also configure via environment variables (they override the config file)
 
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
-- Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (`async` default, `sync` to block)
+- Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (set `sync` only when you must block startup)
 
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -175,8 +175,7 @@ Or with email/password for self-hosted instances (not supported on AFFiNE Cloud 
       "env": {
         "AFFINE_BASE_URL": "https://your-self-hosted-affine.com",
         "AFFINE_EMAIL": "you@example.com",
-        "AFFINE_PASSWORD": "secret!",
-        "AFFINE_LOGIN_AT_START": "async"
+        "AFFINE_PASSWORD": "secret!"
       }
     }
   }
@@ -198,7 +197,7 @@ Register the MCP server with Codex:
   - `codex mcp add affine --env AFFINE_BASE_URL=https://app.affine.pro --env AFFINE_API_TOKEN=ut_xxx -- affine-mcp`
 
 - With email/password (self-hosted only):
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-self-hosted-affine.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-self-hosted-affine.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- affine-mcp`
 
 ### Cursor
 
@@ -236,6 +235,70 @@ If you prefer `npx`:
   }
 }
 ```
+
+### Remote Server
+
+If you want to host the server remotely (e.g., using Render, Railway, Docker, or a VPS) and connect via HTTP MCP (Streamable HTTP on `/mcp`) instead of local `stdio`, run the server in HTTP mode.
+
+#### Environment variables (HTTP mode)
+
+Required:
+- `MCP_TRANSPORT=http`
+- `AFFINE_BASE_URL` (example: `https://app.affine.pro`)
+- One auth method:
+- `AFFINE_API_TOKEN` (recommended), or `AFFINE_COOKIE`, or `AFFINE_EMAIL` + `AFFINE_PASSWORD`
+
+Recommended for remote/public deployments:
+- `AFFINE_MCP_HTTP_HOST=0.0.0.0`
+- `AFFINE_MCP_HTTP_TOKEN=<strong-random-token>` (protects `/mcp`, `/sse`, `/messages`)
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<comma-separated-origins>` (for browser clients)
+
+Optional:
+- `PORT` (defaults to `3000`; many platforms like Render inject this automatically)
+- `AFFINE_WORKSPACE_ID`
+- `AFFINE_GRAPHQL_PATH` (defaults to `/graphql`)
+- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` (testing only)
+
+```bash
+# Export your configuration first
+export MCP_TRANSPORT=http
+export AFFINE_API_TOKEN="your_token..."
+export AFFINE_MCP_HTTP_HOST="0.0.0.0" # Default: 127.0.0.1
+export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
+export PORT=3000
+
+# Start in HTTP mode (Streamable HTTP on /mcp)
+npm run start:http
+# OR manually:
+# MCP_TRANSPORT=http node dist/index.js
+# ("sse" is still accepted at /sse)
+```
+
+#### Recommended presets
+
+Local testing (HTTP mode):
+- `MCP_TRANSPORT=http`
+- `AFFINE_MCP_HTTP_HOST=127.0.0.1`
+- `AFFINE_MCP_HTTP_TOKEN=<token>` (recommended even locally)
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=http://localhost:3000` (if testing from a browser app)
+
+Docker / container runtime:
+- `MCP_TRANSPORT=http`
+- `AFFINE_MCP_HTTP_HOST=0.0.0.0`
+- `PORT=3000` (or container/platform port)
+- `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your app origin(s)>`
+
+Render / Railway / VPS (public endpoint):
+- `MCP_TRANSPORT=http`
+- `AFFINE_MCP_HTTP_HOST=0.0.0.0`
+- `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
+- `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your client origin(s)>`
+
+Endpoints currently available:
+- `/mcp` - MCP server (Streamable HTTP)
+- `/sse` - SSE endpoint (old protocol compatible)
+- `/messages` - Messages endpoint (old protocol compatible)
 
 ## Available Tools
 
@@ -309,6 +372,7 @@ npm run pack:check
 
 - `tool-manifest.json` is the source of truth for publicly exposed tool names.
 - CI validates that `registerTool(...)` declarations match the manifest exactly.
+- For full tool-surface verification, run `npm run test:comprehensive`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
 - Additional focused runners: `npm run test:db-create`, `npm run test:bearer`, `npm run test:playwright`.
 
@@ -345,6 +409,14 @@ Workspace visibility
 
 ## Version History
 
+### 1.7.0 (2026‑02‑27)
+- Added Streamable HTTP MCP support on `/mcp` for remote hosting while keeping legacy SSE compatibility paths (`/sse`, `/messages`)
+- Added HTTP deployment controls: `AFFINE_MCP_HTTP_HOST`, `AFFINE_MCP_HTTP_TOKEN`, `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`, `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS`
+- Added `npm run start:http` for one-command HTTP mode startup
+- Hardened HTTP request handling with explicit 50MB parser application and case-insensitive Bearer auth parsing
+- Expanded docs with remote deployment/security presets (Docker, Render, Railway, VPS)
+- Verified full release checks with `npm run ci`, `npm run test:e2e`, and `npm run test:comprehensive`
+
 ### 1.6.0 (2026‑02‑24)
 - Added 11 document workflow tools: tags (`list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`), markdown roundtrip (`export_doc_markdown`, `create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`), and database operations (`add_database_column`, `add_database_row`)
 - Added interactive CLI commands: `affine-mcp login`, `affine-mcp status`, `affine-mcp logout`
@@ -375,7 +447,7 @@ Workspace visibility
 
 ### 1.2.1 (2025‑09‑17)
 - Default to asynchronous email/password login after MCP stdio handshake
-- New `AFFINE_LOGIN_AT_START` env (`async` default, `sync` to block at startup)
+- `AFFINE_LOGIN_AT_START` supports `sync` when you need blocking startup (default is non-blocking)
 - Expanded docs for Codex/Claude using npm, npx, and local clone
 
 ### 1.2.0 (2025‑09‑16)

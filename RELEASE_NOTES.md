@@ -1,5 +1,43 @@
 # Release Notes
 
+## Version 1.7.0 (2026-02-27)
+
+### Highlights
+- Added remote-ready MCP HTTP hosting mode with Streamable HTTP protocol support on `/mcp`.
+- Kept compatibility paths for older clients through legacy SSE endpoints (`/sse`, `/messages`).
+- Hardened HTTP transport behavior for larger requests and broader Bearer token client compatibility.
+
+### What Changed
+- `src/index.ts`, `src/sse.ts`, `package.json`
+  - Added transport switching via `MCP_TRANSPORT` with modes: `stdio` (default), `http`/`streamable`, and `sse` (legacy alias).
+  - Added a dedicated HTTP startup script: `npm run start:http`.
+  - Introduced a new HTTP runtime server with:
+    - Streamable HTTP MCP endpoint: `/mcp`
+    - Legacy SSE endpoints: `/sse`, `/messages`
+    - Optional token guard via `AFFINE_MCP_HTTP_TOKEN`
+    - Configurable CORS allowlist with explicit local-default behavior
+    - Graceful shutdown handling for active MCP sessions.
+- `src/sse.ts`
+  - Applied explicit `50mb` JSON parsing on `/mcp` to handle larger tool payloads safely.
+  - Updated Bearer auth parsing to accept case-insensitive scheme variants.
+- `src/config.ts`, `src/ws.ts`, `src/tools/workspaces.ts`
+  - Removed unused endpoint scaffolding and tightened header JSON parsing/validation.
+  - Refactored WebSocket ack logic into shared timeout/error utilities.
+  - Propagated workspace `avatar` into initial workspace Yjs metadata during workspace creation.
+- `README.md`
+  - Added remote deployment guidance (Docker/Render/Railway/VPS) and HTTP security recommendations.
+
+### Validation Evidence
+- `npm run ci` passed.
+- `npm run test:e2e` passed:
+  - Database creation flow passed.
+  - Bearer-token MCP flow passed.
+  - Playwright verification passed (`4 passed`).
+- `npm run test:comprehensive` passed with:
+  - `listedTools: 43`, `calledTools: 43`
+  - `totalChecks: 51`, `passed: 51`, `failed: 0`, `blocked: 0`
+  - Results file: `comprehensive-test-results-2026-02-27T01-17-21-949Z.json`.
+
 ## Version 1.6.0 (2026-02-24)
 
 ### Highlights
@@ -101,16 +139,16 @@
 
 ### What Changed
 - Docs: `.env` usage removed; prefer environment variables via shell or app config (Codex/Claude config examples updated).
-- Maintains 1.2.1 behavior: email/password login is asynchronous by default (`AFFINE_LOGIN_AT_START=async`).
+- Maintains 1.2.1 behavior: email/password login is asynchronous by default.
 
 ### Usage Snippets
 - Codex (global install):
   - `npm i -g affine-mcp-server`
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- affine-mcp`
 - Codex (npx):
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- npx -y -p affine-mcp-server affine-mcp`
 - Claude Desktop:
-  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!","AFFINE_LOGIN_AT_START":"async"}}}}`
+  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!"}}}}`
 
 ---
 
@@ -118,7 +156,7 @@
 
 ### Highlights
 - Prevent MCP startup timeouts: email/password login now defaults to asynchronous after the stdio handshake.
-- New env toggle: `AFFINE_LOGIN_AT_START=async|sync` (default: `async`).
+- New env toggle: set `AFFINE_LOGIN_AT_START=sync` only when startup must block.
 - Documentation overhaul for Codex and Claude with npm, npx, and local clone usage.
 
 ### What Changed
@@ -128,11 +166,11 @@
 ### Usage Snippets
 - Codex (global install):
   - `npm i -g affine-mcp-server`
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- affine-mcp`
 - Codex (npx):
-  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' --env AFFINE_LOGIN_AT_START=async -- npx -y -p affine-mcp-server affine-mcp`
+  - `codex mcp add affine --env AFFINE_BASE_URL=https://your-affine-instance.com --env 'AFFINE_EMAIL=you@example.com' --env 'AFFINE_PASSWORD=secret!' -- npx -y -p affine-mcp-server affine-mcp`
 - Claude Desktop:
-  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!","AFFINE_LOGIN_AT_START":"async"}}}}`
+  - `{"mcpServers":{"affine":{"command":"affine-mcp","env":{"AFFINE_BASE_URL":"https://...","AFFINE_EMAIL":"you@example.com","AFFINE_PASSWORD":"secret!"}}}}`
 - Local clone:
   - `git clone ... && cd affine-mcp-server && npm i && npm run build && node dist/index.js`
 

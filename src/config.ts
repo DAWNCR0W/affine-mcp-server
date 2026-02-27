@@ -2,13 +2,12 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createRequire } from "module";
-import { EndpointMap } from "./types.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 export const VERSION: string = pkg.version;
 
-export type ServerConfig = {
+type ServerConfig = {
   baseUrl: string;
   apiToken?: string;
   cookie?: string;
@@ -17,24 +16,10 @@ export type ServerConfig = {
   email?: string;
   password?: string;
   defaultWorkspaceId?: string;
-  endpoints: EndpointMap;
-};
-
-const defaultEndpoints: EndpointMap = {
-  listWorkspaces: { method: "GET", path: "/api/workspaces" },
-  listDocs: { method: "GET", path: "/api/workspaces/:workspaceId/docs" },
-  getDoc: { method: "GET", path: "/api/docs/:docId" },
-  createDoc: { method: "POST", path: "/api/workspaces/:workspaceId/docs" },
-  updateDoc: { method: "PATCH", path: "/api/docs/:docId" },
-  deleteDoc: { method: "DELETE", path: "/api/docs/:docId" },
-  searchDocs: {
-    method: "GET",
-    path: "/api/workspaces/:workspaceId/search"
-  }
 };
 
 /** Config file location: ~/.config/affine-mcp/config */
-export const CONFIG_DIR = path.join(
+const CONFIG_DIR = path.join(
   process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
   "affine-mcp"
 );
@@ -113,48 +98,48 @@ function env(name: string, file: Record<string, string>, fallback?: string): str
   return process.env[name] || file[name] || fallback;
 }
 
+function parseHeadersJson(raw?: string): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.warn("Failed to parse AFFINE_HEADERS_JSON; expected a JSON object of string headers.");
+      return undefined;
+    }
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value !== "string") {
+        console.warn(`Ignoring non-string AFFINE_HEADERS_JSON value for header '${key}'.`);
+        continue;
+      }
+      headers[key] = value;
+    }
+    const sensitiveKeys = Object.keys(headers).filter((k) => /^(authorization|cookie)$/i.test(k));
+    if (sensitiveKeys.length) {
+      console.warn(
+        `WARNING: AFFINE_HEADERS_JSON contains sensitive key(s): ${sensitiveKeys.join(", ")}. ` +
+        `These may conflict with built-in auth and are not protected by debug-logging guards.`
+      );
+    }
+    return headers;
+  } catch {
+    console.warn("Failed to parse AFFINE_HEADERS_JSON; ignoring.");
+    return undefined;
+  }
+}
+
 export function loadConfig(): ServerConfig {
   const file = loadConfigFile();
-  const baseUrl = env("AFFINE_BASE_URL", file, "http://localhost:3010")!.replace(/\/$/, "");
+  const baseUrl = validateBaseUrl(env("AFFINE_BASE_URL", file, "http://localhost:3010")!);
   const apiToken = env("AFFINE_API_TOKEN", file);
   const cookie = env("AFFINE_COOKIE", file);
   const email = env("AFFINE_EMAIL", file);
   const password = env("AFFINE_PASSWORD", file);
-  let headers: Record<string, string> | undefined = undefined;
-  const headersJson = process.env.AFFINE_HEADERS_JSON;
-  if (headersJson) {
-    try {
-      headers = JSON.parse(headersJson);
-      if (headers) {
-        const sensitiveKeys = Object.keys(headers).filter(
-          (k) => /^(authorization|cookie)$/i.test(k)
-        );
-        if (sensitiveKeys.length) {
-          console.warn(
-            `WARNING: AFFINE_HEADERS_JSON contains sensitive key(s): ${sensitiveKeys.join(", ")}. ` +
-            `These may conflict with built-in auth and are not protected by debug-logging guards.`
-          );
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to parse AFFINE_HEADERS_JSON; ignoring.");
-    }
-  }
+  let headers: Record<string, string> | undefined = parseHeadersJson(process.env.AFFINE_HEADERS_JSON);
   if (cookie) {
     headers = { ...(headers || {}), Cookie: cookie };
   }
   const graphqlPath = env("AFFINE_GRAPHQL_PATH", file, "/graphql")!;
   const defaultWorkspaceId = env("AFFINE_WORKSPACE_ID", file);
-
-  let endpoints = defaultEndpoints;
-  const endpointsJson = process.env.AFFINE_ENDPOINTS_JSON;
-  if (endpointsJson) {
-    try {
-      endpoints = { ...defaultEndpoints, ...JSON.parse(endpointsJson) } as EndpointMap;
-    } catch (e) {
-      console.warn("Failed to parse AFFINE_ENDPOINTS_JSON; using defaults.");
-    }
-  }
-
-  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId, endpoints };
+  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId };
 }
