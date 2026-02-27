@@ -1,5 +1,43 @@
 # Release Notes
 
+## Version 1.7.0 (2026-02-27)
+
+### Highlights
+- Added remote-ready MCP HTTP hosting mode with Streamable HTTP protocol support on `/mcp`.
+- Kept compatibility paths for older clients through legacy SSE endpoints (`/sse`, `/messages`).
+- Hardened HTTP transport behavior for larger requests and broader Bearer token client compatibility.
+
+### What Changed
+- `src/index.ts`, `src/sse.ts`, `package.json`
+  - Added transport switching via `MCP_TRANSPORT` with modes: `stdio` (default), `http`/`streamable`, and `sse` (legacy alias).
+  - Added a dedicated HTTP startup script: `npm run start:http`.
+  - Introduced a new HTTP runtime server with:
+    - Streamable HTTP MCP endpoint: `/mcp`
+    - Legacy SSE endpoints: `/sse`, `/messages`
+    - Optional token guard via `AFFINE_MCP_HTTP_TOKEN`
+    - Configurable CORS allowlist with explicit local-default behavior
+    - Graceful shutdown handling for active MCP sessions.
+- `src/sse.ts`
+  - Applied explicit `50mb` JSON parsing on `/mcp` to handle larger tool payloads safely.
+  - Updated Bearer auth parsing to accept case-insensitive scheme variants.
+- `src/config.ts`, `src/ws.ts`, `src/tools/workspaces.ts`
+  - Removed unused endpoint scaffolding and tightened header JSON parsing/validation.
+  - Refactored WebSocket ack logic into shared timeout/error utilities.
+  - Propagated workspace `avatar` into initial workspace Yjs metadata during workspace creation.
+- `README.md`
+  - Added remote deployment guidance (Docker/Render/Railway/VPS) and HTTP security recommendations.
+
+### Validation Evidence
+- `npm run ci` passed.
+- `npm run test:e2e` passed:
+  - Database creation flow passed.
+  - Bearer-token MCP flow passed.
+  - Playwright verification passed (`4 passed`).
+- `npm run test:comprehensive` passed with:
+  - `listedTools: 43`, `calledTools: 43`
+  - `totalChecks: 51`, `passed: 51`, `failed: 0`, `blocked: 0`
+  - Results file: `comprehensive-test-results-2026-02-27T01-17-21-949Z.json`.
+
 ## Version 1.6.0 (2026-02-24)
 
 ### Highlights

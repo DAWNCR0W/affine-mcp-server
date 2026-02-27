@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-02-27
+
+### Added
+- Optional HTTP deployment mode with Streamable HTTP endpoint `/mcp` and backward-compatible legacy endpoints (`/sse`, `/messages`) for remote MCP clients.
+- New `start:http` npm script (`MCP_TRANSPORT=http node dist/index.js`) for one-command HTTP mode startup.
+- HTTP runtime dependencies and typings for remote hosting (`express`, `cors`, `@types/express`, `@types/cors`).
+
+### Changed
+- `MCP_TRANSPORT` now supports `stdio` (default), `http`/`streamable`, and legacy alias `sse`.
+- Added HTTP deployment environment controls: `AFFINE_MCP_HTTP_HOST`, `AFFINE_MCP_HTTP_TOKEN`, `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`, `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS`.
+- WebSocket ack flow was simplified with shared timeout/error handling utilities.
+- Workspace bootstrap now propagates the optional `avatar` argument into initial workspace metadata.
+- README and remote deployment guidance expanded with security defaults and hosting presets.
+
+### Fixed
+- `/mcp` now consistently applies the 50MB JSON parser for large MCP payloads.
+- HTTP bearer authentication now accepts case-insensitive scheme variants (`Bearer` / `bearer`).
+- Removed dead config/type scaffolding and tightened internal config parsing for header JSON.
+
 ## [1.6.0] - 2026-02-24
 
 ### Added
@@ -169,6 +188,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.0
 [1.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.2
 [1.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.1
 [1.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.0
@@ -178,4 +198,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.7.0...HEAD
