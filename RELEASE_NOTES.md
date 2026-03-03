@@ -1,5 +1,31 @@
 # Release Notes
 
+## Version 1.7.1 (2026-03-03)
+
+### Highlights
+- Fixed MCP-created doc structure to match AFFiNE UI parent-link expectations.
+- Fixed callout block text rendering so MCP-created callouts display content in AFFiNE UI.
+- Added regression checks for document-visibility-sensitive creation paths.
+
+### What Changed
+- `src/tools/docs.ts`
+  - `sys:parent` writes for MCP-created blocks were aligned to UI parity (`null`).
+  - Placement context resolution now falls back to parent discovery from `sys:children` when parent fields are null.
+  - Callout creation now emits a child paragraph block and stores text there for UI-compatible rendering.
+- `src/tools/workspaces.ts`
+  - Workspace bootstrap document blocks now use the same null-parent structure for consistency.
+- `tests/test-database-creation.mjs`, `tests/test-bearer-auth.mjs`
+  - Added explicit regression assertions for parent-shape parity after `create_doc`, `append_paragraph`, and `create_doc_from_markdown`.
+
+### Validation Evidence
+- Local Docker AFFiNE validation passed for one-document full block coverage:
+  - Created one document and appended all currently supported MCP block types.
+  - Verified the document appears in `/workspace/{workspaceId}/all`.
+  - Verified direct document open path has no `Unexpected Application Error` / not-found state.
+  - Verified callout marker text renders in UI after the structural fix.
+- `npm run test:e2e` passed (`4 passed`) after the fix.
+- `npm run test:comprehensive` passed (`calledTools: 43`, `failed: 0`).
+
 ## Version 1.7.0 (2026-02-27)
 
 ### Highlights
