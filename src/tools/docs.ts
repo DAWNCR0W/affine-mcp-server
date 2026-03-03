@@ -342,7 +342,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const noteId = generateId();
     const note = new Y.Map<any>();
     setSysFields(note, noteId, "affine:note");
-    note.set("sys:parent", pageId);
+    note.set("sys:parent", null);
     note.set("sys:children", new Y.Array<string>());
     note.set("prop:xywh", "[0,0,800,95]");
     note.set("prop:index", "a0");
@@ -378,7 +378,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const surfaceId = generateId();
     const surface = new Y.Map<any>();
     setSysFields(surface, surfaceId, "affine:surface");
-    surface.set("sys:parent", pageId);
+    surface.set("sys:parent", null);
     surface.set("sys:children", new Y.Array<string>());
     const elements = new Y.Map<any>();
     elements.set("type", "$blocksuite:internal:native$");
@@ -744,6 +744,32 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return index;
   }
 
+  function findParentIdByChild(blocks: Y.Map<any>, childId: string): string | null {
+    for (const [id, value] of blocks) {
+      if (!(value instanceof Y.Map)) {
+        continue;
+      }
+      const childIds = childIdsFrom(value.get("sys:children"));
+      if (childIds.includes(childId)) {
+        return String(id);
+      }
+    }
+    return null;
+  }
+
+  function resolveBlockParentId(blocks: Y.Map<any>, blockId: string): string | null {
+    const block = findBlockById(blocks, blockId);
+    if (!block) {
+      return null;
+    }
+    const rawParentId = block.get("sys:parent");
+    if (typeof rawParentId === "string" && rawParentId.trim().length > 0) {
+      return rawParentId;
+    }
+    // AFFiNE UI commonly stores sys:parent as null and derives hierarchy from sys:children.
+    return findParentIdByChild(blocks, blockId);
+  }
+
   function resolveInsertContext(blocks: Y.Map<any>, normalized: NormalizedAppendBlockInput): {
     parentId: string;
     parentBlock: Y.Map<any>;
@@ -760,8 +786,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       referenceBlockId = placement.afterBlockId;
       const referenceBlock = findBlockById(blocks, referenceBlockId);
       if (!referenceBlock) throw new Error(`placement.afterBlockId '${referenceBlockId}' was not found.`);
-      const refParentId = referenceBlock.get("sys:parent");
-      if (typeof refParentId !== "string" || !refParentId) {
+      const refParentId = resolveBlockParentId(blocks, referenceBlockId);
+      if (!refParentId) {
         throw new Error(`Block '${referenceBlockId}' has no parent.`);
       }
       parentId = refParentId;
@@ -770,8 +796,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       referenceBlockId = placement.beforeBlockId;
       const referenceBlock = findBlockById(blocks, referenceBlockId);
       if (!referenceBlock) throw new Error(`placement.beforeBlockId '${referenceBlockId}' was not found.`);
-      const refParentId = referenceBlock.get("sys:parent");
-      if (typeof refParentId !== "string" || !refParentId) {
+      const refParentId = resolveBlockParentId(blocks, referenceBlockId);
+      if (!refParentId) {
         throw new Error(`Block '${referenceBlockId}' has no parent.`);
       }
       parentId = refParentId;
@@ -838,20 +864,23 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return { parentId, parentBlock, children, insertIndex };
   }
 
-  function createBlock(
-    parentId: string,
-    normalized: NormalizedAppendBlockInput
-  ): { blockId: string; block: Y.Map<any>; flavour: string; blockType?: string } {
+  function createBlock(normalized: NormalizedAppendBlockInput): {
+    blockId: string;
+    block: Y.Map<any>;
+    flavour: string;
+    blockType?: string;
+  } {
     const blockId = generateId();
     const block = new Y.Map<any>();
     const content = normalized.text;
+    // Keep parity with AFFiNE UI-created docs: sys:parent stays null and hierarchy is represented by sys:children.
 
     switch (normalized.type) {
       case "paragraph":
       case "heading":
       case "quote": {
         setSysFields(block, blockId, "affine:paragraph");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         const blockType =
           normalized.type === "heading"
@@ -865,7 +894,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "list": {
         setSysFields(block, blockId, "affine:list");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:type", normalized.listStyle);
         block.set("prop:checked", normalized.listStyle === "todo" ? normalized.checked : false);
@@ -874,7 +903,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "code": {
         setSysFields(block, blockId, "affine:code");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:language", normalized.language);
         if (normalized.caption) {
@@ -885,13 +914,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "divider": {
         setSysFields(block, blockId, "affine:divider");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         return { blockId, block, flavour: "affine:divider" };
       }
       case "callout": {
         setSysFields(block, blockId, "affine:callout");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:icon", { type: "emoji", unicode: "💡" });
         block.set("prop:backgroundColorName", "grey");
@@ -900,7 +929,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "latex": {
         setSysFields(block, blockId, "affine:latex");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:xywh", "[0,0,16,16]");
         block.set("prop:index", "a0");
@@ -912,7 +941,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "table": {
         setSysFields(block, blockId, "affine:table");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         const rows: Record<string, { rowId: string; order: string; backgroundColor?: string }> = {};
         const columns: Record<string, { columnId: string; order: string; backgroundColor?: string; width?: number }> = {};
@@ -949,7 +978,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "bookmark": {
         setSysFields(block, blockId, "affine:bookmark");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:style", normalized.bookmarkStyle);
         block.set("prop:url", normalized.url);
@@ -967,7 +996,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "image": {
         setSysFields(block, blockId, "affine:image");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:caption", normalized.caption ?? "");
         block.set("prop:sourceId", normalized.sourceId);
@@ -982,7 +1011,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "attachment": {
         setSysFields(block, blockId, "affine:attachment");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:name", normalized.name);
         block.set("prop:size", normalized.size);
@@ -1000,7 +1029,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_youtube": {
         setSysFields(block, blockId, "affine:embed-youtube");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1020,7 +1049,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_github": {
         setSysFields(block, blockId, "affine:embed-github");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1044,7 +1073,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_figma": {
         setSysFields(block, blockId, "affine:embed-figma");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1059,7 +1088,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_loom": {
         setSysFields(block, blockId, "affine:embed-loom");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1076,7 +1105,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_html": {
         setSysFields(block, blockId, "affine:embed-html");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1090,7 +1119,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_linked_doc": {
         setSysFields(block, blockId, "affine:embed-linked-doc");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1106,7 +1135,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_synced_doc": {
         setSysFields(block, blockId, "affine:embed-synced-doc");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,800,100]");
@@ -1123,7 +1152,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "embed_iframe": {
         setSysFields(block, blockId, "affine:embed-iframe");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:index", "a0");
         block.set("prop:xywh", "[0,0,0,0]");
@@ -1140,7 +1169,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "database": {
         setSysFields(block, blockId, "affine:database");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         // Create a default table view so AFFiNE UI renders the database
         const defaultView = new Y.Map<any>();
@@ -1165,7 +1194,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         // AFFiNE 0.26.x currently crashes on raw affine:data-view render path.
         // Keep API compatibility for type="data_view" by mapping it to the stable database block.
         setSysFields(block, blockId, "affine:database");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         const dvDefaultView = new Y.Map<any>();
         dvDefaultView.set("id", generateId());
@@ -1187,7 +1216,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "surface_ref": {
         setSysFields(block, blockId, "affine:surface-ref");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:reference", normalized.reference);
         block.set("prop:caption", normalized.caption ?? "");
@@ -1197,7 +1226,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "frame": {
         setSysFields(block, blockId, "affine:frame");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:title", makeText(content || "Frame"));
         block.set("prop:background", normalized.background);
@@ -1210,7 +1239,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "edgeless_text": {
         setSysFields(block, blockId, "affine:edgeless-text");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
@@ -1228,7 +1257,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       case "note": {
         setSysFields(block, blockId, "affine:note");
-        block.set("sys:parent", parentId);
+        block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
         block.set("prop:background", normalized.background);
@@ -1270,7 +1299,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const prevSV = Y.encodeStateVector(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const context = resolveInsertContext(blocks, normalized);
-      const { blockId, block, flavour, blockType } = createBlock(context.parentId, normalized);
+      const { blockId, block, flavour, blockType } = createBlock(normalized);
 
       blocks.set(blockId, block);
       if (context.insertIndex >= context.children.length) {
@@ -1667,7 +1696,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         try {
           const normalized = normalizeAppendBlockInput(appendInput);
           const context = resolveInsertContext(blocks, normalized);
-          const { blockId, block } = createBlock(context.parentId, normalized);
+          const { blockId, block } = createBlock(normalized);
           blocks.set(blockId, block);
           if (context.insertIndex >= context.children.length) {
             context.children.push([blockId]);
@@ -1723,7 +1752,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const surfaceId = generateId();
       const surface = new Y.Map();
       setSysFields(surface, surfaceId, "affine:surface");
-      surface.set("sys:parent", pageId);
+      surface.set("sys:parent", null);
       surface.set("sys:children", new Y.Array());
       const elements = new Y.Map<any>();
       elements.set("type", "$blocksuite:internal:native$");
@@ -1735,7 +1764,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const noteId = generateId();
       const note = new Y.Map();
       setSysFields(note, noteId, "affine:note");
-      note.set("sys:parent", pageId);
+      note.set("sys:parent", null);
       note.set("prop:displayMode", "both");
       note.set("prop:xywh", "[0,0,800,95]");
       note.set("prop:index", "a0");
@@ -1753,7 +1782,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const paraId = generateId();
         const para = new Y.Map();
         setSysFields(para, paraId, "affine:paragraph");
-        para.set("sys:parent", noteId);
+        para.set("sys:parent", null);
         para.set("sys:children", new Y.Array());
         para.set("prop:type", "text");
         const paragraphText = new Y.Text();
