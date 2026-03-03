@@ -109,6 +109,21 @@ async function main() {
     return parsed;
   }
 
+  function assertParentIdsAreNull(readDocPayload, context) {
+    const blocks = Array.isArray(readDocPayload?.blocks) ? readDocPayload.blocks : [];
+    const trackedFlavours = new Set(["affine:page", "affine:surface", "affine:note", "affine:paragraph"]);
+    for (const block of blocks) {
+      if (!trackedFlavours.has(block?.flavour)) {
+        continue;
+      }
+      if (block.parentId !== null) {
+        throw new Error(
+          `${context}: expected parentId=null for ${block.flavour} block ${block.id}, got ${JSON.stringify(block.parentId)}`
+        );
+      }
+    }
+  }
+
   try {
     // Authentication already happened at startup via AFFINE_LOGIN_AT_START=sync.
     // No explicit sign_in call needed — this test verifies the email/password
@@ -132,6 +147,39 @@ async function main() {
     state.docId = doc?.docId;
     if (!state.docId) throw new Error('create_doc did not return docId');
     console.log(`  Doc ID: ${state.docId}`);
+
+    // Regression guard: keep AFFiNE-compatible parentId (null) shape.
+    const readAfterCreate = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    assertParentIdsAreNull(readAfterCreate, 'after create_doc');
+
+    const appendedParagraph = await call('append_paragraph', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      text: 'ParentId null structure check',
+    });
+    if (!appendedParagraph?.paragraphId) throw new Error('append_paragraph did not return paragraphId');
+
+    const readAfterAppendParagraph = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    assertParentIdsAreNull(readAfterAppendParagraph, 'after append_paragraph');
+
+    const markdownDoc = await call('create_doc_from_markdown', {
+      workspaceId: state.workspaceId,
+      title: 'ParentId Markdown Structure Check',
+      markdown: '# Heading from markdown\n\nBody from markdown import.',
+    });
+    if (!markdownDoc?.docId) throw new Error('create_doc_from_markdown did not return docId');
+
+    const readMarkdownDoc = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: markdownDoc.docId,
+    });
+    assertParentIdsAreNull(readMarkdownDoc, 'after create_doc_from_markdown');
 
     // 3. Create database block
     const dbBlock = await call('append_block', {

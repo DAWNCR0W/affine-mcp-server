@@ -76,6 +76,21 @@ async function call(client, toolName, args = {}) {
   return parsed;
 }
 
+function assertParentIdsAreNull(readDocPayload, context) {
+  const blocks = Array.isArray(readDocPayload?.blocks) ? readDocPayload.blocks : [];
+  const trackedFlavours = new Set(["affine:page", "affine:surface", "affine:note", "affine:paragraph"]);
+  for (const block of blocks) {
+    if (!trackedFlavours.has(block?.flavour)) {
+      continue;
+    }
+    if (block.parentId !== null) {
+      throw new Error(
+        `${context}: expected parentId=null for ${block.flavour} block ${block.id}, got ${JSON.stringify(block.parentId)}`
+      );
+    }
+  }
+}
+
 async function main() {
   console.log('=== Bearer Token Auth Test ===');
   console.log(`Base URL: ${BASE_URL}`);
@@ -158,6 +173,39 @@ async function main() {
     state.docId = doc?.docId;
     if (!state.docId) throw new Error('create_doc did not return docId');
     console.log(`  Doc ID: ${state.docId}`);
+
+    // Regression guard: keep AFFiNE-compatible parentId (null) shape.
+    const readAfterCreate = await call(bearerClient, 'read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    assertParentIdsAreNull(readAfterCreate, 'after create_doc');
+
+    const appendedParagraph = await call(bearerClient, 'append_paragraph', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      text: 'ParentId null structure check',
+    });
+    if (!appendedParagraph?.paragraphId) throw new Error('append_paragraph did not return paragraphId');
+
+    const readAfterAppendParagraph = await call(bearerClient, 'read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    assertParentIdsAreNull(readAfterAppendParagraph, 'after append_paragraph');
+
+    const markdownDoc = await call(bearerClient, 'create_doc_from_markdown', {
+      workspaceId: state.workspaceId,
+      title: 'ParentId Markdown Structure Check',
+      markdown: '# Heading from markdown\n\nBody from markdown import.',
+    });
+    if (!markdownDoc?.docId) throw new Error('create_doc_from_markdown did not return docId');
+
+    const readMarkdownDoc = await call(bearerClient, 'read_doc', {
+      workspaceId: state.workspaceId,
+      docId: markdownDoc.docId,
+    });
+    assertParentIdsAreNull(readMarkdownDoc, 'after create_doc_from_markdown');
 
     // Create database block
     const dbBlock = await call(bearerClient, 'append_block', {
