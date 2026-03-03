@@ -74,7 +74,7 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace', ava
   const surfaceBlock = new Y.Map();
   surfaceBlock.set('sys:id', surfaceId);
   surfaceBlock.set('sys:flavour', 'affine:surface');
-  surfaceBlock.set('sys:parent', pageId);
+  surfaceBlock.set('sys:parent', null);
   surfaceBlock.set('sys:children', new Y.Array());
   
   blocks.set(surfaceId, surfaceBlock);
@@ -85,7 +85,7 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace', ava
   const noteBlock = new Y.Map();
   noteBlock.set('sys:id', noteId);
   noteBlock.set('sys:flavour', 'affine:note');
-  noteBlock.set('sys:parent', pageId);
+  noteBlock.set('sys:parent', null);
   noteBlock.set('prop:displayMode', 'DocAndEdgeless');
   noteBlock.set('prop:xywh', '[0,0,800,600]');
   noteBlock.set('prop:index', 'a0');
@@ -102,7 +102,7 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace', ava
   const paragraphBlock = new Y.Map();
   paragraphBlock.set('sys:id', paragraphId);
   paragraphBlock.set('sys:flavour', 'affine:paragraph');
-  paragraphBlock.set('sys:parent', noteId);
+  paragraphBlock.set('sys:parent', null);
   paragraphBlock.set('sys:children', new Y.Array());
   paragraphBlock.set('prop:type', 'text');
   

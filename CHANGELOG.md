@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-03-03
+
+### Changed
+- MCP-created document block hierarchy now follows AFFiNE UI parity by writing `sys:parent` as `null` and relying on `sys:children` relationships.
+- Placement resolution for `append_block` (`beforeBlockId` / `afterBlockId`) now resolves parent context from child links when `sys:parent` is null.
+- Workspace bootstrap document blocks were aligned to the same null-parent shape for consistency.
+
+### Fixed
+- Resolved UI invisibility/inconsistency risk for MCP-created docs caused by parent linkage mismatch versus UI-created docs.
+- Fixed callout rendering parity by creating/storing callout text in a child paragraph block so text is visible in AFFiNE UI.
+- Added regression assertions in Docker E2E scripts to verify null-parent structure after `create_doc`, `append_paragraph`, and `create_doc_from_markdown`.
+
 ## [1.7.0] - 2026-02-27
 
 ### Added
@@ -188,6 +200,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.7.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.1
 [1.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.0
 [1.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.2
 [1.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.2.1
@@ -198,4 +211,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.7.1...HEAD

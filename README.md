@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.7.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.7.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 43 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.7.0: Added remote HTTP MCP support (`/mcp`) with token/CORS controls, while retaining legacy SSE compatibility (`/sse`, `/messages`) for older clients.
+> New in v1.7.1: Fixed MCP-created document structure parity with AFFiNE UI (`sys:parent` handling) and callout text rendering, plus regression coverage for UI visibility paths.
 
 ## Features
 
