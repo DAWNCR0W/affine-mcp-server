@@ -869,6 +869,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     block: Y.Map<any>;
     flavour: string;
     blockType?: string;
+    extraBlocks?: Array<{ blockId: string; block: Y.Map<any> }>;
   } {
     const blockId = generateId();
     const block = new Y.Map<any>();
@@ -921,11 +922,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       case "callout": {
         setSysFields(block, blockId, "affine:callout");
         block.set("sys:parent", null);
-        block.set("sys:children", new Y.Array<string>());
+        const calloutChildren = new Y.Array<string>();
+        const textBlockId = generateId();
+        const textBlock = new Y.Map<any>();
+        setSysFields(textBlock, textBlockId, "affine:paragraph");
+        textBlock.set("sys:parent", null);
+        textBlock.set("sys:children", new Y.Array<string>());
+        textBlock.set("prop:type", "text");
+        textBlock.set("prop:text", makeText(content));
+        calloutChildren.push([textBlockId]);
+        block.set("sys:children", calloutChildren);
         block.set("prop:icon", { type: "emoji", unicode: "💡" });
         block.set("prop:backgroundColorName", "grey");
-        block.set("prop:text", makeText(content));
-        return { blockId, block, flavour: "affine:callout" };
+        return {
+          blockId,
+          block,
+          flavour: "affine:callout",
+          extraBlocks: [{ blockId: textBlockId, block: textBlock }],
+        };
       }
       case "latex": {
         setSysFields(block, blockId, "affine:latex");
@@ -1299,9 +1313,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const prevSV = Y.encodeStateVector(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const context = resolveInsertContext(blocks, normalized);
-      const { blockId, block, flavour, blockType } = createBlock(normalized);
+      const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized);
 
       blocks.set(blockId, block);
+      if (Array.isArray(extraBlocks)) {
+        for (const extra of extraBlocks) {
+          blocks.set(extra.blockId, extra.block);
+        }
+      }
       if (context.insertIndex >= context.children.length) {
         context.children.push([blockId]);
       } else {
@@ -1696,8 +1715,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         try {
           const normalized = normalizeAppendBlockInput(appendInput);
           const context = resolveInsertContext(blocks, normalized);
-          const { blockId, block } = createBlock(normalized);
+          const { blockId, block, extraBlocks } = createBlock(normalized);
           blocks.set(blockId, block);
+          if (Array.isArray(extraBlocks)) {
+            for (const extra of extraBlocks) {
+              blocks.set(extra.blockId, extra.block);
+            }
+          }
           if (context.insertIndex >= context.children.length) {
             context.children.push([blockId]);
           } else {
