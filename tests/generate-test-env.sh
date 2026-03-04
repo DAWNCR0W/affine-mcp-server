@@ -28,10 +28,11 @@ export AFFINE_ADMIN_PASSWORD="${AFFINE_ADMIN_PASSWORD:-$(rand_password)}"
 export DB_USERNAME="${DB_USERNAME:-affine}"
 export DB_PASSWORD="${DB_PASSWORD:-$(rand_password)}"
 export DB_DATABASE="${DB_DATABASE:-affine}"
+export AFFINE_REVISION="${AFFINE_REVISION:-stable}"
 
 # Write docker/.env consumed by docker-compose.yml
 cat > "$DOCKER_DIR/.env" <<EOF
-AFFINE_REVISION=stable
+AFFINE_REVISION=$AFFINE_REVISION
 PORT=3010
 DB_USERNAME=$DB_USERNAME
 DB_PASSWORD=$DB_PASSWORD
