@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.7.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.7.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 43 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.7.1: Fixed MCP-created document structure parity with AFFiNE UI (`sys:parent` handling) and callout text rendering, plus regression coverage for UI visibility paths.
+> New in v1.7.2: Fixed tag visibility parity in AFFiNE Web/App for MCP-created tags and hardened Docker E2E startup reliability with retry/diagnostics.
 
 ## Features
 
@@ -408,6 +408,18 @@ Workspace visibility
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.7.2 (2026‑03‑04)
+- Fixed MCP tag persistence to use AFFiNE canonical tag option IDs so tags are visible in Web/App UI
+- Added backward-compatible tag normalization for legacy string tag entries
+- Added tag visibility regression coverage (`tests/test-tag-visibility.mjs`, `tests/playwright/verify-tag-visibility.pw.ts`)
+- Hardened E2E credential bootstrap with configurable health retries, retry attempts, and Docker diagnostics on failure
+- Verified CI gates (`validate`, `e2e`) for PR #46 and local `npm run ci`
+
+### 1.7.1 (2026‑03‑03)
+- Fixed MCP-created document structure parity with AFFiNE UI (`sys:parent` handling)
+- Fixed callout text rendering parity in AFFiNE UI for MCP-created blocks
+- Added regression assertions for visibility-sensitive document creation paths
 
 ### 1.7.0 (2026‑02‑27)
 - Added Streamable HTTP MCP support on `/mcp` for remote hosting while keeping legacy SSE compatibility paths (`/sse`, `/messages`)

@@ -14,11 +14,13 @@
 /**
  * Poll the AFFiNE base URL until it returns HTTP 200.
  */
-export async function waitForHealthy(baseUrl, maxRetries = 60, intervalMs = 5000) {
+export async function waitForHealthy(baseUrl, maxRetries = 60, intervalMs = 5000, requestTimeoutMs = 3000) {
   const url = baseUrl.replace(/\/$/, '');
   for (let i = 1; i <= maxRetries; i++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
-      const res = await fetch(`${url}/`);
+      const res = await fetch(`${url}/`, { signal: controller.signal });
       if (res.ok) {
         console.error(`[health] AFFiNE healthy after ${i} attempt(s)`);
         return;
@@ -26,6 +28,8 @@ export async function waitForHealthy(baseUrl, maxRetries = 60, intervalMs = 5000
       console.error(`[health] Attempt ${i}/${maxRetries}: status ${res.status}`);
     } catch (err) {
       console.error(`[health] Attempt ${i}/${maxRetries}: ${err.message}`);
+    } finally {
+      clearTimeout(timeoutId);
     }
     if (i < maxRetries) {
       await new Promise(r => setTimeout(r, intervalMs));
@@ -118,10 +122,13 @@ async function runCli() {
 
   const maxRetries = parsePositiveIntEnv('AFFINE_HEALTH_MAX_RETRIES', 60);
   const intervalMs = parsePositiveIntEnv('AFFINE_HEALTH_INTERVAL_MS', 5000);
+  const requestTimeoutMs = parsePositiveIntEnv('AFFINE_HEALTH_REQUEST_TIMEOUT_MS', 3000);
 
-  console.error(`[credentials] Health check config: retries=${maxRetries}, intervalMs=${intervalMs}`);
+  console.error(
+    `[credentials] Health check config: retries=${maxRetries}, intervalMs=${intervalMs}, requestTimeoutMs=${requestTimeoutMs}`
+  );
   console.error('[credentials] Waiting for AFFiNE to become healthy...');
-  await waitForHealthy(baseUrl, maxRetries, intervalMs);
+  await waitForHealthy(baseUrl, maxRetries, intervalMs, requestTimeoutMs);
 
   console.error('[credentials] Ensuring admin user exists...');
   await ensureAdminUser(baseUrl, email, password);
@@ -139,8 +146,10 @@ const isCLI = process.argv[1] &&
    process.argv[1].endsWith('acquire-credentials'));
 
 if (isCLI) {
-  runCli().catch(err => {
+  try {
+    await runCli();
+  } catch (err) {
     console.error(`[credentials] ERROR: ${err.message}`);
     process.exit(1);
-  });
+  }
 }
