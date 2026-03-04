@@ -220,6 +220,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return normalized;
   }
 
+  type WorkspaceTagOption = {
+    id: string;
+    value: string;
+    color: string;
+    createDate: number | null;
+    updateDate: number | null;
+  };
+
+  const TAG_OPTION_COLORS = [
+    "var(--affine-tag-blue)", "var(--affine-tag-green)", "var(--affine-tag-red)",
+    "var(--affine-tag-orange)", "var(--affine-tag-purple)", "var(--affine-tag-yellow)",
+    "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
+  ];
+
   function getStringArray(value: unknown): string[] {
     if (!(value instanceof Y.Array)) {
       return [];
@@ -251,24 +265,276 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return next;
   }
 
-  function hasTag(tagValues: string[], tag: string, ignoreCase: boolean): boolean {
-    const normalizedTag = ignoreCase ? tag.toLocaleLowerCase() : tag;
-    return tagValues.some((entry) => (ignoreCase ? entry.toLocaleLowerCase() : entry) === normalizedTag);
+  function getYMap(target: Y.Map<any>, key: string): Y.Map<any> | null {
+    const value = target.get(key);
+    if (!(value instanceof Y.Map)) {
+      return null;
+    }
+    return value;
   }
 
-  function findTagIndex(tags: Y.Array<string>, tag: string, ignoreCase: boolean): number {
-    const normalizedTag = ignoreCase ? tag.toLocaleLowerCase() : tag;
-    let index = -1;
-    tags.forEach((entry: unknown, i: number) => {
-      if (index >= 0 || typeof entry !== "string") {
+  function ensureYMap(target: Y.Map<any>, key: string): Y.Map<any> {
+    const current = getYMap(target, key);
+    if (current) {
+      return current;
+    }
+    const next = new Y.Map<any>();
+    target.set(key, next);
+    return next;
+  }
+
+  function getWorkspaceTagOptionsArray(meta: Y.Map<any>): Y.Array<any> | null {
+    const properties = getYMap(meta, "properties");
+    if (!properties) {
+      return null;
+    }
+    const tags = getYMap(properties, "tags");
+    if (!tags) {
+      return null;
+    }
+    const options = tags.get("options");
+    if (!(options instanceof Y.Array)) {
+      return null;
+    }
+    return options;
+  }
+
+  function ensureWorkspaceTagOptionsArray(meta: Y.Map<any>): Y.Array<any> {
+    const properties = ensureYMap(meta, "properties");
+    const tags = ensureYMap(properties, "tags");
+    const existing = tags.get("options");
+    if (existing instanceof Y.Array) {
+      return existing;
+    }
+    const next = new Y.Array<any>();
+    tags.set("options", next);
+    return next;
+  }
+
+  function asNumberOrNull(value: unknown): number | null {
+    return typeof value === "number" ? value : null;
+  }
+
+  function parseWorkspaceTagOption(raw: unknown): WorkspaceTagOption | null {
+    let id: unknown;
+    let value: unknown;
+    let color: unknown;
+    let createDate: unknown;
+    let updateDate: unknown;
+
+    if (raw instanceof Y.Map) {
+      id = raw.get("id");
+      value = raw.get("value");
+      color = raw.get("color");
+      createDate = raw.get("createDate");
+      updateDate = raw.get("updateDate");
+    } else if (raw && typeof raw === "object") {
+      id = (raw as any).id;
+      value = (raw as any).value;
+      color = (raw as any).color;
+      createDate = (raw as any).createDate;
+      updateDate = (raw as any).updateDate;
+    } else {
+      return null;
+    }
+
+    if (typeof id !== "string" || id.trim().length === 0) {
+      return null;
+    }
+    if (typeof value !== "string" || value.trim().length === 0) {
+      return null;
+    }
+
+    return {
+      id,
+      value,
+      color: typeof color === "string" && color.trim().length > 0 ? color : TAG_OPTION_COLORS[0],
+      createDate: asNumberOrNull(createDate),
+      updateDate: asNumberOrNull(updateDate),
+    };
+  }
+
+  function getWorkspaceTagOptions(meta: Y.Map<any>): WorkspaceTagOption[] {
+    const options = getWorkspaceTagOptionsArray(meta);
+    if (!options) {
+      return [];
+    }
+    const parsed: WorkspaceTagOption[] = [];
+    options.forEach((raw: unknown) => {
+      const option = parseWorkspaceTagOption(raw);
+      if (option) {
+        parsed.push(option);
+      }
+    });
+    return parsed;
+  }
+
+  function getWorkspaceTagOptionMaps(meta: Y.Map<any>): {
+    options: WorkspaceTagOption[];
+    byId: Map<string, WorkspaceTagOption>;
+    byValueLower: Map<string, WorkspaceTagOption>;
+  } {
+    const options = getWorkspaceTagOptions(meta);
+    const byId = new Map<string, WorkspaceTagOption>();
+    const byValueLower = new Map<string, WorkspaceTagOption>();
+    for (const option of options) {
+      if (!byId.has(option.id)) {
+        byId.set(option.id, option);
+      }
+      const key = option.value.toLocaleLowerCase();
+      if (!byValueLower.has(key)) {
+        byValueLower.set(key, option);
+      }
+    }
+    return { options, byId, byValueLower };
+  }
+
+  function resolveTagLabels(tagEntries: string[], byId: Map<string, WorkspaceTagOption>): string[] {
+    const deduped = new Set<string>();
+    const resolved: string[] = [];
+    for (const entry of tagEntries) {
+      const raw = entry.trim();
+      if (!raw) {
+        continue;
+      }
+      const option = byId.get(raw);
+      const label = (option ? option.value : raw).trim();
+      if (!label) {
+        continue;
+      }
+      const dedupeKey = label.toLocaleLowerCase();
+      if (deduped.has(dedupeKey)) {
+        continue;
+      }
+      deduped.add(dedupeKey);
+      resolved.push(label);
+    }
+    return resolved;
+  }
+
+  function ensureWorkspaceTagOption(meta: Y.Map<any>, tag: string): {
+    option: WorkspaceTagOption;
+    created: boolean;
+  } {
+    const normalizedTag = normalizeTag(tag);
+    const maps = getWorkspaceTagOptionMaps(meta);
+    const existing = maps.byValueLower.get(normalizedTag.toLocaleLowerCase());
+    if (existing) {
+      return { option: existing, created: false };
+    }
+
+    const optionsArray = ensureWorkspaceTagOptionsArray(meta);
+    const color = TAG_OPTION_COLORS[maps.options.length % TAG_OPTION_COLORS.length];
+    const now = Date.now();
+    const option: WorkspaceTagOption = {
+      id: generateId(),
+      value: normalizedTag,
+      color,
+      createDate: now,
+      updateDate: now,
+    };
+
+    const optionMap = new Y.Map<any>();
+    optionMap.set("id", option.id);
+    optionMap.set("value", option.value);
+    optionMap.set("color", option.color);
+    optionMap.set("createDate", now);
+    optionMap.set("updateDate", now);
+    optionsArray.push([optionMap]);
+
+    return { option, created: true };
+  }
+
+  function collectMatchingTagIndexes(
+    tags: Y.Array<string>,
+    requestedTag: string,
+    option: WorkspaceTagOption | null,
+    ignoreCase: boolean
+  ): number[] {
+    const normalizedRequested = ignoreCase ? requestedTag.toLocaleLowerCase() : requestedTag;
+    const normalizedOptionId = option
+      ? (ignoreCase ? option.id.toLocaleLowerCase() : option.id)
+      : null;
+    const normalizedOptionValue = option
+      ? (ignoreCase ? option.value.toLocaleLowerCase() : option.value)
+      : null;
+
+    const indexes: number[] = [];
+    tags.forEach((entry: unknown, index: number) => {
+      if (typeof entry !== "string") {
         return;
       }
       const current = ignoreCase ? entry.toLocaleLowerCase() : entry;
-      if (current === normalizedTag) {
-        index = i;
+      if (
+        current === normalizedRequested ||
+        (normalizedOptionId && current === normalizedOptionId) ||
+        (normalizedOptionValue && current === normalizedOptionValue)
+      ) {
+        indexes.push(index);
       }
     });
-    return index;
+    return indexes;
+  }
+
+  function deleteArrayIndexes(arr: Y.Array<any>, indexes: number[]): boolean {
+    if (indexes.length === 0) {
+      return false;
+    }
+    const sorted = [...indexes].sort((a, b) => b - a);
+    for (const index of sorted) {
+      arr.delete(index, 1);
+    }
+    return true;
+  }
+
+  function syncTagArrayToOption(
+    tags: Y.Array<string>,
+    requestedTag: string,
+    option: WorkspaceTagOption
+  ): {
+    existed: boolean;
+    changed: boolean;
+  } {
+    const optionId = option.id.toLocaleLowerCase();
+    const optionValue = option.value.toLocaleLowerCase();
+    const requested = requestedTag.toLocaleLowerCase();
+
+    let existed = false;
+    let hasCanonicalId = false;
+    const removeIndexes: number[] = [];
+
+    tags.forEach((entry: unknown, index: number) => {
+      if (typeof entry !== "string") {
+        return;
+      }
+      const current = entry.toLocaleLowerCase();
+      const matched = current === optionId || current === optionValue || current === requested;
+      if (!matched) {
+        return;
+      }
+      existed = true;
+      if (current === optionId) {
+        if (hasCanonicalId) {
+          removeIndexes.push(index);
+        } else {
+          hasCanonicalId = true;
+        }
+        return;
+      }
+      removeIndexes.push(index);
+    });
+
+    let changed = deleteArrayIndexes(tags, removeIndexes);
+    if (!hasCanonicalId) {
+      tags.push([option.id]);
+      changed = true;
+    }
+    return { existed, changed };
+  }
+
+  function hasTag(tagValues: string[], tag: string, ignoreCase: boolean): boolean {
+    const normalizedTag = ignoreCase ? tag.toLocaleLowerCase() : tag;
+    return tagValues.some((entry) => (ignoreCase ? entry.toLocaleLowerCase() : entry) === normalizedTag);
   }
 
   type WorkspacePageEntry = {
@@ -1563,14 +1829,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return tableData;
   }
 
-  function collectDocForMarkdown(doc: Y.Doc): {
+  function collectDocForMarkdown(
+    doc: Y.Doc,
+    tagOptionsById: Map<string, WorkspaceTagOption> = new Map()
+  ): {
     title: string;
     tags: string[];
     rootBlockIds: string[];
     blocksById: Map<string, MarkdownRenderableBlock>;
   } {
     const meta = doc.getMap("meta");
-    const tags = getStringArray(getTagArray(meta));
+    const tags = resolveTagLabels(getStringArray(getTagArray(meta)), tagOptionsById);
 
     const blocks = doc.getMap("blocks") as Y.Map<any>;
     const pageId = findBlockIdByFlavour(blocks, "affine:page");
@@ -1876,8 +2145,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
             const meta = wsDoc.getMap("meta");
             const pages = getWorkspacePageEntries(meta);
+            const { byId } = getWorkspaceTagOptionMaps(meta);
             for (const page of pages) {
-              tagsByDocId.set(page.id, getStringArray(page.tagsArray));
+              const tagEntries = getStringArray(page.tagsArray);
+              tagsByDocId.set(page.id, resolveTagLabels(tagEntries, byId));
             }
           }
         } finally {
@@ -1943,10 +2214,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
+      const { options, byId } = getWorkspaceTagOptionMaps(meta);
 
       const tagCounts = new Map<string, number>();
-      for (const tag of getStringArray(getTagArray(meta))) {
-        const normalized = tag.trim();
+      for (const option of options) {
+        const normalized = option.value.trim();
         if (!normalized || tagCounts.has(normalized)) {
           continue;
         }
@@ -1955,7 +2227,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       for (const page of pages) {
         const uniqueTags = new Set<string>();
-        for (const tag of getStringArray(page.tagsArray)) {
+        const resolved = resolveTagLabels(getStringArray(page.tagsArray), byId);
+        for (const tag of resolved) {
           const normalized = tag.trim();
           if (!normalized) {
             continue;
@@ -2014,18 +2287,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
+      const { byId } = getWorkspaceTagOptionMaps(meta);
       const docs = pages
         .map((page) => {
-          const tags = getStringArray(page.tagsArray);
+          const rawTags = getStringArray(page.tagsArray);
+          const tags = resolveTagLabels(rawTags, byId);
           return {
             id: page.id,
             title: page.title,
             createDate: page.createDate,
             updatedDate: page.updatedDate,
             tags,
+            rawTags,
           };
         })
-        .filter((page) => hasTag(page.tags, tag, ignoreCase));
+        .filter((page) => hasTag(page.tags, tag, ignoreCase) || hasTag(page.rawTags, tag, ignoreCase))
+        .map(({ rawTags: _rawTags, ...page }) => page);
 
       return text({
         workspaceId,
@@ -2073,13 +2350,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
       const prevSV = Y.encodeStateVector(wsDoc);
       const meta = wsDoc.getMap("meta");
-      const registry = ensureTagArray(meta);
-
-      if (findTagIndex(registry, tag, true) >= 0) {
+      const { created } = ensureWorkspaceTagOption(meta, tag);
+      if (!created) {
         return text({ workspaceId, tag, created: false });
       }
 
-      registry.push([tag]);
       const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
       return text({ workspaceId, tag, created: true });
@@ -2127,19 +2402,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         throw new Error(`docId ${parsed.docId} is not present in workspace ${workspaceId}`);
       }
 
+      const { option, created: optionCreated } = ensureWorkspaceTagOption(wsMeta, tag);
       const pageTags = ensureTagArray(page.entry);
-      const existedInDoc = findTagIndex(pageTags, tag, true) >= 0;
-      if (!existedInDoc) {
-        pageTags.push([tag]);
-      }
-
-      const registry = ensureTagArray(wsMeta);
-      const existedInRegistry = findTagIndex(registry, tag, true) >= 0;
-      if (!existedInRegistry) {
-        registry.push([tag]);
-      }
-
-      if (!existedInDoc || !existedInRegistry) {
+      const pageSync = syncTagArrayToOption(pageTags, tag, option);
+      const wsChanged = optionCreated || pageSync.changed;
+      if (wsChanged) {
         const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
@@ -2155,21 +2422,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const docPrevSV = Y.encodeStateVector(doc);
         const docMeta = doc.getMap("meta");
         const docTags = ensureTagArray(docMeta);
-        const existedInDocMeta = findTagIndex(docTags, tag, true) >= 0;
-        if (!existedInDocMeta) {
-          docTags.push([tag]);
+        const docSync = syncTagArrayToOption(docTags, tag, option);
+        if (docSync.changed) {
           const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
           await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
         }
         docMetaSynced = true;
       }
 
+      const { byId } = getWorkspaceTagOptionMaps(wsMeta);
+
       return text({
         workspaceId,
         docId: parsed.docId,
         tag,
-        added: !existedInDoc,
-        tags: getStringArray(pageTags),
+        added: !pageSync.existed,
+        tags: resolveTagLabels(getStringArray(pageTags), byId),
         docMetaSynced,
         warning,
       });
@@ -2218,10 +2486,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         throw new Error(`docId ${parsed.docId} is not present in workspace ${workspaceId}`);
       }
 
+      const option = getWorkspaceTagOptionMaps(wsMeta).byValueLower.get(tag.toLocaleLowerCase()) || null;
       const pageTags = ensureTagArray(page.entry);
-      const pageTagIndex = findTagIndex(pageTags, tag, true);
-      if (pageTagIndex >= 0) {
-        pageTags.delete(pageTagIndex, 1);
+      const pageTagIndexes = collectMatchingTagIndexes(pageTags, tag, option, true);
+      const pageRemoved = deleteArrayIndexes(pageTags, pageTagIndexes);
+      if (pageRemoved) {
         const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
@@ -2237,21 +2506,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const docPrevSV = Y.encodeStateVector(doc);
         const docMeta = doc.getMap("meta");
         const docTags = ensureTagArray(docMeta);
-        const docTagIndex = findTagIndex(docTags, tag, true);
-        if (docTagIndex >= 0) {
-          docTags.delete(docTagIndex, 1);
+        const docTagIndexes = collectMatchingTagIndexes(docTags, tag, option, true);
+        if (deleteArrayIndexes(docTags, docTagIndexes)) {
           const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
           await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
         }
         docMetaSynced = true;
       }
 
+      const { byId } = getWorkspaceTagOptionMaps(wsMeta);
+
       return text({
         workspaceId,
         docId: parsed.docId,
         tag,
-        removed: pageTagIndex >= 0,
-        tags: getStringArray(pageTags),
+        removed: pageRemoved,
+        tags: resolveTagLabels(getStringArray(pageTags), byId),
         docMetaSynced,
         warning,
       });
@@ -2306,6 +2576,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
+      let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (workspaceSnapshot.missing) {
+        const workspaceDoc = new Y.Doc();
+        Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+        tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+      }
+
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
 
       if (!snapshot.missing) {
@@ -2324,7 +2602,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
       const meta = doc.getMap("meta");
-      const tags = getStringArray(getTagArray(meta));
+      const tags = resolveTagLabels(getStringArray(getTagArray(meta)), tagOptionsById);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const pageId = findBlockIdByFlavour(blocks, "affine:page");
       const noteId = findBlockIdByFlavour(blocks, "affine:note");
@@ -2613,6 +2891,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
     try {
       await joinWorkspace(socket, workspaceId);
+      let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (workspaceSnapshot.missing) {
+        const wsDoc = new Y.Doc();
+        Y.applyUpdate(wsDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+        tagOptionsById = getWorkspaceTagOptionMaps(wsDoc.getMap("meta")).byId;
+      }
+
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
       if (!snapshot.missing) {
         return text({
@@ -2632,7 +2918,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const collected = collectDocForMarkdown(doc);
+      const collected = collectDocForMarkdown(doc, tagOptionsById);
       const rendered = renderBlocksToMarkdown({
         rootBlockIds: collected.rootBlockIds,
         blocksById: collected.blocksById,
