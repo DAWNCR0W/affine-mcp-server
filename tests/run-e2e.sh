@@ -21,8 +21,11 @@ COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:3010}"
 export AFFINE_HEALTH_MAX_RETRIES="${AFFINE_HEALTH_MAX_RETRIES:-90}"
 export AFFINE_HEALTH_INTERVAL_MS="${AFFINE_HEALTH_INTERVAL_MS:-5000}"
+export AFFINE_HEALTH_REQUEST_TIMEOUT_MS="${AFFINE_HEALTH_REQUEST_TIMEOUT_MS:-3000}"
 export AFFINE_CREDENTIAL_ACQUIRE_RETRIES="${AFFINE_CREDENTIAL_ACQUIRE_RETRIES:-3}"
 export AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS="${AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS:-5}"
+export AFFINE_AUTH_READY_MAX_RETRIES="${AFFINE_AUTH_READY_MAX_RETRIES:-30}"
+export AFFINE_AUTH_READY_INTERVAL_SECONDS="${AFFINE_AUTH_READY_INTERVAL_SECONDS:-3}"
 
 # Generate random credentials (writes docker/.env, exports env vars)
 echo "=== Generating test credentials ==="
@@ -67,6 +70,50 @@ acquire_credentials_with_retry() {
   return "$exit_code"
 }
 
+wait_for_auth_ready() {
+  local attempt
+  local setup_status
+  local sign_in_status
+  local base_url="${AFFINE_BASE_URL%/}"
+  local payload
+  payload=$(printf '{"email":"%s","password":"%s"}' "$AFFINE_ADMIN_EMAIL" "$AFFINE_ADMIN_PASSWORD")
+
+  for ((attempt = 1; attempt <= AFFINE_AUTH_READY_MAX_RETRIES; attempt++)); do
+    setup_status="$(
+      curl -sS -o /tmp/affine-setup-response.txt -w "%{http_code}" \
+        -H "Content-Type: application/json" \
+        -X POST "$base_url/api/setup/create-admin-user" \
+        -d "$payload" || true
+    )"
+
+    sign_in_status="$(
+      curl -sS -o /tmp/affine-signin-response.txt -w "%{http_code}" \
+        -H "Content-Type: application/json" \
+        -X POST "$base_url/api/auth/sign-in" \
+        -d "$payload" || true
+    )"
+
+    if [[ "$sign_in_status" == "200" ]]; then
+      echo "[e2e] AFFiNE auth readiness confirmed after ${attempt} attempt(s) (setup=${setup_status}, sign-in=${sign_in_status})"
+      return 0
+    fi
+
+    echo "[e2e] Auth readiness attempt ${attempt}/${AFFINE_AUTH_READY_MAX_RETRIES}: setup=${setup_status}, sign-in=${sign_in_status}"
+    if ((attempt < AFFINE_AUTH_READY_MAX_RETRIES)); then
+      sleep "$AFFINE_AUTH_READY_INTERVAL_SECONDS"
+    fi
+  done
+
+  echo "[e2e] ERROR: AFFiNE sign-in endpoint did not become ready in time"
+  if [[ -s /tmp/affine-signin-response.txt ]]; then
+    echo "[e2e] Last sign-in response body (first 500 bytes):"
+    head -c 500 /tmp/affine-signin-response.txt
+    echo ""
+  fi
+  docker_diagnostics
+  return 1
+}
+
 # --- Step 0: Clean up any stale containers from previous runs ---
 docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
 
@@ -78,6 +125,9 @@ docker compose -f "$COMPOSE_FILE" up -d
 echo ""
 echo "=== Waiting for AFFiNE to become healthy ==="
 acquire_credentials_with_retry
+echo ""
+echo "=== Verifying AFFiNE auth readiness ==="
+wait_for_auth_ready
 
 # --- Step 3: Build MCP server ---
 echo ""
