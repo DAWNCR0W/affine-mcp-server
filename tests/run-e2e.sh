@@ -19,6 +19,10 @@ COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 
 # --- Configuration ---
 export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:3010}"
+export AFFINE_HEALTH_MAX_RETRIES="${AFFINE_HEALTH_MAX_RETRIES:-90}"
+export AFFINE_HEALTH_INTERVAL_MS="${AFFINE_HEALTH_INTERVAL_MS:-5000}"
+export AFFINE_CREDENTIAL_ACQUIRE_RETRIES="${AFFINE_CREDENTIAL_ACQUIRE_RETRIES:-3}"
+export AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS="${AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS:-5}"
 
 # Generate random credentials (writes docker/.env, exports env vars)
 echo "=== Generating test credentials ==="
@@ -33,6 +37,36 @@ cleanup() {
 }
 trap cleanup EXIT
 
+docker_diagnostics() {
+  echo ""
+  echo "=== Docker diagnostics (on failure) ==="
+  docker compose -f "$COMPOSE_FILE" ps || true
+  echo ""
+  docker compose -f "$COMPOSE_FILE" logs --no-color --tail=200 affine affine_migration postgres redis || true
+}
+
+acquire_credentials_with_retry() {
+  local attempt
+  local exit_code=1
+
+  for ((attempt = 1; attempt <= AFFINE_CREDENTIAL_ACQUIRE_RETRIES; attempt++)); do
+    if node "$SCRIPT_DIR/acquire-credentials.mjs"; then
+      return 0
+    fi
+
+    exit_code=$?
+    echo "[e2e] Credential acquisition failed (attempt ${attempt}/${AFFINE_CREDENTIAL_ACQUIRE_RETRIES}, exit ${exit_code})"
+    docker_diagnostics
+
+    if ((attempt < AFFINE_CREDENTIAL_ACQUIRE_RETRIES)); then
+      echo "[e2e] Retrying credential acquisition in ${AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS}s..."
+      sleep "$AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS"
+    fi
+  done
+
+  return "$exit_code"
+}
+
 # --- Step 0: Clean up any stale containers from previous runs ---
 docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
 
@@ -43,7 +77,7 @@ docker compose -f "$COMPOSE_FILE" up -d
 # --- Step 2: Wait for health + verify credentials ---
 echo ""
 echo "=== Waiting for AFFiNE to become healthy ==="
-node "$SCRIPT_DIR/acquire-credentials.mjs"
+acquire_credentials_with_retry
 
 # --- Step 3: Build MCP server ---
 echo ""

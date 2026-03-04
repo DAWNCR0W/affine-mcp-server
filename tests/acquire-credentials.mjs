@@ -98,31 +98,49 @@ export async function acquireCredentials(baseUrl, email, password) {
   return { cookie, baseUrl: baseUrl.replace(/\/$/, ''), email };
 }
 
+function parsePositiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer, got: ${raw}`);
+  }
+
+  return parsed;
+}
+
+async function runCli() {
+  const baseUrl = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
+  const email = process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
+  const password = process.env.AFFINE_ADMIN_PASSWORD;
+  if (!password) throw new Error('AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh');
+
+  const maxRetries = parsePositiveIntEnv('AFFINE_HEALTH_MAX_RETRIES', 60);
+  const intervalMs = parsePositiveIntEnv('AFFINE_HEALTH_INTERVAL_MS', 5000);
+
+  console.error(`[credentials] Health check config: retries=${maxRetries}, intervalMs=${intervalMs}`);
+  console.error('[credentials] Waiting for AFFiNE to become healthy...');
+  await waitForHealthy(baseUrl, maxRetries, intervalMs);
+
+  console.error('[credentials] Ensuring admin user exists...');
+  await ensureAdminUser(baseUrl, email, password);
+
+  console.error('[credentials] Signing in...');
+  const creds = await acquireCredentials(baseUrl, email, password);
+
+  // Output JSON to stdout (logs go to stderr)
+  console.log(JSON.stringify(creds, null, 2));
+}
+
 // --- CLI mode ---
 const isCLI = process.argv[1] &&
   (process.argv[1].endsWith('acquire-credentials.mjs') ||
    process.argv[1].endsWith('acquire-credentials'));
 
 if (isCLI) {
-  const baseUrl = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
-  const email = process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
-  const password = process.env.AFFINE_ADMIN_PASSWORD;
-  if (!password) throw new Error('AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh');
-
-  try {
-    console.error('[credentials] Waiting for AFFiNE to become healthy...');
-    await waitForHealthy(baseUrl);
-
-    console.error('[credentials] Ensuring admin user exists...');
-    await ensureAdminUser(baseUrl, email, password);
-
-    console.error('[credentials] Signing in...');
-    const creds = await acquireCredentials(baseUrl, email, password);
-
-    // Output JSON to stdout (logs go to stderr)
-    console.log(JSON.stringify(creds, null, 2));
-  } catch (err) {
+  runCli().catch(err => {
     console.error(`[credentials] ERROR: ${err.message}`);
     process.exit(1);
-  }
+  });
 }
