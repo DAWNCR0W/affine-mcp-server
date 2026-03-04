@@ -1,5 +1,31 @@
 # Release Notes
 
+## Version 1.7.2 (2026-03-04)
+
+### Highlights
+- Fixed tag visibility parity so tags persisted through MCP are now rendered correctly in AFFiNE Web/App UI.
+- Added dedicated MCP + Playwright regression coverage for tag visibility.
+- Hardened Docker E2E startup flow with retries and diagnostics to reduce transient CI failures.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Aligned tag persistence to AFFiNE canonical schema (`meta.properties.tags.options`) by storing option IDs.
+  - Added backward-compatible normalization for legacy string tag entries.
+  - Added tag label resolution for tag-facing outputs (`read_doc`, `list_docs`, `list_tags`, `list_docs_by_tag`, markdown export).
+- `tests/test-tag-visibility.mjs`, `tests/playwright/verify-tag-visibility.pw.ts`
+  - Added end-to-end regression path to create/apply tags via MCP and verify real UI visibility in AFFiNE.
+- `tests/run-e2e.sh`, `tests/acquire-credentials.mjs`
+  - Added configurable health-check and credential-acquisition retries.
+  - Added Docker diagnostics dump (`docker compose ps/logs`) on bootstrap failure for actionable CI troubleshooting.
+
+### Validation Evidence
+- Local end-to-end validation passed:
+  - `bash tests/run-e2e.sh` (`6 passed` in Playwright verification)
+- Release sanity gate passed:
+  - `npm run ci`
+- PR checks passed for the change set:
+  - `validate`, `e2e`, and security checks on PR #46
+
 ## Version 1.7.1 (2026-03-03)
 
 ### Highlights
