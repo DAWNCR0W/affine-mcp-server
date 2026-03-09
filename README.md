@@ -326,7 +326,10 @@ Endpoints currently available:
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
-- `add_database_row` – add a row to a database block with values mapped by column name/ID
+- `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
+- `read_database_cells` – read row titles plus decoded database cell values with optional row / column filters
+- `update_database_cell` – update a single database cell or the built-in row title (`createOption` defaults to `true` for select fields)
+- `update_database_row` – batch update multiple cells on a database row (`createOption` defaults to `true` for select fields)
 - `append_markdown` – append markdown content to an existing document
 - `replace_doc_with_markdown` – replace the main note content with markdown content
 - `delete_doc` – delete a document (WebSocket)

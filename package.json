@@ -37,6 +37,7 @@
     "test:comprehensive": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
     "test:db-create": "node tests/test-database-creation.mjs",
+    "test:db-cells": "node tests/test-database-cells.mjs",
     "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
