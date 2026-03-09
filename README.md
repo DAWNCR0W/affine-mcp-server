@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.7.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -16,16 +16,16 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 43 focused tools with WebSocket-based document editing
+- Tools: 46 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.7.2: Fixed tag visibility parity in AFFiNE Web/App for MCP-created tags and hardened Docker E2E startup reliability with retry/diagnostics.
+> New in v1.8.0: Added database cell read/write tools, fixed Kanban row title persistence, and added CLI version commands.
 
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
-- Database workflows: create database blocks, then add columns/rows via MCP tools
+- Database workflows: create database blocks, add columns and rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -95,6 +95,7 @@ The MCP server will use these credentials automatically.
 Other CLI commands:
 - `affine-mcp status` — show current config and test connection
 - `affine-mcp logout` — remove stored credentials
+- `affine-mcp --version` / `-v` / `version` — print the installed CLI version and exit
 
 ### Environment variables
 
@@ -377,7 +378,7 @@ npm run pack:check
 - CI validates that `registerTool(...)` declarations match the manifest exactly.
 - For full tool-surface verification, run `npm run test:comprehensive`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:bearer`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:bearer`, `npm run test:cli-version`, `npm run test:playwright`.
 
 ## Troubleshooting
 
@@ -411,6 +412,13 @@ Workspace visibility
 - Store credentials in a secrets manager
 
 ## Version History
+
+### 1.8.0 (2026‑03‑09)
+- Added `read_database_cells`, `update_database_cell`, and `update_database_row` for database cell-level workflows
+- Fixed `add_database_row` so `title` / `Title` persists to the Kanban card header text
+- Added CLI version commands: `affine-mcp --version`, `affine-mcp -v`, and `affine-mcp version`
+- Added focused regression runners for database cells and CLI version support
+- Verified release gates with `npm run ci`, `npm run test:cli-version`, and live `npm run test:db-cells`
 
 ### 1.7.2 (2026‑03‑04)
 - Fixed MCP tag persistence to use AFFiNE canonical tag option IDs so tags are visible in Web/App UI
