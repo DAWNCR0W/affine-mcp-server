@@ -3204,18 +3204,35 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   // ── helpers for database select columns ──
 
-  /** Read column definitions including select options from a database block */
-  function readColumnDefs(dbBlock: Y.Map<any>): Array<{
-    id: string; name: string; type: string;
+  type DatabaseColumnDef = {
+    id: string;
+    name: string;
+    type: string;
     options: Array<{ id: string; value: string; color: string }>;
     raw: any;
-  }> {
+  };
+
+  type DatabaseColumnLookup = {
+    columnDefs: DatabaseColumnDef[];
+    colById: Map<string, DatabaseColumnDef>;
+    colByName: Map<string, DatabaseColumnDef>;
+    colByNameLower: Map<string, DatabaseColumnDef>;
+    titleCol: DatabaseColumnDef | null;
+  };
+
+  type DatabaseDocContext = DatabaseColumnLookup & {
+    socket: Awaited<ReturnType<typeof connectWorkspaceSocket>>;
+    doc: Y.Doc;
+    prevSV: Uint8Array;
+    blocks: Y.Map<any>;
+    dbBlock: Y.Map<any>;
+    cellsMap: Y.Map<any>;
+  };
+
+  /** Read column definitions including select options from a database block */
+  function readColumnDefs(dbBlock: Y.Map<any>): DatabaseColumnDef[] {
     const columnsRaw = dbBlock.get("prop:columns");
-    const defs: Array<{
-      id: string; name: string; type: string;
-      options: Array<{ id: string; value: string; color: string }>;
-      raw: any;
-    }> = [];
+    const defs: DatabaseColumnDef[] = [];
     if (!(columnsRaw instanceof Y.Array)) return defs;
     columnsRaw.forEach((col: any) => {
       const id = col instanceof Y.Map ? col.get("id") : col?.id;
@@ -3247,6 +3264,117 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return defs;
   }
 
+  function isTitleAliasKey(value: string): boolean {
+    return value.trim().toLowerCase() === "title";
+  }
+
+  function buildDatabaseColumnLookup(columnDefs: DatabaseColumnDef[]): DatabaseColumnLookup {
+    const colById = new Map<string, DatabaseColumnDef>();
+    const colByName = new Map<string, DatabaseColumnDef>();
+    const colByNameLower = new Map<string, DatabaseColumnDef>();
+    let titleCol: DatabaseColumnDef | null = null;
+    for (const col of columnDefs) {
+      colById.set(col.id, col);
+      if (col.name) {
+        colByName.set(col.name, col);
+        colByNameLower.set(col.name.trim().toLowerCase(), col);
+      }
+      if (!titleCol && col.type === "title") {
+        titleCol = col;
+      }
+    }
+    return { columnDefs, colById, colByName, colByNameLower, titleCol };
+  }
+
+  function findDatabaseColumn(key: string, lookup: DatabaseColumnLookup): DatabaseColumnDef | null {
+    return lookup.colByName.get(key)
+      || lookup.colById.get(key)
+      || lookup.colByNameLower.get(key.trim().toLowerCase())
+      || null;
+  }
+
+  function availableDatabaseColumns(lookup: DatabaseColumnLookup): string {
+    return ["title", ...lookup.columnDefs.map(col => col.name || col.id)].join(", ");
+  }
+
+  function getDatabaseRowIds(dbBlock: Y.Map<any>): string[] {
+    return childIdsFrom(dbBlock.get("sys:children"));
+  }
+
+  function readDatabaseRowTitle(rowBlock: Y.Map<any>): string {
+    return asText(rowBlock.get("prop:text"));
+  }
+
+  function resolveDatabaseTitleValue(
+    cells: Record<string, unknown>,
+    lookup: DatabaseColumnLookup,
+  ): string {
+    if (lookup.titleCol) {
+      const value = cells[lookup.titleCol.name] ?? cells[lookup.titleCol.id];
+      if (value !== undefined) {
+        return String(value ?? "");
+      }
+    }
+
+    for (const [key, value] of Object.entries(cells)) {
+      if (isTitleAliasKey(key)) {
+        return String(value ?? "");
+      }
+    }
+
+    const namedTitleColumn = lookup.colByNameLower.get("title");
+    if (namedTitleColumn) {
+      const value = cells[namedTitleColumn.name] ?? cells[namedTitleColumn.id];
+      if (value !== undefined) {
+        return String(value ?? "");
+      }
+    }
+
+    return "";
+  }
+
+  function ensureDatabaseRowCells(cellsMap: Y.Map<any>, rowBlockId: string): Y.Map<any> {
+    const existing = cellsMap.get(rowBlockId);
+    if (existing instanceof Y.Map) {
+      return existing;
+    }
+    const rowCells = new Y.Map<any>();
+    cellsMap.set(rowBlockId, rowCells);
+    return rowCells;
+  }
+
+  function getDatabaseRowBlock(
+    blocks: Y.Map<any>,
+    databaseBlockId: string,
+    rowBlockId: string,
+  ): Y.Map<any> {
+    const rowBlock = findBlockById(blocks, rowBlockId);
+    if (!rowBlock) {
+      throw new Error(`Row block '${rowBlockId}' not found`);
+    }
+    if (rowBlock.get("sys:parent") !== databaseBlockId) {
+      throw new Error(`Row block '${rowBlockId}' does not belong to database '${databaseBlockId}'`);
+    }
+    if (rowBlock.get("sys:flavour") !== "affine:paragraph") {
+      throw new Error(`Row block '${rowBlockId}' is not a database row paragraph`);
+    }
+    return rowBlock;
+  }
+
+  function databaseArrayValues(value: unknown): unknown[] {
+    if (value instanceof Y.Array) {
+      const entries: unknown[] = [];
+      value.forEach(entry => {
+        entries.push(entry);
+      });
+      return entries;
+    }
+    if (Array.isArray(value)) {
+      return value;
+    }
+    return [];
+  }
+
   const SELECT_COLORS = [
     "var(--affine-tag-blue)", "var(--affine-tag-green)", "var(--affine-tag-red)",
     "var(--affine-tag-orange)", "var(--affine-tag-purple)", "var(--affine-tag-yellow)",
@@ -3255,12 +3383,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   /** Find or create a select option for a column, mutating the column's data in place */
   function resolveSelectOptionId(
-    col: { raw: any; options: Array<{ id: string; value: string; color: string }> },
-    valueText: string
+    col: { name: string; raw: any; options: Array<{ id: string; value: string; color: string }> },
+    valueText: string,
+    createOption: boolean = true,
   ): string {
     // Try exact match first
     const existing = col.options.find(o => o.value === valueText);
     if (existing) return existing.id;
+    if (!createOption) {
+      throw new Error(`Column "${col.name}": option "${valueText}" not found`);
+    }
     // Create new option
     const newId = generateId();
     const colorIdx = col.options.length % SELECT_COLORS.length;
@@ -3288,6 +3420,182 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return newId;
   }
 
+  function decodeDatabaseCellValue(
+    col: DatabaseColumnDef,
+    cellEntry: unknown,
+  ): Record<string, unknown> {
+    const rawValue = cellEntry instanceof Y.Map ? cellEntry.get("value") : (cellEntry as any)?.value;
+    const base: Record<string, unknown> = {
+      columnId: col.id,
+      type: col.type,
+    };
+
+    switch (col.type) {
+      case "rich-text":
+      case "title":
+        return { ...base, value: richTextValueToString(rawValue) || null };
+      case "select": {
+        const optionId = asStringOrNull(rawValue);
+        const option = col.options.find(entry => entry.id === optionId) || null;
+        return {
+          ...base,
+          value: option?.value ?? optionId ?? null,
+          optionId: optionId ?? null,
+        };
+      }
+      case "multi-select": {
+        const optionIds = databaseArrayValues(rawValue).map(entry => String(entry));
+        const values = optionIds.map(optionId => col.options.find(entry => entry.id === optionId)?.value ?? optionId);
+        return {
+          ...base,
+          value: values,
+          optionIds,
+        };
+      }
+      case "number": {
+        const numericValue = typeof rawValue === "number" ? rawValue : Number(rawValue);
+        return {
+          ...base,
+          value: Number.isFinite(numericValue) ? numericValue : null,
+        };
+      }
+      case "checkbox":
+        return { ...base, value: typeof rawValue === "boolean" ? rawValue : !!rawValue };
+      case "date": {
+        const numericValue = typeof rawValue === "number" ? rawValue : Number(rawValue);
+        return {
+          ...base,
+          value: Number.isFinite(numericValue) ? numericValue : null,
+        };
+      }
+      case "link":
+        return { ...base, value: rawValue == null ? null : String(rawValue) };
+      default:
+        return {
+          ...base,
+          value: typeof rawValue === "string" || rawValue instanceof Y.Text || Array.isArray(rawValue)
+            ? richTextValueToString(rawValue)
+            : rawValue ?? null,
+        };
+    }
+  }
+
+  function writeDatabaseCellValue(
+    rowCells: Y.Map<any>,
+    col: DatabaseColumnDef,
+    value: unknown,
+    createOption: boolean,
+  ) {
+    const cellValue = new Y.Map<any>();
+    cellValue.set("columnId", col.id);
+    switch (col.type) {
+      case "rich-text":
+      case "title":
+        cellValue.set("value", makeText(String(value ?? "")));
+        break;
+      case "number": {
+        const num = Number(value);
+        if (Number.isNaN(num)) {
+          throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
+        }
+        cellValue.set("value", num);
+        break;
+      }
+      case "checkbox": {
+        let bool: boolean;
+        if (typeof value === "boolean") {
+          bool = value;
+        } else if (typeof value === "string") {
+          const lower = value.toLowerCase().trim();
+          bool = lower === "true" || lower === "1" || lower === "yes";
+        } else {
+          bool = !!value;
+        }
+        cellValue.set("value", bool);
+        break;
+      }
+      case "select":
+        cellValue.set("value", resolveSelectOptionId(col, String(value ?? ""), createOption));
+        break;
+      case "multi-select": {
+        const labels = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
+        const optionIds = new Y.Array<string>();
+        optionIds.push(labels.map(label => resolveSelectOptionId(col, label, createOption)));
+        cellValue.set("value", optionIds);
+        break;
+      }
+      case "date": {
+        const numericValue = typeof value === "number"
+          ? value
+          : Number.isNaN(Number(value)) ? Date.parse(String(value)) : Number(value);
+        if (!Number.isFinite(numericValue)) {
+          throw new Error(`Column "${col.name}": expected a timestamp-compatible value, got ${JSON.stringify(value)}`);
+        }
+        cellValue.set("value", numericValue);
+        break;
+      }
+      case "link":
+        cellValue.set("value", String(value ?? ""));
+        break;
+      default:
+        if (typeof value === "string") {
+          cellValue.set("value", makeText(value));
+        } else {
+          cellValue.set("value", value);
+        }
+    }
+    rowCells.set(col.id, cellValue);
+  }
+
+  async function loadDatabaseDocContext(
+    workspaceId: string,
+    docId: string,
+    databaseBlockId: string,
+  ): Promise<DatabaseDocContext> {
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    await joinWorkspace(socket, workspaceId);
+
+    const doc = new Y.Doc();
+    const snapshot = await loadDoc(socket, workspaceId, docId);
+    if (!snapshot.missing) {
+      socket.disconnect();
+      throw new Error("Document not found");
+    }
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+    const prevSV = Y.encodeStateVector(doc);
+    const blocks = doc.getMap("blocks") as Y.Map<any>;
+    const dbBlock = findBlockById(blocks, databaseBlockId);
+    if (!dbBlock) {
+      socket.disconnect();
+      throw new Error(`Database block '${databaseBlockId}' not found`);
+    }
+    const dbFlavour = dbBlock.get("sys:flavour");
+    if (dbFlavour !== "affine:database") {
+      socket.disconnect();
+      throw new Error(`Block '${databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
+    }
+
+    const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
+    if (!(cellsMap instanceof Y.Map)) {
+      socket.disconnect();
+      throw new Error("Database block has no cells map");
+    }
+
+    const lookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+    return {
+      socket,
+      doc,
+      prevSV,
+      blocks,
+      dbBlock,
+      cellsMap,
+      ...lookup,
+    };
+  }
+
   // ADD DATABASE ROW
   const addDatabaseRowHandler = async (parsed: {
     workspaceId?: string;
@@ -3297,43 +3605,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
-
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      await joinWorkspace(socket, workspaceId);
-
-      const doc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
-      if (!snapshot.missing) throw new Error("Document not found");
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-
-      const prevSV = Y.encodeStateVector(doc);
-      const blocks = doc.getMap("blocks") as Y.Map<any>;
-
-      // Find the database block
-      const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
-      if (!dbBlock) throw new Error(`Database block '${parsed.databaseBlockId}' not found`);
-      const dbFlavour = dbBlock.get("sys:flavour");
-      if (dbFlavour !== "affine:database") {
-        throw new Error(`Block '${parsed.databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
-      }
-
-      // Read column definitions with select options
-      const columnDefs = readColumnDefs(dbBlock);
-
-      // Build lookups
-      const colByName = new Map<string, typeof columnDefs[0]>();
-      const colById = new Map<string, typeof columnDefs[0]>();
-      for (const col of columnDefs) {
-        if (col.name) colByName.set(col.name, col);
-        colById.set(col.id, col);
-      }
-
-      // Identify the title column (first column, or type === "title")
-      const titleCol = columnDefs.find(c => c.type === "title") || null;
-
       // Create a new paragraph block as the row child of the database
       const rowBlockId = generateId();
       const rowBlock = new Y.Map<any>();
@@ -3341,106 +3614,30 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       rowBlock.set("sys:parent", parsed.databaseBlockId);
       rowBlock.set("sys:children", new Y.Array<string>());
       rowBlock.set("prop:type", "text");
-      // Title column value goes on the paragraph block's text
-      const titleValue = titleCol ? parsed.cells[titleCol.name] ?? parsed.cells[titleCol.id] ?? "" : "";
+      const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
       rowBlock.set("prop:text", makeText(String(titleValue)));
-      blocks.set(rowBlockId, rowBlock);
+      ctx.blocks.set(rowBlockId, rowBlock);
 
       // Add row block to database's children
-      const dbChildren = ensureChildrenArray(dbBlock);
+      const dbChildren = ensureChildrenArray(ctx.dbBlock);
       dbChildren.push([rowBlockId]);
 
-      // Populate cells map on the database block
-      const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
-      if (!(cellsMap instanceof Y.Map)) {
-        throw new Error("Database block has no cells map");
-      }
-
       // Create row cell map
-      const rowCells = new Y.Map<any>();
+      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, rowBlockId);
       for (const [key, value] of Object.entries(parsed.cells)) {
-        // Resolve column: try by name first, then by ID
-        const col = colByName.get(key) || colById.get(key);
+        const col = findDatabaseColumn(key, ctx);
         if (!col) {
-          throw new Error(`Column '${key}' not found. Available columns: ${columnDefs.map(c => c.name || c.id).join(", ")}`);
-        }
-
-        // Skip the title column — already stored on the paragraph block
-        if (titleCol && col.id === titleCol.id) continue;
-
-        // Create cell value based on column type
-        const cellValue = new Y.Map<any>();
-        cellValue.set("columnId", col.id);
-        switch (col.type) {
-          case "rich-text": {
-            const yText = makeText(String(value ?? ""));
-            cellValue.set("value", yText);
-            break;
-          }
-          case "title": {
-            // Handled above on the paragraph block; skip
+          if (isTitleAliasKey(key)) {
             continue;
           }
-          case "number": {
-            const num = Number(value);
-            if (Number.isNaN(num)) {
-              throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
-            }
-            cellValue.set("value", num);
-            break;
-          }
-          case "checkbox": {
-            let bool: boolean;
-            if (typeof value === "boolean") {
-              bool = value;
-            } else if (typeof value === "string") {
-              const lower = value.toLowerCase().trim();
-              bool = lower === "true" || lower === "1" || lower === "yes";
-            } else {
-              bool = !!value;
-            }
-            cellValue.set("value", bool);
-            break;
-          }
-          case "select": {
-            // Resolve option ID by label text; auto-create if needed
-            const optionId = resolveSelectOptionId(col, String(value ?? ""));
-            cellValue.set("value", optionId);
-            break;
-          }
-          case "multi-select": {
-            const labels = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
-            const ids = labels.map(lbl => resolveSelectOptionId(col, lbl));
-            cellValue.set("value", ids);
-            break;
-          }
-          case "date": {
-            const ts = Number(value);
-            if (Number.isNaN(ts)) {
-              throw new Error(`Column "${col.name}": expected a timestamp number, got ${JSON.stringify(value)}`);
-            }
-            cellValue.set("value", ts);
-            break;
-          }
-          case "link": {
-            cellValue.set("value", String(value ?? ""));
-            break;
-          }
-          default: {
-            // Fallback: store as rich-text
-            if (typeof value === "string") {
-              cellValue.set("value", makeText(value));
-            } else {
-              cellValue.set("value", value);
-            }
-          }
+          throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
         }
-        rowCells.set(col.id, cellValue);
-      }
-      cellsMap.set(rowBlockId, rowCells);
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+        writeDatabaseCellValue(rowCells, col, value, true);
+      }
+
+      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         added: true,
@@ -3449,7 +3646,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         cellCount: Object.keys(parsed.cells).length,
       });
     } finally {
-      socket.disconnect();
+      ctx.socket.disconnect();
     }
   };
   server.registerTool(
@@ -3465,6 +3662,207 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     addDatabaseRowHandler as any
+  );
+
+  const readDatabaseCellsHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rowBlockIds?: string[];
+    columns?: string[];
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const requestedRows = parsed.rowBlockIds?.length
+        ? parsed.rowBlockIds
+        : getDatabaseRowIds(ctx.dbBlock);
+
+      const requestedColumns = parsed.columns?.length
+        ? parsed.columns.map(columnKey => {
+            const col = findDatabaseColumn(columnKey, ctx);
+            if (!col) {
+              throw new Error(`Column '${columnKey}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
+            }
+            return col;
+          })
+        : ctx.columnDefs;
+      const requestedColumnIds = new Set(requestedColumns.map(col => col.id));
+
+      const rows = requestedRows.map(rowBlockId => {
+        const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, rowBlockId);
+        const title = readDatabaseRowTitle(rowBlock) || null;
+        const rowCells = ctx.cellsMap.get(rowBlockId);
+        const cells: Record<string, Record<string, unknown>> = {};
+
+        if (rowCells instanceof Y.Map) {
+          for (const col of ctx.columnDefs) {
+            if (ctx.titleCol && col.id === ctx.titleCol.id) {
+              continue;
+            }
+            if (!requestedColumnIds.has(col.id)) {
+              continue;
+            }
+            const cellEntry = rowCells.get(col.id);
+            if (cellEntry === undefined) {
+              continue;
+            }
+            cells[col.name || col.id] = decodeDatabaseCellValue(col, cellEntry);
+          }
+        }
+
+        return {
+          rowBlockId,
+          title,
+          cells,
+        };
+      });
+
+      return text({ rows });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "read_database_cells",
+    {
+      title: "Read Database Cells",
+      description: "Read row titles and database cell values from an AFFiNE database block.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rowBlockIds: z.array(z.string().min(1)).optional().describe("Optional row block ID filter. Omit to return all rows."),
+        columns: z.array(z.string().min(1)).optional().describe("Optional column name or ID filter."),
+      },
+    },
+    readDatabaseCellsHandler as any
+  );
+
+  const updateDatabaseCellHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rowBlockId: string;
+    column: string;
+    value: unknown;
+    createOption?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
+      const col = findDatabaseColumn(parsed.column, ctx);
+
+      if (!col) {
+        if (!isTitleAliasKey(parsed.column)) {
+          throw new Error(`Column '${parsed.column}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
+        }
+      } else {
+        writeDatabaseCellValue(rowCells, col, parsed.value, parsed.createOption ?? true);
+      }
+
+      if (isTitleAliasKey(parsed.column) || (col && (col.type === "title" || isTitleAliasKey(col.name)))) {
+        rowBlock.set("prop:text", makeText(String(parsed.value ?? "")));
+      }
+
+      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        updated: true,
+        rowBlockId: parsed.rowBlockId,
+        column: parsed.column,
+        value: parsed.value ?? null,
+      });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "update_database_cell",
+    {
+      title: "Update Database Cell",
+      description: "Update a single cell on an existing AFFiNE database row. Use `title` to update the row title shown in Kanban card headers.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
+        column: z.string().min(1).describe("Column name or ID. Use `title` for the built-in row title."),
+        value: z.unknown().describe("New cell value"),
+        createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
+      },
+    },
+    updateDatabaseCellHandler as any
+  );
+
+  const updateDatabaseRowHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rowBlockId: string;
+    cells: Record<string, unknown>;
+    createOption?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
+      let titleValue: string | null = null;
+
+      for (const [key, value] of Object.entries(parsed.cells)) {
+        const col = findDatabaseColumn(key, ctx);
+        if (!col) {
+          if (isTitleAliasKey(key)) {
+            titleValue = String(value ?? "");
+            continue;
+          }
+          throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
+        }
+
+        writeDatabaseCellValue(rowCells, col, value, parsed.createOption ?? true);
+        if (col.type === "title" || isTitleAliasKey(col.name)) {
+          titleValue = String(value ?? "");
+        }
+      }
+
+      if (titleValue !== null) {
+        rowBlock.set("prop:text", makeText(titleValue));
+      }
+
+      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        updated: true,
+        rowBlockId: parsed.rowBlockId,
+        cellCount: Object.keys(parsed.cells).length,
+      });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "update_database_row",
+    {
+      title: "Update Database Row",
+      description: "Batch update multiple cells on an existing AFFiNE database row. Include `title` in the cells map to update the Kanban row title.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Use `title` for the built-in row title."),
+        createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
+      },
+    },
+    updateDatabaseRowHandler as any
   );
 
   // ADD DATABASE COLUMN
