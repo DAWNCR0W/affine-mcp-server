@@ -1,5 +1,5 @@
 {
-  "version": "1.7.2",
+  "version": "1.8.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -32,6 +32,7 @@
     "list_workspaces",
     "publish_doc",
     "read_all_notifications",
+    "read_database_cells",
     "read_doc",
     "remove_tag_from_doc",
     "replace_doc_with_markdown",
@@ -40,6 +41,8 @@
     "revoke_doc",
     "sign_in",
     "update_comment",
+    "update_database_cell",
+    "update_database_row",
     "update_profile",
     "update_settings",
     "update_workspace",

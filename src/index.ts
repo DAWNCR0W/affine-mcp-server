@@ -17,8 +17,13 @@ import { registerAuthTools } from "./tools/auth.js";
 import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 
-// CLI subcommands: affine-mcp login|status|logout
-const subcommand = process.argv[2];
+// CLI commands: affine-mcp login|status|logout|version
+const rawArgs = process.argv.slice(2);
+const subcommand = rawArgs[0] === "--" ? rawArgs[1] : rawArgs[0];
+if (subcommand === "--version" || subcommand === "-v" || subcommand === "version") {
+  console.log(VERSION);
+  process.exit(0);
+}
 if (subcommand && await runCli(subcommand)) {
   process.exit(0);
 }
