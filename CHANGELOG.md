@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-03-09
+
+### Added
+- Database cell workflows:
+  - `read_database_cells`
+  - `update_database_cell`
+  - `update_database_row`
+- CLI version commands:
+  - `affine-mcp --version`
+  - `affine-mcp -v`
+  - `affine-mcp version`
+- Focused regression runners:
+  - `npm run test:db-cells`
+  - `npm run test:cli-version`
+
+### Changed
+- Tool surface expanded from 43 to 46 canonical tools.
+- Database workflows now support row title persistence and cell-level sync for Kanban-oriented databases.
+- README and release documentation now describe the new database cell workflows and CLI version support.
+
+### Fixed
+- `add_database_row` now persists `title` / `Title` into the built-in row paragraph used by AFFiNE Kanban card headers.
+- CLI version handling now exits early without starting the server, including forwarded wrapper args such as `affine-mcp -- --version`.
+
 ## [1.7.2] - 2026-03-04
 
 ### Added
@@ -221,6 +245,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.8.0
 [1.7.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.2
 [1.7.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.1
 [1.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.0
@@ -233,4 +258,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.8.0...HEAD

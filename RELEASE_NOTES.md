@@ -1,5 +1,34 @@
 # Release Notes
 
+## Version 1.8.0 (2026-03-09)
+
+### Highlights
+- Added database cell read/write tools for AFFiNE databases, including Kanban stage sync workflows.
+- Fixed row title persistence so `add_database_row` now renders Kanban card headers correctly when `title` / `Title` is provided.
+- Added CLI version commands for direct and wrapped installs: `--version`, `-v`, and `version`.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Added `read_database_cells` to read database rows with per-column values and optional row/column filters.
+  - Added `update_database_cell` and `update_database_row` for single-cell and batch row updates across supported database column types.
+  - Fixed `add_database_row` so the built-in row paragraph text stays in sync with the logical title used by AFFiNE Kanban cards.
+- `src/index.ts`, `tests/test-cli-version.mjs`
+  - Added early CLI version handling for `--version`, `-v`, and `version`.
+  - Added wrapper-argument coverage for `affine-mcp -- --version`.
+- `package.json`, `tool-manifest.json`, `README.md`
+  - Bumped package metadata to `1.8.0`.
+  - Updated public docs and manifest metadata for the expanded tool surface and CLI version support.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- CLI version regression coverage passed:
+  - `npm run test:cli-version`
+- Live database cell integration coverage passed against local Docker AFFiNE:
+  - `. tests/generate-test-env.sh`
+  - `docker compose -f docker/docker-compose.yml up -d`
+  - `npm run test:db-cells`
+
 ## Version 1.7.2 (2026-03-04)
 
 ### Highlights
