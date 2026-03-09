@@ -2,6 +2,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import { makeText, richTextValueToString, mapEntries, extractTableData } from "../util/table.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
@@ -177,14 +178,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const cookie = gql.cookie;
     const bearer = gql.bearer;
     return { endpoint, cookie, bearer };
-  }
-
-  function makeText(content: string): Y.Text {
-    const yText = new Y.Text();
-    if (content.length > 0) {
-      yText.insert(0, content);
-    }
-    return yText;
   }
 
   function asText(value: unknown): string {
@@ -1223,21 +1216,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         setSysFields(block, blockId, "affine:table");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        const rows: Record<string, { rowId: string; order: string; backgroundColor?: string }> = {};
-        const columns: Record<string, { columnId: string; order: string; backgroundColor?: string; width?: number }> = {};
-        const cells: Record<string, { text: string }> = {};
         const rowIds: string[] = [];
         const columnIds: string[] = [];
         const tableData = normalized.tableData ?? [];
 
         for (let i = 0; i < normalized.rows; i++) {
           const rowId = generateId();
-          rows[rowId] = { rowId, order: `r${String(i).padStart(4, "0")}` };
+          // rowId key is written for AFFiNE's native client; extractTableData only reads order.
+          block.set(`prop:rows.${rowId}.rowId`, rowId);
+          block.set(`prop:rows.${rowId}.order`, `r${String(i).padStart(4, "0")}`);
           rowIds.push(rowId);
         }
         for (let i = 0; i < normalized.columns; i++) {
           const columnId = generateId();
-          columns[columnId] = { columnId, order: `c${String(i).padStart(4, "0")}` };
+          // columnId key is written for AFFiNE's native client; extractTableData only reads order.
+          block.set(`prop:columns.${columnId}.columnId`, columnId);
+          block.set(`prop:columns.${columnId}.order`, `c${String(i).padStart(4, "0")}`);
           columnIds.push(columnId);
         }
         for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex += 1) {
@@ -1245,13 +1239,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           for (let columnIndex = 0; columnIndex < columnIds.length; columnIndex += 1) {
             const columnId = columnIds[columnIndex];
             const cellText = tableData[rowIndex]?.[columnIndex] ?? "";
-            cells[`${rowId}:${columnId}`] = { text: cellText };
+            block.set(`prop:cells.${rowId}:${columnId}.text`, makeText(cellText));
           }
         }
 
-        block.set("prop:rows", rows);
-        block.set("prop:columns", columns);
-        block.set("prop:cells", cells);
         block.set("prop:comments", undefined);
         block.set("prop:textAlign", undefined);
         return { blockId, block, flavour: "affine:table" };
@@ -1735,98 +1726,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       return value;
     }
     return null;
-  }
-
-  function richTextValueToString(value: unknown): string {
-    if (value instanceof Y.Text) {
-      return value.toString();
-    }
-    if (typeof value === "string") {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return value
-        .map((entry) => {
-          if (typeof entry === "string") {
-            return entry;
-          }
-          if (entry && typeof entry === "object" && typeof (entry as any).insert === "string") {
-            return (entry as any).insert as string;
-          }
-          return "";
-        })
-        .join("");
-    }
-    if (value && typeof value === "object" && typeof (value as any).insert === "string") {
-      return (value as any).insert as string;
-    }
-    return "";
-  }
-
-  function mapEntries(value: unknown): Array<[string, any]> {
-    if (value instanceof Y.Map) {
-      const entries: Array<[string, any]> = [];
-      value.forEach((mapValue: unknown, key: string) => {
-        entries.push([key, mapValue]);
-      });
-      return entries;
-    }
-    if (value && typeof value === "object") {
-      return Object.entries(value as Record<string, any>);
-    }
-    return [];
-  }
-
-  function extractTableData(block: Y.Map<any>): string[][] | null {
-    const rowsValue = block.get("prop:rows");
-    const columnsValue = block.get("prop:columns");
-    const cellsValue = block.get("prop:cells");
-
-    const rowEntries = mapEntries(rowsValue)
-      .map(([rowId, payload]) => ({
-        rowId,
-        order:
-          payload && typeof payload === "object" && typeof (payload as any).order === "string"
-            ? (payload as any).order
-            : rowId,
-      }))
-      .sort((a, b) => a.order.localeCompare(b.order));
-
-    const columnEntries = mapEntries(columnsValue)
-      .map(([columnId, payload]) => ({
-        columnId,
-        order:
-          payload && typeof payload === "object" && typeof (payload as any).order === "string"
-            ? (payload as any).order
-            : columnId,
-      }))
-      .sort((a, b) => a.order.localeCompare(b.order));
-
-    if (rowEntries.length === 0 || columnEntries.length === 0) {
-      return null;
-    }
-
-    const cells = new Map<string, string>();
-    for (const [cellKey, payload] of mapEntries(cellsValue)) {
-      if (payload instanceof Y.Map) {
-        cells.set(cellKey, richTextValueToString(payload.get("text")));
-        continue;
-      }
-      if (payload && typeof payload === "object" && "text" in payload) {
-        cells.set(cellKey, richTextValueToString((payload as any).text));
-      }
-    }
-
-    const tableData: string[][] = [];
-    for (const { rowId } of rowEntries) {
-      const row: string[] = [];
-      for (const { columnId } of columnEntries) {
-        row.push(cells.get(`${rowId}:${columnId}`) ?? "");
-      }
-      tableData.push(row);
-    }
-
-    return tableData;
   }
 
   function collectDocForMarkdown(
