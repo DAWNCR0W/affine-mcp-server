@@ -41,6 +41,8 @@
     "test:db-create": "node tests/test-database-creation.mjs",
     "test:db-cells": "node tests/test-database-cells.mjs",
     "test:db-schema": "node tests/test-database-schema.mjs",
+    "test:data-view": "node tests/test-data-view.mjs",
+    "test:data-view-ui": "npx playwright test tests/playwright/verify-data-view.pw.ts --config tests/playwright/playwright.config.ts",
     "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:supporting-tools": "node tests/test-supporting-tools.mjs",
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",

@@ -325,7 +325,7 @@ Endpoints currently available:
 - `add_tag_to_doc` – attach a tag to a document
 - `remove_tag_from_doc` – detach a tag from a document
 - `append_paragraph` – append a paragraph block (WebSocket)
-- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
+- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`viewMode=kanban` enables preset-backed data views; `data_view` defaults to kanban)
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
 - `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
 - `read_database_columns` – read database schema metadata including column IDs/types, select options, and table view column mappings
