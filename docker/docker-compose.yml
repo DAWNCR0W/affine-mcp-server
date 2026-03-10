@@ -1,7 +1,6 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: affine_test_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USERNAME:-affine}
@@ -17,7 +16,6 @@ services:
 
   redis:
     image: redis:7
-    container_name: affine_test_redis
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
@@ -27,7 +25,6 @@ services:
 
   affine_migration:
     image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
-    container_name: affine_test_migration
     command: ['node', './scripts/self-host-predeploy.js']
     environment:
       AFFINE_CONFIG_PATH: /root/.affine/config
@@ -44,7 +41,6 @@ services:
 
   affine:
     image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
-    container_name: affine_test_app
     restart: unless-stopped
     ports:
       - '${PORT:-3010}:3010'
