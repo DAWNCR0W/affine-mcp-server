@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `read_database_columns` to expose database schema metadata for empty or sparsely populated AFFiNE databases.
+
+### Fixed
+- Empty database workflows no longer depend on existing rows to discover column names, IDs, types, and view mappings.
+
 ## [1.8.0] - 2026-03-09
 
 ### Added

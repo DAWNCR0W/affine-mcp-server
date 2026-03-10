@@ -25,7 +25,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
-- Database workflows: create database blocks, add columns and rows, and read or update cell values via MCP tools
+- Database workflows: create database blocks, inspect schema, add columns and rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -328,6 +328,7 @@ Endpoints currently available:
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
 - `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
+- `read_database_columns` – read database schema metadata including column IDs/types, select options, and table view column mappings
 - `read_database_cells` – read row titles plus decoded database cell values with optional row / column filters
 - `update_database_cell` – update a single database cell or the built-in row title (`createOption` defaults to `true` for select fields)
 - `update_database_row` – batch update multiple cells on a database row (`createOption` defaults to `true` for select fields)
