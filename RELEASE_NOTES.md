@@ -1,5 +1,38 @@
 # Release Notes
 
+## Version 1.9.0 (2026-03-10)
+
+### Highlights
+- Added dedicated database schema discovery with `read_database_columns`, so empty AFFiNE databases are now self-describing.
+- Added preset-backed `data_view` creation with kanban-oriented verification and richer exposed view metadata.
+- Hardened test infrastructure with a self-bootstrapping comprehensive runner, focused supporting-tools coverage, and a more reliable end-to-end Docker pipeline.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Added `read_database_columns` for empty-database schema discovery.
+  - Added preset-backed `data_view` creation and richer exposed view metadata for database views.
+  - Added markdown callout import/export support through the document markdown pipeline.
+- `tests/run-e2e.sh`, `tests/run-comprehensive.sh`
+  - Isolated Docker-backed test stacks and staged startup/readiness checks for more reliable local and CI execution.
+  - Seeded data-view state before Playwright so the full UI verification suite can run end to end.
+- `tests/test-supporting-tools.mjs`, `tests/test-data-view.mjs`, `tests/test-markdown-roundtrip.mjs`
+  - Added focused supporting-tools regression coverage.
+  - Added data-view integration coverage and markdown callout round-trip coverage.
+- `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`, `tool-manifest.json`, `package.json`
+  - Bumped release metadata to `1.9.0`.
+  - Trimmed duplicated release history from the README and pointed readers to the dedicated release documents.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Live environment verification passed:
+  - `npm run test:e2e`
+  - `npm run test:comprehensive`
+  - `npm run test:supporting-tools`
+  - `npm run test:data-view`
+  - `npm run test:data-view-ui`
+  - `npm run test:markdown-roundtrip`
+
 ## Version 1.8.0 (2026-03-09)
 
 ### Highlights
