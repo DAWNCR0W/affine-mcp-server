@@ -235,6 +235,7 @@ class ComprehensiveRunner {
       throw new Error('append_block(database) did not return blockId');
     }
     const databaseColumnName = `Status-${Date.now()}`;
+    let databaseRowBlockId = null;
     await this.callTool('add_database_column', {
       workspaceId,
       docId,
@@ -243,6 +244,22 @@ class ComprehensiveRunner {
       type: 'select',
       options: ['Todo', 'Done'],
     });
+    await this.callTool('read_database_columns', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+    }, parsed => {
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('read_database_columns did not return JSON payload');
+      }
+      if (!Array.isArray(parsed.columns) || parsed.columns.length === 0) {
+        throw new Error('read_database_columns returned no columns');
+      }
+      const schemaColumn = parsed.columns.find(entry => entry?.name === databaseColumnName);
+      if (!schemaColumn) {
+        throw new Error('read_database_columns did not include the created column');
+      }
+    });
     await this.callTool('add_database_row', {
       workspaceId,
       docId,
@@ -250,6 +267,59 @@ class ComprehensiveRunner {
       cells: {
         [databaseColumnName]: 'Todo',
       },
+    }, parsed => {
+      databaseRowBlockId = parsed?.rowBlockId || null;
+    });
+    if (!databaseRowBlockId) {
+      throw new Error('add_database_row did not return rowBlockId');
+    }
+    await this.callTool('read_database_cells', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+    }, parsed => {
+      if (!Array.isArray(parsed?.rows) || parsed.rows.length !== 1) {
+        throw new Error('read_database_cells did not return the expected single row');
+      }
+      if (parsed.rows[0]?.cells?.[databaseColumnName]?.value !== 'Todo') {
+        throw new Error('read_database_cells did not expose the created row value');
+      }
+    });
+    await this.callTool('update_database_cell', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      rowBlockId: databaseRowBlockId,
+      column: databaseColumnName,
+      value: 'Done',
+      createOption: false,
+    });
+    await this.callTool('update_database_row', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      rowBlockId: databaseRowBlockId,
+      cells: {
+        title: 'Comprehensive Row',
+        [databaseColumnName]: 'Todo',
+      },
+      createOption: false,
+    });
+    await this.callTool('read_database_cells', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      rowBlockIds: [databaseRowBlockId],
+    }, parsed => {
+      if (!Array.isArray(parsed?.rows) || parsed.rows.length !== 1) {
+        throw new Error('read_database_cells row filter did not return the updated row');
+      }
+      if (parsed.rows[0]?.title !== 'Comprehensive Row') {
+        throw new Error('update_database_row did not persist the row title');
+      }
+      if (parsed.rows[0]?.cells?.[databaseColumnName]?.value !== 'Todo') {
+        throw new Error('update_database_row did not persist the cell value');
+      }
     });
     await this.callTool('append_markdown', {
       workspaceId,

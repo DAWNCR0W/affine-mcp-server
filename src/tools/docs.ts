@@ -3212,6 +3212,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     raw: any;
   };
 
+  type DatabaseViewColumnDef = {
+    id: string;
+    name: string | null;
+    hidden: boolean;
+    width: number | null;
+  };
+
+  type DatabaseViewDef = {
+    id: string;
+    name: string;
+    mode: string;
+    columns: DatabaseViewColumnDef[];
+    columnIds: string[];
+  };
+
   type DatabaseColumnLookup = {
     columnDefs: DatabaseColumnDef[];
     colById: Map<string, DatabaseColumnDef>;
@@ -3262,6 +3277,52 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (id) defs.push({ id: String(id), name: String(name || ""), type: String(type || "rich-text"), options, raw: col });
     });
     return defs;
+  }
+
+  function readDatabaseViewDefs(dbBlock: Y.Map<any>, lookup: DatabaseColumnLookup): DatabaseViewDef[] {
+    const viewsRaw = dbBlock.get("prop:views");
+    const views: DatabaseViewDef[] = [];
+    if (!(viewsRaw instanceof Y.Array)) {
+      return views;
+    }
+
+    viewsRaw.forEach((view: any) => {
+      const id = view instanceof Y.Map ? view.get("id") : view?.id;
+      if (!id) {
+        return;
+      }
+
+      const columnsRaw = view instanceof Y.Map ? view.get("columns") : view?.columns;
+      const columns: DatabaseViewColumnDef[] = databaseArrayValues(columnsRaw)
+        .map((entry: any) => {
+          const columnId = entry instanceof Y.Map ? entry.get("id") : entry?.id;
+          if (!columnId || typeof columnId !== "string") {
+            return null;
+          }
+
+          const columnDef = lookup.colById.get(columnId) || null;
+          const hidden = entry instanceof Y.Map ? entry.get("hide") : entry?.hide;
+          const width = entry instanceof Y.Map ? entry.get("width") : entry?.width;
+
+          return {
+            id: columnId,
+            name: columnDef?.name || null,
+            hidden: hidden === true,
+            width: typeof width === "number" ? width : null,
+          };
+        })
+        .filter((entry): entry is DatabaseViewColumnDef => entry !== null);
+
+      views.push({
+        id: String(id),
+        name: String((view instanceof Y.Map ? view.get("name") : view?.name) || ""),
+        mode: String((view instanceof Y.Map ? view.get("mode") : view?.mode) || ""),
+        columns,
+        columnIds: columns.map(column => column.id),
+      });
+    });
+
+    return views;
   }
 
   function isTitleAliasKey(value: string): boolean {
@@ -3738,6 +3799,49 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     readDatabaseCellsHandler as any
+  );
+
+  const readDatabaseColumnsHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const columns = ctx.columnDefs.map(col => ({
+        id: col.id,
+        name: col.name || null,
+        type: col.type,
+        options: col.options,
+      }));
+
+      return text({
+        databaseBlockId: parsed.databaseBlockId,
+        title: richTextValueToString(ctx.dbBlock.get("prop:title")) || null,
+        rowCount: getDatabaseRowIds(ctx.dbBlock).length,
+        columnCount: columns.length,
+        titleColumnId: ctx.titleCol?.id || null,
+        columns,
+        views: readDatabaseViewDefs(ctx.dbBlock, ctx),
+      });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "read_database_columns",
+    {
+      title: "Read Database Columns",
+      description: "Read schema metadata for an AFFiNE database block, including columns, select options, and view column mappings. Useful for empty databases before any rows exist.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+      },
+    },
+    readDatabaseColumnsHandler as any
   );
 
   const updateDatabaseCellHandler = async (parsed: {
