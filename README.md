@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.9.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -16,10 +16,10 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 46 focused tools with WebSocket-based document editing
+- Tools: 47 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.8.0: Added database cell read/write tools, fixed Kanban row title persistence, and added CLI version commands.
+> New in v1.9.0: Added database schema discovery, preset-backed data views, self-bootstrapping comprehensive regression, focused supporting-tools coverage, and markdown callout round-trips.
 
 ## Features
 
