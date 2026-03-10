@@ -7,12 +7,19 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const MCP_SERVER_PATH = './dist/index.js';
 const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
-const EMAIL = process.env.AFFINE_EMAIL || 'dev@affine.pro';
-const PASSWORD = process.env.AFFINE_PASSWORD || 'dev';
+const EMAIL = process.env.AFFINE_EMAIL || process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
+const PASSWORD = process.env.AFFINE_PASSWORD || process.env.AFFINE_ADMIN_PASSWORD;
 const LOGIN_MODE = process.env.AFFINE_LOGIN_AT_START || 'sync';
+const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || '/tmp/affine-mcp-comprehensive-noconfig';
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 const MANIFEST_PATH = path.join(process.cwd(), 'tool-manifest.json');
 const EXPECTED_TOOLS = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).tools;
+
+if (!PASSWORD) {
+  throw new Error(
+    'AFFINE_PASSWORD or AFFINE_ADMIN_PASSWORD env var required. Prefer `npm run test:comprehensive` for self-bootstrapping local validation.'
+  );
+}
 
 function parseContent(result) {
   const text = result?.content?.[0]?.text;
@@ -51,6 +58,7 @@ class ComprehensiveRunner {
         AFFINE_EMAIL: EMAIL,
         AFFINE_PASSWORD: PASSWORD,
         AFFINE_LOGIN_AT_START: LOGIN_MODE,
+        XDG_CONFIG_HOME,
       },
       stderr: 'pipe',
     });
