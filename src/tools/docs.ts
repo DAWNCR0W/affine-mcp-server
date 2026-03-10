@@ -1766,6 +1766,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           strict,
           placement,
         };
+      case "callout":
+        return {
+          workspaceId,
+          docId,
+          type: "callout",
+          text: operation.text,
+          strict,
+          placement,
+        };
       case "list":
         return {
           workspaceId,

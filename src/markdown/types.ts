@@ -15,6 +15,10 @@ export type MarkdownOperation =
       text: string;
     }
   | {
+      type: "callout";
+      text: string;
+    }
+  | {
       type: "list";
       text: string;
       style: MarkdownListStyle;

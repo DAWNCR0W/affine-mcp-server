@@ -25,6 +25,13 @@ function formatQuote(text: string): string[] {
   return lines.map(line => `> ${line}`);
 }
 
+function formatCallout(lines: string[]): string[] {
+  return [
+    "> [!NOTE]",
+    ...lines.map(line => line.length > 0 ? `> ${line}` : ">"),
+  ];
+}
+
 function escapePipe(value: string): string {
   return value.replace(/\|/g, "\\|");
 }
@@ -176,6 +183,26 @@ function renderBlock(
       }
       return {
         lines: renderTable(block.tableData),
+        isList: false,
+      };
+    }
+
+    case "affine:callout": {
+      const contentLines: string[] = [];
+      for (const childId of children) {
+        const child = renderBlock(childId, listDepth, state);
+        if (child.lines.length > 0) {
+          if (contentLines.length > 0 && !child.isList) {
+            contentLines.push("");
+          }
+          contentLines.push(...child.lines);
+        }
+      }
+      if (contentLines.length === 0 && text.length > 0) {
+        contentLines.push(text);
+      }
+      return {
+        lines: formatCallout(contentLines),
         isList: false,
       };
     }
