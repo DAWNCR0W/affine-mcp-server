@@ -377,7 +377,8 @@ npm run pack:check
 
 - `tool-manifest.json` is the source of truth for publicly exposed tool names.
 - CI validates that `registerTool(...)` declarations match the manifest exactly.
-- For full tool-surface verification, run `npm run test:comprehensive`.
+- For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
+- For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
 - Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:bearer`, `npm run test:cli-version`, `npm run test:playwright`.
 
