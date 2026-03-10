@@ -7,8 +7,9 @@
 #   4. Run MCP database creation test (email/password auth)
 #   5. Run MCP bearer token auth test
 #   6. Run MCP tag visibility setup test
-#   7. Run Playwright UI verification (all scenarios)
-#   8. Tear down Docker (on exit)
+#   7. Run MCP data-view setup test
+#   8. Run Playwright UI verification (all scenarios)
+#   9. Tear down Docker (on exit)
 #
 set -euo pipefail
 
@@ -297,7 +298,12 @@ echo ""
 echo "=== Running MCP tag visibility setup test ==="
 node "$SCRIPT_DIR/test-tag-visibility.mjs"
 
-# --- Step 7: Run Playwright verification ---
+# --- Step 7: Run MCP data-view setup test ---
+echo ""
+echo "=== Running MCP data-view setup test ==="
+node "$SCRIPT_DIR/test-data-view.mjs"
+
+# --- Step 8: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready
