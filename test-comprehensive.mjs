@@ -7,12 +7,19 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const MCP_SERVER_PATH = './dist/index.js';
 const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
-const EMAIL = process.env.AFFINE_EMAIL || 'dev@affine.pro';
-const PASSWORD = process.env.AFFINE_PASSWORD || 'dev';
+const EMAIL = process.env.AFFINE_EMAIL || process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
+const PASSWORD = process.env.AFFINE_PASSWORD || process.env.AFFINE_ADMIN_PASSWORD;
 const LOGIN_MODE = process.env.AFFINE_LOGIN_AT_START || 'sync';
+const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || '/tmp/affine-mcp-comprehensive-noconfig';
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 const MANIFEST_PATH = path.join(process.cwd(), 'tool-manifest.json');
 const EXPECTED_TOOLS = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).tools;
+
+if (!PASSWORD) {
+  throw new Error(
+    'AFFINE_PASSWORD or AFFINE_ADMIN_PASSWORD env var required. Prefer `npm run test:comprehensive` for self-bootstrapping local validation.'
+  );
+}
 
 function parseContent(result) {
   const text = result?.content?.[0]?.text;
@@ -51,6 +58,7 @@ class ComprehensiveRunner {
         AFFINE_EMAIL: EMAIL,
         AFFINE_PASSWORD: PASSWORD,
         AFFINE_LOGIN_AT_START: LOGIN_MODE,
+        XDG_CONFIG_HOME,
       },
       stderr: 'pipe',
     });
@@ -235,6 +243,7 @@ class ComprehensiveRunner {
       throw new Error('append_block(database) did not return blockId');
     }
     const databaseColumnName = `Status-${Date.now()}`;
+    let databaseRowBlockId = null;
     await this.callTool('add_database_column', {
       workspaceId,
       docId,
@@ -243,6 +252,22 @@ class ComprehensiveRunner {
       type: 'select',
       options: ['Todo', 'Done'],
     });
+    await this.callTool('read_database_columns', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+    }, parsed => {
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('read_database_columns did not return JSON payload');
+      }
+      if (!Array.isArray(parsed.columns) || parsed.columns.length === 0) {
+        throw new Error('read_database_columns returned no columns');
+      }
+      const schemaColumn = parsed.columns.find(entry => entry?.name === databaseColumnName);
+      if (!schemaColumn) {
+        throw new Error('read_database_columns did not include the created column');
+      }
+    });
     await this.callTool('add_database_row', {
       workspaceId,
       docId,
@@ -250,6 +275,59 @@ class ComprehensiveRunner {
       cells: {
         [databaseColumnName]: 'Todo',
       },
+    }, parsed => {
+      databaseRowBlockId = parsed?.rowBlockId || null;
+    });
+    if (!databaseRowBlockId) {
+      throw new Error('add_database_row did not return rowBlockId');
+    }
+    await this.callTool('read_database_cells', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+    }, parsed => {
+      if (!Array.isArray(parsed?.rows) || parsed.rows.length !== 1) {
+        throw new Error('read_database_cells did not return the expected single row');
+      }
+      if (parsed.rows[0]?.cells?.[databaseColumnName]?.value !== 'Todo') {
+        throw new Error('read_database_cells did not expose the created row value');
+      }
+    });
+    await this.callTool('update_database_cell', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      rowBlockId: databaseRowBlockId,
+      column: databaseColumnName,
+      value: 'Done',
+      createOption: false,
+    });
+    await this.callTool('update_database_row', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      rowBlockId: databaseRowBlockId,
+      cells: {
+        title: 'Comprehensive Row',
+        [databaseColumnName]: 'Todo',
+      },
+      createOption: false,
+    });
+    await this.callTool('read_database_cells', {
+      workspaceId,
+      docId,
+      databaseBlockId,
+      rowBlockIds: [databaseRowBlockId],
+    }, parsed => {
+      if (!Array.isArray(parsed?.rows) || parsed.rows.length !== 1) {
+        throw new Error('read_database_cells row filter did not return the updated row');
+      }
+      if (parsed.rows[0]?.title !== 'Comprehensive Row') {
+        throw new Error('update_database_row did not persist the row title');
+      }
+      if (parsed.rows[0]?.cells?.[databaseColumnName]?.value !== 'Todo') {
+        throw new Error('update_database_row did not persist the cell value');
+      }
     });
     await this.callTool('append_markdown', {
       workspaceId,

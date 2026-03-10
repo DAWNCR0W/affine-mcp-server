@@ -63,6 +63,9 @@ const APPEND_BLOCK_BOOKMARK_STYLE_VALUES = [
 ] as const;
 type AppendBlockBookmarkStyle = typeof APPEND_BLOCK_BOOKMARK_STYLE_VALUES[number];
 const AppendBlockBookmarkStyle = z.enum(APPEND_BLOCK_BOOKMARK_STYLE_VALUES);
+const APPEND_BLOCK_DATA_VIEW_MODE_VALUES = ["table", "kanban"] as const;
+type AppendBlockDataViewMode = typeof APPEND_BLOCK_DATA_VIEW_MODE_VALUES[number];
+const AppendBlockDataViewMode = z.enum(APPEND_BLOCK_DATA_VIEW_MODE_VALUES);
 
 type AppendPlacement = {
   parentId?: string;
@@ -100,6 +103,7 @@ type AppendBlockInput = {
   level?: number;
   style?: AppendBlockListStyle;
   bookmarkStyle?: AppendBlockBookmarkStyle;
+  viewMode?: AppendBlockDataViewMode;
   strict?: boolean;
   placement?: AppendPlacement;
   tableData?: string[][];
@@ -133,6 +137,7 @@ type NormalizedAppendBlockInput = {
   headingLevel: 1 | 2 | 3 | 4 | 5 | 6;
   listStyle: AppendBlockListStyle;
   bookmarkStyle: AppendBlockBookmarkStyle;
+  dataViewMode: AppendBlockDataViewMode;
   checked: boolean;
   language: string;
   caption?: string;
@@ -178,6 +183,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const bearer = gql.bearer;
     return { endpoint, cookie, bearer };
   }
+
+  const SELECT_COLORS = [
+    "var(--affine-tag-blue)", "var(--affine-tag-green)", "var(--affine-tag-red)",
+    "var(--affine-tag-orange)", "var(--affine-tag-purple)", "var(--affine-tag-yellow)",
+    "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
+  ];
 
   function makeText(content: string): Y.Text {
     const yText = new Y.Text();
@@ -906,6 +917,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     } else if (raw.tableData !== undefined && normalized.strict) {
       throw new Error("The 'tableData' field can only be used with type='table'.");
     }
+
+    if (normalized.type !== "database" && normalized.type !== "data_view" && raw.viewMode !== undefined && normalized.strict) {
+      throw new Error("The 'viewMode' field can only be used with type='database' or type='data_view'.");
+    }
   }
 
   function normalizeAppendBlockInput(parsed: AppendBlockInput): NormalizedAppendBlockInput {
@@ -916,6 +931,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const headingLevel = Math.max(1, Math.min(6, headingLevelNumber)) as 1 | 2 | 3 | 4 | 5 | 6;
     const listStyle = typeInfo.listStyleFromAlias ?? parsed.style ?? "bulleted";
     const bookmarkStyle = parsed.bookmarkStyle ?? "horizontal";
+    const dataViewMode = parsed.viewMode ?? (typeInfo.type === "data_view" ? "kanban" : "table");
     const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
     const placement = normalizePlacement(parsed.placement);
     const url = (parsed.url ?? "").trim();
@@ -965,6 +981,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       headingLevel,
       listStyle,
       bookmarkStyle,
+      dataViewMode,
       checked: Boolean(parsed.checked),
       language,
       caption: parsed.caption,
@@ -1128,6 +1145,125 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     return { parentId, parentBlock, children, insertIndex };
+  }
+
+  function createDatabaseViewColumn(columnId: string, width: number = 200, hide: boolean = false): Y.Map<any> {
+    const column = new Y.Map<any>();
+    column.set("id", columnId);
+    column.set("width", width);
+    column.set("hide", hide);
+    return column;
+  }
+
+  function createDatabaseColumnDefinition(input: {
+    id: string;
+    name: string;
+    type: string;
+    width?: number;
+    options?: string[];
+  }): Y.Map<any> {
+    const column = new Y.Map<any>();
+    column.set("id", input.id);
+    column.set("name", input.name);
+    column.set("type", input.type);
+    column.set("width", input.width ?? 200);
+
+    if ((input.type === "select" || input.type === "multi-select") && input.options?.length) {
+      const data = new Y.Map<any>();
+      const options = new Y.Array<any>();
+      input.options.forEach((value, index) => {
+        const option = new Y.Map<any>();
+        option.set("id", generateId());
+        option.set("value", value);
+        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+        options.push([option]);
+      });
+      data.set("options", options);
+      column.set("data", data);
+    }
+
+    return column;
+  }
+
+  function createPresetBackedDataViewBlock(
+    blockId: string,
+    titleText: string,
+    viewMode: AppendBlockDataViewMode,
+    blockType: string,
+  ): { blockId: string; block: Y.Map<any>; flavour: string; blockType: string } {
+    const block = new Y.Map<any>();
+    setSysFields(block, blockId, "affine:database");
+    block.set("sys:parent", null);
+    block.set("sys:children", new Y.Array<string>());
+    block.set("prop:title", makeText(titleText));
+    block.set("prop:cells", new Y.Map<any>());
+    block.set("prop:comments", undefined);
+
+    const titleColumnId = generateId();
+    const columns = new Y.Array<any>();
+    columns.push([createDatabaseColumnDefinition({
+      id: titleColumnId,
+      name: "Title",
+      type: "title",
+      width: 320,
+    })]);
+
+    const viewColumns = new Y.Array<any>();
+    viewColumns.push([createDatabaseViewColumn(titleColumnId, 320, false)]);
+    const header = {
+      titleColumn: titleColumnId,
+      iconColumn: "type",
+    };
+
+    let groupBy: Record<string, string> | null = null;
+    let groupProperties: unknown[] | null = null;
+
+    if (viewMode === "kanban") {
+      const statusColumnId = generateId();
+      columns.push([createDatabaseColumnDefinition({
+        id: statusColumnId,
+        name: "Status",
+        type: "select",
+        options: ["Todo", "In Progress", "Done"],
+      })]);
+      viewColumns.push([createDatabaseViewColumn(statusColumnId, 200, false)]);
+      groupBy = {
+        columnId: statusColumnId,
+        name: "select",
+        type: "groupBy",
+      };
+      groupProperties = [];
+    }
+
+    const view = new Y.Map<any>();
+    view.set("id", generateId());
+    view.set("name", viewMode === "kanban" ? "Kanban View" : "Table View");
+    view.set("mode", viewMode);
+    view.set("columns", viewColumns);
+    view.set("filter", { type: "group", op: "and", conditions: [] });
+    if (groupBy) {
+      view.set("groupBy", groupBy);
+    } else {
+      view.set("groupBy", null);
+    }
+    if (groupProperties) {
+      view.set("groupProperties", groupProperties);
+    }
+    view.set("sort", null);
+    view.set("header", header);
+
+    const views = new Y.Array<any>();
+    views.push([view]);
+
+    block.set("prop:columns", columns);
+    block.set("prop:views", views);
+
+    return {
+      blockId,
+      block,
+      flavour: "affine:database",
+      blockType,
+    };
   }
 
   function createBlock(normalized: NormalizedAppendBlockInput): {
@@ -1448,6 +1584,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return { blockId, block, flavour: "affine:embed-iframe" };
       }
       case "database": {
+        if (normalized.dataViewMode === "kanban") {
+          return createPresetBackedDataViewBlock(blockId, normalized.text, "kanban", "database_kanban");
+        }
         setSysFields(block, blockId, "affine:database");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
@@ -1471,28 +1610,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return { blockId, block, flavour: "affine:database" };
       }
       case "data_view": {
-        // AFFiNE 0.26.x currently crashes on raw affine:data-view render path.
-        // Keep API compatibility for type="data_view" by mapping it to the stable database block.
-        setSysFields(block, blockId, "affine:database");
-        block.set("sys:parent", null);
-        block.set("sys:children", new Y.Array<string>());
-        const dvDefaultView = new Y.Map<any>();
-        dvDefaultView.set("id", generateId());
-        dvDefaultView.set("name", "Table View");
-        dvDefaultView.set("mode", "table");
-        dvDefaultView.set("columns", new Y.Array<any>());
-        dvDefaultView.set("filter", { type: "group", op: "and", conditions: [] });
-        dvDefaultView.set("groupBy", null);
-        dvDefaultView.set("sort", null);
-        dvDefaultView.set("header", { titleColumn: null, iconColumn: null });
-        const dvViews = new Y.Array<any>();
-        dvViews.push([dvDefaultView]);
-        block.set("prop:views", dvViews);
-        block.set("prop:title", makeText(content));
-        block.set("prop:cells", new Y.Map<any>());
-        block.set("prop:columns", new Y.Array<any>());
-        block.set("prop:comments", undefined);
-        return { blockId, block, flavour: "affine:database", blockType: "data_view_fallback" };
+        return createPresetBackedDataViewBlock(blockId, normalized.text, normalized.dataViewMode, `data_view_${normalized.dataViewMode}`);
       }
       case "surface_ref": {
         setSysFields(block, blockId, "affine:surface-ref");
@@ -1644,6 +1762,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           workspaceId,
           docId,
           type: "quote",
+          text: operation.text,
+          strict,
+          placement,
+        };
+      case "callout":
+        return {
+          workspaceId,
+          docId,
+          type: "callout",
           text: operation.text,
           strict,
           placement,
@@ -2813,6 +2940,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     level?: number;
     style?: AppendBlockListStyle;
     bookmarkStyle?: AppendBlockBookmarkStyle;
+    viewMode?: AppendBlockDataViewMode;
     strict?: boolean;
     placement?: AppendPlacement;
   }) => {
@@ -2857,6 +2985,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
         style: AppendBlockListStyle.optional().describe("List style for type=list"),
         bookmarkStyle: AppendBlockBookmarkStyle.optional().describe("Bookmark card style"),
+        viewMode: AppendBlockDataViewMode.optional().describe("Initial data view preset for type=database or type=data_view. Defaults: database=table, data_view=kanban"),
         checked: z.boolean().optional().describe("Todo state when type is todo"),
         language: z.string().optional().describe("Code language when type is code"),
         caption: z.string().optional().describe("Code caption when type is code"),
@@ -3212,6 +3341,30 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     raw: any;
   };
 
+  type DatabaseViewColumnDef = {
+    id: string;
+    name: string | null;
+    hidden: boolean;
+    width: number | null;
+  };
+
+  type DatabaseViewDef = {
+    id: string;
+    name: string;
+    mode: string;
+    columns: DatabaseViewColumnDef[];
+    columnIds: string[];
+    groupBy: {
+      columnId: string | null;
+      name: string | null;
+      type: string | null;
+    } | null;
+    header: {
+      titleColumn: string | null;
+      iconColumn: string | null;
+    };
+  };
+
   type DatabaseColumnLookup = {
     columnDefs: DatabaseColumnDef[];
     colById: Map<string, DatabaseColumnDef>;
@@ -3262,6 +3415,65 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (id) defs.push({ id: String(id), name: String(name || ""), type: String(type || "rich-text"), options, raw: col });
     });
     return defs;
+  }
+
+  function readDatabaseViewDefs(dbBlock: Y.Map<any>, lookup: DatabaseColumnLookup): DatabaseViewDef[] {
+    const viewsRaw = dbBlock.get("prop:views");
+    const views: DatabaseViewDef[] = [];
+    if (!(viewsRaw instanceof Y.Array)) {
+      return views;
+    }
+
+    viewsRaw.forEach((view: any) => {
+      const id = view instanceof Y.Map ? view.get("id") : view?.id;
+      if (!id) {
+        return;
+      }
+
+      const columnsRaw = view instanceof Y.Map ? view.get("columns") : view?.columns;
+      const headerRaw = view instanceof Y.Map ? view.get("header") : view?.header;
+      const groupByRaw = view instanceof Y.Map ? view.get("groupBy") : view?.groupBy;
+      const columns: DatabaseViewColumnDef[] = databaseArrayValues(columnsRaw)
+        .map((entry: any) => {
+          const columnId = entry instanceof Y.Map ? entry.get("id") : entry?.id;
+          if (!columnId || typeof columnId !== "string") {
+            return null;
+          }
+
+          const columnDef = lookup.colById.get(columnId) || null;
+          const hidden = entry instanceof Y.Map ? entry.get("hide") : entry?.hide;
+          const width = entry instanceof Y.Map ? entry.get("width") : entry?.width;
+
+          return {
+            id: columnId,
+            name: columnDef?.name || null,
+            hidden: hidden === true,
+            width: typeof width === "number" ? width : null,
+          };
+        })
+        .filter((entry): entry is DatabaseViewColumnDef => entry !== null);
+
+      views.push({
+        id: String(id),
+        name: String((view instanceof Y.Map ? view.get("name") : view?.name) || ""),
+        mode: String((view instanceof Y.Map ? view.get("mode") : view?.mode) || ""),
+        columns,
+        columnIds: columns.map(column => column.id),
+        groupBy: groupByRaw
+          ? {
+              columnId: typeof (groupByRaw as any)?.columnId === "string" ? (groupByRaw as any).columnId : null,
+              name: typeof (groupByRaw as any)?.name === "string" ? (groupByRaw as any).name : null,
+              type: typeof (groupByRaw as any)?.type === "string" ? (groupByRaw as any).type : null,
+            }
+          : null,
+        header: {
+          titleColumn: typeof (headerRaw as any)?.titleColumn === "string" ? (headerRaw as any).titleColumn : null,
+          iconColumn: typeof (headerRaw as any)?.iconColumn === "string" ? (headerRaw as any).iconColumn : null,
+        },
+      });
+    });
+
+    return views;
   }
 
   function isTitleAliasKey(value: string): boolean {
@@ -3374,12 +3586,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
     return [];
   }
-
-  const SELECT_COLORS = [
-    "var(--affine-tag-blue)", "var(--affine-tag-green)", "var(--affine-tag-red)",
-    "var(--affine-tag-orange)", "var(--affine-tag-purple)", "var(--affine-tag-yellow)",
-    "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
-  ];
 
   /** Find or create a select option for a column, mutating the column's data in place */
   function resolveSelectOptionId(
@@ -3738,6 +3944,49 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     readDatabaseCellsHandler as any
+  );
+
+  const readDatabaseColumnsHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const columns = ctx.columnDefs.map(col => ({
+        id: col.id,
+        name: col.name || null,
+        type: col.type,
+        options: col.options,
+      }));
+
+      return text({
+        databaseBlockId: parsed.databaseBlockId,
+        title: richTextValueToString(ctx.dbBlock.get("prop:title")) || null,
+        rowCount: getDatabaseRowIds(ctx.dbBlock).length,
+        columnCount: columns.length,
+        titleColumnId: ctx.titleCol?.id || null,
+        columns,
+        views: readDatabaseViewDefs(ctx.dbBlock, ctx),
+      });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "read_database_columns",
+    {
+      title: "Read Database Columns",
+      description: "Read schema metadata for an AFFiNE database block, including columns, select options, and view column mappings. Useful for empty databases before any rows exist.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+      },
+    },
+    readDatabaseColumnsHandler as any
   );
 
   const updateDatabaseCellHandler = async (parsed: {

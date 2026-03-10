@@ -275,6 +275,15 @@ function collectQuoteText(tokens: TokenLike[], start: number, end: number): stri
   return lines.join("\n");
 }
 
+function parseCalloutAdmonition(text: string): string | null {
+  const lines = text.split("\n");
+  const marker = lines[0]?.trim() ?? "";
+  if (!/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(marker)) {
+    return null;
+  }
+  return lines.slice(1).join("\n").trim();
+}
+
 function parseList(
   tokens: TokenLike[],
   start: number,
@@ -461,7 +470,10 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           break;
         }
         const quoteText = collectQuoteText(tokens, i + 1, close).trim();
-        if (quoteText.length > 0) {
+        const calloutText = parseCalloutAdmonition(quoteText);
+        if (calloutText !== null) {
+          state.operations.push({ type: "callout", text: calloutText });
+        } else if (quoteText.length > 0) {
           state.operations.push({ type: "quote", text: quoteText });
         }
         i = close + 1;

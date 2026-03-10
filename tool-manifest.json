@@ -1,5 +1,5 @@
 {
-  "version": "1.8.0",
+  "version": "1.9.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -33,6 +33,7 @@
     "publish_doc",
     "read_all_notifications",
     "read_database_cells",
+    "read_database_columns",
     "read_doc",
     "remove_tag_from_doc",
     "replace_doc_with_markdown",

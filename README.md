@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.9.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -16,16 +16,16 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 46 focused tools with WebSocket-based document editing
+- Tools: 47 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.8.0: Added database cell read/write tools, fixed Kanban row title persistence, and added CLI version commands.
+> New in v1.9.0: Added database schema discovery, preset-backed data views, self-bootstrapping comprehensive regression, focused supporting-tools coverage, and markdown callout round-trips.
 
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
-- Database workflows: create database blocks, add columns and rows, and read or update cell values via MCP tools
+- Database workflows: create database blocks, inspect schema, add columns and rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -325,9 +325,10 @@ Endpoints currently available:
 - `add_tag_to_doc` – attach a tag to a document
 - `remove_tag_from_doc` – detach a tag from a document
 - `append_paragraph` – append a paragraph block (WebSocket)
-- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`data_view` currently falls back to database)
+- `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`viewMode=kanban` enables preset-backed data views; `data_view` defaults to kanban)
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
 - `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
+- `read_database_columns` – read database schema metadata including column IDs/types, select options, and table view column mappings
 - `read_database_cells` – read row titles plus decoded database cell values with optional row / column filters
 - `update_database_cell` – update a single database cell or the built-in row title (`createOption` defaults to `true` for select fields)
 - `update_database_row` – batch update multiple cells on a database row (`createOption` defaults to `true` for select fields)
@@ -376,9 +377,10 @@ npm run pack:check
 
 - `tool-manifest.json` is the source of truth for publicly exposed tool names.
 - CI validates that `registerTool(...)` declarations match the manifest exactly.
-- For full tool-surface verification, run `npm run test:comprehensive`.
+- For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
+- For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:bearer`, `npm run test:cli-version`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:cli-version`, `npm run test:playwright`.
 
 ## Troubleshooting
 
@@ -411,83 +413,11 @@ Workspace visibility
 - Use HTTPS
 - Store credentials in a secrets manager
 
-## Version History
+## Release Notes
 
-### 1.8.0 (2026‑03‑09)
-- Added `read_database_cells`, `update_database_cell`, and `update_database_row` for database cell-level workflows
-- Fixed `add_database_row` so `title` / `Title` persists to the Kanban card header text
-- Added CLI version commands: `affine-mcp --version`, `affine-mcp -v`, and `affine-mcp version`
-- Added focused regression runners for database cells and CLI version support
-- Verified release gates with `npm run ci`, `npm run test:cli-version`, and live `npm run test:db-cells`
-
-### 1.7.2 (2026‑03‑04)
-- Fixed MCP tag persistence to use AFFiNE canonical tag option IDs so tags are visible in Web/App UI
-- Added backward-compatible tag normalization for legacy string tag entries
-- Added tag visibility regression coverage (`tests/test-tag-visibility.mjs`, `tests/playwright/verify-tag-visibility.pw.ts`)
-- Hardened E2E credential bootstrap with configurable health retries, retry attempts, and Docker diagnostics on failure
-- Verified CI gates (`validate`, `e2e`) for PR #46 and local `npm run ci`
-
-### 1.7.1 (2026‑03‑03)
-- Fixed MCP-created document structure parity with AFFiNE UI (`sys:parent` handling)
-- Fixed callout text rendering parity in AFFiNE UI for MCP-created blocks
-- Added regression assertions for visibility-sensitive document creation paths
-
-### 1.7.0 (2026‑02‑27)
-- Added Streamable HTTP MCP support on `/mcp` for remote hosting while keeping legacy SSE compatibility paths (`/sse`, `/messages`)
-- Added HTTP deployment controls: `AFFINE_MCP_HTTP_HOST`, `AFFINE_MCP_HTTP_TOKEN`, `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`, `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS`
-- Added `npm run start:http` for one-command HTTP mode startup
-- Hardened HTTP request handling with explicit 50MB parser application and case-insensitive Bearer auth parsing
-- Expanded docs with remote deployment/security presets (Docker, Render, Railway, VPS)
-- Verified full release checks with `npm run ci`, `npm run test:e2e`, and `npm run test:comprehensive`
-
-### 1.6.0 (2026‑02‑24)
-- Added 11 document workflow tools: tags (`list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`), markdown roundtrip (`export_doc_markdown`, `create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`), and database operations (`add_database_column`, `add_database_row`)
-- Added interactive CLI commands: `affine-mcp login`, `affine-mcp status`, `affine-mcp logout`
-- Added Docker + Playwright E2E pipeline and CI workflow for auth/database regression checks
-- Tool surface increased from 32 to 43 canonical tools
-- Added release test commands (`test:e2e`, `test:db-create`, `test:bearer`, `test:playwright`) and package dependencies for markdown conversion + Playwright
-
-### 1.5.0 (2026‑02‑13)
-- Expanded `append_block` from Step1 to Step4 profiles: canonical text/list/code/divider/callout/latex/table/bookmark/media/embed plus `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note` (`data_view` currently mapped to database for stability)
-- Added strict field validation and canonical parent enforcement for page/note/surface containers
-- Added local integration runner coverage for all 30 append_block cases against a live AFFINE server
-
-### 1.4.0 (2026‑02‑13)
-- Added `read_doc` for reading document block snapshot + plain text
-- Added Cursor setup examples and troubleshooting notes for JSON-RPC method usage
-- Added explicit local-storage workspace limitation notes
-
-### 1.3.0 (2026‑02‑13)
-- Added `append_block` for slash-command style editing (`heading/list/todo/code/divider/quote`)
-- Tool surface simplified to 31 canonical tools (duplicate aliases removed)
-- Added CI + manifest parity verification (`npm run test:tool-manifest`, `npm run ci`)
-- Added open-source community health docs and issue/PR templates
-
-### 1.2.2 (2025‑09‑18)
-- CLI wrapper added to ensure Node runs ESM entry (`bin/affine-mcp`), preventing shell mis-execution
-- Docs cleaned: use env vars via shell/app config; `.env` file no longer recommended
-- MCP startup behavior unchanged from 1.2.1 (async login by default)
-
-### 1.2.1 (2025‑09‑17)
-- Default to asynchronous email/password login after MCP stdio handshake
-- `AFFINE_LOGIN_AT_START` supports `sync` when you need blocking startup (default is non-blocking)
-- Expanded docs for Codex/Claude using npm, npx, and local clone
-
-### 1.2.0 (2025‑09‑16)
-- WebSocket-based document tools: `create_doc`, `append_paragraph`, `delete_doc` (create/edit/delete now supported)
-- Tool aliases introduced at the time (`affine_*` + non-prefixed names). They were removed later to reduce duplication.
-- ESM resolution: NodeNext; improved build stability
-- CLI binary: `affine-mcp` for easy `npm i -g` usage
-
-### 1.1.0 (2025‑08‑12)
-- Fixed workspace creation with initial documents (UI accessible)
-- 30+ tools, simplified tool names
-- Improved error handling and authentication
-
-### 1.0.0 (2025‑08‑12)
-- Initial stable release
-- Basic workspace and document operations
-- Full authentication support
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Release notes: [RELEASE_NOTES.md](RELEASE_NOTES.md)
+- GitHub Releases: [Releases](https://github.com/dawncr0w/affine-mcp-server/releases)
 
 ## Contributing
 
