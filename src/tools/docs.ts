@@ -3339,6 +3339,61 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     createDocFromMarkdownHandler as any
   );
 
+  // batch_create_docs: create up to 20 docs in one call
+  const batchCreateDocsHandler = async (parsed: {
+    workspaceId?: string;
+    docs: Array<{ title: string; markdown: string; parentDocId?: string }>;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    if (!Array.isArray(parsed.docs) || parsed.docs.length === 0) throw new Error("docs array is required.");
+    if (parsed.docs.length > 20) throw new Error("Maximum 20 docs per batch.");
+
+    const results: Array<{ title: string; docId: string; linkedToParent: boolean; warnings: string[] }> = [];
+
+    for (const item of parsed.docs) {
+      try {
+        const r = await createDocFromMarkdownHandler({ workspaceId, title: item.title, markdown: item.markdown });
+        const d = JSON.parse((r as any).content[0].text);
+
+        // Link to parent if provided
+        let linkedToParent = false;
+        if (item.parentDocId) {
+          try {
+            await appendBlockInternal({ workspaceId, docId: item.parentDocId, type: "embed_linked_doc", pageId: d.docId });
+            linkedToParent = true;
+          } catch {
+            d.warnings?.push(`Doc created but could not be linked to parent "${item.parentDocId}". Link it manually.`);
+          }
+        }
+
+        results.push({ title: d.title, docId: d.docId, linkedToParent, warnings: d.warnings ?? [] });
+      } catch (err: any) {
+        results.push({ title: item.title, docId: "", linkedToParent: false, warnings: [`Failed: ${err?.message ?? String(err)}`] });
+      }
+    }
+
+    const failed = results.filter(r => !r.docId).length;
+    return text({ created: results.length - failed, failed, results });
+  };
+
+  server.registerTool(
+    "batch_create_docs",
+    {
+      title: "Batch Create Documents",
+      description: "Create multiple AFFiNE documents in a single call. Each doc can optionally be linked to a parent (parentDocId) to appear in the sidebar. Max 20 docs per batch.",
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docs: z.array(z.object({
+          title: z.string().describe("Document title."),
+          markdown: z.string().describe("Markdown content."),
+          parentDocId: z.string().optional().describe("Parent doc ID — if provided, the new doc is embedded under this parent in the sidebar."),
+        })).min(1).max(20).describe("Array of docs to create (max 20)."),
+      },
+    },
+    batchCreateDocsHandler as any
+  );
+
   const appendMarkdownHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
