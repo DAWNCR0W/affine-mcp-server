@@ -3153,6 +3153,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     title?: string;
     markdown: string;
     strict?: boolean;
+    parentDocId?: string;
   }) => {
     const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
     let operations = [...parsedMarkdown.operations];
@@ -3188,15 +3189,36 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       });
     }
 
-    const applyWarnings =
-      applied.skippedCount > 0
-        ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
-        : [];
+    // If parentDocId is provided, embed the new doc into the parent so it
+    // appears in the sidebar as a child instead of being an orphan.
+    let linkedToParent = false;
+    if (parsed.parentDocId) {
+      try {
+        await appendBlockInternal({
+          workspaceId: created.workspaceId,
+          docId: parsed.parentDocId,
+          type: "embed_linked_doc",
+          pageId: created.docId,
+        });
+        linkedToParent = true;
+      } catch {
+        // Non-fatal: doc was created, just not linked. Warn below.
+      }
+    }
+
+    const applyWarnings: string[] = [];
+    if (applied.skippedCount > 0) {
+      applyWarnings.push(`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`);
+    }
+    if (parsed.parentDocId && !linkedToParent) {
+      applyWarnings.push(`Doc created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`);
+    }
 
     return text({
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
+      linkedToParent,
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
@@ -3210,12 +3232,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "create_doc_from_markdown",
     {
       title: "Create Document From Markdown",
-      description: "Create a new AFFiNE document and import markdown content.",
+      description: "Create a new AFFiNE document and import markdown content. Use parentDocId to automatically embed the new doc into a parent, making it visible in the sidebar instead of being an orphan.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         title: z.string().optional(),
         markdown: MarkdownContent.describe("Markdown content to import"),
         strict: z.boolean().optional(),
+        parentDocId: z.string().optional().describe("If provided, the new doc is automatically embedded into this parent doc as a linked child (visible in sidebar)."),
       },
     },
     createDocFromMarkdownHandler as any
