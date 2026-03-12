@@ -2380,6 +2380,58 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       socket.disconnect();
     }
   };
+  // search_docs: fast title search via workspace metadata (no per-doc loading needed)
+  const searchDocsHandler = async (parsed: { workspaceId?: string; query: string; limit?: number }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const q = (parsed.query ?? "").toLowerCase().trim();
+    if (!q) throw new Error("query is required.");
+    const limit = parsed.limit ?? 20;
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!snapshot.missing) {
+        return text({ query: q, results: [], totalCount: 0 });
+      }
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const pages = getWorkspacePageEntries(meta);
+
+      const matches = pages
+        .filter((p) => p.title && p.title.toLowerCase().includes(q))
+        .slice(0, limit)
+        .map((p) => ({
+          docId: p.id,
+          title: p.title,
+          updatedAt: p.updatedDate ? new Date(p.updatedDate).toISOString() : null,
+          url: `${(process.env.AFFINE_BASE_URL || "").replace(/\/$/, "")}/workspace/${workspaceId}/${p.id}`,
+        }));
+
+      return text({ query: parsed.query, totalCount: matches.length, results: matches });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "search_docs",
+    {
+      title: "Search Documents by Title",
+      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, and direct URL for each match.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
+        query: z.string().describe("Search query — matched case-insensitively against doc titles."),
+        limit: z.number().optional().describe("Max results to return (default: 20)."),
+      },
+    },
+    searchDocsHandler as any
+  );
+
   server.registerTool(
     "list_tags",
     {
