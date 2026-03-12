@@ -3396,6 +3396,119 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
   }, duplicateDocHandler as any);
 
+  // ─── cleanup_orphan_embeds ──────────────────────────────────────────────────
+  const cleanupOrphanEmbedsHandler = async (parsed: { workspaceId?: string; docId: string; dryRun?: boolean }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snap = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snap.missing) throw new Error(`Doc ${parsed.docId} not found.`);
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const orphans: Array<{ blockId: string; targetDocId: string }> = [];
+      for (const [blockId, raw] of blocks) {
+        if (!(raw instanceof Y.Map)) continue;
+        if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
+        const targetId = raw.get("prop:pageId");
+        if (typeof targetId !== "string" || !targetId) { orphans.push({ blockId, targetDocId: targetId ?? "" }); continue; }
+        const targetSnap = await loadDoc(socket, workspaceId, targetId);
+        if (!targetSnap.missing) orphans.push({ blockId, targetDocId: targetId });
+      }
+      if (parsed.dryRun || orphans.length === 0) {
+        return text({ docId: parsed.docId, dryRun: parsed.dryRun ?? false, orphansFound: orphans.length, orphans });
+      }
+      const prevSV = Y.encodeStateVector(doc);
+      for (const { blockId } of orphans) {
+        for (const [, parentRaw] of blocks) {
+          if (!(parentRaw instanceof Y.Map)) continue;
+          const children = parentRaw.get("sys:children");
+          if (!(children instanceof Y.Array)) continue;
+          const ids = childIdsFrom(children);
+          const idx = ids.indexOf(blockId);
+          if (idx !== -1) { children.delete(idx, 1); break; }
+        }
+        blocks.delete(blockId);
+      }
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      return text({ docId: parsed.docId, dryRun: false, orphansRemoved: orphans.length, orphans });
+    } finally { socket.disconnect(); }
+  };
+  server.registerTool("cleanup_orphan_embeds", {
+    title: "Cleanup Orphan Embed Links",
+    description: "Remove embed_linked_doc blocks that point to deleted/non-existent docs. Use dryRun=true to preview without making changes.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      docId: z.string().describe("The doc to clean up orphan embeds from."),
+      dryRun: z.boolean().optional().describe("If true, only report orphans without deleting (default: false)."),
+    },
+  }, cleanupOrphanEmbedsHandler as any);
+
+  // ─── find_and_replace ───────────────────────────────────────────────────────
+  const findAndReplaceHandler = async (parsed: {
+    workspaceId?: string; docId: string; search: string; replace: string; matchAll?: boolean; dryRun?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snap = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snap.missing) throw new Error(`Doc ${parsed.docId} not found.`);
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      let totalMatches = 0;
+      const matchLog: Array<{ blockId: string; flavour: string; original: string; replaced: string }> = [];
+      const matchAll = parsed.matchAll !== false;
+      for (const [blockId, raw] of blocks) {
+        if (!(raw instanceof Y.Map)) continue;
+        const flavour = raw.get("sys:flavour") as string | undefined;
+        for (const [, val] of raw) {
+          if (!(val instanceof Y.Text)) continue;
+          const original = val.toString();
+          if (!original.includes(parsed.search)) continue;
+          const replaced = matchAll
+            ? original.split(parsed.search).join(parsed.replace)
+            : original.replace(parsed.search, parsed.replace);
+          const count = matchAll ? original.split(parsed.search).length - 1 : 1;
+          totalMatches += count;
+          matchLog.push({ blockId, flavour: flavour ?? "unknown", original, replaced });
+          if (!parsed.dryRun) {
+            const prevSV = Y.encodeStateVector(doc);
+            val.delete(0, val.length);
+            val.insert(0, replaced);
+            const delta = Y.encodeStateAsUpdate(doc, prevSV);
+            await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+          }
+        }
+      }
+      return text({
+        docId: parsed.docId, search: parsed.search, replace: parsed.replace,
+        dryRun: parsed.dryRun ?? false, totalMatches, blocksAffected: matchLog.length, matches: matchLog,
+      });
+    } finally { socket.disconnect(); }
+  };
+  server.registerTool("find_and_replace", {
+    title: "Find and Replace in Document",
+    description: "Find and replace text across all Y.Text fields in a document (paragraphs, headings, titles). matchAll defaults to true. Use dryRun=true to preview before applying.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      docId: z.string().describe("The doc to search in."),
+      search: z.string().describe("Text to find."),
+      replace: z.string().describe("Replacement text."),
+      matchAll: z.boolean().optional().describe("Replace all occurrences (default: true)."),
+      dryRun: z.boolean().optional().describe("If true, only report matches without replacing (default: false)."),
+    },
+  }, findAndReplaceHandler as any);
+
   const appendMarkdownHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
