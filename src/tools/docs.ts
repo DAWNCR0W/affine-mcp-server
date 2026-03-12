@@ -2692,7 +2692,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     getDocHandler as any
   );
 
-  const readDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+  const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
       throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
@@ -2797,6 +2797,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
+      // If includeMarkdown is requested, reuse the same render path as export_doc_markdown
+      let markdown: string | undefined;
+      if (parsed.includeMarkdown) {
+        const collected = collectDocForMarkdown(doc, new Map());
+        const rendered = renderBlocksToMarkdown({
+          rootBlockIds: collected.rootBlockIds,
+          blocksById: collected.blocksById,
+        });
+        markdown = rendered.markdown;
+      }
+
       return text({
         docId: parsed.docId,
         title: title || null,
@@ -2805,6 +2816,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         blockCount: blockRows.length,
         blocks: blockRows,
         plainText: plainTextLines.join("\n"),
+        ...(markdown !== undefined ? { markdown } : {}),
       });
     } finally {
       socket.disconnect();
@@ -2814,10 +2826,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "read_doc",
     {
       title: "Read Document Content",
-      description: "Read document block content via WebSocket snapshot (blocks + plain text).",
+      description: "Read document block content via WebSocket snapshot (blocks + plain text). Set includeMarkdown: true to also get the rendered markdown — useful when you need to read content without a separate export_doc_markdown call.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
+        includeMarkdown: z.boolean().optional().describe("If true, includes rendered markdown in the response. Equivalent to also calling export_doc_markdown."),
       },
     },
     readDocHandler as any
