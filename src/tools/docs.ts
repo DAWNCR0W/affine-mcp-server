@@ -1359,35 +1359,45 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         setSysFields(block, blockId, "affine:table");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        const rows: Record<string, { rowId: string; order: string; backgroundColor?: string }> = {};
-        const columns: Record<string, { columnId: string; order: string; backgroundColor?: string; width?: number }> = {};
-        const cells: Record<string, { text: string }> = {};
+
+        // AFFiNE reads table props as flat dot-notation keys on the block Y.Map:
+        //   prop:rows.{rowId}.rowId, prop:rows.{rowId}.order
+        //   prop:columns.{colId}.columnId, prop:columns.{colId}.order
+        //   prop:cells.{rowId}:{colId}.text  (Y.Text, NOT a nested Y.Map)
+        // Using nested Y.Maps (the old approach) causes cells to be invisible in the UI.
         const rowIds: string[] = [];
         const columnIds: string[] = [];
         const tableData = normalized.tableData ?? [];
 
         for (let i = 0; i < normalized.rows; i++) {
           const rowId = generateId();
-          rows[rowId] = { rowId, order: `r${String(i).padStart(4, "0")}` };
+          block.set(`prop:rows.${rowId}.rowId`, rowId);
+          block.set(`prop:rows.${rowId}.order`, `r${String(i).padStart(4, "0")}`);
           rowIds.push(rowId);
         }
         for (let i = 0; i < normalized.columns; i++) {
           const columnId = generateId();
-          columns[columnId] = { columnId, order: `c${String(i).padStart(4, "0")}` };
+          block.set(`prop:columns.${columnId}.columnId`, columnId);
+          block.set(`prop:columns.${columnId}.order`, `c${String(i).padStart(4, "0")}`);
           columnIds.push(columnId);
         }
         for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex += 1) {
           const rowId = rowIds[rowIndex];
+          const isHeader = rowIndex === 0;
           for (let columnIndex = 0; columnIndex < columnIds.length; columnIndex += 1) {
             const columnId = columnIds[columnIndex];
             const cellText = tableData[rowIndex]?.[columnIndex] ?? "";
-            cells[`${rowId}:${columnId}`] = { text: cellText };
+            const cellYText = new Y.Text();
+            // First row is always rendered bold (header row convention)
+            if (isHeader && cellText) {
+              cellYText.insert(0, cellText, { bold: true });
+            } else {
+              cellYText.insert(0, cellText);
+            }
+            block.set(`prop:cells.${rowId}:${columnId}.text`, cellYText);
           }
         }
 
-        block.set("prop:rows", rows);
-        block.set("prop:columns", columns);
-        block.set("prop:cells", cells);
         block.set("prop:comments", undefined);
         block.set("prop:textAlign", undefined);
         return { blockId, block, flavour: "affine:table" };
