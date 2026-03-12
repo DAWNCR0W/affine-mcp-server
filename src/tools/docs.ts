@@ -2898,6 +2898,99 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     readDocHandler as any
   );
 
+  // move_doc: move a doc in the sidebar by removing its embed_linked_doc from the old parent
+  // and adding it to the new parent. fromParentDocId is optional — if omitted, only adds to new parent.
+  const moveDocHandler = async (parsed: { workspaceId?: string; docId: string; toParentDocId: string; fromParentDocId?: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      let removedFromParent = false;
+
+      // Step 1: remove embed_linked_doc from old parent (if provided)
+      if (parsed.fromParentDocId) {
+        const parentDoc = new Y.Doc();
+        const parentSnapshot = await loadDoc(socket, workspaceId, parsed.fromParentDocId);
+        if (parentSnapshot.missing) {
+          Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
+          const prevSV = Y.encodeStateVector(parentDoc);
+          const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
+
+          // Find the embed_linked_doc block pointing to our docId
+          let embedBlockId: string | null = null;
+          let embedParentChildren: Y.Array<any> | null = null;
+          let embedIndex = -1;
+
+          for (const [id, raw] of blocks) {
+            if (!(raw instanceof Y.Map)) continue;
+            const flavour = raw.get("sys:flavour");
+            const pageId = raw.get("prop:pageId");
+            if (flavour === "affine:embed-linked-doc" && pageId === parsed.docId) {
+              embedBlockId = String(id);
+              break;
+            }
+          }
+
+          if (embedBlockId) {
+            // Find the parent block whose sys:children contains embedBlockId
+            for (const [, raw] of blocks) {
+              if (!(raw instanceof Y.Map)) continue;
+              const children = raw.get("sys:children");
+              if (!(children instanceof Y.Array)) continue;
+              const arr = children.toArray() as string[];
+              const idx = arr.indexOf(embedBlockId);
+              if (idx >= 0) {
+                embedParentChildren = children;
+                embedIndex = idx;
+                break;
+              }
+            }
+            if (embedParentChildren && embedIndex >= 0) {
+              embedParentChildren.delete(embedIndex, 1);
+            }
+            blocks.delete(embedBlockId);
+            const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
+            await pushDocUpdate(socket, workspaceId, parsed.fromParentDocId, Buffer.from(delta).toString("base64"));
+            removedFromParent = true;
+          }
+        }
+      }
+
+      // Step 2: add embed_linked_doc to new parent
+      await appendBlockInternal({
+        workspaceId,
+        docId: parsed.toParentDocId,
+        type: "embed_linked_doc",
+        pageId: parsed.docId,
+      });
+
+      return { moved: true, docId: parsed.docId, toParentDocId: parsed.toParentDocId, removedFromParent };
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "move_doc",
+    {
+      title: "Move Document in Sidebar",
+      description: "Move a doc in the AFFiNE sidebar by embedding it under a new parent. Optionally removes it from the old parent (fromParentDocId). If fromParentDocId is omitted, the doc is added to the new parent but not removed from the old one.",
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string().describe("The doc to move."),
+        toParentDocId: z.string().describe("The new parent doc that will contain the embed."),
+        fromParentDocId: z.string().optional().describe("The current parent doc to remove the embed from. If omitted, only adds to new parent."),
+      },
+    },
+    moveDocHandler as any
+  );
+
   const publishDocHandler = async (parsed: { workspaceId?: string; docId: string; mode?: "Page" | "Edgeless" }) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId;
       if (!workspaceId) {
