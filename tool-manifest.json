@@ -7,6 +7,7 @@
     "append_block",
     "append_markdown",
     "append_paragraph",
+    "batch_create_docs",
     "cleanup_blobs",
     "create_comment",
     "create_doc",
