@@ -30,6 +30,7 @@
     "list_notifications",
     "list_tags",
     "list_workspaces",
+    "move_doc",
     "publish_doc",
     "read_all_notifications",
     "read_database_cells",
