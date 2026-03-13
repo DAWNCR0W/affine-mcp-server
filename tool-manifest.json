@@ -26,6 +26,7 @@
     "generate_access_token",
     "get_doc",
     "get_doc_by_title",
+    "get_docs_by_tag",
     "get_workspace",
     "list_access_tokens",
     "list_backlinks",

@@ -3905,6 +3905,59 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
   }, findAndReplaceHandler as any);
 
+  // ─── get_docs_by_tag ────────────────────────────────────────────────────────
+  const getDocsByTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnap.missing) return text({ tag: parsed.tag, count: 0, docs: [] });
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const tagMap = new Map<string, string>();
+      const tagsArr = meta.get("tags") as Y.Array<any> | undefined;
+      if (tagsArr) {
+        tagsArr.forEach((t: any) => {
+          if (t instanceof Y.Map) {
+            const id = t.get("id"); const value = t.get("value");
+            if (id && value) tagMap.set(id, value);
+          }
+        });
+      }
+      const q = parsed.tag.toLowerCase();
+      const matchingTagIds = new Set([...tagMap.entries()]
+        .filter(([, v]) => v.toLowerCase().includes(q)).map(([id]) => id));
+      if (matchingTagIds.size === 0) return text({ tag: parsed.tag, count: 0, docs: [], availableTags: [...tagMap.values()] });
+      const pages = getWorkspacePageEntries(meta);
+      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const getTagIds = (p: any): string[] => {
+        if (!p.tagsArray) return [];
+        const ids: string[] = [];
+        p.tagsArray.forEach((tid: string) => ids.push(tid));
+        return ids;
+      };
+      const matched = pages
+        .filter(p => getTagIds(p).some(tid => matchingTagIds.has(tid)))
+        .map(p => ({ docId: p.id, title: p.title ?? "Untitled",
+          tags: getTagIds(p).map(tid => tagMap.get(tid) ?? tid),
+          url: `${baseUrl}/workspace/${workspaceId}/${p.id}` }));
+      return text({ tag: parsed.tag, count: matched.length, docs: matched });
+    } finally { socket.disconnect(); }
+  };
+  server.registerTool("get_docs_by_tag", {
+    title: "Get Documents by Tag",
+    description: "Filter documents by tag name (case-insensitive substring match). Returns matching docs with their full tag list.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      tag: z.string().describe("Tag name to filter by (substring match, case-insensitive)."),
+    },
+  }, getDocsByTagHandler as any);
+
   // ── helpers for database select columns ──
 
   type DatabaseColumnDef = {
