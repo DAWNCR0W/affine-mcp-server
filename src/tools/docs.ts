@@ -3200,7 +3200,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const pageId = raw.get("prop:pageId");
         if (typeof pageId === "string" && pageId) {
           children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
-            url: `${(process.env.AFFINE_BASE_URL || "").replace(/\/$/, "")}/workspace/${workspaceId}/${pageId}` });
+            url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}` });
         }
       }
       return text({ docId: parsed.docId, count: children.length, children });
@@ -3294,7 +3294,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const collected = collectDocForMarkdown(doc, new Map());
         const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
         results.push({ docId: match.id, title: match.title, found: true, markdown: rendered.markdown,
-          url: `${(process.env.AFFINE_BASE_URL || "").replace(/\/$/, "")}/workspace/${workspaceId}/${match.id}` });
+          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${match.id}` });
       }
       return text({ query: parsed.query, found: results.some(r => (r as any).found), results });
     } finally { socket.disconnect(); }
@@ -3336,7 +3336,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           if (!(raw instanceof Y.Map)) continue;
           if (raw.get("sys:flavour") === "affine:embed-linked-doc" && raw.get("prop:pageId") === parsed.docId) {
             backlinks.push({ docId: page.id, title: titleById.get(page.id) ?? null,
-              url: `${(process.env.AFFINE_BASE_URL || "").replace(/\/$/, "")}/workspace/${workspaceId}/${page.id}` });
+              url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${page.id}` });
             break;
           }
         }
