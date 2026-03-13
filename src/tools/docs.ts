@@ -3791,6 +3791,60 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       dryRun: z.boolean().optional().describe("If true, only report matches without replacing (default: false)."),
     },
   }, findAndReplaceHandler as any);
+
+  // ─── get_docs_by_tag ────────────────────────────────────────────────────────
+  const getDocsByTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnap.missing) return text({ tag: parsed.tag, count: 0, docs: [] });
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const { byId, options } = getWorkspaceTagOptionMaps(meta);
+      const q = parsed.tag.toLowerCase();
+      const matchingTagIds = new Set(
+        options.filter(o => o.value.toLowerCase().includes(q)).map(o => o.id)
+      );
+      if (matchingTagIds.size === 0) {
+        return text({
+          tag: parsed.tag,
+          count: 0,
+          docs: [],
+          availableTags: options.map(o => o.value),
+        });
+      }
+      const pages = getWorkspacePageEntries(meta);
+      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const matched = pages
+        .map(p => {
+          const rawTagIds = getStringArray(p.tagsArray);
+          return { p, rawTagIds };
+        })
+        .filter(({ rawTagIds }) => rawTagIds.some(tid => matchingTagIds.has(tid)))
+        .map(({ p, rawTagIds }) => ({
+          docId: p.id,
+          title: p.title ?? "Untitled",
+          tags: resolveTagLabels(rawTagIds, byId),
+          url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
+        }));
+      return text({ tag: parsed.tag, count: matched.length, docs: matched });
+    } finally { socket.disconnect(); }
+  };
+  server.registerTool("get_docs_by_tag", {
+    title: "Get Documents by Tag",
+    description: "Filter documents by tag name (case-insensitive substring match). Returns matching docs with their full tag list. If no match, also returns availableTags for discoverability.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      tag: z.string().describe("Tag name to filter by (substring match, case-insensitive)."),
+    },
+  }, getDocsByTagHandler as any);
+
   // ─── list_workspace_tree ────────────────────────────────────────────────────
   const listWorkspaceTreeHandler = async (parsed: { workspaceId?: string; depth?: number }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
@@ -4169,7 +4223,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: z.string().optional().describe("Parent doc to link the new doc under in the sidebar."),
     },
   }, createDocFromTemplateHandler as any);
-
 
   // ── helpers for database select columns ──
 
