@@ -2402,17 +2402,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
 
-      const matches = pages
-        .filter((p) => p.title && p.title.toLowerCase().includes(q))
+      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const filtered = pages.filter((p) => p.title && p.title.toLowerCase().includes(q));
+      const totalCount = filtered.length;
+      const matches = filtered
         .slice(0, limit)
         .map((p) => ({
           docId: p.id,
           title: p.title,
           updatedAt: p.updatedDate ? new Date(p.updatedDate).toISOString() : null,
-          url: `${(process.env.AFFINE_BASE_URL || "").replace(/\/$/, "")}/workspace/${workspaceId}/${p.id}`,
+          url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
         }));
 
-      return text({ query: parsed.query, totalCount: matches.length, results: matches });
+      return text({ query: parsed.query, totalCount, results: matches });
     } finally {
       socket.disconnect();
     }
