@@ -3096,7 +3096,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     exportDocMarkdownHandler as any
   );
 
-  const createDocFromMarkdownHandler = async (parsed: {
+  // Core logic for creating a doc from markdown — returns structured data, no MCP envelope.
+  // Used by both createDocFromMarkdownHandler and batchCreateDocsHandler.
+  const createDocFromMarkdownCore = async (parsed: {
     workspaceId?: string;
     title?: string;
     markdown: string;
@@ -3141,7 +3143,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
         : [];
 
-    return text({
+    return {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
@@ -3152,7 +3154,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
       },
-    });
+    };
+  };
+
+  const createDocFromMarkdownHandler = async (parsed: {
+    workspaceId?: string;
+    title?: string;
+    markdown: string;
+    strict?: boolean;
+  }) => {
+    return text(await createDocFromMarkdownCore(parsed));
   };
   server.registerTool(
     "create_doc_from_markdown",
@@ -3183,8 +3194,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
     for (const item of parsed.docs) {
       try {
-        const r = await createDocFromMarkdownHandler({ workspaceId, title: item.title, markdown: item.markdown });
-        const d = JSON.parse((r as any).content[0].text);
+        const d = await createDocFromMarkdownCore({ workspaceId, title: item.title, markdown: item.markdown });
 
         // Link to parent if provided
         let linkedToParent = false;
