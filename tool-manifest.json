@@ -24,6 +24,7 @@
     "find_and_replace",
     "generate_access_token",
     "get_doc",
+    "get_orphan_docs",
     "get_workspace",
     "list_access_tokens",
     "list_comments",
