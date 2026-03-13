@@ -32,6 +32,7 @@
     "list_histories",
     "list_notifications",
     "list_tags",
+    "list_workspace_tree",
     "list_workspaces",
     "move_doc",
     "publish_doc",
