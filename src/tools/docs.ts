@@ -3898,7 +3898,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     inputSchema: {
       workspaceId: z.string().optional(),
       docId: z.string().describe("The doc to search in."),
-      search: z.string().describe("Text to find."),
+      search: z.string().min(1).describe("Text to find (must not be empty)."),
       replace: z.string().describe("Replacement text."),
       matchAll: z.boolean().optional().describe("Replace all occurrences (default: true)."),
       dryRun: z.boolean().optional().describe("If true, only report matches without replacing (default: false)."),
