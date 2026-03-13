@@ -44,6 +44,7 @@
     "resolve_comment",
     "revoke_access_token",
     "revoke_doc",
+    "search_docs",
     "sign_in",
     "update_comment",
     "update_database_cell",
