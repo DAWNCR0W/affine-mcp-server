@@ -3701,6 +3701,60 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       dryRun: z.boolean().optional().describe("If true, only report matches without replacing (default: false)."),
     },
   }, findAndReplaceHandler as any);
+  // ─── list_workspace_tree ────────────────────────────────────────────────────
+  const listWorkspaceTreeHandler = async (parsed: { workspaceId?: string; depth?: number }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const maxDepth = parsed.depth ?? 3;
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnap.missing) return text({ workspaceId, tree: [] });
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
+      const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
+      const childrenOf = new Map<string, string[]>();
+      const allChildren = new Set<string>();
+      for (const page of pages) {
+        const snap = await loadDoc(socket, workspaceId, page.id);
+        if (!snap.missing) continue;
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
+        const blocks = doc.getMap("blocks") as Y.Map<any>;
+        const kids: string[] = [];
+        for (const [, raw] of blocks) {
+          if (!(raw instanceof Y.Map)) continue;
+          if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
+          const pid = raw.get("prop:pageId");
+          if (typeof pid === "string" && pid && titleById.has(pid)) {
+            kids.push(pid);
+            allChildren.add(pid);
+          }
+        }
+        if (kids.length) childrenOf.set(page.id, kids);
+      }
+      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const roots = pages.filter(p => !allChildren.has(p.id)).map(p => p.id);
+      const buildNode = (id: string, depth: number): any => ({
+        docId: id, title: titleById.get(id) ?? "Untitled",
+        url: `${baseUrl}/workspace/${workspaceId}/${id}`,
+        children: depth < maxDepth ? (childrenOf.get(id) ?? []).map(cid => buildNode(cid, depth + 1)) : [],
+      });
+      return text({ workspaceId, totalDocs: pages.length, rootCount: roots.length, tree: roots.map(id => buildNode(id, 0)) });
+    } finally { socket.disconnect(); }
+  };
+  server.registerTool("list_workspace_tree", {
+    title: "List Workspace Tree",
+    description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      depth: z.number().optional().describe("Max nesting depth to return (default: 3)."),
+    },
+  }, listWorkspaceTreeHandler as any);
 
   // ── helpers for database select columns ──
 
