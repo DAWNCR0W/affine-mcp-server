@@ -2949,7 +2949,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         pageId: parsed.docId,
       });
 
-      return { moved: true, docId: parsed.docId, toParentDocId: parsed.toParentDocId, removedFromParent };
+      return text({ moved: true, docId: parsed.docId, toParentDocId: parsed.toParentDocId, removedFromParent });
     } finally {
       socket.disconnect();
     }
