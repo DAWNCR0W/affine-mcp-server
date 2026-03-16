@@ -59,6 +59,11 @@ async function buildServer() {
   // To avoid startup timeouts in MCP clients, default to async login after the stdio handshake.
   if (!gql.isAuthenticated() && config.email && config.password) {
     const mode = (process.env.AFFINE_LOGIN_AT_START || "async").toLowerCase();
+    // In HTTP transport mode, buildServer() is called per session, so credentials
+    // must be retained for subsequent sessions. Only clear in stdio mode (single session).
+    const isHttpTransport = ["sse", "http", "streamable"].includes(
+      (process.env.MCP_TRANSPORT || "stdio").toLowerCase()
+    );
     if (mode === "sync") {
       console.error("No token/cookie; performing synchronous email/password authentication at startup...");
       try {
@@ -69,17 +74,20 @@ async function buildServer() {
         console.error("Failed to authenticate with email/password:", e);
         console.error("WARNING: Continuing without authentication - some operations may fail");
       } finally {
-        // Clear credentials from memory after authentication attempt
-        config.password = undefined;
-        config.email = undefined;
+        if (!isHttpTransport) {
+          config.password = undefined;
+          config.email = undefined;
+        }
       }
     } else {
       console.error("No token/cookie; deferring email/password authentication (async after connect)...");
       // Capture credentials before clearing — async login needs them.
       const loginEmail = config.email!;
       const loginPassword = config.password!;
-      config.password = undefined;
-      config.email = undefined;
+      if (!isHttpTransport) {
+        config.password = undefined;
+        config.email = undefined;
+      }
       // Fire-and-forget async login so stdio handshake is not delayed.
       (async () => {
         try {
