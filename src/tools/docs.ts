@@ -2395,13 +2395,48 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       socket.disconnect();
     }
   };
+  const getSearchMatchRank = (
+    title: string | null,
+    normalizedQuery: string,
+    matchMode: "substring" | "prefix" | "exact",
+  ): number | null => {
+    if (!title) return null;
+    const normalizedTitle = title.toLocaleLowerCase();
+    const isExact = normalizedTitle === normalizedQuery;
+    const isPrefix = normalizedTitle.startsWith(normalizedQuery);
+    const isSubstring = normalizedTitle.includes(normalizedQuery);
+
+    if (matchMode === "exact") {
+      return isExact ? 0 : null;
+    }
+    if (matchMode === "prefix") {
+      return isPrefix ? (isExact ? 0 : 1) : null;
+    }
+    if (isExact) return 0;
+    if (isPrefix) return 1;
+    if (isSubstring) return 2;
+    return null;
+  };
+
   // search_docs: fast title search via workspace metadata (no per-doc loading needed)
-  const searchDocsHandler = async (parsed: { workspaceId?: string; query: string; limit?: number }) => {
+  const searchDocsHandler = async (parsed: {
+    workspaceId?: string;
+    query: string;
+    limit?: number;
+    matchMode?: "substring" | "prefix" | "exact";
+    tag?: string;
+    sortBy?: "relevance" | "updatedAt";
+    sortDirection?: "asc" | "desc";
+  }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
-    const q = (parsed.query ?? "").toLowerCase().trim();
+    const q = (parsed.query ?? "").toLocaleLowerCase().trim();
     if (!q) throw new Error("query is required.");
     const limit = parsed.limit ?? 20;
+    const matchMode = parsed.matchMode ?? "substring";
+    const sortBy = parsed.sortBy ?? "relevance";
+    const sortDirection = parsed.sortDirection ?? "desc";
+    const normalizedTag = (parsed.tag ?? "").toLocaleLowerCase().trim();
 
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
@@ -2416,20 +2451,66 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
+      const { byId } = getWorkspaceTagOptionMaps(meta);
 
       const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
-      const filtered = pages.filter((p) => p.title && p.title.toLowerCase().includes(q));
+      const filtered = pages
+        .map((page) => {
+          const rank = getSearchMatchRank(page.title, q, matchMode);
+          if (rank === null) {
+            return null;
+          }
+          const tags = resolveTagLabels(getStringArray(page.tagsArray), byId);
+          if (normalizedTag && !tags.some((tag) => tag.toLocaleLowerCase().includes(normalizedTag))) {
+            return null;
+          }
+          const updatedTimestamp = page.updatedDate ?? page.createDate ?? 0;
+          return {
+            docId: page.id,
+            title: page.title,
+            tags,
+            updatedAt: updatedTimestamp > 0 ? new Date(updatedTimestamp).toISOString() : null,
+            updatedTimestamp,
+            url: `${baseUrl}/workspace/${workspaceId}/${page.id}`,
+            rank,
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+      filtered.sort((a, b) => {
+        if (sortBy === "updatedAt") {
+          const diff = a.updatedTimestamp - b.updatedTimestamp;
+          if (diff !== 0) {
+            return sortDirection === "asc" ? diff : -diff;
+          }
+        } else if (a.rank !== b.rank) {
+          return a.rank - b.rank;
+        } else if (a.updatedTimestamp !== b.updatedTimestamp) {
+          return b.updatedTimestamp - a.updatedTimestamp;
+        }
+        return (a.title ?? "").localeCompare(b.title ?? "");
+      });
+
       const totalCount = filtered.length;
       const matches = filtered
         .slice(0, limit)
-        .map((p) => ({
-          docId: p.id,
-          title: p.title,
-          updatedAt: p.updatedDate ? new Date(p.updatedDate).toISOString() : null,
-          url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
+        .map((entry) => ({
+          docId: entry.docId,
+          title: entry.title,
+          tags: entry.tags,
+          updatedAt: entry.updatedAt,
+          url: entry.url,
         }));
 
-      return text({ query: parsed.query, totalCount, results: matches });
+      return text({
+        query: parsed.query,
+        tag: parsed.tag ?? null,
+        matchMode,
+        sortBy,
+        sortDirection,
+        totalCount,
+        results: matches,
+      });
     } finally {
       socket.disconnect();
     }
@@ -2444,6 +2525,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
         limit: z.number().optional().describe("Max results to return (default: 20)."),
+        matchMode: z.enum(["substring", "prefix", "exact"]).optional().describe("How to match titles (default: substring)."),
+        tag: z.string().optional().describe("Optional tag filter (case-insensitive substring match against resolved tag names)."),
+        sortBy: z.enum(["relevance", "updatedAt"]).optional().describe("Sort by match relevance (default) or by updatedAt."),
+        sortDirection: z.enum(["asc", "desc"]).optional().describe("Sort direction for updatedAt sorting (default: desc)."),
       },
     },
     searchDocsHandler as any

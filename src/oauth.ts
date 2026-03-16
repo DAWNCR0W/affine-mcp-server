@@ -58,6 +58,13 @@ export function getOAuthProtectedResourceMetadataUrl(publicBaseUrl: string): str
   return `${publicBaseUrl.replace(/\/$/, "")}/.well-known/oauth-protected-resource`;
 }
 
+export function getOAuthProtectedResourceMetadataPaths(publicBaseUrl: string): string[] {
+  const primaryPath = new URL(getOAuthProtectedResourceMetadataUrl(publicBaseUrl)).pathname;
+  const resourcePath = new URL(getOAuthResourceUrl(publicBaseUrl)).pathname;
+  const aliasPath = `/.well-known/oauth-protected-resource${resourcePath === "/" ? "" : resourcePath}`;
+  return [...new Set([primaryPath, aliasPath])];
+}
+
 export function buildOAuthProtectedResourceMetadata(config: OAuthConfig) {
   return {
     resource: getOAuthResourceUrl(config.publicBaseUrl),
@@ -132,6 +139,17 @@ async function loadAuthorizationServerMetadata(issuerUrl: string): Promise<Autho
     metadataCache.set(issuerUrl, pending);
   }
   return pending;
+}
+
+export async function probeOAuthReadiness(config: OAuthConfig): Promise<{ issuer: string; jwksUri: string }> {
+  const metadata = await loadAuthorizationServerMetadata(config.issuerUrl);
+  if (!metadata.jwks_uri) {
+    throw new Error("Authorization server metadata is missing jwks_uri");
+  }
+  return {
+    issuer: metadata.issuer,
+    jwksUri: metadata.jwks_uri,
+  };
 }
 
 function getJwks(metadata: AuthorizationServerMetadata) {

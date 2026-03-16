@@ -249,6 +249,13 @@ async function main() {
     server = await startOAuthHttpServer(affineApiToken, issuer.issuerBaseUrl);
     issuer.setAudienceBase(server.publicBaseUrl);
 
+    const healthz = await fetch(`${server.publicBaseUrl}/healthz`);
+    expectEqual(healthz.status, 200, "oauth healthz status");
+    const readyz = await fetch(`${server.publicBaseUrl}/readyz`);
+    expectEqual(readyz.status, 200, "oauth readyz status");
+    const readyzPayload = await readyz.json();
+    expectEqual(readyzPayload?.authMode, "oauth", "oauth readyz authMode");
+
     const metadataResponse = await fetch(`${server.publicBaseUrl}/.well-known/oauth-protected-resource`);
     expectEqual(metadataResponse.status, 200, "protected resource metadata status");
     const metadata = await metadataResponse.json();

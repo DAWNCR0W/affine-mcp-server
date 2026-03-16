@@ -45,6 +45,7 @@
     "test:doc-discovery": "node tests/test-doc-discovery.mjs",
     "test:data-view-ui": "npx playwright test tests/playwright/verify-data-view.pw.ts --config tests/playwright/playwright.config.ts",
     "test:bearer": "node tests/test-bearer-auth.mjs",
+    "test:http-bearer": "node tests/test-http-bearer.mjs",
     "test:oauth-http": "node tests/test-oauth-http.mjs",
     "test:supporting-tools": "node tests/test-supporting-tools.mjs",
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",
