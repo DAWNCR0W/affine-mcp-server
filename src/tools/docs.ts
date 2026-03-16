@@ -3756,6 +3756,52 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
   }, listWorkspaceTreeHandler as any);
 
+  // ─── get_orphan_docs ────────────────────────────────────────────────────────
+  const getOrphanDocsHandler = async (parsed: { workspaceId?: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnap.missing) return text({ orphans: [] });
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
+      const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
+      const allChildren = new Set<string>();
+      for (const page of pages) {
+        const snap = await loadDoc(socket, workspaceId, page.id);
+        if (!snap.missing) continue;
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
+        const blocks = doc.getMap("blocks") as Y.Map<any>;
+        for (const [, raw] of blocks) {
+          if (!(raw instanceof Y.Map)) continue;
+          if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
+          const pageId = raw.get("prop:pageId");
+          if (typeof pageId === "string" && pageId) allChildren.add(pageId);
+        }
+      }
+      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, "")).replace(/\/$/, "");
+      const orphans = pages
+        .filter(p => !allChildren.has(p.id))
+        .map(p => ({
+          docId: p.id,
+          title: titleById.get(p.id) ?? "Untitled",
+          url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
+        }));
+      return text({ count: orphans.length, orphans });
+    } finally { socket.disconnect(); }
+  };
+  server.registerTool("get_orphan_docs", {
+    title: "Get Orphan Documents",
+    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc). Useful for workspace hygiene. Note: scans all docs — O(n).",
+    inputSchema: { workspaceId: z.string().optional() },
+  }, getOrphanDocsHandler as any);
+
   const listChildrenHandler = async (parsed: { workspaceId?: string; docId: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
