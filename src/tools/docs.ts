@@ -4027,6 +4027,59 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
   }, duplicateDocHandler as any);
 
+  // ─── create_doc_from_template ───────────────────────────────────────────────
+  const createDocFromTemplateHandler = async (parsed: {
+    workspaceId?: string; templateDocId: string; title: string;
+    variables?: Record<string, string>; parentDocId?: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snap = await loadDoc(socket, workspaceId, parsed.templateDocId);
+      if (!snap.missing) throw new Error(`Template doc ${parsed.templateDocId} not found.`);
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
+      const collected = collectDocForMarkdown(doc, new Map());
+      const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
+      let markdown = rendered.markdown;
+      const vars = parsed.variables ?? {};
+      for (const [key, value] of Object.entries(vars)) {
+        const pattern = new RegExp(`\\{\\{\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}}`, "g");
+        markdown = markdown.replace(pattern, value);
+      }
+      const unfilled = [...markdown.matchAll(/\{\{\s*[\w.-]+\s*\}\}/g)].map(match => match[0]);
+      socket.disconnect();
+      const result = await createDocFromMarkdownHandler({ workspaceId, title: parsed.title, markdown });
+      const created = JSON.parse((result as any).content[0].text);
+      let linkedToParent = false;
+      if (parsed.parentDocId && created.docId) {
+        try {
+          await appendBlockInternal({ workspaceId, docId: parsed.parentDocId, type: "embed_linked_doc", pageId: created.docId });
+          linkedToParent = true;
+        } catch { /* non-fatal */ }
+      }
+      return text({ ...created, sourceTemplateDocId: parsed.templateDocId, linkedToParent, unfilledVariables: unfilled });
+    } catch (err) {
+      try { socket.disconnect(); } catch { /* already disconnected */ }
+      throw err;
+    }
+  };
+  server.registerTool("create_doc_from_template", {
+    title: "Create Document from Template",
+    description: "Clone a template doc and substitute {{variable}} placeholders. Returns a warning for any unfilled variables. Optionally link to a parent doc in the sidebar.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      templateDocId: z.string().describe("The template doc to clone from."),
+      title: z.string().describe("Title for the new doc."),
+      variables: z.record(z.string(), z.string()).optional().describe("Key-value map of {{variable}} substitutions."),
+      parentDocId: z.string().optional().describe("Parent doc to link the new doc under in the sidebar."),
+    },
+  }, createDocFromTemplateHandler as any);
+
 
   // ── helpers for database select columns ──
 
