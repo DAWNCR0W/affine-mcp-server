@@ -21,6 +21,12 @@ type CliCommandDefinition = {
   handler: CliCommandHandler;
 };
 
+type ConnectionInspection = {
+  userName: string;
+  userEmail: string;
+  workspaceCount: number;
+};
+
 function ask(prompt: string, hidden = false): Promise<string> {
   if (hidden && process.stdin.isTTY) {
     return readHidden(prompt);
@@ -114,6 +120,30 @@ function parseFlag(args: string[], ...flags: string[]): boolean {
   return args.some((arg) => flags.includes(arg));
 }
 
+function consumeOption(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index === -1) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new CliError(`Missing value for '${flag}'.`);
+  }
+  args.splice(index, 2);
+  return value;
+}
+
+function consumeFlags(args: string[], ...flags: string[]): boolean {
+  let found = false;
+  for (const flag of flags) {
+    let index = args.indexOf(flag);
+    while (index !== -1) {
+      args.splice(index, 1);
+      found = true;
+      index = args.indexOf(flag);
+    }
+  }
+  return found;
+}
+
 function ensureNoUnexpectedArgs(args: string[], command: string): void {
   if (args.length > 0) {
     throw new CliError(`Unexpected arguments for '${command}': ${args.join(" ")}`);
@@ -188,6 +218,19 @@ async function resolveCliAuth(baseUrl: string): Promise<{ auth: { token?: string
   throw new CliError("No authentication configured. Run 'affine-mcp login' or set AFFINE_API_TOKEN.");
 }
 
+async function inspectConnection(baseUrl: string, auth: { token?: string; cookie?: string }): Promise<ConnectionInspection> {
+  const data = await gql(
+    baseUrl,
+    auth,
+    "query { currentUser { name email } workspaces { id } }",
+  );
+  return {
+    userName: data.currentUser.name,
+    userEmail: data.currentUser.email,
+    workspaceCount: data.workspaces.length,
+  };
+}
+
 function printHelp(command?: string) {
   if (command) {
     const definition = COMMANDS[command];
@@ -220,7 +263,11 @@ function printHelp(command?: string) {
   console.log("  affine-mcp --help");
 }
 
-async function detectWorkspace(baseUrl: string, auth: { token?: string; cookie?: string }): Promise<string> {
+async function detectWorkspace(baseUrl: string, auth: { token?: string; cookie?: string }, preferredWorkspaceId?: string): Promise<string> {
+  if (preferredWorkspaceId) {
+    console.error(`Using workspace override: ${preferredWorkspaceId}`);
+    return preferredWorkspaceId;
+  }
   console.error("Detecting workspaces...");
   try {
     const data = await gql(baseUrl, auth, `query {
@@ -329,7 +376,14 @@ async function loginWithToken(baseUrl: string): Promise<{ token: string; workspa
   return { token, workspaceId };
 }
 
-async function login(_args: string[]) {
+async function login(args: string[]) {
+  const parsedArgs = [...args];
+  const providedUrl = consumeOption(parsedArgs, "--url");
+  const providedToken = consumeOption(parsedArgs, "--token");
+  const providedWorkspaceId = consumeOption(parsedArgs, "--workspace-id");
+  const force = consumeFlags(parsedArgs, "--force", "-f");
+  ensureNoUnexpectedArgs(parsedArgs, "login");
+
   console.error("Affine MCP Server — Login\n");
 
   const existing = loadConfigFile();
@@ -338,26 +392,52 @@ async function login(_args: string[]) {
     console.error(`  URL:       ${existing.AFFINE_BASE_URL || "(default)"}`);
     console.error("  Token:     (set)");
     console.error(`  Workspace: ${existing.AFFINE_WORKSPACE_ID || "(none)"}\n`);
-    const overwrite = await ask("Overwrite? [y/N] ");
-    if (!/^[yY]$/.test(overwrite)) {
-      console.error("Keeping existing config.");
-      return;
+    if (!force) {
+      const overwrite = await ask("Overwrite? [y/N] ");
+      if (!/^[yY]$/.test(overwrite)) {
+        console.error("Keeping existing config.");
+        return;
+      }
+      console.error("");
+    } else {
+      console.error("Overwriting existing config (--force).\n");
     }
-    console.error("");
   }
 
   const defaultUrl = "https://app.affine.pro";
-  const rawUrl = (await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl;
+  const rawUrl = providedUrl ?? ((await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl);
   const baseUrl = validateBaseUrl(rawUrl);
 
-  const isSelfHosted = !baseUrl.includes("affine.pro");
   let result: { token: string; workspaceId: string };
 
-  if (isSelfHosted) {
-    const method = await ask("\nAuth method — [1] Email/password (recommended)  [2] Paste API token: ");
-    result = method === "2" ? await loginWithToken(baseUrl) : await loginWithEmail(baseUrl);
+  if (providedToken) {
+    console.error("Testing provided token...");
+    try {
+      const info = await inspectConnection(baseUrl, { token: providedToken });
+      console.error(`✓ Authenticated as: ${info.userName} <${info.userEmail}>\n`);
+    } catch (err: any) {
+      throw new CliError(`Authentication failed: ${err.message}`);
+    }
+    result = {
+      token: providedToken,
+      workspaceId: await detectWorkspace(baseUrl, { token: providedToken }, providedWorkspaceId),
+    };
   } else {
-    result = await loginWithToken(baseUrl);
+    const isSelfHosted = !baseUrl.includes("affine.pro");
+    if (isSelfHosted) {
+      const method = await ask("\nAuth method — [1] Email/password (recommended)  [2] Paste API token: ");
+      const loginResult = method === "2" ? await loginWithToken(baseUrl) : await loginWithEmail(baseUrl);
+      result = {
+        ...loginResult,
+        workspaceId: providedWorkspaceId || loginResult.workspaceId,
+      };
+    } else {
+      const loginResult = await loginWithToken(baseUrl);
+      result = {
+        ...loginResult,
+        workspaceId: providedWorkspaceId || loginResult.workspaceId,
+      };
+    }
   }
 
   writeConfigFile({
@@ -371,24 +451,36 @@ async function login(_args: string[]) {
 }
 
 async function status(args: string[]) {
-  ensureNoUnexpectedArgs(args, "status");
+  const parsedArgs = [...args];
+  const asJson = consumeFlags(parsedArgs, "--json");
+  ensureNoUnexpectedArgs(parsedArgs, "status");
   const config = loadConfigFile();
   if (!config.AFFINE_API_TOKEN) {
     throw new CliError("Not logged in. Run: affine-mcp login");
   }
-  console.error(`Config: ${CONFIG_FILE}`);
-  console.error(`URL:       ${config.AFFINE_BASE_URL || "(default)"}`);
-  console.error("Token:     (set)");
-  console.error(`Workspace: ${config.AFFINE_WORKSPACE_ID || "(none)"}\n`);
-
   try {
-    const data = await gql(
+    const inspection = await inspectConnection(
       config.AFFINE_BASE_URL || "https://app.affine.pro",
       { token: config.AFFINE_API_TOKEN },
-      "query { currentUser { name email } workspaces { id } }",
     );
-    console.error(`User: ${data.currentUser.name} <${data.currentUser.email}>`);
-    console.error(`Workspaces: ${data.workspaces.length}`);
+    if (asJson) {
+      console.log(JSON.stringify({
+        configFile: CONFIG_FILE,
+        baseUrl: config.AFFINE_BASE_URL || "https://app.affine.pro",
+        workspaceId: config.AFFINE_WORKSPACE_ID || null,
+        userName: inspection.userName,
+        userEmail: inspection.userEmail,
+        workspaceCount: inspection.workspaceCount,
+      }, null, 2));
+      return;
+    }
+
+    console.error(`Config: ${CONFIG_FILE}`);
+    console.error(`URL:       ${config.AFFINE_BASE_URL || "(default)"}`);
+    console.error("Token:     (set)");
+    console.error(`Workspace: ${config.AFFINE_WORKSPACE_ID || "(none)"}\n`);
+    console.error(`User: ${inspection.userName} <${inspection.userEmail}>`);
+    console.error(`Workspaces: ${inspection.workspaceCount}`);
   } catch (err: any) {
     throw new CliError(`Connection failed: ${err.message}`);
   }
@@ -410,11 +502,9 @@ function configPath(args: string[]) {
 }
 
 function showConfig(args: string[]) {
-  const asJson = parseFlag(args, "--json");
-  const unexpectedArgs = args.filter((arg) => arg !== "--json");
-  if (unexpectedArgs.length > 0) {
-    throw new CliError(`Unexpected arguments for 'show-config': ${unexpectedArgs.join(" ")}`);
-  }
+  const parsedArgs = [...args];
+  const asJson = consumeFlags(parsedArgs, "--json");
+  ensureNoUnexpectedArgs(parsedArgs, "show-config");
 
   const summary = buildEffectiveConfigSummary();
   if (asJson) {
@@ -437,11 +527,9 @@ function showConfig(args: string[]) {
 }
 
 async function doctor(args: string[]) {
-  const asJson = parseFlag(args, "--json");
-  const unexpectedArgs = args.filter((arg) => arg !== "--json");
-  if (unexpectedArgs.length > 0) {
-    throw new CliError(`Unexpected arguments for 'doctor': ${unexpectedArgs.join(" ")}`);
-  }
+  const parsedArgs = [...args];
+  const asJson = consumeFlags(parsedArgs, "--json");
+  ensureNoUnexpectedArgs(parsedArgs, "doctor");
 
   const summary = buildEffectiveConfigSummary();
   const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
@@ -482,15 +570,11 @@ async function doctor(args: string[]) {
     }
 
     try {
-      const data = await gql(
-        summary.baseUrl,
-        auth,
-        "query { currentUser { name email } workspaces { id } }",
-      );
+      const data = await inspectConnection(summary.baseUrl, auth);
       checks.push({
         name: "graphql-auth",
         ok: true,
-        detail: `${data.currentUser.email} (${data.workspaces.length} workspace(s))`,
+        detail: `${data.userEmail} (${data.workspaceCount} workspace(s))`,
       });
     } catch (err: any) {
       checks.push({
@@ -558,17 +642,40 @@ function getSnippetEnv(): Record<string, string> {
 }
 
 function snippet(args: string[]) {
-  const target = args[0];
+  const parsedArgs = [...args];
+  const includeEnv = consumeFlags(parsedArgs, "--env");
+  const target = parsedArgs[0];
   if (!target) {
     throw new CliError("Usage: affine-mcp snippet <claude|cursor|codex> [--env]");
   }
-  const includeEnv = parseFlag(args, "--env");
-  const unexpectedArgs = args.slice(1).filter((arg) => arg !== "--env");
-  if (unexpectedArgs.length > 0) {
-    throw new CliError(`Unexpected arguments for 'snippet': ${unexpectedArgs.join(" ")}`);
-  }
-
+  ensureNoUnexpectedArgs(parsedArgs.slice(1), "snippet");
   const env = includeEnv ? getSnippetEnv() : undefined;
+
+  if (target === "all") {
+    const payload = {
+      claude: {
+        mcpServers: {
+          affine: {
+            command: "affine-mcp",
+            ...(env && Object.keys(env).length > 0 ? { env } : {}),
+          },
+        },
+      },
+      cursor: {
+        mcpServers: {
+          affine: {
+            command: "affine-mcp",
+            ...(env && Object.keys(env).length > 0 ? { env } : {}),
+          },
+        },
+      },
+      codex: env && Object.keys(env).length > 0
+        ? `codex mcp add affine ${Object.entries(env).map(([key, value]) => `--env ${key}=${JSON.stringify(value)}`).join(" ")} -- affine-mcp`
+        : "codex mcp add affine -- affine-mcp",
+    };
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
 
   if (target === "claude" || target === "cursor") {
     const payload = {
@@ -595,7 +702,7 @@ function snippet(args: string[]) {
     return;
   }
 
-  throw new CliError(`Unknown snippet target '${target}'. Expected claude, cursor, or codex.`);
+  throw new CliError(`Unknown snippet target '${target}'. Expected claude, cursor, codex, or all.`);
 }
 
 function help(args: string[]) {
@@ -613,12 +720,12 @@ const COMMANDS: Record<string, CliCommandDefinition> = {
   },
   login: {
     summary: "Interactive login and config bootstrap",
-    usage: "affine-mcp login",
+    usage: "affine-mcp login [--url <url>] [--token <token>] [--workspace-id <id>] [--force]",
     handler: login,
   },
   status: {
     summary: "Test the saved config and print current user info",
-    usage: "affine-mcp status",
+    usage: "affine-mcp status [--json]",
     handler: status,
   },
   logout: {
@@ -643,7 +750,7 @@ const COMMANDS: Record<string, CliCommandDefinition> = {
   },
   snippet: {
     summary: "Print ready-to-paste Claude/Cursor/Codex snippets",
-    usage: "affine-mcp snippet <claude|cursor|codex> [--env]",
+    usage: "affine-mcp snippet <claude|cursor|codex|all> [--env]",
     handler: snippet,
   },
 };

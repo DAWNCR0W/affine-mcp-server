@@ -79,6 +79,12 @@ expectSuccess(codexSnippet);
 expect(codexSnippet.stdout.includes("codex mcp add affine"), "codex snippet should print codex command");
 expect(codexSnippet.stdout.includes("AFFINE_API_TOKEN"), "codex snippet should include env token");
 
+const allSnippet = run("snippet all --env", [DIST_ENTRY, "snippet", "all", "--env"]);
+expectSuccess(allSnippet);
+const allSnippetJson = JSON.parse(allSnippet.stdout);
+expect(allSnippetJson.claude.mcpServers.affine.command === "affine-mcp", "snippet all should include claude payload");
+expect(typeof allSnippetJson.codex === "string" && allSnippetJson.codex.includes("codex mcp add affine"), "snippet all should include codex command");
+
 const unknown = run("unknown command", [DIST_ENTRY, "wat"]);
 expectFailure(unknown);
 expect(unknown.stderr.includes("Unknown command"), "unknown command should print error");
@@ -96,6 +102,7 @@ console.log(JSON.stringify({
     "show-config --json",
     "snippet claude --env",
     "snippet codex --env",
+    "snippet all --env",
     "unknown command",
     "help doctor",
   ],
