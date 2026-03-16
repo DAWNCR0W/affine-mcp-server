@@ -93,7 +93,12 @@ The MCP server will use these credentials automatically.
 ```
 
 Other CLI commands:
+- `affine-mcp --help` / `-h` / `help` — show command help
 - `affine-mcp status` — show current config and test connection
+- `affine-mcp doctor` — run config and connectivity diagnostics
+- `affine-mcp show-config` — print the effective config with secrets redacted
+- `affine-mcp config-path` — print the config file path
+- `affine-mcp snippet <claude|cursor|codex> [--env]` — print ready-to-paste client configuration snippets
 - `affine-mcp logout` — remove stored credentials
 - `affine-mcp --version` / `-v` / `version` — print the installed CLI version and exit
 
@@ -186,6 +191,8 @@ Or with email/password for self-hosted instances (not supported on AFFiNE Cloud 
 Tips
 - Prefer `affine-mcp login` or `AFFINE_API_TOKEN` for zero‑latency startup.
 - If your password contains `!` (zsh history expansion), wrap it in single quotes in shells or use the JSON config above.
+- `affine-mcp doctor` is the fastest way to confirm that your saved config still works.
+- `affine-mcp snippet claude --env` and `affine-mcp snippet codex --env` can generate ready-to-paste client setup from your current config.
 
 ### Codex CLI
 
@@ -427,7 +434,7 @@ npm run pack:check
 - For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
 - For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:playwright`.
 
 ## Troubleshooting
 

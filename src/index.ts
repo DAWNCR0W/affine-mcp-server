@@ -19,12 +19,23 @@ import { startHttpMcpServer } from "./sse.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
-const subcommand = rawArgs[0] === "--" ? rawArgs[1] : rawArgs[0];
+const cliArgs = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
+const subcommand = cliArgs[0];
 if (subcommand === "--version" || subcommand === "-v" || subcommand === "version") {
   console.log(VERSION);
   process.exit(0);
 }
-if (subcommand && await runCli(subcommand)) {
+if (subcommand === "--help" || subcommand === "-h") {
+  await runCli("help");
+  process.exit(0);
+}
+if (subcommand) {
+  const handled = await runCli(subcommand, cliArgs.slice(1));
+  if (!handled) {
+    console.error(`Unknown command: ${subcommand}`);
+    await runCli("help");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
