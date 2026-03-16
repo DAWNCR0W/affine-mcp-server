@@ -246,12 +246,16 @@ If you want to host the server remotely (e.g., using Render, Railway, Docker, or
 Required:
 - `MCP_TRANSPORT=http`
 - `AFFINE_BASE_URL` (example: `https://app.affine.pro`)
-- One auth method:
+- `AFFINE_MCP_AUTH_MODE=bearer` (default) or `AFFINE_MCP_AUTH_MODE=oauth`
+
+Bearer mode backend auth:
 - `AFFINE_API_TOKEN` (recommended), or `AFFINE_COOKIE`, or `AFFINE_EMAIL` + `AFFINE_PASSWORD`
+
+OAuth mode backend auth:
+- `AFFINE_API_TOKEN` (required service credential for AFFiNE backend access)
 
 Recommended for remote/public deployments:
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
-- `AFFINE_MCP_HTTP_TOKEN=<strong-random-token>` (protects `/mcp`, `/sse`, `/messages`)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<comma-separated-origins>` (for browser clients)
 
 Optional:
@@ -260,31 +264,67 @@ Optional:
 - `AFFINE_GRAPHQL_PATH` (defaults to `/graphql`)
 - `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` (testing only)
 
+Bearer-mode only:
+- `AFFINE_MCP_HTTP_TOKEN=<strong-random-token>` (protects `/mcp`, `/sse`, `/messages`)
+
+OAuth-mode only:
+- `AFFINE_MCP_PUBLIC_BASE_URL=https://mcp.yourdomain.com`
+- `AFFINE_OAUTH_ISSUER_URL=https://auth.yourdomain.com`
+- `AFFINE_OAUTH_SCOPES=mcp` (defaults to `mcp`)
+
+#### HTTP auth modes
+
+`AFFINE_MCP_AUTH_MODE=bearer` keeps the current static bearer-token behavior.
+
 ```bash
-# Export your configuration first
 export MCP_TRANSPORT=http
+export AFFINE_MCP_AUTH_MODE=bearer
 export AFFINE_API_TOKEN="your_token..."
-export AFFINE_MCP_HTTP_HOST="0.0.0.0" # Default: 127.0.0.1
+export AFFINE_MCP_HTTP_HOST="0.0.0.0"
 export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
 export PORT=3000
 
-# Start in HTTP mode (Streamable HTTP on /mcp)
 npm run start:http
-# OR manually:
-# MCP_TRANSPORT=http node dist/index.js
-# ("sse" is still accepted at /sse)
 ```
+
+`AFFINE_MCP_AUTH_MODE=oauth` turns the MCP endpoint into an OAuth-protected resource for web MCP clients. In this mode:
+- the server exposes `/.well-known/oauth-protected-resource`
+- unauthenticated `/mcp` requests return `401` with a `WWW-Authenticate` challenge
+- `AFFINE_MCP_HTTP_TOKEN` and `?token=` are disabled
+- `sign_in` is not registered
+- `AFFINE_API_TOKEN` is still required so the server can call AFFiNE as a service credential
+
+```bash
+export MCP_TRANSPORT=http
+export AFFINE_MCP_AUTH_MODE=oauth
+export AFFINE_API_TOKEN="your-affine-service-token"
+export AFFINE_MCP_HTTP_HOST="0.0.0.0"
+export AFFINE_MCP_PUBLIC_BASE_URL="https://mcp.yourdomain.com"
+export AFFINE_OAUTH_ISSUER_URL="https://auth.yourdomain.com"
+export AFFINE_OAUTH_SCOPES="mcp"
+export PORT=3000
+
+npm run start:http
+```
+
+Notes for oauth mode:
+- use HTTPS for non-local deployments
+- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` is rejected in oauth mode
+- tokens are validated against the issuer discovery metadata and JWKS
+- the protected resource metadata is also served at `/.well-known/oauth-protected-resource/mcp` for path-specific discovery
 
 #### Recommended presets
 
 Local testing (HTTP mode):
 - `MCP_TRANSPORT=http`
+- `AFFINE_MCP_AUTH_MODE=bearer`
 - `AFFINE_MCP_HTTP_HOST=127.0.0.1`
 - `AFFINE_MCP_HTTP_TOKEN=<token>` (recommended even locally)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=http://localhost:3000` (if testing from a browser app)
 
 Docker / container runtime:
 - `MCP_TRANSPORT=http`
+- `AFFINE_MCP_AUTH_MODE=bearer`
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
 - `PORT=3000` (or container/platform port)
 - `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
@@ -292,8 +332,11 @@ Docker / container runtime:
 
 Render / Railway / VPS (public endpoint):
 - `MCP_TRANSPORT=http`
+- `AFFINE_MCP_AUTH_MODE=bearer` or `oauth`
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
-- `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
+- `AFFINE_MCP_HTTP_TOKEN=<strong-token>` (bearer mode)
+- `AFFINE_MCP_PUBLIC_BASE_URL=<public base URL>` (oauth mode)
+- `AFFINE_OAUTH_ISSUER_URL=<issuer URL>` (oauth mode)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your client origin(s)>`
 
 Endpoints currently available:

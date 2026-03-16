@@ -6,9 +6,20 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import type { OAuthConfig } from "./oauth.js";
+import type { ServerConfig } from "./config.js";
+import {
+  buildOAuthProtectedResourceMetadata,
+  getOAuthProtectedResourceMetadataUrl,
+  getOAuthResourceUrl,
+  validateOAuthConfig,
+  verifyOAuthAccessToken,
+} from "./oauth.js";
+
 export async function startHttpMcpServer(
   createMcpServer: () => Promise<McpServer>,
   port: number,
+  config: ServerConfig,
 ) {
   // --- HTTP host binding ---
   // AFFINE_MCP_HTTP_HOST: network interface to bind (default: "127.0.0.1" — loopback only).
@@ -94,11 +105,122 @@ export async function startHttpMcpServer(
     });
   };
 
+  let oauthConfig: OAuthConfig | null = null;
+  let oauthProtectedResourceMetadataUrl: string | null = null;
+  let oauthProtectedResourceMetadataPath: string | null = null;
+  let oauthProtectedResourceMetadataPathAlias: string | null = null;
+
+  if (config.authMode === "oauth") {
+    if (!config.publicBaseUrl) {
+      throw new Error("AFFINE_MCP_PUBLIC_BASE_URL is required when AFFINE_MCP_AUTH_MODE=oauth.");
+    }
+    if (!config.oauthIssuerUrl) {
+      throw new Error("AFFINE_OAUTH_ISSUER_URL is required when AFFINE_MCP_AUTH_MODE=oauth.");
+    }
+    oauthConfig = {
+      publicBaseUrl: config.publicBaseUrl,
+      issuerUrl: config.oauthIssuerUrl,
+      scopes: config.oauthScopes,
+      clockSkewSeconds: config.oauthClockSkewSeconds,
+    };
+    validateOAuthConfig(oauthConfig, { allowAnyOrigin, httpAuthToken });
+    oauthProtectedResourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(oauthConfig.publicBaseUrl);
+    oauthProtectedResourceMetadataPath = new URL(oauthProtectedResourceMetadataUrl).pathname;
+    oauthProtectedResourceMetadataPathAlias = `/.well-known/oauth-protected-resource${new URL(getOAuthResourceUrl(oauthConfig.publicBaseUrl)).pathname}`;
+  }
+
+  const buildOAuthErrorResponse = (error: string, description: string) => ({
+    error,
+    error_description: description,
+  });
+
+  const buildWwwAuthenticateHeader = (opts?: {
+    error?: string;
+    errorDescription?: string;
+    scope?: string;
+  }) => {
+    const params: string[] = [];
+    if (opts?.error) {
+      params.push(`error="${opts.error}"`);
+    }
+    if (opts?.errorDescription) {
+      params.push(`error_description="${opts.errorDescription.replace(/"/g, "'")}"`);
+    }
+    if (opts?.scope) {
+      params.push(`scope="${opts.scope}"`);
+    }
+    if (oauthProtectedResourceMetadataUrl) {
+      params.push(`resource_metadata="${oauthProtectedResourceMetadataUrl}"`);
+    }
+    return params.length > 0 ? `Bearer ${params.join(", ")}` : "Bearer";
+  };
+
   // Validates the Bearer token on all non-preflight requests.
   // The auth scheme match is case-insensitive for client compatibility.
   // OPTIONS is allowed through so CORS preflight can complete before auth is checked.
   const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
     if (req.method === "OPTIONS") return next();
+    if (config.authMode === "oauth") {
+      if (!oauthConfig) {
+        res.status(500).json(buildOAuthErrorResponse("server_error", "OAuth configuration was not initialized."));
+        return;
+      }
+
+      if (typeof req.query.token === "string") {
+        res.set("WWW-Authenticate", buildWwwAuthenticateHeader({
+          error: "invalid_request",
+          errorDescription: "Query parameter token is not allowed in oauth mode.",
+        }));
+        res.status(400).json(buildOAuthErrorResponse("invalid_request", "Query parameter token is not allowed in oauth mode."));
+        return;
+      }
+
+      const authHeader = req.headers["authorization"];
+      if (authHeader === undefined) {
+        res.set("WWW-Authenticate", buildWwwAuthenticateHeader());
+        res.status(401).json(buildOAuthErrorResponse("invalid_token", "Missing Authorization header."));
+        return;
+      }
+
+      const raw = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+      const bearerMatch = /^Bearer\s+(.+)$/i.exec(raw);
+      if (!bearerMatch) {
+        res.set("WWW-Authenticate", buildWwwAuthenticateHeader({
+          error: "invalid_request",
+          errorDescription: "Use 'Authorization: Bearer <token>'.",
+        }));
+        res.status(401).json(buildOAuthErrorResponse("invalid_request", "Use 'Authorization: Bearer <token>'."));
+        return;
+      }
+
+      void verifyOAuthAccessToken(bearerMatch[1], oauthConfig)
+        .then((authInfo) => {
+          const requiredScopes = oauthConfig?.scopes || [];
+          const hasAllScopes = requiredScopes.every((scope) => authInfo.scopes.includes(scope));
+          if (!hasAllScopes) {
+            res.set("WWW-Authenticate", buildWwwAuthenticateHeader({
+              error: "insufficient_scope",
+              errorDescription: "The access token does not include the required scope.",
+              scope: requiredScopes.join(" "),
+            }));
+            res.status(403).json(
+              buildOAuthErrorResponse("insufficient_scope", "The access token does not include the required scope."),
+            );
+            return;
+          }
+          next();
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Access token validation failed.";
+          res.set("WWW-Authenticate", buildWwwAuthenticateHeader({
+            error: "invalid_token",
+            errorDescription: message,
+          }));
+          res.status(401).json(buildOAuthErrorResponse("invalid_token", message));
+        });
+      return;
+    }
+
     if (!httpAuthToken) return next();
 
     const authHeader = req.headers["authorization"];
@@ -133,6 +255,16 @@ export async function startHttpMcpServer(
     }
     next();
   };
+
+  if (oauthConfig && oauthProtectedResourceMetadataPath && oauthProtectedResourceMetadataPathAlias) {
+    const metadataHandler = (_req: Request, res: Response) => {
+      res.json(buildOAuthProtectedResourceMetadata(oauthConfig!));
+    };
+    app.get(oauthProtectedResourceMetadataPath, corsMiddleware, metadataHandler);
+    if (oauthProtectedResourceMetadataPathAlias !== oauthProtectedResourceMetadataPath) {
+      app.get(oauthProtectedResourceMetadataPathAlias, corsMiddleware, metadataHandler);
+    }
+  }
 
   // Explicit preflight handlers for the legacy SSE routes.
   app.options("/sse", corsMiddleware);
