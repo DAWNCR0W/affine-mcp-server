@@ -4,7 +4,7 @@
  *
  * Covers:
  * - list_docs should return titles from workspace metadata when GraphQL omits them
- * - search_docs should find matching docs in a single call
+ * - search_docs should support exact/prefix matching, tag filtering, and updatedAt sorting
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,6 +111,7 @@ async function main() {
     const listedTitles = listed?.edges?.map(edge => edge?.node?.title) || [];
     expectIncludes(listedTitles, "Workspace Home", "list_docs titles");
 
+    const createdDocs = [];
     for (const title of ["Tasky", "Operations Notes", "Task Tracker"]) {
       const created = await call("create_doc", {
         workspaceId: workspace.id,
@@ -118,13 +119,57 @@ async function main() {
         content: `${title} body`,
       });
       expectTruthy(created?.docId, `create_doc docId for ${title}`);
+      createdDocs.push(created);
     }
+
+    await call("create_tag", { workspaceId: workspace.id, tag: "urgent" });
+    await call("add_tag_to_doc", {
+      workspaceId: workspace.id,
+      docId: createdDocs[2].docId,
+      tag: "urgent",
+    });
 
     const search = await call("search_docs", { workspaceId: workspace.id, query: "Task", limit: 10 });
     expectEqual(search?.totalCount, 2, "search_docs totalCount");
     const searchTitles = search?.results?.map(result => result?.title) || [];
     expectIncludes(searchTitles, "Tasky", "search_docs result titles");
     expectIncludes(searchTitles, "Task Tracker", "search_docs result titles");
+
+    const exactMatch = await call("search_docs", {
+      workspaceId: workspace.id,
+      query: "Tasky",
+      matchMode: "exact",
+      limit: 10,
+    });
+    expectEqual(exactMatch?.totalCount, 1, "search_docs exact totalCount");
+    expectEqual(exactMatch?.results?.[0]?.title, "Tasky", "search_docs exact first result");
+
+    const prefixMatch = await call("search_docs", {
+      workspaceId: workspace.id,
+      query: "Task",
+      matchMode: "prefix",
+      limit: 10,
+    });
+    expectEqual(prefixMatch?.totalCount, 2, "search_docs prefix totalCount");
+
+    const tagFiltered = await call("search_docs", {
+      workspaceId: workspace.id,
+      query: "Task",
+      tag: "urgent",
+      limit: 10,
+    });
+    expectEqual(tagFiltered?.totalCount, 1, "search_docs tag-filter totalCount");
+    expectEqual(tagFiltered?.results?.[0]?.title, "Task Tracker", "search_docs tag-filter result");
+    expectIncludes(tagFiltered?.results?.[0]?.tags || [], "urgent", "search_docs tag-filter tags");
+
+    const sortedByUpdatedAt = await call("search_docs", {
+      workspaceId: workspace.id,
+      query: "Task",
+      sortBy: "updatedAt",
+      sortDirection: "desc",
+      limit: 10,
+    });
+    expectEqual(sortedByUpdatedAt?.results?.[0]?.title, "Task Tracker", "search_docs updatedAt sort");
 
     console.log();
     console.log("=== Document discovery integration test passed ===");

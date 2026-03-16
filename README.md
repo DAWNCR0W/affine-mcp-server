@@ -312,6 +312,7 @@ Notes for oauth mode:
 - `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` is rejected in oauth mode
 - tokens are validated against the issuer discovery metadata and JWKS
 - the protected resource metadata is also served at `/.well-known/oauth-protected-resource/mcp` for path-specific discovery
+- `GET /healthz` and `GET /readyz` are available for deployment diagnostics
 
 #### Recommended presets
 
@@ -343,6 +344,8 @@ Endpoints currently available:
 - `/mcp` - MCP server (Streamable HTTP)
 - `/sse` - SSE endpoint (old protocol compatible)
 - `/messages` - Messages endpoint (old protocol compatible)
+- `/healthz` - HTTP liveness probe
+- `/readyz` - HTTP readiness probe
 
 ## Available Tools
 
@@ -356,6 +359,7 @@ Endpoints currently available:
 ### Documents
 - `list_docs` – list documents with pagination (includes `node.tags`)
 - `list_tags` – list all tags in a workspace
+- `search_docs` – fast title search with substring/prefix/exact matching, optional tag filtering, and updatedAt sorting
 - `list_docs_by_tag` – list documents by tag
 - `get_doc` – get document metadata
 - `read_doc` – read document block content and plain text snapshot (WebSocket)
@@ -423,7 +427,7 @@ npm run pack:check
 - For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
 - For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:cli-version`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:playwright`.
 
 ## Troubleshooting
 
