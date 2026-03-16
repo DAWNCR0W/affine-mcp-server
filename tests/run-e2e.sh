@@ -293,22 +293,27 @@ echo ""
 echo "=== Running MCP bearer token auth test ==="
 node "$SCRIPT_DIR/test-bearer-auth.mjs"
 
-# --- Step 6: Run MCP tag visibility setup test ---
+# --- Step 6: Run MCP OAuth HTTP auth test ---
+echo ""
+echo "=== Running MCP OAuth HTTP auth test ==="
+node "$SCRIPT_DIR/test-oauth-http.mjs"
+
+# --- Step 7: Run MCP tag visibility setup test ---
 echo ""
 echo "=== Running MCP tag visibility setup test ==="
 node "$SCRIPT_DIR/test-tag-visibility.mjs"
 
-# --- Step 7: Run MCP data-view setup test ---
+# --- Step 8: Run MCP data-view setup test ---
 echo ""
 echo "=== Running MCP data-view setup test ==="
 node "$SCRIPT_DIR/test-data-view.mjs"
 
-# --- Step 8: Run MCP doc discovery regression test ---
+# --- Step 9: Run MCP doc discovery regression test ---
 echo ""
 echo "=== Running MCP doc discovery regression test ==="
 node "$SCRIPT_DIR/test-doc-discovery.mjs"
 
-# --- Step 9: Run Playwright verification ---
+# --- Step 10: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready
