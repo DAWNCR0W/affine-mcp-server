@@ -34,6 +34,7 @@
     "start:http": "MCP_TRANSPORT=http node dist/index.js",
     "test": "npm run test:tool-manifest",
     "test:cli-version": "node tests/test-cli-version.mjs",
+    "test:cli-commands": "node tests/test-cli-commands.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
