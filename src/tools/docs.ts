@@ -6,7 +6,7 @@ import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDo
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
-import type { MarkdownOperation, MarkdownRenderableBlock } from "../markdown/types.js";
+import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
@@ -79,6 +79,7 @@ type AppendBlockInput = {
   docId: string;
   type: string;
   text?: string;
+  deltas?: TextDelta[];
   url?: string;
   pageId?: string;
   iframeUrl?: string;
@@ -143,6 +144,7 @@ type NormalizedAppendBlockInput = {
   caption?: string;
   legacyType?: AppendBlockLegacyType;
   tableData?: string[][];
+  deltas?: TextDelta[];
 };
 
 type CreateDocInput = {
@@ -190,10 +192,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
   ];
 
-  function makeText(content: string): Y.Text {
+  function makeText(content: string | TextDelta[]): Y.Text {
     const yText = new Y.Text();
-    if (content.length > 0) {
-      yText.insert(0, content);
+    if (typeof content === "string") {
+      if (content.length > 0) {
+        yText.insert(0, content);
+      }
+    } else {
+      let offset = 0;
+      for (const delta of content) {
+        if (delta.insert.length > 0) {
+          const attrs = delta.attributes ? { ...delta.attributes } : undefined;
+          yText.insert(offset, delta.insert, attrs as Record<string, unknown> | undefined);
+          offset += delta.insert.length;
+        }
+      }
     }
     return yText;
   }
@@ -987,6 +1000,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       caption: parsed.caption,
       legacyType: typeInfo.legacyType,
       tableData,
+      deltas: parsed.deltas,
     };
 
     validateNormalizedAppendBlockInput(normalized, parsed);
@@ -1292,7 +1306,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               ? "quote"
               : "text";
         block.set("prop:type", blockType);
-        block.set("prop:text", makeText(content));
+        block.set("prop:text", makeText(normalized.deltas ?? content));
         return { blockId, block, flavour: "affine:paragraph", blockType };
       }
       case "list": {
@@ -1301,7 +1315,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:type", normalized.listStyle);
         block.set("prop:checked", normalized.listStyle === "todo" ? normalized.checked : false);
-        block.set("prop:text", makeText(content));
+        block.set("prop:text", makeText(normalized.deltas ?? content));
         return { blockId, block, flavour: "affine:list", blockType: normalized.listStyle };
       }
       case "code": {
@@ -1331,7 +1345,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         textBlock.set("sys:parent", null);
         textBlock.set("sys:children", new Y.Array<string>());
         textBlock.set("prop:type", "text");
-        textBlock.set("prop:text", makeText(content));
+        textBlock.set("prop:text", makeText(normalized.deltas ?? content));
         calloutChildren.push([textBlockId]);
         block.set("sys:children", calloutChildren);
         block.set("prop:icon", { type: "emoji", unicode: "💡" });
@@ -1757,6 +1771,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           level: operation.level,
           strict,
           placement,
+          deltas: operation.deltas,
         };
       case "paragraph":
         return {
@@ -1766,6 +1781,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           text: operation.text,
           strict,
           placement,
+          deltas: operation.deltas,
         };
       case "quote":
         return {
@@ -1775,6 +1791,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           text: operation.text,
           strict,
           placement,
+          deltas: operation.deltas,
         };
       case "callout":
         return {
@@ -1784,6 +1801,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           text: operation.text,
           strict,
           placement,
+          deltas: operation.deltas,
         };
       case "list":
         return {
@@ -1795,6 +1813,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           checked: operation.checked,
           strict,
           placement,
+          deltas: operation.deltas,
         };
       case "code":
         return {
