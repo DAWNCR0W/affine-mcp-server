@@ -2270,6 +2270,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const docs = data.workspace.docs;
 
       const tagsByDocId = new Map<string, string[]>();
+      const titlesByDocId = new Map<string, string>();
       try {
         const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
@@ -2284,6 +2285,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             const pages = getWorkspacePageEntries(meta);
             const { byId } = getWorkspaceTagOptionMaps(meta);
             for (const page of pages) {
+              if (page.title) {
+                titlesByDocId.set(page.id, page.title);
+              }
               const tagEntries = getStringArray(page.tagsArray);
               tagsByDocId.set(page.id, resolveTagLabels(tagEntries, byId));
             }
@@ -2307,6 +2311,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
                 ...edge,
                 node: {
                   ...node,
+                  title: titlesByDocId.get(node.id) || node.title,
                   tags: tagsByDocId.get(node.id) || [],
                 },
               };
