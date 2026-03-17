@@ -55,6 +55,7 @@ npm run test:comprehensive
 ## Pull Request Guidelines
 
 - Keep each PR focused on one logical change.
+- Target the `develop` branch only. PRs against `main` or any other branch are closed automatically.
 - Include what changed and why.
 - Include validation evidence (commands and result summary).
 - Update docs (`README.md`, `CHANGELOG.md`) when behavior changes.
