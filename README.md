@@ -93,7 +93,12 @@ The MCP server will use these credentials automatically.
 ```
 
 Other CLI commands:
+- `affine-mcp --help` / `-h` / `help` — show command help
 - `affine-mcp status` — show current config and test connection
+- `affine-mcp doctor` — run config and connectivity diagnostics
+- `affine-mcp show-config` — print the effective config with secrets redacted
+- `affine-mcp config-path` — print the config file path
+- `affine-mcp snippet <claude|cursor|codex> [--env]` — print ready-to-paste client configuration snippets
 - `affine-mcp logout` — remove stored credentials
 - `affine-mcp --version` / `-v` / `version` — print the installed CLI version and exit
 
@@ -186,6 +191,8 @@ Or with email/password for self-hosted instances (not supported on AFFiNE Cloud 
 Tips
 - Prefer `affine-mcp login` or `AFFINE_API_TOKEN` for zero‑latency startup.
 - If your password contains `!` (zsh history expansion), wrap it in single quotes in shells or use the JSON config above.
+- `affine-mcp doctor` is the fastest way to confirm that your saved config still works.
+- `affine-mcp snippet claude --env` and `affine-mcp snippet codex --env` can generate ready-to-paste client setup from your current config.
 
 ### Codex CLI
 
@@ -246,12 +253,16 @@ If you want to host the server remotely (e.g., using Render, Railway, Docker, or
 Required:
 - `MCP_TRANSPORT=http`
 - `AFFINE_BASE_URL` (example: `https://app.affine.pro`)
-- One auth method:
+- `AFFINE_MCP_AUTH_MODE=bearer` (default) or `AFFINE_MCP_AUTH_MODE=oauth`
+
+Bearer mode backend auth:
 - `AFFINE_API_TOKEN` (recommended), or `AFFINE_COOKIE`, or `AFFINE_EMAIL` + `AFFINE_PASSWORD`
+
+OAuth mode backend auth:
+- `AFFINE_API_TOKEN` (required service credential for AFFiNE backend access)
 
 Recommended for remote/public deployments:
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
-- `AFFINE_MCP_HTTP_TOKEN=<strong-random-token>` (protects `/mcp`, `/sse`, `/messages`)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<comma-separated-origins>` (for browser clients)
 
 Optional:
@@ -260,31 +271,68 @@ Optional:
 - `AFFINE_GRAPHQL_PATH` (defaults to `/graphql`)
 - `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` (testing only)
 
+Bearer-mode only:
+- `AFFINE_MCP_HTTP_TOKEN=<strong-random-token>` (protects `/mcp`, `/sse`, `/messages`)
+
+OAuth-mode only:
+- `AFFINE_MCP_PUBLIC_BASE_URL=https://mcp.yourdomain.com`
+- `AFFINE_OAUTH_ISSUER_URL=https://auth.yourdomain.com`
+- `AFFINE_OAUTH_SCOPES=mcp` (defaults to `mcp`)
+
+#### HTTP auth modes
+
+`AFFINE_MCP_AUTH_MODE=bearer` keeps the current static bearer-token behavior.
+
 ```bash
-# Export your configuration first
 export MCP_TRANSPORT=http
+export AFFINE_MCP_AUTH_MODE=bearer
 export AFFINE_API_TOKEN="your_token..."
-export AFFINE_MCP_HTTP_HOST="0.0.0.0" # Default: 127.0.0.1
+export AFFINE_MCP_HTTP_HOST="0.0.0.0"
 export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
 export PORT=3000
 
-# Start in HTTP mode (Streamable HTTP on /mcp)
 npm run start:http
-# OR manually:
-# MCP_TRANSPORT=http node dist/index.js
-# ("sse" is still accepted at /sse)
 ```
+
+`AFFINE_MCP_AUTH_MODE=oauth` turns the MCP endpoint into an OAuth-protected resource for web MCP clients. In this mode:
+- the server exposes `/.well-known/oauth-protected-resource`
+- unauthenticated `/mcp` requests return `401` with a `WWW-Authenticate` challenge
+- `AFFINE_MCP_HTTP_TOKEN` and `?token=` are disabled
+- `sign_in` is not registered
+- `AFFINE_API_TOKEN` is still required so the server can call AFFiNE as a service credential
+
+```bash
+export MCP_TRANSPORT=http
+export AFFINE_MCP_AUTH_MODE=oauth
+export AFFINE_API_TOKEN="your-affine-service-token"
+export AFFINE_MCP_HTTP_HOST="0.0.0.0"
+export AFFINE_MCP_PUBLIC_BASE_URL="https://mcp.yourdomain.com"
+export AFFINE_OAUTH_ISSUER_URL="https://auth.yourdomain.com"
+export AFFINE_OAUTH_SCOPES="mcp"
+export PORT=3000
+
+npm run start:http
+```
+
+Notes for oauth mode:
+- use HTTPS for non-local deployments
+- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` is rejected in oauth mode
+- tokens are validated against the issuer discovery metadata and JWKS
+- the protected resource metadata is also served at `/.well-known/oauth-protected-resource/mcp` for path-specific discovery
+- `GET /healthz` and `GET /readyz` are available for deployment diagnostics
 
 #### Recommended presets
 
 Local testing (HTTP mode):
 - `MCP_TRANSPORT=http`
+- `AFFINE_MCP_AUTH_MODE=bearer`
 - `AFFINE_MCP_HTTP_HOST=127.0.0.1`
 - `AFFINE_MCP_HTTP_TOKEN=<token>` (recommended even locally)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=http://localhost:3000` (if testing from a browser app)
 
 Docker / container runtime:
 - `MCP_TRANSPORT=http`
+- `AFFINE_MCP_AUTH_MODE=bearer`
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
 - `PORT=3000` (or container/platform port)
 - `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
@@ -292,14 +340,19 @@ Docker / container runtime:
 
 Render / Railway / VPS (public endpoint):
 - `MCP_TRANSPORT=http`
+- `AFFINE_MCP_AUTH_MODE=bearer` or `oauth`
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
-- `AFFINE_MCP_HTTP_TOKEN=<strong-token>`
+- `AFFINE_MCP_HTTP_TOKEN=<strong-token>` (bearer mode)
+- `AFFINE_MCP_PUBLIC_BASE_URL=<public base URL>` (oauth mode)
+- `AFFINE_OAUTH_ISSUER_URL=<issuer URL>` (oauth mode)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your client origin(s)>`
 
 Endpoints currently available:
 - `/mcp` - MCP server (Streamable HTTP)
 - `/sse` - SSE endpoint (old protocol compatible)
 - `/messages` - Messages endpoint (old protocol compatible)
+- `/healthz` - HTTP liveness probe
+- `/readyz` - HTTP readiness probe
 
 ## Available Tools
 
@@ -313,6 +366,7 @@ Endpoints currently available:
 ### Documents
 - `list_docs` – list documents with pagination (includes `node.tags`)
 - `list_tags` – list all tags in a workspace
+- `search_docs` – fast title search with substring/prefix/exact matching, optional tag filtering, and updatedAt sorting
 - `list_docs_by_tag` – list documents by tag
 - `get_doc` – get document metadata
 - `read_doc` – read document block content and plain text snapshot (WebSocket)
@@ -380,7 +434,7 @@ npm run pack:check
 - For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
 - For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:cli-version`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:playwright`.
 
 ## Troubleshooting
 

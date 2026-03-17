@@ -19,17 +19,31 @@ import { startHttpMcpServer } from "./sse.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
-const subcommand = rawArgs[0] === "--" ? rawArgs[1] : rawArgs[0];
+const cliArgs = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
+const subcommand = cliArgs[0];
 if (subcommand === "--version" || subcommand === "-v" || subcommand === "version") {
   console.log(VERSION);
   process.exit(0);
 }
-if (subcommand && await runCli(subcommand)) {
+if (subcommand === "--help" || subcommand === "-h") {
+  await runCli("help");
+  process.exit(0);
+}
+if (subcommand) {
+  const handled = await runCli(subcommand, cliArgs.slice(1));
+  if (!handled) {
+    console.error(`Unknown command: ${subcommand}`);
+    await runCli("help");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
 // MCP server mode (default)
 const config = loadConfig();
+const transportMode = (process.env.MCP_TRANSPORT || "stdio").toLowerCase();
+const useHttpTransport =
+  transportMode === "sse" || transportMode === "http" || transportMode === "streamable";
 
 // Startup diagnostics (visible in Claude Code MCP server logs via stderr)
 import { existsSync } from "fs";
@@ -38,6 +52,7 @@ console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 
 console.error(`[affine-mcp] Endpoint: ${config.baseUrl}${config.graphqlPath}`);
 const hasAuth = !!(config.apiToken || config.cookie || (config.email && config.password));
 console.error(`[affine-mcp] Auth: ${hasAuth ? 'configured' : 'not configured'}`);
+console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
 if (hasAuth && config.baseUrl.startsWith("http://")
     && !config.baseUrl.includes("localhost")
     && !config.baseUrl.includes("127.0.0.1")) {
@@ -45,19 +60,41 @@ if (hasAuth && config.baseUrl.startsWith("http://")
 }
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
+if (config.authMode === "oauth" && !useHttpTransport) {
+  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
+}
+
 async function buildServer() {
   const server = new McpServer({ name: "affine-mcp", version: VERSION });
+  const gqlHeaders = { ...(config.headers || {}) };
+  const gqlBearer = config.apiToken;
+
+  if (config.authMode === "oauth") {
+    if (!gqlBearer) {
+      throw new Error("AFFINE_API_TOKEN is required when AFFINE_MCP_AUTH_MODE=oauth.");
+    }
+    if (config.cookie || config.email || config.password) {
+      console.error(
+        "[affine-mcp] OAuth mode uses the configured AFFINE_API_TOKEN service credential. " +
+        "Ignoring AFFINE_COOKIE / AFFINE_EMAIL / AFFINE_PASSWORD.",
+      );
+    }
+    delete gqlHeaders.Cookie;
+    if (process.env.AFFINE_LOGIN_AT_START) {
+      console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
+    }
+  }
 
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
     endpoint: `${config.baseUrl}${config.graphqlPath}`,
-    headers: config.headers,
-    bearer: config.apiToken
+    headers: gqlHeaders,
+    bearer: gqlBearer
   });
 
   // Try email/password authentication if no other auth method is configured.
   // To avoid startup timeouts in MCP clients, default to async login after the stdio handshake.
-  if (!gql.isAuthenticated() && config.email && config.password) {
+  if (config.authMode !== "oauth" && !gql.isAuthenticated() && config.email && config.password) {
     const mode = (process.env.AFFINE_LOGIN_AT_START || "async").toLowerCase();
     if (mode === "sync") {
       console.error("No token/cookie; performing synchronous email/password authentication at startup...");
@@ -107,19 +144,13 @@ async function buildServer() {
   registerAccessTokenTools(server, gql);
   registerBlobTools(server, gql);
   registerNotificationTools(server, gql);
-  registerAuthTools(server, gql, config.baseUrl);
+  if (config.authMode !== "oauth") {
+    registerAuthTools(server, gql, config.baseUrl);
+  }
   return server;
 }
 
 async function start() {
-  // MCP_TRANSPORT aliases:
-  // - "stdio" (default): local desktop MCP clients
-  // - "http" / "streamable": HTTP MCP server exposing /mcp (preferred)
-  // - "sse": legacy alias retained for backward compatibility
-  const transportMode = (process.env.MCP_TRANSPORT || "stdio").toLowerCase();
-  const useHttpTransport =
-    transportMode === "sse" || transportMode === "http" || transportMode === "streamable";
-
   if (useHttpTransport) {
     const DEFAULT_PORT = 3000;
     const portEnvValue = process.env.PORT;
@@ -139,7 +170,7 @@ async function start() {
       }
     }
 
-    await startHttpMcpServer(buildServer, port);
+    await startHttpMcpServer(buildServer, port, config);
   } else {
     // stdio transport is the default for typical desktop MCP clients
     const server = await buildServer();
