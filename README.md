@@ -1,3 +1,16 @@
+# AFFiNE MCP Server Dockerized
+This is a fork to package the AFFiNE MCP Server to a docker image
+
+To create the Docker-Image
+
+`sh ./build-dockerfile.sh`
+
+Maybe change the tag beforehand.
+
+after that: (with the correct tag)
+`docker push mordockdun/affine-mcp-server-dockerized:v1`
+
+
 # AFFiNE MCP Server
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
