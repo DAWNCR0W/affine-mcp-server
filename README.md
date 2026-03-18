@@ -314,9 +314,9 @@ export PORT=3000
 npm run start:http
 ```
 
-Notes for oauth mode:
+Notes for OAuth mode:
 - use HTTPS for non-local deployments
-- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` is rejected in oauth mode
+- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS=true` is rejected in OAuth mode
 - tokens are validated against the issuer discovery metadata and JWKS
 - the protected resource metadata is also served at `/.well-known/oauth-protected-resource/mcp` for path-specific discovery
 - `GET /healthz` and `GET /readyz` are available for deployment diagnostics
@@ -362,24 +362,33 @@ Endpoints currently available:
 - `create_workspace` – create workspace with initial document
 - `update_workspace` – update workspace settings
 - `delete_workspace` – delete workspace permanently
+- `list_workspace_tree` – return the workspace document hierarchy as a tree
+- `get_orphan_docs` – find documents that are not linked from any parent doc in the sidebar tree
 
 ### Documents
 - `list_docs` – list documents with pagination (includes `node.tags`)
 - `list_tags` – list all tags in a workspace
 - `search_docs` – fast title search with substring/prefix/exact matching, optional tag filtering, and updatedAt sorting
-- `list_docs_by_tag` – list documents by tag
+- `list_docs_by_tag` – list documents that contain the requested tag
+- `get_docs_by_tag` – discover documents by case-insensitive tag substring and return `availableTags` when nothing matches
 - `get_doc` – get document metadata
+- `get_doc_by_title` – find a document by title and return its Markdown content
 - `read_doc` – read document block content and plain text snapshot (WebSocket)
 - `export_doc_markdown` – export document content as markdown
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
 - `create_doc` – create a new document (WebSocket)
 - `create_doc_from_markdown` – create a document from markdown content
+- `create_doc_from_template` – clone a template doc, substitute `{{variables}}`, and optionally link it under a parent doc
+- `duplicate_doc` – clone a document into a new doc, optionally under a parent doc
 - `create_tag` – create a reusable workspace-level tag
 - `add_tag_to_doc` – attach a tag to a document
 - `remove_tag_from_doc` – detach a tag from a document
+- `update_doc_title` – rename a document in both workspace metadata and the internal page block
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`viewMode=kanban` enables preset-backed data views; `data_view` defaults to kanban)
+- `move_doc` – move a document in the sidebar by relinking it under a different parent
+- `batch_create_docs` – create up to 20 documents in a single call
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
 - `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
 - `read_database_columns` – read database schema metadata including column IDs/types, select options, and table view column mappings
@@ -388,6 +397,10 @@ Endpoints currently available:
 - `update_database_row` – batch update multiple cells on a database row (`createOption` defaults to `true` for select fields)
 - `append_markdown` – append markdown content to an existing document
 - `replace_doc_with_markdown` – replace the main note content with markdown content
+- `list_children` – list the direct child docs linked from a document
+- `list_backlinks` – list the parent/reference docs that link to a document
+- `cleanup_orphan_embeds` – remove linked-doc embeds that point to missing docs
+- `find_and_replace` – preview or apply text replacement across a document
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments

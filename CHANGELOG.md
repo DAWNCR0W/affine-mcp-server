@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Focused HTTP transport regression coverage for bearer, OAuth, and email/password multi-session flows.
 
 ### Changed
-- Tool surface expanded from 47 to 61 canonical tools.
+- Toolset expanded from 47 to 61 canonical tools.
 - CLI usability and setup guidance improved with richer diagnostics and ready-to-paste config snippets.
 - `test:e2e` now validates HTTP email/password multi-session auth alongside bearer and OAuth HTTP coverage.
 
