@@ -343,8 +343,8 @@ Render / Railway / VPS (public endpoint):
 - `AFFINE_MCP_AUTH_MODE=bearer` or `oauth`
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0`
 - `AFFINE_MCP_HTTP_TOKEN=<strong-token>` (bearer mode)
-- `AFFINE_MCP_PUBLIC_BASE_URL=<public base URL>` (oauth mode)
-- `AFFINE_OAUTH_ISSUER_URL=<issuer URL>` (oauth mode)
+- `AFFINE_MCP_PUBLIC_BASE_URL=<public base URL>` (OAuth mode)
+- `AFFINE_OAUTH_ISSUER_URL=<issuer URL>` (OAuth mode)
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS=<your client origin(s)>`
 
 Endpoints currently available:
