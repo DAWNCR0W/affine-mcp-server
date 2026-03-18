@@ -9,12 +9,14 @@
 
 ### What Changed
 - `src/tools/docs.ts`
-  - Added `search_docs`, `get_doc_by_title`, `get_docs_by_tag`, `list_children`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, and `create_doc_from_template`.
+  - Added `search_docs`, `get_doc_by_title`, `get_docs_by_tag`, `list_children`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `create_doc_from_template`, `duplicate_doc`, and `update_doc_title`.
   - Extended Markdown-oriented workflows with `parentDocId` support and `read_doc.includeMarkdown`.
 - `src/tools/workspaces.ts`
   - Added `get_orphan_docs` and `list_workspace_tree` for workspace-level discovery.
 - `src/cli.ts`, `src/httpAuth.ts`, `src/httpDiagnostics.ts`, `src/oauth.ts`, `src/sse.ts`, `src/index.ts`
   - Added optional OAuth-protected HTTP mode, improved auth diagnostics and setup guidance, and fixed HTTP email/password credential reuse across new sessions.
+- `src/tools/docs.ts`, `README.md`
+  - Restored `list_docs` titles from workspace metadata snapshots and documented the expanded document workflow surface.
 - `tests/run-e2e.sh`, `tests/test-cli-commands.mjs`, `tests/test-doc-discovery.mjs`, `tests/test-http-bearer.mjs`, `tests/test-http-email-password.mjs`, `tests/test-oauth-http.mjs`
   - Expanded end-to-end coverage for CLI UX, document discovery, and HTTP auth modes.
 - `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`, `tool-manifest.json`, `package.json`
@@ -25,6 +27,28 @@
   - `npm run ci`
 - Docker-backed end-to-end validation passed:
   - `npm run test:e2e`
+
+### Main-Branch Automation
+- CI: https://github.com/DAWNCR0W/affine-mcp-server/actions/runs/23223154262
+- E2E Tests: https://github.com/DAWNCR0W/affine-mcp-server/actions/runs/23223154256
+- Publish to npm: https://github.com/DAWNCR0W/affine-mcp-server/actions/runs/23223154263
+
+### Pull Requests
+- Search docs: https://github.com/DAWNCR0W/affine-mcp-server/pull/72
+- Parent-linked Markdown create support: https://github.com/DAWNCR0W/affine-mcp-server/pull/73
+- `read_doc.includeMarkdown`: https://github.com/DAWNCR0W/affine-mcp-server/pull/74
+- Move document workflow: https://github.com/DAWNCR0W/affine-mcp-server/pull/75
+- Batch document creation: https://github.com/DAWNCR0W/affine-mcp-server/pull/76
+- Utility/discovery tool expansion: https://github.com/DAWNCR0W/affine-mcp-server/pull/77
+- Cleanup and find/replace workflows: https://github.com/DAWNCR0W/affine-mcp-server/pull/79
+- Workspace tree: https://github.com/DAWNCR0W/affine-mcp-server/pull/86
+- Orphan document discovery: https://github.com/DAWNCR0W/affine-mcp-server/pull/87
+- Create document from template: https://github.com/DAWNCR0W/affine-mcp-server/pull/89
+- `list_docs` title restoration: https://github.com/DAWNCR0W/affine-mcp-server/pull/92
+- OAuth HTTP mode: https://github.com/DAWNCR0W/affine-mcp-server/pull/93
+- HTTP diagnostics and search discovery improvements: https://github.com/DAWNCR0W/affine-mcp-server/pull/94
+- CLI usability improvements: https://github.com/DAWNCR0W/affine-mcp-server/pull/95
+- HTTP credential/session fix backported before release: https://github.com/DAWNCR0W/affine-mcp-server/pull/96
 
 ## Version 1.9.0 (2026-03-10)
 
