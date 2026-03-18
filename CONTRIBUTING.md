@@ -60,6 +60,13 @@ npm run test:comprehensive
 - Include validation evidence (commands and result summary).
 - Update docs (`README.md`, `CHANGELOG.md`) when behavior changes.
 
+## Release Workflow
+
+- Prepare releases from a `release/x.y.z` branch and merge that branch into `main`.
+- Keep `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, and `RELEASE_NOTES.md` in sync before tagging.
+- Use the matching version section from `RELEASE_NOTES.md` as the source for the GitHub Release body.
+- Treat `npm run ci` and `npm run test:e2e` as the release validation baseline.
+
 ## Commit Message Style
 
 Use conventional, readable commits:

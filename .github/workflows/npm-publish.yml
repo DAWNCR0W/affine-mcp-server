@@ -8,6 +8,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -26,6 +27,14 @@ jobs:
 
       - name: Validate
         run: npm run ci
+        working-directory: .
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: .
+
+      - name: Run release E2E validation
+        run: npm run test:e2e
         working-directory: .
 
       - name: Publish to npm

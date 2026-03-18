@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Live CLI integration coverage via `npm run test:cli-live`.
+
+### Changed
+- CLI setup now supports non-interactive login with `affine-mcp login --url ... --token ... --workspace-id ... --force`.
+- `affine-mcp status --json` now returns machine-readable connection details.
+- `affine-mcp snippet all --env` now prints Claude, Cursor, and Codex setup in a single response.
+
 ## [1.10.0] - 2026-03-18
 
 ### Added
