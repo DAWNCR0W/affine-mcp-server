@@ -18,7 +18,7 @@
 - `tests/run-e2e.sh`, `tests/test-cli-commands.mjs`, `tests/test-doc-discovery.mjs`, `tests/test-http-bearer.mjs`, `tests/test-http-email-password.mjs`, `tests/test-oauth-http.mjs`
   - Expanded end-to-end coverage for CLI UX, document discovery, and HTTP auth modes.
 - `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`, `tool-manifest.json`, `package.json`
-  - Bumped release metadata to `1.10.0` and refreshed public docs for the expanded tool surface.
+  - Bumped release metadata to `1.10.0` and refreshed public docs for the expanded toolset.
 
 ### Validation Evidence
 - Release sanity gate passed:
@@ -76,7 +76,7 @@
   - Added wrapper-argument coverage for `affine-mcp -- --version`.
 - `package.json`, `tool-manifest.json`, `README.md`
   - Bumped package metadata to `1.8.0`.
-  - Updated public docs and manifest metadata for the expanded tool surface and CLI version support.
+  - Updated public docs and manifest metadata for the expanded toolset and CLI version support.
 
 ### Validation Evidence
 - Release sanity gate passed:
@@ -91,7 +91,7 @@
 ## Version 1.7.2 (2026-03-04)
 
 ### Highlights
-- Fixed tag visibility parity so tags persisted through MCP are now rendered correctly in AFFiNE Web/App UI.
+- Fixed tag visibility parity so tags persisted through MCP are now rendered correctly in the AFFiNE UI.
 - Added dedicated MCP + Playwright regression coverage for tag visibility.
 - Hardened Docker E2E startup flow with retries and diagnostics to reduce transient CI failures.
 
@@ -216,9 +216,9 @@
 ## Version 1.5.0 (2026-02-13)
 
 ### Highlights
-- Completed `append_block` expansion Step1~Step4 with live AFFINE server validation.
+- Completed `append_block` expansion Step1~Step4 with live AFFiNE server validation.
 - Added database/edgeless append support: `database`, `data_view`, `surface_ref`, `frame`, `edgeless_text`, `note`.
-- Hardened validation/parent resolution rules to match AFFINE block container constraints.
+- Hardened validation/parent resolution rules to match AFFiNE block container constraints.
 
 ### What Changed
 - `src/tools/docs.ts`
@@ -248,18 +248,18 @@
 
 ### What Changed
 - New tool: `read_doc` in `src/tools/docs.ts` with WebSocket snapshot parsing and block traversal.
-- Tool manifest and comprehensive tests updated for 32-tool surface validation.
+- Tool manifest and comprehensive tests updated for 32-tool validation.
 - Runtime server version metadata updated to `1.4.0`.
 
 ### Validation Evidence
 - `npm run ci` passed.
-- `npm run test:comprehensive` passed against local AFFINE server with 32/32 tools called and 38/38 checks passed.
+- `npm run test:comprehensive` passed against a local AFFiNE server with 32/32 tools called and 38/38 checks passed.
 
 ## Version 1.3.0 (2026-02-13)
 
 ### Highlights
 - Added slash-command style block insertion with `append_block` (`heading/list/todo/code/divider/quote`).
-- Simplified public MCP tool surface to 31 canonical tools by removing duplicated aliases and unstable low-value tools.
+- Simplified the public MCP toolset to 31 canonical tools by removing duplicated aliases and unstable low-value tools.
 - Added release quality gates: CI workflow, tool manifest parity verification, and package dry-run checks.
 
 ### What Changed

@@ -96,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker E2E credential bootstrap now emits health-check configuration and retries credential acquisition before failing.
 
 ### Fixed
-- Resolved issue where tags persisted via MCP were not visible in AFFiNE Web/App UI.
+- Resolved issue where tags persisted via MCP were not visible in the AFFiNE UI.
 - Reduced CI flakiness from transient AFFiNE container startup timing by adding retry and on-failure Docker diagnostics.
 
 ## [1.7.1] - 2026-03-03
