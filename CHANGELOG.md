@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-03-18
+
+### Changed
+- Refreshed packaged `README.md` and release metadata so the published v1.10.x docs match the shipped toolset.
+- `.github/workflows/npm-publish.yml` now runs Docker-backed `npm run test:e2e` before `npm publish`.
+- `CONTRIBUTING.md` now documents the release workflow and the `RELEASE_NOTES.md` source-of-truth convention.
+
 ## [1.10.0] - 2026-03-18
 
 ### Added
@@ -294,6 +301,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.10.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.1
 [1.10.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.0
 [1.9.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.9.0
 [1.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.8.0
@@ -309,4 +317,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.10.1...HEAD
