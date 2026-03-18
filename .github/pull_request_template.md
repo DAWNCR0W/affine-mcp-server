@@ -1,3 +1,5 @@
+> Base branch must be `develop`. Pull requests targeting other branches are closed automatically.
+
 ## Summary
 
 Describe what changed and why.

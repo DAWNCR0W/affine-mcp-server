@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 export const VERSION: string = pkg.version;
 
-type ServerConfig = {
+export type ServerConfig = {
   baseUrl: string;
   apiToken?: string;
   cookie?: string;
@@ -16,6 +16,11 @@ type ServerConfig = {
   email?: string;
   password?: string;
   defaultWorkspaceId?: string;
+  authMode: "bearer" | "oauth";
+  publicBaseUrl?: string;
+  oauthIssuerUrl?: string;
+  oauthScopes: string[];
+  oauthClockSkewSeconds: number;
 };
 
 /** Config file location: ~/.config/affine-mcp/config */
@@ -128,9 +133,36 @@ function parseHeadersJson(raw?: string): Record<string, string> | undefined {
   }
 }
 
+function parseAuthMode(raw: string | undefined): "bearer" | "oauth" {
+  if (!raw) return "bearer";
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "bearer" || normalized === "oauth") {
+    return normalized;
+  }
+  throw new Error(`Invalid AFFINE_MCP_AUTH_MODE: ${raw}. Expected 'bearer' or 'oauth'.`);
+}
+
+function parseOAuthScopes(raw: string | undefined): string[] {
+  const scopes = (raw || "mcp")
+    .split(/[\s,]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return scopes.length > 0 ? scopes : ["mcp"];
+}
+
+function parsePositiveIntegerEnv(name: string, raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer. Received: ${raw}`);
+  }
+  return parsed;
+}
+
 export function loadConfig(): ServerConfig {
   const file = loadConfigFile();
   const baseUrl = validateBaseUrl(env("AFFINE_BASE_URL", file, "http://localhost:3010")!);
+  const authMode = parseAuthMode(env("AFFINE_MCP_AUTH_MODE", file, "bearer"));
   const apiToken = env("AFFINE_API_TOKEN", file);
   const cookie = env("AFFINE_COOKIE", file);
   const email = env("AFFINE_EMAIL", file);
@@ -141,5 +173,30 @@ export function loadConfig(): ServerConfig {
   }
   const graphqlPath = env("AFFINE_GRAPHQL_PATH", file, "/graphql")!;
   const defaultWorkspaceId = env("AFFINE_WORKSPACE_ID", file);
-  return { baseUrl, apiToken, cookie, headers, graphqlPath, email, password, defaultWorkspaceId };
+  const publicBaseUrlRaw = env("AFFINE_MCP_PUBLIC_BASE_URL", file);
+  const oauthIssuerUrlRaw = env("AFFINE_OAUTH_ISSUER_URL", file);
+  const publicBaseUrl = publicBaseUrlRaw ? validateBaseUrl(publicBaseUrlRaw) : undefined;
+  const oauthIssuerUrl = oauthIssuerUrlRaw ? validateBaseUrl(oauthIssuerUrlRaw) : undefined;
+  const oauthScopes = parseOAuthScopes(env("AFFINE_OAUTH_SCOPES", file, "mcp"));
+  const oauthClockSkewSeconds = parsePositiveIntegerEnv(
+    "AFFINE_OAUTH_CLOCK_SKEW_SECONDS",
+    env("AFFINE_OAUTH_CLOCK_SKEW_SECONDS", file),
+    60,
+  );
+
+  return {
+    baseUrl,
+    apiToken,
+    cookie,
+    headers,
+    graphqlPath,
+    email,
+    password,
+    defaultWorkspaceId,
+    authMode,
+    publicBaseUrl,
+    oauthIssuerUrl,
+    oauthScopes,
+    oauthClockSkewSeconds,
+  };
 }

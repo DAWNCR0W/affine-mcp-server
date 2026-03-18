@@ -6,9 +6,14 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import type { ServerConfig } from "./config.js";
+import { registerHttpDiagnosticsRoutes } from "./httpDiagnostics.js";
+import { createHttpAuthState, registerHttpAuthRoutes } from "./httpAuth.js";
+
 export async function startHttpMcpServer(
   createMcpServer: () => Promise<McpServer>,
   port: number,
+  config: ServerConfig,
 ) {
   // --- HTTP host binding ---
   // AFFINE_MCP_HTTP_HOST: network interface to bind (default: "127.0.0.1" — loopback only).
@@ -94,45 +99,14 @@ export async function startHttpMcpServer(
     });
   };
 
+  const authState = createHttpAuthState(config, { allowAnyOrigin, httpAuthToken });
+
   // Validates the Bearer token on all non-preflight requests.
   // The auth scheme match is case-insensitive for client compatibility.
   // OPTIONS is allowed through so CORS preflight can complete before auth is checked.
-  const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-    if (req.method === "OPTIONS") return next();
-    if (!httpAuthToken) return next();
-
-    const authHeader = req.headers["authorization"];
-    const queryToken =
-      typeof req.query.token === "string" ? req.query.token : undefined;
-    let token: string | undefined;
-
-    if (authHeader !== undefined) {
-      // Normalize string | string[] to string (HTTP spec allows duplicate headers).
-      const raw = Array.isArray(authHeader) ? authHeader[0] : authHeader;
-      const bearerMatch = /^Bearer\s+(.+)$/i.exec(raw);
-      if (bearerMatch) {
-        token = bearerMatch[1];
-      } else {
-        // Strictly reject non-Bearer schemes to avoid accidentally accepting Basic / Digest.
-        console.warn(
-          "[affine-mcp] Authorization header is not Bearer scheme. " +
-            "Expected: 'Authorization: Bearer <token>'.",
-        );
-        res
-          .status(401)
-          .send("Unauthorized: Use 'Authorization: Bearer <token>'");
-        return;
-      }
-    } else if (queryToken !== undefined) {
-      token = queryToken;
-    }
-
-    if (token !== httpAuthToken) {
-      res.status(401).send("Unauthorized: Invalid or missing token");
-      return;
-    }
-    next();
-  };
+  const { authMiddleware } = authState;
+  registerHttpAuthRoutes(app, authState, corsMiddleware);
+  registerHttpDiagnosticsRoutes(app, config, authState, corsMiddleware);
 
   // Explicit preflight handlers for the legacy SSE routes.
   app.options("/sse", corsMiddleware);
@@ -309,6 +283,11 @@ export async function startHttpMcpServer(
     console.error(
       `[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${port}/sse`,
     );
+    console.error(`[affine-mcp] Diagnostics: http://${displayHost}:${port}/healthz`);
+    console.error(`[affine-mcp] Readiness:   http://${displayHost}:${port}/readyz`);
+    if (authState.protectedResourceMetadataUrl) {
+      console.error(`[affine-mcp] Protected resource metadata: ${authState.protectedResourceMetadataUrl}`);
+    }
   });
 
   // Graceful shutdown: stop accepting new connections, then close active transports.

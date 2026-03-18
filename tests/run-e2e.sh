@@ -6,10 +6,11 @@
 #   3. Build the MCP server
 #   4. Run MCP database creation test (email/password auth)
 #   5. Run MCP bearer token auth test
-#   6. Run MCP tag visibility setup test
-#   7. Run MCP data-view setup test
-#   8. Run Playwright UI verification (all scenarios)
-#   9. Tear down Docker (on exit)
+#   6. Run MCP HTTP email/password multi-session test
+#   7. Run MCP tag visibility setup test
+#   8. Run MCP data-view setup test
+#   9. Run Playwright UI verification (all scenarios)
+#  10. Tear down Docker (on exit)
 #
 set -euo pipefail
 
@@ -293,17 +294,37 @@ echo ""
 echo "=== Running MCP bearer token auth test ==="
 node "$SCRIPT_DIR/test-bearer-auth.mjs"
 
-# --- Step 6: Run MCP tag visibility setup test ---
+# --- Step 6: Run MCP HTTP email/password multi-session test ---
+echo ""
+echo "=== Running MCP HTTP email/password multi-session test ==="
+node "$SCRIPT_DIR/test-http-email-password.mjs"
+
+# --- Step 7: Run MCP HTTP bearer auth test ---
+echo ""
+echo "=== Running MCP HTTP bearer auth test ==="
+node "$SCRIPT_DIR/test-http-bearer.mjs"
+
+# --- Step 8: Run MCP OAuth HTTP auth test ---
+echo ""
+echo "=== Running MCP OAuth HTTP auth test ==="
+node "$SCRIPT_DIR/test-oauth-http.mjs"
+
+# --- Step 9: Run MCP tag visibility setup test ---
 echo ""
 echo "=== Running MCP tag visibility setup test ==="
 node "$SCRIPT_DIR/test-tag-visibility.mjs"
 
-# --- Step 7: Run MCP data-view setup test ---
+# --- Step 10: Run MCP data-view setup test ---
 echo ""
 echo "=== Running MCP data-view setup test ==="
 node "$SCRIPT_DIR/test-data-view.mjs"
 
-# --- Step 8: Run Playwright verification ---
+# --- Step 11: Run MCP doc discovery regression test ---
+echo ""
+echo "=== Running MCP doc discovery regression test ==="
+node "$SCRIPT_DIR/test-doc-discovery.mjs"
+
+# --- Step 12: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready
