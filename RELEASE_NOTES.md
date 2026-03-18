@@ -1,5 +1,25 @@
 # Release Notes
 
+## Version 1.10.1 (2026-03-18)
+
+### Highlights
+- Refreshed the packaged README and release metadata so the published v1.10.x docs match the shipped toolset.
+- Tightened tag-based npm publication by requiring Docker-backed E2E validation before publish.
+- Kept the runtime/tool surface unchanged from `v1.10.0`; this is a documentation and release-process patch.
+
+### What Changed
+- `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`, `tool-manifest.json`, `package.json`
+  - Bumped release metadata to `1.10.1`.
+  - Brought the packaged README and release notes in line with the full v1.10.x toolset and validation history.
+- `.github/workflows/npm-publish.yml`
+  - Added Playwright browser installation and `npm run test:e2e` as a required pre-publish validation step for tag releases.
+- `CONTRIBUTING.md`
+  - Documented the release workflow and noted that GitHub release bodies should be sourced from the matching `RELEASE_NOTES.md` section.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+
 ## Version 1.10.0 (2026-03-18)
 
 ### Highlights
