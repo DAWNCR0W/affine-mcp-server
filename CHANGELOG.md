@@ -21,9 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Document utility workflows:
   - `batch_create_docs`
   - `create_doc_from_template`
+  - `duplicate_doc`
   - `move_doc`
   - `cleanup_orphan_embeds`
   - `find_and_replace`
+  - `update_doc_title`
 - Optional OAuth-protected HTTP mode for remote MCP deployments.
 - Focused HTTP transport regression coverage for bearer, OAuth, and email/password multi-session flows.
 
