@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-03-18
+
+### Added
+- Document discovery and navigation workflows:
+  - `search_docs`
+  - `get_doc_by_title`
+  - `get_docs_by_tag`
+  - `list_children`
+  - `list_backlinks`
+  - `get_orphan_docs`
+  - `list_workspace_tree`
+- Document utility workflows:
+  - `batch_create_docs`
+  - `create_doc_from_template`
+  - `move_doc`
+  - `cleanup_orphan_embeds`
+  - `find_and_replace`
+- Optional OAuth-protected HTTP mode for remote MCP deployments.
+- Focused HTTP transport regression coverage for bearer, OAuth, and email/password multi-session flows.
+
+### Changed
+- Tool surface expanded from 47 to 61 canonical tools.
+- CLI usability and setup guidance improved with richer diagnostics and ready-to-paste config snippets.
+- `test:e2e` now validates HTTP email/password multi-session auth alongside bearer and OAuth HTTP coverage.
+
+### Fixed
+- `list_docs` titles are restored from workspace metadata snapshots.
+- HTTP transport now preserves email/password credentials across fresh sessions so repeated Streamable HTTP connections can re-authenticate successfully.
+
 ## [1.9.0] - 2026-03-10
 
 ### Added
@@ -263,6 +292,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.10.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.0
 [1.9.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.9.0
 [1.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.8.0
 [1.7.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.7.2
@@ -277,4 +307,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.10.0...HEAD

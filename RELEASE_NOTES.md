@@ -1,5 +1,31 @@
 # Release Notes
 
+## Version 1.10.0 (2026-03-18)
+
+### Highlights
+- Expanded document discovery and navigation with search, title lookup, backlinks, children/orphan traversal, and workspace tree tools.
+- Added template, batch, cleanup, and move workflows to cover higher-volume AFFiNE document operations.
+- Hardened remote HTTP deployments with optional OAuth mode, richer diagnostics, and a fix for repeated email/password-authenticated sessions.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Added `search_docs`, `get_doc_by_title`, `get_docs_by_tag`, `list_children`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, and `create_doc_from_template`.
+  - Extended markdown-oriented workflows with `parentDocId` support and `read_doc.includeMarkdown`.
+- `src/tools/workspaces.ts`
+  - Added `get_orphan_docs` and `list_workspace_tree` for workspace-level discovery.
+- `src/cli.ts`, `src/httpAuth.ts`, `src/httpDiagnostics.ts`, `src/oauth.ts`, `src/sse.ts`, `src/index.ts`
+  - Added optional OAuth-protected HTTP mode, improved auth diagnostics and setup guidance, and fixed HTTP email/password credential reuse across new sessions.
+- `tests/run-e2e.sh`, `tests/test-cli-commands.mjs`, `tests/test-doc-discovery.mjs`, `tests/test-http-bearer.mjs`, `tests/test-http-email-password.mjs`, `tests/test-oauth-http.mjs`
+  - Expanded end-to-end coverage for CLI UX, document discovery, and HTTP auth modes.
+- `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`, `tool-manifest.json`, `package.json`
+  - Bumped release metadata to `1.10.0` and refreshed public docs for the expanded tool surface.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+
 ## Version 1.9.0 (2026-03-10)
 
 ### Highlights
