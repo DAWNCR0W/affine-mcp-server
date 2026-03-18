@@ -3,14 +3,14 @@
 ## Version 1.10.0 (2026-03-18)
 
 ### Highlights
-- Expanded document discovery and navigation with search, title lookup, backlinks, children/orphan traversal, and workspace tree tools.
+- Expanded document discovery and navigation with search, title lookup, backlinks, child/orphan traversal, and workspace tree tools.
 - Added template, batch, cleanup, and move workflows to cover higher-volume AFFiNE document operations.
-- Hardened remote HTTP deployments with optional OAuth mode, richer diagnostics, and a fix for repeated email/password-authenticated sessions.
+- Hardened remote HTTP deployments with optional OAuth mode, richer diagnostics, and a fix for repeated sessions using email/password authentication.
 
 ### What Changed
 - `src/tools/docs.ts`
   - Added `search_docs`, `get_doc_by_title`, `get_docs_by_tag`, `list_children`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, and `create_doc_from_template`.
-  - Extended markdown-oriented workflows with `parentDocId` support and `read_doc.includeMarkdown`.
+  - Extended Markdown-oriented workflows with `parentDocId` support and `read_doc.includeMarkdown`.
 - `src/tools/workspaces.ts`
   - Added `get_orphan_docs` and `list_workspace_tree` for workspace-level discovery.
 - `src/cli.ts`, `src/httpAuth.ts`, `src/httpDiagnostics.ts`, `src/oauth.ts`, `src/sse.ts`, `src/index.ts`
