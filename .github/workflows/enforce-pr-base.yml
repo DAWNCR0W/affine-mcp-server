@@ -24,7 +24,7 @@ jobs:
 
       - name: Close PRs targeting non-develop branches
         if: ${{ github.event.pull_request.base.ref != 'develop' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { owner, repo } = context.repo;
