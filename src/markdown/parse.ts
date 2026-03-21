@@ -107,7 +107,7 @@ function renderInline(children: TokenLike[]): TextDelta[] {
           output.push({ insert: "\n" });
           break;
         case "hardbreak":
-          output.push({ insert: "\n" });
+          output.push({ insert: "  \n" });
           break;
         case "image": {
           const src = getAttr(token, "src");
@@ -121,8 +121,10 @@ function renderInline(children: TokenLike[]): TextDelta[] {
             break;
           }
           const href = getAttr(token, "href");
-          const innerText = deltaToString(renderRange(i + 1, close));
-          output.push({ insert: innerText || href, attributes: { link: href } });
+          const innerDeltas = renderRange(i + 1, close);
+          const innerText = deltaToString(innerDeltas);
+          const linkDeltas = applyAttrs(innerDeltas.length > 0 ? innerDeltas : [{ insert: href }], { link: href });
+          output.push(...linkDeltas);
           i = close;
           break;
         }
@@ -262,35 +264,50 @@ function parseTable(tokens: TokenLike[], start: number, end: number): { rows: nu
   };
 }
 
-function collectQuoteText(tokens: TokenLike[], start: number, end: number): string {
-  const lines: string[] = [];
+function collectQuoteDeltas(tokens: TokenLike[], start: number, end: number): TextDelta[] {
+  const result: TextDelta[] = [];
+  let first = true;
   for (let i = start; i < end; i += 1) {
     const token = tokens[i];
     if (token.type === "inline") {
-      const line = deltaToString(renderInline(token.children ?? [])).trim();
-      if (line) {
-        lines.push(line);
+      const lineDeltas = renderInline(token.children ?? []);
+      if (!deltaToString(lineDeltas).trim()) {
+        continue;
       }
+      if (!first) {
+        result.push({ insert: "\n" });
+      }
+      result.push(...lineDeltas);
+      first = false;
       continue;
     }
     if (token.type === "fence" || token.type === "code_block") {
       const language = (token.info ?? "").trim();
       const codeBody = token.content.replace(/\n$/, "");
-      lines.push(`\`\`\`${language}\n${codeBody}\n\`\`\``);
+      if (!first) {
+        result.push({ insert: "\n" });
+      }
+      result.push({ insert: `\`\`\`${language}\n${codeBody}\n\`\`\`` });
+      first = false;
       continue;
     }
   }
-
-  return lines.join("\n");
+  return result;
 }
 
-function parseCalloutAdmonition(text: string): string | null {
-  const lines = text.split("\n");
-  const marker = lines[0]?.trim() ?? "";
-  if (!/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(marker)) {
+function parseCalloutAdmonitionDeltas(deltas: TextDelta[]): TextDelta[] | null {
+  if (deltas.length === 0) {
     return null;
   }
-  return lines.slice(1).join("\n").trim();
+  const first = deltas[0];
+  if (first.attributes || !/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(first.insert.trim())) {
+    return null;
+  }
+  const rest = deltas.slice(1);
+  if (rest.length > 0 && rest[0].insert === "\n") {
+    return rest.slice(1);
+  }
+  return rest;
 }
 
 function parseList(
@@ -498,12 +515,14 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           i += 1;
           break;
         }
-        const quoteText = collectQuoteText(tokens, i + 1, close).trim();
-        const calloutText = parseCalloutAdmonition(quoteText);
-        if (calloutText !== null) {
-          state.operations.push({ type: "callout", text: calloutText });
+        const quoteDeltas = collectQuoteDeltas(tokens, i + 1, close);
+        const quoteText = deltaToString(quoteDeltas).trim();
+        const calloutDeltas = parseCalloutAdmonitionDeltas(quoteDeltas);
+        if (calloutDeltas !== null) {
+          const calloutText = deltaToString(calloutDeltas).trim();
+          state.operations.push({ type: "callout", text: calloutText, deltas: calloutDeltas });
         } else if (quoteText.length > 0) {
-          state.operations.push({ type: "quote", text: quoteText });
+          state.operations.push({ type: "quote", text: quoteText, deltas: quoteDeltas });
         }
         i = close + 1;
         break;

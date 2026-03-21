@@ -77,6 +77,7 @@ export type MarkdownRenderableBlock = {
   flavour: string | null;
   type: string | null;
   text: string | null;
+  deltas?: TextDelta[];
   checked: boolean | null;
   language: string | null;
   childIds: string[];

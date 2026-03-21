@@ -202,8 +202,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let offset = 0;
       for (const delta of content) {
         if (delta.insert.length > 0) {
-          const attrs = delta.attributes ? { ...delta.attributes } : undefined;
-          yText.insert(offset, delta.insert, attrs as Record<string, unknown> | undefined);
+          const attrs: Record<string, unknown> = delta.attributes ? { ...delta.attributes } : {};
+          yText.insert(offset, delta.insert, attrs);
           offset += delta.insert.length;
         }
       }
