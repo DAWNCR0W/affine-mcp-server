@@ -1,5 +1,5 @@
 import MarkdownIt from "markdown-it";
-import type { MarkdownListStyle, MarkdownOperation, MarkdownParseResult } from "./types.js";
+import type { MarkdownListStyle, MarkdownOperation, MarkdownParseResult, TextDelta } from "./types.js";
 
 type TokenLike = {
   type: string;
@@ -79,29 +79,40 @@ function findMatchingInline(tokens: TokenLike[], start: number, openType: string
   return -1;
 }
 
-function renderInline(children: TokenLike[]): string {
-  function renderRange(start: number, end: number): string {
-    let output = "";
+function deltaToString(deltas: TextDelta[]): string {
+  return deltas.map(d => d.insert).join("");
+}
+
+function renderInline(children: TokenLike[]): TextDelta[] {
+  function applyAttrs(deltas: TextDelta[], attrs: NonNullable<TextDelta["attributes"]>): TextDelta[] {
+    return deltas.map(d => ({
+      insert: d.insert,
+      attributes: { ...d.attributes, ...attrs },
+    }));
+  }
+
+  function renderRange(start: number, end: number): TextDelta[] {
+    const output: TextDelta[] = [];
     for (let i = start; i < end; i += 1) {
       const token = children[i];
       switch (token.type) {
         case "text":
         case "html_inline":
-          output += token.content;
+          output.push({ insert: token.content });
           break;
         case "code_inline":
-          output += `\`${token.content}\``;
+          output.push({ insert: token.content, attributes: { code: true } });
           break;
         case "softbreak":
-          output += "\n";
+          output.push({ insert: "\n" });
           break;
         case "hardbreak":
-          output += "  \n";
+          output.push({ insert: "  \n" });
           break;
         case "image": {
           const src = getAttr(token, "src");
           const alt = token.content ?? "";
-          output += `![${alt}](${src})`;
+          output.push({ insert: `![${alt}](${src})` });
           break;
         }
         case "link_open": {
@@ -110,10 +121,10 @@ function renderInline(children: TokenLike[]): string {
             break;
           }
           const href = getAttr(token, "href");
-          const title = getAttr(token, "title");
-          const inner = renderRange(i + 1, close);
-          const titlePart = title ? ` \"${title}\"` : "";
-          output += `[${inner}](${href}${titlePart})`;
+          const innerDeltas = renderRange(i + 1, close);
+          const innerText = deltaToString(innerDeltas);
+          const linkDeltas = applyAttrs(innerDeltas.length > 0 ? innerDeltas : [{ insert: href }], { link: href });
+          output.push(...linkDeltas);
           i = close;
           break;
         }
@@ -122,7 +133,7 @@ function renderInline(children: TokenLike[]): string {
           if (close < 0) {
             break;
           }
-          output += `**${renderRange(i + 1, close)}**`;
+          output.push(...applyAttrs(renderRange(i + 1, close), { bold: true }));
           i = close;
           break;
         }
@@ -131,7 +142,7 @@ function renderInline(children: TokenLike[]): string {
           if (close < 0) {
             break;
           }
-          output += `*${renderRange(i + 1, close)}*`;
+          output.push(...applyAttrs(renderRange(i + 1, close), { italic: true }));
           i = close;
           break;
         }
@@ -140,7 +151,7 @@ function renderInline(children: TokenLike[]): string {
           if (close < 0) {
             break;
           }
-          output += `~~${renderRange(i + 1, close)}~~`;
+          output.push(...applyAttrs(renderRange(i + 1, close), { strike: true }));
           i = close;
           break;
         }
@@ -179,7 +190,7 @@ function extractSingleLink(children: TokenLike[]): { href: string; text: string 
   }
 
   const inner = filtered.slice(1, filtered.length - 1);
-  const text = renderInline(inner).trim() || href;
+  const text = deltaToString(renderInline(inner)).trim() || href;
   return { href, text };
 }
 
@@ -211,7 +222,7 @@ function parseTable(tokens: TokenLike[], start: number, end: number): { rows: nu
           let cellText = "";
           for (let k = j + 1; k < cellClose; k += 1) {
             if (tokens[k].type === "inline") {
-              cellText = renderInline(tokens[k].children ?? []).trim();
+              cellText = deltaToString(renderInline(tokens[k].children ?? [])).trim();
               break;
             }
           }
@@ -253,35 +264,50 @@ function parseTable(tokens: TokenLike[], start: number, end: number): { rows: nu
   };
 }
 
-function collectQuoteText(tokens: TokenLike[], start: number, end: number): string {
-  const lines: string[] = [];
+function collectQuoteDeltas(tokens: TokenLike[], start: number, end: number): TextDelta[] {
+  const result: TextDelta[] = [];
+  let first = true;
   for (let i = start; i < end; i += 1) {
     const token = tokens[i];
     if (token.type === "inline") {
-      const line = renderInline(token.children ?? []).trim();
-      if (line) {
-        lines.push(line);
+      const lineDeltas = renderInline(token.children ?? []);
+      if (!deltaToString(lineDeltas).trim()) {
+        continue;
       }
+      if (!first) {
+        result.push({ insert: "\n" });
+      }
+      result.push(...lineDeltas);
+      first = false;
       continue;
     }
     if (token.type === "fence" || token.type === "code_block") {
       const language = (token.info ?? "").trim();
       const codeBody = token.content.replace(/\n$/, "");
-      lines.push(`\`\`\`${language}\n${codeBody}\n\`\`\``);
+      if (!first) {
+        result.push({ insert: "\n" });
+      }
+      result.push({ insert: `\`\`\`${language}\n${codeBody}\n\`\`\`` });
+      first = false;
       continue;
     }
   }
-
-  return lines.join("\n");
+  return result;
 }
 
-function parseCalloutAdmonition(text: string): string | null {
-  const lines = text.split("\n");
-  const marker = lines[0]?.trim() ?? "";
-  if (!/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(marker)) {
+function parseCalloutAdmonitionDeltas(deltas: TextDelta[]): TextDelta[] | null {
+  if (deltas.length === 0) {
     return null;
   }
-  return lines.slice(1).join("\n").trim();
+  const first = deltas[0];
+  if (first.attributes || !/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(first.insert.trim())) {
+    return null;
+  }
+  const rest = deltas.slice(1);
+  if (rest.length > 0 && rest[0].insert === "\n") {
+    return rest.slice(1);
+  }
+  return rest;
 }
 
 function parseList(
@@ -306,6 +332,7 @@ function parseList(
       }
 
       let itemText = "";
+      let itemDeltas: TextDelta[] = [];
       const nestedOperations: MarkdownOperation[] = [];
       let hasNestedList = false;
 
@@ -313,7 +340,8 @@ function parseList(
       while (cursor < close) {
         const current = tokens[cursor];
         if (!itemText && current.type === "inline") {
-          itemText = renderInline(current.children ?? []).trim();
+          itemDeltas = renderInline(current.children ?? []);
+          itemText = deltaToString(itemDeltas).trim();
         }
 
         if (current.type === "bullet_list_open" || current.type === "ordered_list_open") {
@@ -345,6 +373,21 @@ function parseList(
         style = "todo";
         checked = taskMatch[1].toLowerCase() === "x";
         itemText = taskMatch[2];
+        // Trim the leading checkbox prefix from deltas
+        const prefixLen = deltaToString(itemDeltas).length - itemText.length;
+        let rem = prefixLen;
+        const adjustedDeltas: TextDelta[] = [];
+        for (const d of itemDeltas) {
+          if (rem <= 0) {
+            adjustedDeltas.push(d);
+          } else if (rem >= d.insert.length) {
+            rem -= d.insert.length;
+          } else {
+            adjustedDeltas.push({ ...d, insert: d.insert.slice(rem) });
+            rem = 0;
+          }
+        }
+        itemDeltas = adjustedDeltas;
       }
 
       operations.push({
@@ -352,6 +395,7 @@ function parseList(
         text: itemText,
         style,
         ...(style === "todo" ? { checked: Boolean(checked) } : {}),
+        deltas: itemDeltas,
       });
 
       if (hasNestedList) {
@@ -393,8 +437,9 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
         const levelNum = Number((token.tag ?? "h1").replace("h", ""));
         const level = Math.max(1, Math.min(6, levelNum)) as 1 | 2 | 3 | 4 | 5 | 6;
         const inline = tokens.slice(i + 1, close).find(inner => inner.type === "inline");
-        const text = inline ? renderInline(inline.children ?? []).trim() : "";
-        state.operations.push({ type: "heading", level, text });
+        const headingDeltas = inline ? renderInline(inline.children ?? []) : [];
+        const text = deltaToString(headingDeltas).trim();
+        state.operations.push({ type: "heading", level, text, deltas: headingDeltas });
         i = close + 1;
         break;
       }
@@ -439,9 +484,10 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           break;
         }
 
-        const text = renderInline(children).trim();
+        const paraDeltas = renderInline(children);
+        const text = deltaToString(paraDeltas).trim();
         if (text.length > 0) {
-          state.operations.push({ type: "paragraph", text });
+          state.operations.push({ type: "paragraph", text, deltas: paraDeltas });
         }
         i = close + 1;
         break;
@@ -469,12 +515,14 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           i += 1;
           break;
         }
-        const quoteText = collectQuoteText(tokens, i + 1, close).trim();
-        const calloutText = parseCalloutAdmonition(quoteText);
-        if (calloutText !== null) {
-          state.operations.push({ type: "callout", text: calloutText });
+        const quoteDeltas = collectQuoteDeltas(tokens, i + 1, close);
+        const quoteText = deltaToString(quoteDeltas).trim();
+        const calloutDeltas = parseCalloutAdmonitionDeltas(quoteDeltas);
+        if (calloutDeltas !== null) {
+          const calloutText = deltaToString(calloutDeltas).trim();
+          state.operations.push({ type: "callout", text: calloutText, deltas: calloutDeltas });
         } else if (quoteText.length > 0) {
-          state.operations.push({ type: "quote", text: quoteText });
+          state.operations.push({ type: "quote", text: quoteText, deltas: quoteDeltas });
         }
         i = close + 1;
         break;

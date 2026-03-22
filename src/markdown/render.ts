@@ -1,4 +1,4 @@
-import type { MarkdownRenderResult, MarkdownRenderableBlock } from "./types.js";
+import type { MarkdownRenderResult, MarkdownRenderableBlock, TextDelta } from "./types.js";
 
 type RenderState = {
   blocksById: Map<string, MarkdownRenderableBlock>;
@@ -65,6 +65,31 @@ function renderTable(tableData: string[][]): string[] {
   ];
 }
 
+function deltaRunToMarkdown(insert: string, attributes: NonNullable<TextDelta["attributes"]>): string {
+  if (attributes.code) {
+    return `\`${insert}\``;
+  }
+  let inner = insert;
+  if (attributes.bold && attributes.italic) {
+    inner = `***${inner}***`;
+  } else if (attributes.bold) {
+    inner = `**${inner}**`;
+  } else if (attributes.italic) {
+    inner = `*${inner}*`;
+  }
+  if (attributes.link) {
+    inner = `[${inner}](${attributes.link})`;
+  }
+  if (attributes.strike) {
+    inner = `~~${inner}~~`;
+  }
+  return inner;
+}
+
+function deltasToMarkdown(deltas: TextDelta[]): string {
+  return deltas.map(d => d.attributes ? deltaRunToMarkdown(d.insert, d.attributes) : d.insert).join("");
+}
+
 function childList(block: MarkdownRenderableBlock): string[] {
   return Array.isArray(block.childIds) ? block.childIds : [];
 }
@@ -86,7 +111,9 @@ function renderBlock(
     return { lines: [], isList: false };
   }
 
-  const text = (block.text ?? "").trim();
+  const text = (block.deltas && block.deltas.length > 0
+    ? deltasToMarkdown(block.deltas)
+    : (block.text ?? "")).trim();
   const flavour = block.flavour ?? "";
   const type = block.type ?? "";
   const children = childList(block);
