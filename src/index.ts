@@ -14,6 +14,7 @@ import { registerBlobTools } from "./tools/blobStorage.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { loginWithPassword } from "./auth.js";
 import { registerAuthTools } from "./tools/auth.js";
+import { registerOrganizeTools } from "./tools/organize.js";
 import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 
@@ -155,6 +156,7 @@ async function buildServer() {
   if (config.authMode !== "oauth") {
     registerAuthTools(server, gql, config.baseUrl);
   }
+  registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   return server;
 }
 

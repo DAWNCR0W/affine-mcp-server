@@ -16,7 +16,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 61 focused tools with WebSocket-based document editing
+- Tools: 75 focused tools with WebSocket-based document editing
 - Status: Active
  
 > New in v1.10.1: Refreshed packaged docs and release metadata for the v1.10.x toolset, and tightened tag-publish validation with E2E coverage. No runtime or tool-behavior changes.
@@ -25,6 +25,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
+- Sidebar data: collections (server-backed) plus experimental organize folder/link access through AFFiNE workspace DB docs
 - Database workflows: create database blocks, inspect schema, add columns and rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
@@ -369,6 +370,20 @@ Endpoints currently available:
 - `delete_workspace` – delete workspace permanently
 - `list_workspace_tree` – return the workspace document hierarchy as a tree
 - `get_orphan_docs` – find documents that are not linked from any parent doc in the sidebar tree
+- `list_collections` – list workspace collections
+- `get_collection` – get a collection by id
+- `create_collection` – create a collection
+- `update_collection` – rename a collection
+- `delete_collection` – delete a collection
+- `add_doc_to_collection` – add a document to a collection allow-list
+- `remove_doc_from_collection` – remove a document from a collection allow-list
+- `list_organize_nodes` – experimental organize/folder tree dump
+- `create_folder` – experimental root or nested folder creation
+- `rename_folder` – experimental folder rename
+- `delete_folder` – experimental recursive folder delete
+- `move_organize_node` – experimental folder/link move
+- `add_organize_link` – experimental doc/tag/collection link under a folder
+- `delete_organize_link` – experimental doc/tag/collection link delete
 
 ### Documents
 - `list_docs` – list documents with pagination (includes `node.tags`)
@@ -452,7 +467,7 @@ npm run pack:check
 - For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
 - For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:http-email-password`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:cli-live`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:organize`, `npm run test:bearer`, `npm run test:http-email-password`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:cli-live`, `npm run test:playwright`.
 
 ## Troubleshooting
 
