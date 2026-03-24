@@ -217,6 +217,28 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return "";
   }
 
+  function asDeltaArray(value: unknown): TextDelta[] | undefined {
+    if (!(value instanceof Y.Text)) return undefined;
+    const raw = value.toDelta() as Array<{ insert?: unknown; attributes?: Record<string, unknown> }>;
+    if (!raw.length) return undefined;
+    const result: TextDelta[] = [];
+    for (const d of raw) {
+      if (typeof d.insert !== "string") continue;
+      const td: TextDelta = { insert: d.insert };
+      if (d.attributes) {
+        const attrs: NonNullable<TextDelta["attributes"]> = {};
+        if (d.attributes.bold === true) attrs.bold = true;
+        if (d.attributes.italic === true) attrs.italic = true;
+        if (d.attributes.strike === true) attrs.strike = true;
+        if (d.attributes.code === true) attrs.code = true;
+        if (typeof d.attributes.link === "string") attrs.link = d.attributes.link;
+        if (Object.keys(attrs).length > 0) td.attributes = attrs;
+      }
+      result.push(td);
+    }
+    return result.length ? result : undefined;
+  }
+
   function childIdsFrom(value: unknown): string[] {
     if (!(value instanceof Y.Array)) return [];
     const childIds: string[] = [];
@@ -2039,6 +2061,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         flavour: asStringOrNull(block.get("sys:flavour")),
         type: asStringOrNull(block.get("prop:type")),
         text: asText(block.get("prop:text")) || null,
+        deltas: asDeltaArray(block.get("prop:text")),
         checked: typeof block.get("prop:checked") === "boolean" ? Boolean(block.get("prop:checked")) : null,
         language: asStringOrNull(block.get("prop:language")),
         childIds,
@@ -3785,8 +3808,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           matchLog.push({ blockId, flavour: flavour ?? "unknown", original, replaced });
           if (!parsed.dryRun) {
             const prevSV = Y.encodeStateVector(doc);
-            val.delete(0, val.length);
-            val.insert(0, replaced);
+            // Collect match positions then apply right-to-left so offsets stay valid
+            const positions: number[] = [];
+            let idx = 0;
+            while (true) {
+              const pos = original.indexOf(parsed.search, idx);
+              if (pos === -1) break;
+              positions.push(pos);
+              if (!matchAll) break;
+              idx = pos + parsed.search.length;
+            }
+            for (let i = positions.length - 1; i >= 0; i--) {
+              val.delete(positions[i], parsed.search.length);
+              val.insert(positions[i], parsed.replace);
+            }
             const delta = Y.encodeStateAsUpdate(doc, prevSV);
             await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
           }
