@@ -109,6 +109,7 @@ You can also configure via environment variables (they override the config file)
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
 - Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (set `sync` only when you must block startup)
+- Tool filtering: `AFFINE_DISABLED_GROUPS`, `AFFINE_DISABLED_TOOLS` (see [Filtering Exposed Tools](#filtering-exposed-tools))
 
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -353,6 +354,69 @@ Endpoints currently available:
 - `/messages` - Messages endpoint (old protocol compatible)
 - `/healthz` - HTTP liveness probe
 - `/readyz` - HTTP readiness probe
+
+## Filtering Exposed Tools
+
+By default the server registers all 61 tools. You can narrow the exposed surface using two optional environment variables — helpful for reducing context window token consumption, limiting AI to safe read-only operations, or locking down remote deployments.
+
+### Group-level blacklist — `AFFINE_DISABLED_GROUPS`
+
+Disables an entire tool group at startup. Comma-separated, case-insensitive.
+
+| Group name | Tools included |
+|---|---|
+| `workspaces` | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `delete_workspace` |
+| `docs` | All document & DB tools (`list_docs`, `read_doc`, `edit_doc`, `delete_doc`, `list_workspace_tree`, `get_orphan_docs`, …) |
+| `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
+| `history` | `list_histories` |
+| `users` | User management, profile & authentication (`current_user`, `sign_in`, `update_profile`, `update_settings`) |
+| `access_tokens` | `list_access_tokens`, `generate_access_token`, `revoke_access_token` |
+| `blobs` | `upload_blob`, `delete_blob`, `cleanup_blobs` |
+| `notifications` | `list_notifications`, `read_all_notifications` |
+
+Example — disable all collaboration and administrative tools:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx",
+        "AFFINE_DISABLED_GROUPS": "comments,history,notifications,blobs,access_tokens,user_crud"
+      }
+    }
+  }
+}
+```
+
+### Tool-level blacklist — `AFFINE_DISABLED_TOOLS`
+
+Disables individual tools by exact name. Comma-separated. Applied in addition to any group blacklist — useful for removing specific high-risk tools from an otherwise-enabled group.
+
+Example — keep the full `workspaces` group except the destructive delete operation:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "env": {
+        "AFFINE_BASE_URL": "https://app.affine.pro",
+        "AFFINE_API_TOKEN": "ut_xxx",
+        "AFFINE_DISABLED_TOOLS": "delete_workspace,delete_doc"
+      }
+    }
+  }
+}
+```
+
+Both variables can be combined:
+
+```bash
+AFFINE_DISABLED_GROUPS=comments,notifications AFFINE_DISABLED_TOOLS=delete_workspace affine-mcp
+```
 
 ## Available Tools
 

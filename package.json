@@ -36,6 +36,7 @@
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
+    "test:tool-filtering": "node tests/test-tool-filtering.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
