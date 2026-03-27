@@ -114,6 +114,7 @@ You can also configure via environment variables (they override the config file)
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
 - Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (set `sync` only when you must block startup)
+- Tool filtering: `AFFINE_DISABLED_GROUPS`, `AFFINE_DISABLED_TOOLS` (see [Filtering Exposed Tools](#filtering-exposed-tools))
 
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -360,6 +361,7 @@ Endpoints currently available:
 - `/healthz` - HTTP liveness probe
 - `/readyz` - HTTP readiness probe
 
+
 ## Available Tools
 
 ### Workspace
@@ -370,6 +372,8 @@ Endpoints currently available:
 - `delete_workspace` – delete workspace permanently
 - `list_workspace_tree` – return the workspace document hierarchy as a tree
 - `get_orphan_docs` – find documents that are not linked from any parent doc in the sidebar tree
+
+### Organization
 - `list_collections` – list workspace collections
 - `get_collection` – get a collection by id
 - `create_collection` – create a collection
@@ -384,6 +388,7 @@ Endpoints currently available:
 - `move_organize_node` – experimental folder/link move
 - `add_organize_link` – experimental doc/tag/collection link under a folder
 - `delete_organize_link` – experimental doc/tag/collection link delete
+
 
 ### Documents
 - `list_docs` – list documents with pagination (includes `node.tags`)
@@ -438,6 +443,40 @@ Endpoints currently available:
 
 ### Blob Storage
 - `upload_blob`, `delete_blob`, `cleanup_blobs`
+
+## Filtering Exposed Tools
+
+Optional environment variables to narrow the exposed surface. 
+
+### Group-level — `AFFINE_DISABLED_GROUPS`
+
+| Group name | Tools included |
+|---|---|
+| `workspaces` | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `delete_workspace` |
+| `docs` | `list_docs`, `read_doc`, `create_doc`, `edit_doc`, `delete_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `list_backlinks`, `duplicate_doc`, `create_doc_from_template`, `cleanup_orphan_embeds`, `find_and_replace`, `get_docs_by_tag`, `get_db_schema`, `get_db_tables`, `add_db_row`, `update_db_cell`, `query_db` |
+| `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
+| `history` | `list_histories` |
+| `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
+| `users` | `current_user`, `sign_in`, `update_profile`, `update_settings` |
+| `access_tokens` | `list_access_tokens`, `generate_access_token`, `revoke_access_token` |
+| `blobs` | `upload_blob`, `delete_blob`, `cleanup_blobs` |
+| `notifications` | `list_notifications`, `read_all_notifications` |
+
+```json
+"env": {
+  "AFFINE_DISABLED_GROUPS": "comments,history,blobs,users"
+}
+```
+
+### Tool-level — `AFFINE_DISABLED_TOOLS`
+
+Disables individual tools by exact name (comma-separated). 
+
+```json
+"env": {
+  "AFFINE_DISABLED_TOOLS": "delete_workspace,delete_doc"
+}
+```
 
 ## Use Locally (clone)
 
