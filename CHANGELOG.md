@@ -7,13 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [1.11.0] - 2026-03-27
+
 ### Added
-- Live CLI integration coverage via `npm run test:cli-live`.
+- Sidebar organize workflows:
+  - `list_collections`
+  - `get_collection`
+  - `create_collection`
+  - `update_collection`
+  - `delete_collection`
+  - `add_doc_to_collection`
+  - `remove_doc_from_collection`
+  - `list_organize_nodes`
+  - `create_folder`
+  - `rename_folder`
+  - `delete_folder`
+  - `move_organize_node`
+  - `add_organize_link`
+  - `delete_organize_link`
+- Tool filtering controls:
+  - `AFFINE_DISABLED_GROUPS`
+  - `AFFINE_DISABLED_TOOLS`
+- `delete_database_row` to remove existing rows from AFFiNE database blocks.
 
 ### Changed
+- Tool surface expanded from 61 to 76 canonical tools.
+- Markdown import now preserves inline rich-text marks in list items and table cells.
 - CLI setup now supports non-interactive login with `affine-mcp login --url ... --token ... --workspace-id ... --force`.
 - `affine-mcp status --json` now returns machine-readable connection details.
 - `affine-mcp snippet all --env` now prints Claude, Cursor, and Codex setup in a single response.
+- README and release-facing docs now describe organize tools, tool filtering, and the new database row delete workflow.
+
+### Fixed
+- Table-cell and list-item markdown imports no longer keep literal `**...**` markers when AFFiNE rich-text attributes should be written.
+
+### Dependencies
+- Refreshed GitHub Actions, runtime lockfile entries, and development tooling, including `actions/github-script`, `jose`, `@modelcontextprotocol/sdk`, `undici`, `yjs`, `typescript`, and `@types/node`.
 
 ## [1.10.1] - 2026-03-18
 
@@ -309,6 +340,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.0
 [1.10.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.1
 [1.10.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.0
 [1.9.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.9.0
@@ -325,4 +357,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.11.0...HEAD
