@@ -933,8 +933,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("The 'tableData' field can only be used with type='table'.");
     }
 
-    if (normalized.type !== "database" && normalized.type !== "data_view" && raw.viewMode !== undefined && normalized.strict) {
-      throw new Error("The 'viewMode' field can only be used with type='database' or type='data_view'.");
+    if (normalized.type !== "database" && normalized.type !== "data_view" && normalized.type !== "bookmark" && raw.viewMode !== undefined && normalized.strict) {
+      throw new Error("The 'viewMode' field can only be used with type='database', type='data_view', or type='bookmark'.");
     }
   }
 
@@ -946,7 +946,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const headingLevel = Math.max(1, Math.min(6, headingLevelNumber)) as 1 | 2 | 3 | 4 | 5 | 6;
     const listStyle = typeInfo.listStyleFromAlias ?? parsed.style ?? "bulleted";
     const bookmarkStyle = parsed.bookmarkStyle ?? "horizontal";
-    const dataViewMode = parsed.viewMode ?? (typeInfo.type === "data_view" ? "kanban" : "table");
+    const dataViewMode = (typeInfo.type === "database" || typeInfo.type === "data_view")
+      ? (parsed.viewMode as AppendBlockDataViewMode ?? (typeInfo.type === "data_view" ? "kanban" : "table"))
+      : "table";
     const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
     const placement = normalizePlacement(parsed.placement);
     const url = (parsed.url ?? "").trim();
@@ -3023,6 +3025,80 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     readDocHandler as any
   );
 
+  // dump_doc_crdt: Debug tool to dump the raw Yjs CRDT structure of a document.
+  // Useful for understanding how AFFiNE stores blocks, text marks, etc.
+  const dumpDocCrdtHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    if (!parsed.docId) throw new Error("docId is required.");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+
+      if (!snapshot.missing) {
+        return text({ docId: parsed.docId, error: "Document not found or empty" });
+      }
+
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      // Helper to convert Yjs types to JSON-serializable format
+      function yjsToJson(val: any): any {
+        if (val === null || val === undefined) return null;
+        if (val.constructor.name === "Number" || val.constructor.name === "String" || val.constructor.name === "Boolean") return val;
+        if (val instanceof Uint8Array) return { __type: "Uint8Array", data: Array.from(val) };
+        if (val instanceof Y.Map) {
+          const obj: Record<string, any> = {};
+          val.forEach((v, k) => { obj[k] = yjsToJson(v); });
+          return obj;
+        }
+        if (val instanceof Y.Array) {
+          return { __type: "YArray", data: Array.from(val).map(yjsToJson) };
+        }
+        if (val instanceof Y.Text) {
+          // Y.Text stores deltas with attributes (marks)
+          const delta = val.toDelta();
+          return { __type: "YText", delta };
+        }
+        if (typeof val === "object") {
+          try { return JSON.parse(JSON.stringify(val)); } catch { return String(val); }
+        }
+        return String(val);
+      }
+
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const result: Record<string, any> = {};
+      blocks.forEach((block, key) => {
+        result[key] = yjsToJson(block);
+      });
+
+      return text({
+        docId: parsed.docId,
+        blocksCount: blocks.size,
+        blocks: result,
+      });
+    } finally {
+      socket.close();
+    }
+  };
+
+  server.registerTool(
+    "dump_doc_crdt",
+    {
+      title: "Dump Doc CRDT",
+      description: "Debug tool: dump raw Yjs CRDT structure of a document block tree",
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string(),
+      },
+    },
+    dumpDocCrdtHandler as any
+  );
+
   // move_doc: move a doc in the sidebar by removing its embed_linked_doc from the old parent
   // and adding it to the new parent. fromParentDocId is optional — if omitted, only adds to new parent.
   const moveDocHandler = async (parsed: { workspaceId?: string; docId: string; toParentDocId: string; fromParentDocId?: string }) => {
@@ -3204,6 +3280,139 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     appendParagraphHandler as any
   );
 
+  const appendInlineLinkHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    text: string;
+    url: string;
+    placement?: {
+      parentId?: string;
+      afterBlockId?: string;
+      beforeBlockId?: string;
+      index?: number;
+    };
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    if (!parsed.docId) throw new Error("docId is required");
+    if (!parsed.text) throw new Error("text is required");
+    if (!parsed.url) throw new Error("url is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (snapshot.missing) {
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      }
+
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      // Find the note block to insert into
+      let parentId: string | undefined;
+      let children: Y.Array<any>;
+      let insertIndex: number;
+
+      const placement = parsed.placement;
+
+      if (placement?.afterBlockId) {
+        const refBlock = findBlockById(blocks, placement.afterBlockId);
+        if (!refBlock) throw new Error(`afterBlockId '${placement.afterBlockId}' not found`);
+        const refParentId = resolveBlockParentId(blocks, placement.afterBlockId);
+        if (!refParentId) throw new Error(`Block '${placement.afterBlockId}' has no parent`);
+        parentId = refParentId;
+        const parentBlock = blocks.get(parentId);
+        children = parentBlock.get("sys:children") as Y.Array<any>;
+        insertIndex = Array.from(children).indexOf(placement.afterBlockId) + 1;
+      } else if (placement?.beforeBlockId) {
+        const refBlock = findBlockById(blocks, placement.beforeBlockId);
+        if (!refBlock) throw new Error(`beforeBlockId '${placement.beforeBlockId}' not found`);
+        const refParentId = resolveBlockParentId(blocks, placement.beforeBlockId);
+        if (!refParentId) throw new Error(`Block '${placement.beforeBlockId}' has no parent`);
+        parentId = refParentId;
+        const parentBlock = blocks.get(parentId);
+        children = parentBlock.get("sys:children") as Y.Array<any>;
+        insertIndex = Array.from(children).indexOf(placement.beforeBlockId);
+      } else if (placement?.parentId) {
+        parentId = placement.parentId;
+        const parentBlock = blocks.get(parentId);
+        if (!parentBlock) throw new Error(`parentId '${placement.parentId}' not found`);
+        children = parentBlock.get("sys:children") as Y.Array<any>;
+        insertIndex = placement.index !== undefined ? placement.index : children.length;
+      } else {
+        // Default: find the note block
+        const pageBlockId = findBlockIdByFlavour(blocks, "affine:page");
+        if (!pageBlockId) throw new Error("Document has no page block");
+        const noteBlockId = findBlockIdByFlavour(blocks, "affine:note");
+        if (!noteBlockId) throw new Error("Document has no note block");
+        parentId = noteBlockId;
+        const parentBlock = blocks.get(parentId);
+        children = parentBlock.get("sys:children") as Y.Array<any>;
+        insertIndex = children.length;
+      }
+
+      // Create paragraph block with inline link using Delta format
+      const blockId = generateId();
+      const block = new Y.Map<any>();
+      setSysFields(block, blockId, "affine:paragraph");
+      block.set("sys:parent", null);
+      block.set("sys:children", new Y.Array<string>());
+      block.set("prop:type", "text");
+      block.set("prop:link", parsed.url);  // Add link property at block level
+
+      // Create Y.Text with link mark using Delta format
+      // BlockSuite/AFFiNE might use "href" as the attribute key for links
+      const yText = new Y.Text();
+      yText.applyDelta([
+        { insert: parsed.text, attributes: { href: parsed.url } }
+      ]);
+      block.set("prop:text", yText);
+
+      // Insert block
+      blocks.set(blockId, block);
+      if (insertIndex >= children.length) {
+        children.push([blockId]);
+      } else {
+        children.insert(insertIndex, [blockId]);
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({ ok: true, docId: parsed.docId, blockId, text: parsed.text, url: parsed.url });
+    } finally {
+      socket.close();
+    }
+  };
+
+  server.registerTool(
+    "append_inline_link",
+    {
+      title: "Append Inline Link",
+      description: "Append a paragraph containing a single inline hyperlink.",
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string(),
+        text: z.string(),
+        url: z.string(),
+        placement: z
+          .object({
+            parentId: z.string().optional(),
+            afterBlockId: z.string().optional(),
+            beforeBlockId: z.string().optional(),
+            index: z.number().int().min(0).optional(),
+          })
+          .optional(),
+      },
+    },
+    appendInlineLinkHandler as any
+  );
+
   const appendBlockHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
@@ -3278,7 +3487,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
         style: AppendBlockListStyle.optional().describe("List style for type=list"),
         bookmarkStyle: AppendBlockBookmarkStyle.optional().describe("Bookmark card style"),
-        viewMode: AppendBlockDataViewMode.optional().describe("Initial data view preset for type=database or type=data_view. Defaults: database=table, data_view=kanban"),
+        viewMode: AppendBlockDataViewMode.optional().describe("Initial data view preset for type=database or type=data_view"),
         checked: z.boolean().optional().describe("Todo state when type is todo"),
         language: z.string().optional().describe("Code language when type is code"),
         caption: z.string().optional().describe("Code caption when type is code"),
