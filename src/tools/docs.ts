@@ -6,7 +6,7 @@ import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDo
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
-import type { MarkdownOperation, MarkdownRenderableBlock } from "../markdown/types.js";
+import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
@@ -79,6 +79,7 @@ type AppendBlockInput = {
   docId: string;
   type: string;
   text?: string;
+  deltas?: TextDelta[];
   url?: string;
   pageId?: string;
   iframeUrl?: string;
@@ -107,6 +108,7 @@ type AppendBlockInput = {
   strict?: boolean;
   placement?: AppendPlacement;
   tableData?: string[][];
+  tableCellDeltas?: TextDelta[][][];
 };
 
 type NormalizedAppendBlockInput = {
@@ -143,6 +145,8 @@ type NormalizedAppendBlockInput = {
   caption?: string;
   legacyType?: AppendBlockLegacyType;
   tableData?: string[][];
+  deltas?: TextDelta[];
+  tableCellDeltas?: TextDelta[][][];
 };
 
 type CreateDocInput = {
@@ -190,10 +194,23 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
   ];
 
-  function makeText(content: string): Y.Text {
+  function makeText(content: string | TextDelta[]): Y.Text {
     const yText = new Y.Text();
-    if (content.length > 0) {
-      yText.insert(0, content);
+    if (typeof content === "string") {
+      if (content.length > 0) {
+        yText.insert(0, content);
+      }
+      return yText;
+    }
+
+    let offset = 0;
+    for (const delta of content) {
+      if (delta.insert.length === 0) {
+        continue;
+      }
+      const attrs: Record<string, unknown> = delta.attributes ? { ...delta.attributes } : {};
+      yText.insert(offset, delta.insert, attrs);
+      offset += delta.insert.length;
     }
     return yText;
   }
@@ -912,10 +929,28 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           }
         }
       }
+      if (normalized.tableCellDeltas) {
+        if (!Array.isArray(normalized.tableCellDeltas) || normalized.tableCellDeltas.length !== normalized.rows) {
+          throw new Error("tableCellDeltas row count must match table rows.");
+        }
+        for (let rowIndex = 0; rowIndex < normalized.tableCellDeltas.length; rowIndex += 1) {
+          const row = normalized.tableCellDeltas[rowIndex];
+          if (!Array.isArray(row) || row.length !== normalized.columns) {
+            throw new Error("tableCellDeltas column count must match table columns.");
+          }
+          for (const cell of row) {
+            if (!Array.isArray(cell)) {
+              throw new Error("Each tableCellDeltas entry must be an array of text deltas.");
+            }
+          }
+        }
+      }
     } else if ((raw.rows !== undefined || raw.columns !== undefined) && normalized.strict) {
       throw new Error("The 'rows'/'columns' fields can only be used with type='table'.");
     } else if (raw.tableData !== undefined && normalized.strict) {
       throw new Error("The 'tableData' field can only be used with type='table'.");
+    } else if (raw.tableCellDeltas !== undefined && normalized.strict) {
+      throw new Error("The 'tableCellDeltas' field can only be used with type='table'.");
     }
 
     if (normalized.type !== "database" && normalized.type !== "data_view" && raw.viewMode !== undefined && normalized.strict) {
@@ -952,6 +987,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const columns = Number.isInteger(parsed.columns) ? (parsed.columns as number) : 3;
     const latex = (parsed.latex ?? "").trim();
     const tableData = Array.isArray(parsed.tableData) ? parsed.tableData : undefined;
+    const tableCellDeltas = Array.isArray(parsed.tableCellDeltas) ? parsed.tableCellDeltas : undefined;
 
     const normalized: NormalizedAppendBlockInput = {
       workspaceId: parsed.workspaceId,
@@ -987,6 +1023,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       caption: parsed.caption,
       legacyType: typeInfo.legacyType,
       tableData,
+      deltas: parsed.deltas,
+      tableCellDeltas,
     };
 
     validateNormalizedAppendBlockInput(normalized, parsed);
@@ -1791,6 +1829,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           docId,
           type: "list",
           text: operation.text,
+          deltas: operation.deltas,
           style: operation.style,
           checked: operation.checked,
           strict,
@@ -1822,6 +1861,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           rows: operation.rows,
           columns: operation.columns,
           tableData: operation.tableData,
+          tableCellDeltas: operation.tableCellDeltas,
           strict,
           placement,
         };
@@ -4761,6 +4801,58 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     addDatabaseRowHandler as any
+  );
+
+  const deleteDatabaseRowHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rowBlockId: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowChildren = childIdsFrom(rowBlock.get("sys:children"));
+      const descendantBlockIds = collectDescendantBlockIds(ctx.blocks, [parsed.rowBlockId, ...rowChildren]);
+      const dbChildren = ensureChildrenArray(ctx.dbBlock);
+      const rowIndex = indexOfChild(dbChildren, parsed.rowBlockId);
+      if (rowIndex < 0) {
+        throw new Error(`Row block '${parsed.rowBlockId}' is not present in database '${parsed.databaseBlockId}' children`);
+      }
+
+      dbChildren.delete(rowIndex, 1);
+      ctx.cellsMap.delete(parsed.rowBlockId);
+      for (const blockId of descendantBlockIds) {
+        ctx.blocks.delete(blockId);
+      }
+
+      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        deleted: true,
+        rowBlockId: parsed.rowBlockId,
+        databaseBlockId: parsed.databaseBlockId,
+      });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "delete_database_row",
+    {
+      title: "Delete Database Row",
+      description: "Delete a row from an AFFiNE database block.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rowBlockId: z.string().min(1).describe("Row paragraph block ID to delete"),
+      },
+    },
+    deleteDatabaseRowHandler as any
   );
 
   const readDatabaseCellsHandler = async (parsed: {

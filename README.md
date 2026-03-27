@@ -416,6 +416,7 @@ Endpoints currently available:
 - `batch_create_docs` – create up to 20 documents in a single call
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
 - `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
+- `delete_database_row` – delete a row from a database block by row block id
 - `read_database_columns` – read database schema metadata including column IDs/types, select options, and table view column mappings
 - `read_database_cells` – read row titles plus decoded database cell values with optional row / column filters
 - `update_database_cell` – update a single database cell or the built-in row title (`createOption` defaults to `true` for select fields)
