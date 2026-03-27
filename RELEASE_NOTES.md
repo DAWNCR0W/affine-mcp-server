@@ -1,5 +1,40 @@
 # Release Notes
 
+## Version 1.11.0 (2026-03-27)
+
+### Highlights
+- Added full sidebar organize workflows for collections, folders, and links inside AFFiNE workspace trees.
+- Added configurable tool-surface filtering with `AFFINE_DISABLED_GROUPS` and `AFFINE_DISABLED_TOOLS`.
+- Added `delete_database_row` and fixed markdown import so list items and table cells keep inline rich-text marks in AFFiNE.
+
+### What Changed
+- `src/tools/organize.ts`, `README.md`, `tests/test-organize-tools.mjs`
+  - Added collection and folder management tools plus live organize-tool coverage.
+- `src/index.ts`, `README.md`, `tests/test-tool-filtering.mjs`
+  - Added group-level and tool-level filtering for exposed MCP tools.
+- `src/tools/docs.ts`, `tests/test-database-cells.mjs`
+  - Added `delete_database_row`.
+  - Added live database-row deletion coverage, including repeated-delete failure handling.
+- `src/tools/docs.ts`, `src/markdown/parse.ts`, `src/markdown/types.ts`, `tests/test-markdown-rich-text-import.mjs`
+  - Preserved inline rich-text formatting for markdown list items and table cells during import.
+  - Added live markdown-import verification against a real AFFiNE instance.
+- `src/cli.ts`, `tests/test-cli-commands.mjs`, `tests/test-cli-live.mjs`
+  - Added non-interactive CLI login/setup improvements and live CLI integration coverage.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `1.11.0`.
+  - Refreshed release-facing documentation for the expanded toolset.
+- Dependency maintenance
+  - Refreshed GitHub Actions, runtime lockfile entries, and development tooling, including `actions/github-script`, `jose`, `@modelcontextprotocol/sdk`, `undici`, `yjs`, `typescript`, and `@types/node`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+- Focused live verification passed:
+  - `npm run test:markdown-rich-text-import`
+  - `npm run test:db-cells`
+
 ## Version 1.10.1 (2026-03-18)
 
 ### Highlights

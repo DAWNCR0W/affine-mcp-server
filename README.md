@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.10.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.11.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -16,16 +16,17 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 61 focused tools with WebSocket-based document editing
+- Tools: 76 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.10.1: Refreshed packaged docs and release metadata for the v1.10.x toolset, and tightened tag-publish validation with E2E coverage. No runtime or tool-behavior changes.
+> New in v1.11.0: Added sidebar organize tools, configurable tool filtering, `delete_database_row`, and richer markdown import formatting for lists and table cells.
 
 ## Features
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
-- Database workflows: create database blocks, inspect schema, add columns and rows, and read or update cell values via MCP tools
+- Sidebar data: collections, folders, and organize links for AFFiNE workspace trees
+- Database workflows: create database blocks, inspect schema, add/update/delete rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
 - Users & Tokens: current user, sign in, profile/settings, and personal access tokens
@@ -95,12 +96,16 @@ The MCP server will use these credentials automatically.
 Other CLI commands:
 - `affine-mcp --help` / `-h` / `help` — show command help
 - `affine-mcp status` — show current config and test connection
+- `affine-mcp status --json` — machine-readable status output
 - `affine-mcp doctor` — run config and connectivity diagnostics
 - `affine-mcp show-config` — print the effective config with secrets redacted
 - `affine-mcp config-path` — print the config file path
-- `affine-mcp snippet <claude|cursor|codex> [--env]` — print ready-to-paste client configuration snippets
+- `affine-mcp snippet <claude|cursor|codex|all> [--env]` — print ready-to-paste client configuration snippets
 - `affine-mcp logout` — remove stored credentials
 - `affine-mcp --version` / `-v` / `version` — print the installed CLI version and exit
+
+Non-interactive login helpers:
+- `affine-mcp login --url <url> --token <token> --workspace-id <id> --force`
 
 ### Environment variables
 
@@ -109,6 +114,7 @@ You can also configure via environment variables (they override the config file)
 - Required: `AFFINE_BASE_URL`
 - Auth (choose one): `AFFINE_API_TOKEN` | `AFFINE_COOKIE` | `AFFINE_EMAIL` + `AFFINE_PASSWORD`
 - Optional: `AFFINE_GRAPHQL_PATH` (default `/graphql`), `AFFINE_WORKSPACE_ID`, `AFFINE_LOGIN_AT_START` (set `sync` only when you must block startup)
+- Tool filtering: `AFFINE_DISABLED_GROUPS`, `AFFINE_DISABLED_TOOLS` (see [Filtering Exposed Tools](#filtering-exposed-tools))
 
 Authentication priority:
 1) `AFFINE_API_TOKEN` → 2) `AFFINE_COOKIE` → 3) `AFFINE_EMAIL` + `AFFINE_PASSWORD`
@@ -193,6 +199,7 @@ Tips
 - If your password contains `!` (zsh history expansion), wrap it in single quotes in shells or use the JSON config above.
 - `affine-mcp doctor` is the fastest way to confirm that your saved config still works.
 - `affine-mcp snippet claude --env` and `affine-mcp snippet codex --env` can generate ready-to-paste client setup from your current config.
+- `affine-mcp snippet all --env` prints Claude, Cursor, and Codex setup in one shot.
 
 ### Codex CLI
 
@@ -354,6 +361,7 @@ Endpoints currently available:
 - `/healthz` - HTTP liveness probe
 - `/readyz` - HTTP readiness probe
 
+
 ## Available Tools
 
 ### Workspace
@@ -364,6 +372,23 @@ Endpoints currently available:
 - `delete_workspace` – delete workspace permanently
 - `list_workspace_tree` – return the workspace document hierarchy as a tree
 - `get_orphan_docs` – find documents that are not linked from any parent doc in the sidebar tree
+
+### Organization
+- `list_collections` – list workspace collections
+- `get_collection` – get a collection by id
+- `create_collection` – create a collection
+- `update_collection` – rename a collection
+- `delete_collection` – delete a collection
+- `add_doc_to_collection` – add a document to a collection allow-list
+- `remove_doc_from_collection` – remove a document from a collection allow-list
+- `list_organize_nodes` – experimental organize/folder tree dump
+- `create_folder` – experimental root or nested folder creation
+- `rename_folder` – experimental folder rename
+- `delete_folder` – experimental recursive folder delete
+- `move_organize_node` – experimental folder/link move
+- `add_organize_link` – experimental doc/tag/collection link under a folder
+- `delete_organize_link` – experimental doc/tag/collection link delete
+
 
 ### Documents
 - `list_docs` – list documents with pagination (includes `node.tags`)
@@ -391,6 +416,7 @@ Endpoints currently available:
 - `batch_create_docs` – create up to 20 documents in a single call
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
 - `add_database_row` – add a row to a database block with values mapped by column name/ID (`title` / `Title` updates the built-in row title)
+- `delete_database_row` – delete a row from a database block by row block id
 - `read_database_columns` – read database schema metadata including column IDs/types, select options, and table view column mappings
 - `read_database_cells` – read row titles plus decoded database cell values with optional row / column filters
 - `update_database_cell` – update a single database cell or the built-in row title (`createOption` defaults to `true` for select fields)
@@ -418,6 +444,40 @@ Endpoints currently available:
 
 ### Blob Storage
 - `upload_blob`, `delete_blob`, `cleanup_blobs`
+
+## Filtering Exposed Tools
+
+Optional environment variables to narrow the exposed surface. 
+
+### Group-level — `AFFINE_DISABLED_GROUPS`
+
+| Group name | Tools included |
+|---|---|
+| `workspaces` | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `delete_workspace` |
+| `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_doc_from_markdown`, `create_doc_from_template`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
+| `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
+| `history` | `list_histories` |
+| `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
+| `users` | `current_user`, `sign_in`, `update_profile`, `update_settings` |
+| `access_tokens` | `list_access_tokens`, `generate_access_token`, `revoke_access_token` |
+| `blobs` | `upload_blob`, `delete_blob`, `cleanup_blobs` |
+| `notifications` | `list_notifications`, `read_all_notifications` |
+
+```json
+"env": {
+  "AFFINE_DISABLED_GROUPS": "comments,history,blobs,users"
+}
+```
+
+### Tool-level — `AFFINE_DISABLED_TOOLS`
+
+Disables individual tools by exact name (comma-separated). 
+
+```json
+"env": {
+  "AFFINE_DISABLED_TOOLS": "delete_workspace,delete_doc"
+}
+```
 
 ## Use Locally (clone)
 
@@ -447,7 +507,7 @@ npm run pack:check
 - For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
 - For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:bearer`, `npm run test:http-email-password`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:organize`, `npm run test:bearer`, `npm run test:http-email-password`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:cli-live`, `npm run test:tool-filtering`, `npm run test:markdown-rich-text-import`, `npm run test:playwright`.
 
 ## Troubleshooting
 

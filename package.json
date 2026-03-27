@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "1.10.1",
+  "version": "1.11.0",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -35,7 +35,9 @@
     "test": "npm run test:tool-manifest",
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
+    "test:cli-live": "node tests/test-cli-live.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
+    "test:tool-filtering": "node tests/test-tool-filtering.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
@@ -49,9 +51,11 @@
     "test:http-email-password": "node tests/test-http-email-password.mjs",
     "test:http-bearer": "node tests/test-http-bearer.mjs",
     "test:oauth-http": "node tests/test-oauth-http.mjs",
+    "test:organize": "node tests/test-organize-tools.mjs",
     "test:supporting-tools": "node tests/test-supporting-tools.mjs",
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",
     "test:markdown-roundtrip": "node tests/test-markdown-roundtrip.mjs",
+    "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
@@ -75,6 +79,7 @@
     "express": "^5.2.1",
     "form-data": "^4.0.4",
     "jose": "^6.2.1",
+    "fractional-indexing": "^3.2.0",
     "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "socket.io-client": "^4.8.1",
@@ -89,6 +94,6 @@
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^25.2.3",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.4"
+    "typescript": "^6.0.2"
   }
 }
