@@ -8,6 +8,7 @@
  * - row and column filtering by name / ID
  * - `update_database_cell` across all supported column types
  * - `update_database_row` batch updates
+ * - `delete_database_row` removes rows cleanly from the database block
  * - select / multi-select option auto-create behavior and strict failure mode
  *
  * Outputs tests/test-database-cells-state.json for UI verification.
@@ -156,7 +157,7 @@ async function main() {
 
   try {
     const tools = await client.listTools();
-    const requiredTools = ['add_database_row', 'read_database_cells', 'update_database_cell', 'update_database_row'];
+    const requiredTools = ['add_database_row', 'delete_database_row', 'read_database_cells', 'update_database_cell', 'update_database_row'];
     for (const toolName of requiredTools) {
       if (!tools.tools.some(tool => tool.name === toolName)) {
         throw new Error(`Expected tool "${toolName}" to be registered`);
@@ -466,7 +467,38 @@ async function main() {
     expectEqual(finalRow2.cells.Due.value, updatedDates.row2, 'final row2 Due');
     expectEqual(finalRow2.cells.Link.value, 'https://example.com/beta-final', 'final row2 Link');
 
-    state.finalRows = [finalRow1, finalRow2];
+    await call('delete_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: state.rowBlockIds[0],
+    });
+    await settle(1200);
+
+    await expectToolFailure('delete_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: state.rowBlockIds[0],
+    }, `Row block '${state.rowBlockIds[0]}' not found`);
+
+    const afterDelete = await call('read_database_cells', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+    });
+    expectEqual(afterDelete.rows.length, 1, 'row count after delete_database_row');
+    expectEqual(afterDelete.rows[0].rowBlockId, state.rowBlockIds[1], 'remaining row after delete_database_row');
+
+    const readAfterDelete = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    if (readAfterDelete?.blocks?.some(block => block.id === state.rowBlockIds[0])) {
+      throw new Error('deleted database row block still exists in read_doc output');
+    }
+
+    state.finalRows = afterDelete.rows;
 
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
     console.log();
