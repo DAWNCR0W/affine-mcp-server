@@ -1,5 +1,5 @@
 import MarkdownIt from "markdown-it";
-import type { MarkdownListStyle, MarkdownOperation, MarkdownParseResult } from "./types.js";
+import type { MarkdownListStyle, MarkdownOperation, MarkdownParseResult, TextDelta } from "./types.js";
 
 type TokenLike = {
   type: string;
@@ -154,6 +154,98 @@ function renderInline(children: TokenLike[]): string {
   return renderRange(0, children.length);
 }
 
+function deltaToString(deltas: TextDelta[]): string {
+  return deltas.map(delta => delta.insert).join("");
+}
+
+function renderInlineDeltas(children: TokenLike[]): TextDelta[] {
+  function applyAttrs(
+    deltas: TextDelta[],
+    attrs: NonNullable<TextDelta["attributes"]>
+  ): TextDelta[] {
+    return deltas.map(delta => ({
+      insert: delta.insert,
+      attributes: { ...(delta.attributes ?? {}), ...attrs },
+    }));
+  }
+
+  function renderRange(start: number, end: number): TextDelta[] {
+    const output: TextDelta[] = [];
+    for (let i = start; i < end; i += 1) {
+      const token = children[i];
+      switch (token.type) {
+        case "text":
+        case "html_inline":
+          output.push({ insert: token.content });
+          break;
+        case "code_inline":
+          output.push({ insert: token.content, attributes: { code: true } });
+          break;
+        case "softbreak":
+          output.push({ insert: "\n" });
+          break;
+        case "hardbreak":
+          output.push({ insert: "  \n" });
+          break;
+        case "image": {
+          const src = getAttr(token, "src");
+          const alt = token.content ?? "";
+          output.push({ insert: `![${alt}](${src})` });
+          break;
+        }
+        case "link_open": {
+          const close = findMatchingInline(children, i, "link_open", "link_close");
+          if (close < 0) {
+            break;
+          }
+          const href = getAttr(token, "href");
+          const innerDeltas = renderRange(i + 1, close);
+          output.push(
+            ...applyAttrs(
+              innerDeltas.length > 0 ? innerDeltas : [{ insert: href }],
+              { link: href }
+            )
+          );
+          i = close;
+          break;
+        }
+        case "strong_open": {
+          const close = findMatchingInline(children, i, "strong_open", "strong_close");
+          if (close < 0) {
+            break;
+          }
+          output.push(...applyAttrs(renderRange(i + 1, close), { bold: true }));
+          i = close;
+          break;
+        }
+        case "em_open": {
+          const close = findMatchingInline(children, i, "em_open", "em_close");
+          if (close < 0) {
+            break;
+          }
+          output.push(...applyAttrs(renderRange(i + 1, close), { italic: true }));
+          i = close;
+          break;
+        }
+        case "s_open": {
+          const close = findMatchingInline(children, i, "s_open", "s_close");
+          if (close < 0) {
+            break;
+          }
+          output.push(...applyAttrs(renderRange(i + 1, close), { strike: true }));
+          i = close;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    return output;
+  }
+
+  return renderRange(0, children.length).filter(delta => delta.insert.length > 0);
+}
+
 function extractSingleLink(children: TokenLike[]): { href: string; text: string } | null {
   const filtered = children.filter(token => {
     if (token.type === "softbreak" || token.type === "hardbreak") {
@@ -183,8 +275,13 @@ function extractSingleLink(children: TokenLike[]): { href: string; text: string 
   return { href, text };
 }
 
-function parseTable(tokens: TokenLike[], start: number, end: number): { rows: number; columns: number; tableData: string[][] } | null {
+function parseTable(
+  tokens: TokenLike[],
+  start: number,
+  end: number
+): { rows: number; columns: number; tableData: string[][]; tableCellDeltas: TextDelta[][][] } | null {
   const rows: string[][] = [];
+  const cellDeltasRows: TextDelta[][][] = [];
 
   let i = start;
   while (i < end) {
@@ -195,6 +292,7 @@ function parseTable(tokens: TokenLike[], start: number, end: number): { rows: nu
         break;
       }
       const cells: string[] = [];
+      const rowCellDeltas: TextDelta[][] = [];
       let j = i + 1;
       while (j < trClose) {
         const cellOpen = tokens[j];
@@ -209,19 +307,23 @@ function parseTable(tokens: TokenLike[], start: number, end: number): { rows: nu
             break;
           }
           let cellText = "";
+          let cellDeltas: TextDelta[] = [];
           for (let k = j + 1; k < cellClose; k += 1) {
             if (tokens[k].type === "inline") {
-              cellText = renderInline(tokens[k].children ?? []).trim();
+              cellDeltas = renderInlineDeltas(tokens[k].children ?? []);
+              cellText = deltaToString(cellDeltas).trim();
               break;
             }
           }
           cells.push(cellText);
+          rowCellDeltas.push(cellDeltas);
           j = cellClose + 1;
           continue;
         }
         j += 1;
       }
       rows.push(cells);
+      cellDeltasRows.push(rowCellDeltas);
       i = trClose + 1;
       continue;
     }
@@ -250,6 +352,13 @@ function parseTable(tokens: TokenLike[], start: number, end: number): { rows: nu
     rows: tableData.length,
     columns,
     tableData,
+    tableCellDeltas: cellDeltasRows.map(row => {
+      const normalized = [...row];
+      while (normalized.length < columns) {
+        normalized.push([]);
+      }
+      return normalized;
+    }),
   };
 }
 
@@ -306,6 +415,7 @@ function parseList(
       }
 
       let itemText = "";
+      let itemDeltas: TextDelta[] = [];
       const nestedOperations: MarkdownOperation[] = [];
       let hasNestedList = false;
 
@@ -313,7 +423,8 @@ function parseList(
       while (cursor < close) {
         const current = tokens[cursor];
         if (!itemText && current.type === "inline") {
-          itemText = renderInline(current.children ?? []).trim();
+          itemDeltas = renderInlineDeltas(current.children ?? []);
+          itemText = deltaToString(itemDeltas).trim();
         }
 
         if (current.type === "bullet_list_open" || current.type === "ordered_list_open") {
@@ -345,6 +456,25 @@ function parseList(
         style = "todo";
         checked = taskMatch[1].toLowerCase() === "x";
         itemText = taskMatch[2];
+        const prefixLength = deltaToString(itemDeltas).length - itemText.length;
+        let remainingPrefix = prefixLength;
+        const trimmedDeltas: TextDelta[] = [];
+        for (const delta of itemDeltas) {
+          if (remainingPrefix <= 0) {
+            trimmedDeltas.push(delta);
+            continue;
+          }
+          if (remainingPrefix >= delta.insert.length) {
+            remainingPrefix -= delta.insert.length;
+            continue;
+          }
+          trimmedDeltas.push({
+            ...delta,
+            insert: delta.insert.slice(remainingPrefix),
+          });
+          remainingPrefix = 0;
+        }
+        itemDeltas = trimmedDeltas;
       }
 
       operations.push({
@@ -352,6 +482,7 @@ function parseList(
         text: itemText,
         style,
         ...(style === "todo" ? { checked: Boolean(checked) } : {}),
+        deltas: itemDeltas,
       });
 
       if (hasNestedList) {
@@ -520,6 +651,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           rows: parsedTable.rows,
           columns: parsedTable.columns,
           tableData: parsedTable.tableData,
+          tableCellDeltas: parsedTable.tableCellDeltas,
         });
         i = close + 1;
         break;

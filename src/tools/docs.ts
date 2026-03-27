@@ -1339,7 +1339,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:type", normalized.listStyle);
         block.set("prop:checked", normalized.listStyle === "todo" ? normalized.checked : false);
-        block.set("prop:text", makeText(content));
+        block.set("prop:text", makeText(normalized.deltas ?? content));
         return { blockId, block, flavour: "affine:list", blockType: normalized.listStyle };
       }
       case "code": {
@@ -1406,6 +1406,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const rowIds: string[] = [];
         const columnIds: string[] = [];
         const tableData = normalized.tableData ?? [];
+        const tableCellDeltas = normalized.tableCellDeltas ?? [];
 
         for (let i = 0; i < normalized.rows; i++) {
           const rowId = generateId();
@@ -1425,8 +1426,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           for (let columnIndex = 0; columnIndex < columnIds.length; columnIndex += 1) {
             const columnId = columnIds[columnIndex];
             const cellText = tableData[rowIndex]?.[columnIndex] ?? "";
+            const cellDeltas = tableCellDeltas[rowIndex]?.[columnIndex];
+
+            if (Array.isArray(cellDeltas) && cellDeltas.length > 0) {
+              const normalizedCellDeltas = isHeader
+                ? cellDeltas.map(delta => ({
+                    insert: delta.insert,
+                    attributes: { ...(delta.attributes ?? {}), bold: true },
+                  }))
+                : cellDeltas;
+              block.set(`prop:cells.${rowId}:${columnId}.text`, makeText(normalizedCellDeltas));
+              continue;
+            }
+
             const cellYText = new Y.Text();
-            // First row is always rendered bold (header row convention)
             if (isHeader && cellText) {
               cellYText.insert(0, cellText, { bold: true });
             } else {
