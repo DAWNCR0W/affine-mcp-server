@@ -59,6 +59,7 @@ function testParseAdmonitionAsCallout() {
     {
       type: 'callout',
       text: 'Callout body',
+      deltas: [{ insert: 'Callout body' }],
     },
   ], 'admonition-style blockquotes should import as callout operations');
   assert.equal(parsed.lossy, false, 'callout import should not be lossy');
