@@ -4763,6 +4763,57 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     addDatabaseRowHandler as any
   );
 
+  const deleteDatabaseRowHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rowBlockId: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const descendantBlockIds = collectDescendantBlockIds(ctx.blocks, [parsed.rowBlockId, ...childIdsFrom(rowBlock.get("sys:children"))]);
+      const dbChildren = ensureChildrenArray(ctx.dbBlock);
+      const rowIndex = indexOfChild(dbChildren, parsed.rowBlockId);
+      if (rowIndex < 0) {
+        throw new Error(`Row block '${parsed.rowBlockId}' is not present in database '${parsed.databaseBlockId}' children`);
+      }
+
+      dbChildren.delete(rowIndex, 1);
+      ctx.cellsMap.delete(parsed.rowBlockId);
+      for (const blockId of descendantBlockIds) {
+        ctx.blocks.delete(blockId);
+      }
+
+      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        deleted: true,
+        rowBlockId: parsed.rowBlockId,
+        databaseBlockId: parsed.databaseBlockId,
+      });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "delete_database_row",
+    {
+      title: "Delete Database Row",
+      description: "Delete a row from an AFFiNE database block.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rowBlockId: z.string().min(1).describe("Row paragraph block ID to delete"),
+      },
+    },
+    deleteDatabaseRowHandler as any
+  );
+
   const readDatabaseCellsHandler = async (parsed: {
     workspaceId?: string;
     docId: string;

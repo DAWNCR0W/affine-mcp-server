@@ -24,6 +24,7 @@
     "delete_blob",
     "delete_collection",
     "delete_comment",
+    "delete_database_row",
     "delete_doc",
     "delete_folder",
     "delete_organize_link",
