@@ -44,6 +44,12 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Local working notes (not part of the repo)
+BUG_BOLD_TEXT.md
+CHANGES_bold_text_fix.md
+bugs/
+tests/create-formatting-demo.mjs
 comprehensive-test-results-*.json
 
 # E2E test artifacts

@@ -78,7 +78,7 @@ function deltaRunToMarkdown(insert: string, attributes: NonNullable<TextDelta["a
     inner = `*${inner}*`;
   }
   if (attributes.link) {
-    inner = `[${inner}](${attributes.link})`;
+    inner = `[${inner.replace(/]/g, "\\]")}](${attributes.link})`;
   }
   if (attributes.strike) {
     inner = `~~${inner}~~`;

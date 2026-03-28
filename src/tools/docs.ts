@@ -192,6 +192,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
   ];
 
+  // Null-valued attrs explicitly clear marks in Yjs, preventing them from
+  // bleeding into adjacent plain-text runs via left-neighbour inheritance.
+  const CLEARED_MARKS: Record<string, null> = { bold: null, italic: null, strike: null, code: null, link: null };
+
   function makeText(content: string | TextDelta[]): Y.Text {
     const yText = new Y.Text();
     if (typeof content === "string") {
@@ -202,7 +206,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let offset = 0;
       for (const delta of content) {
         if (delta.insert.length > 0) {
-          const attrs: Record<string, unknown> = delta.attributes ? { ...delta.attributes } : {};
+          const attrs: Record<string, unknown> = delta.attributes
+            ? { ...CLEARED_MARKS, ...delta.attributes }
+            : { ...CLEARED_MARKS };
           yText.insert(offset, delta.insert, attrs);
           offset += delta.insert.length;
         }
@@ -3808,7 +3814,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           matchLog.push({ blockId, flavour: flavour ?? "unknown", original, replaced });
           if (!parsed.dryRun) {
             const prevSV = Y.encodeStateVector(doc);
-            // Collect match positions then apply right-to-left so offsets stay valid
+            // Snapshot delta runs once so we can look up attrs at each match position.
+            const deltaRuns = val.toDelta() as Array<{ insert: string; attributes?: Record<string, unknown> }>;
+            // Collect match positions then apply right-to-left so offsets stay valid.
             const positions: number[] = [];
             let idx = 0;
             while (true) {
@@ -3819,8 +3827,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               idx = pos + parsed.search.length;
             }
             for (let i = positions.length - 1; i >= 0; i--) {
+              // Find the attrs of the run that contains the match start.
+              let cur = 0;
+              let matchAttrs: Record<string, unknown> | undefined;
+              for (const run of deltaRuns) {
+                if (positions[i] < cur + run.insert.length) {
+                  matchAttrs = run.attributes;
+                  break;
+                }
+                cur += run.insert.length;
+              }
               val.delete(positions[i], parsed.search.length);
-              val.insert(positions[i], parsed.replace);
+              if (matchAttrs && Object.keys(matchAttrs).length > 0) {
+                val.insert(positions[i], parsed.replace, matchAttrs);
+              } else {
+                val.insert(positions[i], parsed.replace);
+              }
             }
             const delta = Y.encodeStateAsUpdate(doc, prevSV);
             await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
