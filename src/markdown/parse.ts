@@ -83,30 +83,6 @@ function deltaToString(deltas: TextDelta[]): string {
   return deltas.map(delta => delta.insert).join("");
 }
 
-/**
- * Strip deltas corresponding to the first line (up to and including the first
- * "\n" separator).  Used by callout parsing to remove the `[!NOTE]` marker
- * line from the collected blockquote deltas.
- */
-function stripFirstDeltaLine(deltas: TextDelta[]): TextDelta[] {
-  const result: TextDelta[] = [];
-  let pastNewline = false;
-  for (const delta of deltas) {
-    if (pastNewline) {
-      result.push(delta);
-      continue;
-    }
-    const nlIndex = delta.insert.indexOf("\n");
-    if (nlIndex >= 0) {
-      pastNewline = true;
-      const remainder = delta.insert.slice(nlIndex + 1);
-      if (remainder.length > 0) {
-        result.push({ ...delta, insert: remainder });
-      }
-    }
-  }
-  return result;
-}
 
 function renderInline(children: TokenLike[]): TextDelta[] {
   function applyAttrs(deltas: TextDelta[], attrs: NonNullable<TextDelta["attributes"]>): TextDelta[] {
@@ -343,13 +319,30 @@ function collectQuoteText(tokens: TokenLike[], start: number, end: number): { te
   return { text: lines.join("\n"), deltas: allDeltas };
 }
 
-function parseCalloutAdmonition(text: string): string | null {
+function parseCalloutAdmonitionDeltas(deltas: TextDelta[]): TextDelta[] | null {
+  const text = deltaToString(deltas);
   const lines = text.split("\n");
   const marker = lines[0]?.trim() ?? "";
   if (!/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(marker)) {
     return null;
   }
-  return lines.slice(1).join("\n").trim();
+  const bodyText = lines.slice(1).join("\n").trim();
+  // Re-slice the deltas to remove the marker line
+  const markerLen = lines[0].length + 1; // +1 for \n
+  let skipped = 0;
+  const bodyDeltas: TextDelta[] = [];
+  for (const d of deltas) {
+    if (skipped < markerLen) {
+      const skip = Math.min(d.insert.length, markerLen - skipped);
+      skipped += skip;
+      if (skip < d.insert.length) {
+        bodyDeltas.push({ ...d, insert: d.insert.slice(skip) });
+      }
+    } else {
+      bodyDeltas.push(d);
+    }
+  }
+  return bodyText.length > 0 ? bodyDeltas.filter(d => d.insert.trim() || !d.attributes) : bodyDeltas;
 }
 
 function parseList(
@@ -560,9 +553,10 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
         }
         const quoteResult = collectQuoteText(tokens, i + 1, close);
         const quoteText = quoteResult.text.trim();
-        const calloutText = parseCalloutAdmonition(quoteText);
-        if (calloutText !== null) {
-          state.operations.push({ type: "callout", text: calloutText, deltas: stripFirstDeltaLine(quoteResult.deltas) });
+        const calloutDeltas = parseCalloutAdmonitionDeltas(quoteResult.deltas);
+        if (calloutDeltas !== null) {
+          const calloutText = deltaToString(calloutDeltas).trim();
+          state.operations.push({ type: "callout", text: calloutText, deltas: calloutDeltas });
         } else if (quoteText.length > 0) {
           state.operations.push({ type: "quote", text: quoteText, deltas: quoteResult.deltas });
         }

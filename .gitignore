@@ -58,3 +58,9 @@ tests/playwright/playwright-report.json
 
 # Package artifacts
 *.tgz
+
+# Local dev/debug artifacts
+BUG_BOLD_TEXT.md
+CHANGES_bold_text_fix.md
+bugs/
+tests/create-formatting-demo.mjs

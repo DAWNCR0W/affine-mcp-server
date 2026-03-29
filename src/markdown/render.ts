@@ -1,4 +1,4 @@
-import type { MarkdownRenderResult, MarkdownRenderableBlock } from "./types.js";
+import type { MarkdownRenderResult, MarkdownRenderableBlock, TextDelta } from "./types.js";
 
 type RenderState = {
   blocksById: Map<string, MarkdownRenderableBlock>;
@@ -65,6 +65,40 @@ function renderTable(tableData: string[][]): string[] {
   ];
 }
 
+export function deltasToMarkdown(deltas: TextDelta[]): string {
+  let result = "";
+  let boldOpen = false;
+  let italicOpen = false;
+  const flushBoldItalic = () => {
+    if (italicOpen) { result += "*"; italicOpen = false; }
+    if (boldOpen) { result += "**"; boldOpen = false; }
+  };
+  for (const d of deltas) {
+    const attrs = d.attributes ?? {};
+    const wantBold = attrs.bold === true;
+    const wantItalic = attrs.italic === true;
+    if (attrs.code || attrs.link || attrs.strike) {
+      flushBoldItalic();
+      let inner = d.insert;
+      if (attrs.code) { result += `\`${inner}\``; continue; }
+      if (wantBold && wantItalic) { inner = `***${inner}***`; }
+      else if (wantBold) { inner = `**${inner}**`; }
+      else if (wantItalic) { inner = `*${inner}*`; }
+      if (attrs.link) { inner = `[${inner.replace(/]/g, "\\]")}](${attrs.link})`; }
+      if (attrs.strike) { inner = `~~${inner}~~`; }
+      result += inner;
+      continue;
+    }
+    if (italicOpen && !wantItalic) { result += "*"; italicOpen = false; }
+    if (boldOpen && !wantBold) { result += "**"; boldOpen = false; }
+    if (wantBold && !boldOpen) { result += "**"; boldOpen = true; }
+    if (wantItalic && !italicOpen) { result += "*"; italicOpen = true; }
+    result += d.insert;
+  }
+  flushBoldItalic();
+  return result;
+}
+
 function childList(block: MarkdownRenderableBlock): string[] {
   return Array.isArray(block.childIds) ? block.childIds : [];
 }
@@ -86,7 +120,9 @@ function renderBlock(
     return { lines: [], isList: false };
   }
 
-  const text = (block.text ?? "").trim();
+  const text = (block.deltas && block.deltas.length > 0
+    ? deltasToMarkdown(block.deltas)
+    : (block.text ?? "")).trim();
   const flavour = block.flavour ?? "";
   const type = block.type ?? "";
   const children = childList(block);
