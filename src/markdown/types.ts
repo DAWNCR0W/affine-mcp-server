@@ -16,18 +16,22 @@ export type MarkdownOperation =
       type: "heading";
       text: string;
       level: 1 | 2 | 3 | 4 | 5 | 6;
+      deltas?: TextDelta[];
     }
   | {
       type: "paragraph";
       text: string;
+      deltas?: TextDelta[];
     }
   | {
       type: "quote";
       text: string;
+      deltas?: TextDelta[];
     }
   | {
       type: "callout";
       text: string;
+      deltas?: TextDelta[];
     }
   | {
       type: "list";
@@ -81,6 +85,7 @@ export type MarkdownRenderableBlock = {
   sourceId: string | null;
   caption: string | null;
   tableData: string[][] | null;
+  deltas?: TextDelta[];
 };
 
 export type MarkdownRenderResult = {

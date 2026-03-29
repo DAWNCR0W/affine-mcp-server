@@ -282,35 +282,46 @@ function parseTable(tokens: TokenLike[], start: number, end: number): {
   };
 }
 
-function collectQuoteText(tokens: TokenLike[], start: number, end: number): string {
-  const lines: string[] = [];
+function collectQuoteDeltas(tokens: TokenLike[], start: number, end: number): TextDelta[] {
+  const result: TextDelta[] = [];
   for (let i = start; i < end; i += 1) {
     const token = tokens[i];
     if (token.type === "inline") {
-      const line = deltaToString(renderInline(token.children ?? [])).trim();
-      if (line) {
-        lines.push(line);
+      const lineDeltas = renderInline(token.children ?? []);
+      if (lineDeltas.length > 0) {
+        if (result.length > 0) result.push({ insert: "\n" });
+        result.push(...lineDeltas);
       }
       continue;
     }
-    if (token.type === "fence" || token.type === "code_block") {
-      const language = (token.info ?? "").trim();
-      const codeBody = token.content.replace(/\n$/, "");
-      lines.push(`\`\`\`${language}\n${codeBody}\n\`\`\``);
-      continue;
-    }
   }
-
-  return lines.join("\n");
+  return result;
 }
 
-function parseCalloutAdmonition(text: string): string | null {
+function parseCalloutAdmonitionDeltas(deltas: TextDelta[]): TextDelta[] | null {
+  const text = deltaToString(deltas);
   const lines = text.split("\n");
   const marker = lines[0]?.trim() ?? "";
   if (!/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(marker)) {
     return null;
   }
-  return lines.slice(1).join("\n").trim();
+  const bodyText = lines.slice(1).join("\n").trim();
+  // Re-slice the deltas to remove the marker line
+  const markerLen = lines[0].length + 1; // +1 for \n
+  let skipped = 0;
+  const bodyDeltas: TextDelta[] = [];
+  for (const d of deltas) {
+    if (skipped < markerLen) {
+      const skip = Math.min(d.insert.length, markerLen - skipped);
+      skipped += skip;
+      if (skip < d.insert.length) {
+        bodyDeltas.push({ ...d, insert: d.insert.slice(skip) });
+      }
+    } else {
+      bodyDeltas.push(d);
+    }
+  }
+  return bodyText.length > 0 ? bodyDeltas.filter(d => d.insert.trim() || !d.attributes) : bodyDeltas;
 }
 
 function parseList(
@@ -442,7 +453,8 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
         const level = Math.max(1, Math.min(6, levelNum)) as 1 | 2 | 3 | 4 | 5 | 6;
         const inline = tokens.slice(i + 1, close).find(inner => inner.type === "inline");
         const text = inline ? deltaToString(renderInline(inline.children ?? [])).trim() : "";
-        state.operations.push({ type: "heading", level, text });
+        const headingDeltas = inline ? renderInline(inline.children ?? []) : [];
+        state.operations.push({ type: "heading", level, text, deltas: headingDeltas });
         i = close + 1;
         break;
       }
@@ -487,9 +499,10 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           break;
         }
 
-        const text = deltaToString(renderInline(children)).trim();
+        const paraDeltas = renderInline(children);
+        const text = deltaToString(paraDeltas).trim();
         if (text.length > 0) {
-          state.operations.push({ type: "paragraph", text });
+          state.operations.push({ type: "paragraph", text, deltas: paraDeltas });
         }
         i = close + 1;
         break;
@@ -517,12 +530,14 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           i += 1;
           break;
         }
-        const quoteText = collectQuoteText(tokens, i + 1, close).trim();
-        const calloutText = parseCalloutAdmonition(quoteText);
-        if (calloutText !== null) {
-          state.operations.push({ type: "callout", text: calloutText });
+        const quoteDeltas = collectQuoteDeltas(tokens, i + 1, close);
+        const quoteText = deltaToString(quoteDeltas).trim();
+        const calloutDeltas = parseCalloutAdmonitionDeltas(quoteDeltas);
+        if (calloutDeltas !== null) {
+          const calloutText = deltaToString(calloutDeltas).trim();
+          state.operations.push({ type: "callout", text: calloutText, deltas: calloutDeltas });
         } else if (quoteText.length > 0) {
-          state.operations.push({ type: "quote", text: quoteText });
+          state.operations.push({ type: "quote", text: quoteText, deltas: quoteDeltas });
         }
         i = close + 1;
         break;
