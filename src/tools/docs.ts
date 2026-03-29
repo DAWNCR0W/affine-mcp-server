@@ -4618,19 +4618,45 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     value: unknown,
     createOption: boolean,
   ) {
-    const cellValue = new Y.Map<any>();
-    cellValue.set("columnId", col.id);
+    // For types that require Y.js shared types (Y.Text, Y.Array), we must use
+    // a Y.Map wrapper so the shared type can be nested inside the cell entry.
+    // For all other (primitive) types, we store a plain JS object instead.
+    //
+    // BlockSuite's reactive proxy layer (used by the AFFiNE UI) deserialises
+    // `prop:cells` entries written as plain objects correctly, but it does NOT
+    // reliably pick up primitive values buried inside manually-constructed
+    // nested Y.Map instances.  Rich-text works with Y.Map because Y.Text
+    // receives special bridging treatment in BlockSuite; plain primitives
+    // (number, boolean, string) do not.
+    //
+    // See: https://github.com/toeverything/blocksuite – blocks/database/src/utils/block-utils.ts
     switch (col.type) {
       case "rich-text":
-      case "title":
+      case "title": {
+        // Y.Text must live inside a Y.Map so it can be a nested shared type.
+        const cellValue = new Y.Map<any>();
+        cellValue.set("columnId", col.id);
         cellValue.set("value", makeText(String(value ?? "")));
+        rowCells.set(col.id, cellValue);
         break;
+      }
+      case "multi-select": {
+        // Y.Array must also live inside a Y.Map.
+        const cellValue = new Y.Map<any>();
+        cellValue.set("columnId", col.id);
+        const labels = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
+        const optionIds = new Y.Array<string>();
+        optionIds.push(labels.map(label => resolveSelectOptionId(col, label, createOption)));
+        cellValue.set("value", optionIds);
+        rowCells.set(col.id, cellValue);
+        break;
+      }
       case "number": {
         const num = Number(value);
         if (Number.isNaN(num)) {
           throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
         }
-        cellValue.set("value", num);
+        rowCells.set(col.id, { columnId: col.id, value: num });
         break;
       }
       case "checkbox": {
@@ -4643,19 +4669,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         } else {
           bool = !!value;
         }
-        cellValue.set("value", bool);
+        rowCells.set(col.id, { columnId: col.id, value: bool });
         break;
       }
       case "select":
-        cellValue.set("value", resolveSelectOptionId(col, String(value ?? ""), createOption));
+        rowCells.set(col.id, {
+          columnId: col.id,
+          value: resolveSelectOptionId(col, String(value ?? ""), createOption),
+        });
         break;
-      case "multi-select": {
-        const labels = Array.isArray(value) ? value.map(String) : [String(value ?? "")];
-        const optionIds = new Y.Array<string>();
-        optionIds.push(labels.map(label => resolveSelectOptionId(col, label, createOption)));
-        cellValue.set("value", optionIds);
-        break;
-      }
       case "date": {
         const numericValue = typeof value === "number"
           ? value
@@ -4663,20 +4685,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         if (!Number.isFinite(numericValue)) {
           throw new Error(`Column "${col.name}": expected a timestamp-compatible value, got ${JSON.stringify(value)}`);
         }
-        cellValue.set("value", numericValue);
+        rowCells.set(col.id, { columnId: col.id, value: numericValue });
         break;
       }
       case "link":
-        cellValue.set("value", String(value ?? ""));
+        rowCells.set(col.id, { columnId: col.id, value: String(value ?? "") });
         break;
-      default:
+      default: {
         if (typeof value === "string") {
+          // Unknown type with string value – use Y.Map + Y.Text for safety.
+          const cellValue = new Y.Map<any>();
+          cellValue.set("columnId", col.id);
           cellValue.set("value", makeText(value));
+          rowCells.set(col.id, cellValue);
         } else {
-          cellValue.set("value", value);
+          rowCells.set(col.id, { columnId: col.id, value });
         }
+      }
     }
-    rowCells.set(col.id, cellValue);
   }
 
   async function loadDatabaseDocContext(
