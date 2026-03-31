@@ -1,5 +1,28 @@
 # Release Notes
 
+## Version 1.11.1 (2026-03-31)
+
+### Highlights
+- Corrected stale `list_docs` metadata after `delete_doc` so callers no longer see a pre-delete `totalCount`.
+- Aligned `list_docs.pageInfo.endCursor` with the returned edge list after delete-driven metadata drift.
+- Added live regression coverage to keep the delete/list_docs workflow stable against AFFiNE `0.26.4`.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Clamp `list_docs.totalCount` downward when the workspace snapshot shows fewer pages than GraphQL reports after a deletion.
+  - Align `pageInfo.endCursor` with the last returned edge cursor and recompute offset-based `hasNextPage` when the count is clamped.
+- `tests/test-doc-discovery.mjs`
+  - Added a live regression that creates documents, deletes one, and verifies corrected `totalCount`, deleted-doc absence, and cursor alignment.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `1.11.1`.
+  - Refreshed release-facing docs for the patch release.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Focused live verification passed:
+  - `npm run test:doc-discovery`
+
 ## Version 1.11.0 (2026-03-27)
 
 ### Highlights

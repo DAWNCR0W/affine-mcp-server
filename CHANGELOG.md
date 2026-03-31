@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [1.11.1] - 2026-03-31
+
+### Fixed
+- `list_docs` now clamps stale `totalCount` metadata after `delete_doc` removes a document but AFFiNE GraphQL still reports the pre-delete count.
+- `list_docs.pageInfo.endCursor` now aligns with the last returned edge cursor after delete-driven metadata drift.
+
+### Tests
+- Added live regression coverage for delete/list count correction in `tests/test-doc-discovery.mjs`.
+
 ## [1.11.0] - 2026-03-27
 
 ### Added
@@ -340,6 +349,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.11.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.1
 [1.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.0
 [1.10.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.1
 [1.10.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.10.0
@@ -357,4 +367,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.11.1...HEAD
