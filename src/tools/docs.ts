@@ -2304,6 +2304,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const tagsByDocId = new Map<string, string[]>();
       const titlesByDocId = new Map<string, string>();
+      let workspacePageCount: number | null = null;
       try {
         const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
@@ -2316,6 +2317,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
             const meta = wsDoc.getMap("meta");
             const pages = getWorkspacePageEntries(meta);
+            workspacePageCount = pages.length;
             const { byId } = getWorkspaceTagOptionMaps(meta);
             for (const page of pages) {
               if (page.title) {
@@ -2332,24 +2334,48 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         // Keep list_docs available even when workspace snapshot fetch fails.
       }
 
+      const mergedEdges = Array.isArray(docs?.edges)
+        ? docs.edges.map((edge: any) => {
+            const node = edge?.node;
+            if (!node || typeof node.id !== "string") {
+              return edge;
+            }
+            return {
+              ...edge,
+              node: {
+                ...node,
+                title: titlesByDocId.get(node.id) || node.title,
+                tags: tagsByDocId.get(node.id) || [],
+              },
+            };
+          })
+        : [];
+
+      // The workspace snapshot reflects deletions before GraphQL count metadata catches up.
+      // Clamp downward only so create/index lag does not inflate counts from partial snapshot state.
+      const correctedTotalCount =
+        typeof docs?.totalCount === "number" &&
+        typeof workspacePageCount === "number" &&
+        workspacePageCount < docs.totalCount
+          ? workspacePageCount
+          : docs?.totalCount;
+
+      const correctedPageInfo = docs?.pageInfo
+        ? {
+            ...docs.pageInfo,
+            endCursor: mergedEdges.length > 0 ? mergedEdges[mergedEdges.length - 1]?.cursor ?? null : null,
+            hasNextPage:
+              typeof correctedTotalCount === "number" && !parsed.after
+                ? (parsed.offset ?? 0) + mergedEdges.length < correctedTotalCount
+                : docs.pageInfo.hasNextPage,
+          }
+        : docs?.pageInfo;
+
       const mergedDocs = {
         ...docs,
-        edges: Array.isArray(docs?.edges)
-          ? docs.edges.map((edge: any) => {
-              const node = edge?.node;
-              if (!node || typeof node.id !== "string") {
-                return edge;
-              }
-              return {
-                ...edge,
-                node: {
-                  ...node,
-                  title: titlesByDocId.get(node.id) || node.title,
-                  tags: tagsByDocId.get(node.id) || [],
-                },
-              };
-            })
-          : [],
+        totalCount: correctedTotalCount,
+        pageInfo: correctedPageInfo,
+        edges: mergedEdges,
       };
 
       return text(mergedDocs);
