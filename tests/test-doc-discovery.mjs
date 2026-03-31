@@ -5,6 +5,7 @@
  * Covers:
  * - list_docs should return titles from workspace metadata when GraphQL omits them
  * - search_docs should support exact/prefix matching, tag filtering, and updatedAt sorting
+ * - list_docs should correct stale count metadata after delete_doc removes a document
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,10 @@ function expectIncludes(haystack, needle, message) {
   if (!Array.isArray(haystack) || !haystack.includes(needle)) {
     throw new Error(`${message}: expected ${JSON.stringify(haystack)} to include ${JSON.stringify(needle)}`);
   }
+}
+
+async function delay(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -92,6 +97,20 @@ async function main() {
     }
     console.log("    ✓ OK");
     return parsed;
+  }
+
+  async function waitForListDocs(workspaceId, predicate, description, attempts = 20, delayMs = 1000) {
+    let lastResult = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      lastResult = await call("list_docs", { workspaceId, first: 50 });
+      if (predicate(lastResult)) {
+        return lastResult;
+      }
+      if (attempt < attempts) {
+        await delay(delayMs);
+      }
+    }
+    throw new Error(`${description}: timed out waiting for list_docs state. Last result: ${JSON.stringify(lastResult)}`);
   }
 
   await client.connect(transport);
@@ -170,6 +189,31 @@ async function main() {
       limit: 10,
     });
     expectEqual(sortedByUpdatedAt?.results?.[0]?.title, "Task Tracker", "search_docs updatedAt sort");
+
+    await waitForListDocs(
+      workspace.id,
+      result => (result?.edges?.length || 0) === 4 && result?.totalCount === 4,
+      "list_docs post-create count sync",
+    );
+
+    await call("delete_doc", {
+      workspaceId: workspace.id,
+      docId: createdDocs[0].docId,
+    });
+
+    const listedAfterDelete = await waitForListDocs(
+      workspace.id,
+      result => (result?.edges?.length || 0) === 3,
+      "list_docs post-delete edge sync",
+    );
+    expectEqual(listedAfterDelete?.totalCount, 3, "list_docs totalCount after delete");
+    const listedAfterDeleteIds = listedAfterDelete?.edges?.map(edge => edge?.node?.id) || [];
+    if (listedAfterDeleteIds.includes(createdDocs[0].docId)) {
+      throw new Error(`list_docs deleted doc id: expected deleted id to be absent, got ${JSON.stringify(listedAfterDeleteIds)}`);
+    }
+
+    const lastEdgeCursor = listedAfterDelete?.edges?.[listedAfterDelete.edges.length - 1]?.cursor ?? null;
+    expectEqual(listedAfterDelete?.pageInfo?.endCursor ?? null, lastEdgeCursor, "list_docs endCursor after delete");
 
     console.log();
     console.log("=== Document discovery integration test passed ===");
