@@ -2305,6 +2305,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const tagsByDocId = new Map<string, string[]>();
       const titlesByDocId = new Map<string, string>();
       let workspacePageCount: number | null = null;
+      let workspacePageIds: Set<string> | null = null;
+      const deletedDocIds = new Set<string>();
       try {
         const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
@@ -2318,6 +2320,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             const meta = wsDoc.getMap("meta");
             const pages = getWorkspacePageEntries(meta);
             workspacePageCount = pages.length;
+            workspacePageIds = new Set(pages.map(page => page.id));
             const { byId } = getWorkspaceTagOptionMaps(meta);
             for (const page of pages) {
               if (page.title) {
@@ -2325,6 +2328,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               }
               const tagEntries = getStringArray(page.tagsArray);
               tagsByDocId.set(page.id, resolveTagLabels(tagEntries, byId));
+            }
+          }
+          const graphEdges = Array.isArray(docs?.edges) ? docs.edges : [];
+          if (workspacePageIds && graphEdges.length > workspacePageIds.size) {
+            for (const edge of graphEdges) {
+              const nodeId = edge?.node?.id;
+              if (typeof nodeId !== "string" || workspacePageIds.has(nodeId)) {
+                continue;
+              }
+              const edgeSnapshot = await loadDoc(socket, workspaceId, nodeId);
+              const edgeExists = Boolean(edgeSnapshot.missing || edgeSnapshot.state || edgeSnapshot.timestamp);
+              if (!edgeExists) {
+                deletedDocIds.add(nodeId);
+              }
             }
           }
         } finally {
@@ -2351,11 +2368,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           })
         : [];
 
-      // The workspace snapshot reflects deletions before GraphQL count metadata catches up.
-      // Clamp downward only so create/index lag does not inflate counts from partial snapshot state.
+      const visibleEdges = deletedDocIds.size > 0
+        ? mergedEdges.filter((edge: any) => !deletedDocIds.has(edge?.node?.id))
+        : mergedEdges;
+
       const correctedTotalCount =
         typeof docs?.totalCount === "number" &&
         typeof workspacePageCount === "number" &&
+        (
+          deletedDocIds.size > 0 ||
+          visibleEdges.length === workspacePageCount
+        ) &&
         workspacePageCount < docs.totalCount
           ? workspacePageCount
           : docs?.totalCount;
@@ -2363,10 +2386,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const correctedPageInfo = docs?.pageInfo
         ? {
             ...docs.pageInfo,
-            endCursor: mergedEdges.length > 0 ? mergedEdges[mergedEdges.length - 1]?.cursor ?? null : null,
+            endCursor: visibleEdges.length > 0 ? visibleEdges[visibleEdges.length - 1]?.cursor ?? null : null,
             hasNextPage:
               typeof correctedTotalCount === "number" && !parsed.after
-                ? (parsed.offset ?? 0) + mergedEdges.length < correctedTotalCount
+                ? (parsed.offset ?? 0) + visibleEdges.length < correctedTotalCount
                 : docs.pageInfo.hasNextPage,
           }
         : docs?.pageInfo;
@@ -2375,7 +2398,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         ...docs,
         totalCount: correctedTotalCount,
         pageInfo: correctedPageInfo,
-        edges: mergedEdges,
+        edges: visibleEdges,
       };
 
       return text(mergedDocs);
