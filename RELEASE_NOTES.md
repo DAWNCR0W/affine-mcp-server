@@ -1,17 +1,36 @@
 # Release Notes
 
+## Version 1.11.2 (2026-03-31)
+
+### Highlights
+- Corrected stale `list_docs` edge results so deleted documents no longer linger after `delete_doc`.
+- Completed the delete/list_docs hardening started in `v1.11.1` by keeping the visible edge list aligned with workspace metadata.
+- Revalidated the delete/list workflow live against AFFiNE `0.26.4`.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Filter out deleted documents that remain in GraphQL edges after the workspace snapshot has already dropped them.
+  - Keep the visible edge list aligned with the corrected `totalCount` and `endCursor` metadata after delete-driven drift.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `1.11.2`.
+  - Refreshed release-facing docs for the follow-up patch release.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Focused live verification passed:
+  - `npm run test:doc-discovery`
+
 ## Version 1.11.1 (2026-03-31)
 
 ### Highlights
 - Corrected stale `list_docs` metadata after `delete_doc` so callers no longer see a pre-delete `totalCount`.
-- Corrected stale `list_docs` edge results so deleted documents no longer linger when workspace metadata has already removed them.
 - Aligned `list_docs.pageInfo.endCursor` with the returned edge list after delete-driven metadata drift.
 - Added live regression coverage to keep the delete/list_docs workflow stable against AFFiNE `0.26.4`.
 
 ### What Changed
 - `src/tools/docs.ts`
   - Clamp `list_docs.totalCount` downward when the workspace snapshot shows fewer pages than GraphQL reports after a deletion.
-  - Filter out deleted documents that remain in GraphQL edges after the workspace snapshot has already dropped them.
   - Align `pageInfo.endCursor` with the last returned edge cursor and recompute offset-based `hasNextPage` when the count is clamped.
 - `tests/test-doc-discovery.mjs`
   - Added a live regression that creates documents, deletes one, and verifies corrected `totalCount`, deleted-doc absence, and cursor alignment.
