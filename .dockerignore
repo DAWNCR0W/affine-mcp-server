@@ -1,0 +1,10 @@
+.git
+.github
+node_modules
+dist
+docker
+tests
+test-comprehensive.mjs
+*.md
+!README.md
+.env*

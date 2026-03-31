@@ -251,6 +251,42 @@ If you prefer `npx`:
 }
 ```
 
+### Docker
+
+Pre-built multi-arch images (`linux/amd64`, `linux/arm64`) are published to the GitHub Container Registry on every release tag:
+
+```
+ghcr.io/dawncr0w/affine-mcp-server:latest      # latest release
+ghcr.io/dawncr0w/affine-mcp-server:1.11.2      # specific version
+```
+
+Quick start:
+
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -e AFFINE_BASE_URL=https://your-affine-instance.com \
+  -e AFFINE_API_TOKEN=ut_your_token \
+  -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
+  ghcr.io/dawncr0w/affine-mcp-server:latest
+```
+
+Then add to your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp",
+      "headers": { "Authorization": "Bearer your-strong-secret" }
+    }
+  }
+}
+```
+
+The container runs as a non-root user and exposes `/healthz` and `/readyz` for liveness/readiness probes.
+
 ### Remote Server
 
 If you want to host the server remotely (e.g., using Render, Railway, Docker, or a VPS) and connect via HTTP MCP (Streamable HTTP on `/mcp`) instead of local `stdio`, run the server in HTTP mode.
