@@ -13,6 +13,7 @@ No unreleased changes yet.
 
 ### Fixed
 - `list_docs` now clamps stale `totalCount` metadata after `delete_doc` removes a document but AFFiNE GraphQL still reports the pre-delete count.
+- `list_docs` now filters out deleted documents that briefly remain in GraphQL edges after workspace metadata has already dropped them.
 - `list_docs.pageInfo.endCursor` now aligns with the last returned edge cursor after delete-driven metadata drift.
 
 ### Tests

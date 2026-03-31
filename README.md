@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 76 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.11.1: Corrected stale `list_docs` count and cursor metadata after `delete_doc` removes a document.
+> New in v1.11.1: Corrected stale `list_docs` count, cursor metadata, and deleted-document visibility after `delete_doc`.
 
 ## Features
 
