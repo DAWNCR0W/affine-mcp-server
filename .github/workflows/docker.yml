@@ -2,8 +2,6 @@ name: Docker
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*.*.*'
   pull_request:
@@ -44,14 +42,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # branch: latest on main
-            type=raw,value=latest,enable={{is_default_branch}}
-            # semver tags: v1.2.3 → 1.2.3, 1.2, 1
+            # semver tags: v1.2.3 → 1.2.3, 1.2, 1, latest
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            # short sha for traceability
-            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
           labels: |
             org.opencontainers.image.title=affine-mcp-server
             org.opencontainers.image.description=MCP server for AFFiNE with full read/write support
