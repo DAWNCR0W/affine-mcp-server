@@ -253,11 +253,11 @@ If you prefer `npx`:
 
 ### Docker
 
-Pre-built multi-arch images (`linux/amd64`, `linux/arm64`) are published to the GitHub Container Registry on every push to `main` and for every release tag:
+Pre-built multi-arch images (`linux/amd64`, `linux/arm64`) are published to the GitHub Container Registry on every release tag:
 
 ```
-ghcr.io/schwankner/affine-mcp-server:latest      # latest main
-ghcr.io/schwankner/affine-mcp-server:1.11.2      # specific version
+ghcr.io/dawncr0w/affine-mcp-server:latest      # latest release
+ghcr.io/dawncr0w/affine-mcp-server:1.11.2      # specific version
 ```
 
 Quick start:
@@ -268,7 +268,7 @@ docker run -d \
   -e AFFINE_BASE_URL=https://your-affine-instance.com \
   -e AFFINE_API_TOKEN=ut_your_token \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/schwankner/affine-mcp-server:latest
+  ghcr.io/dawncr0w/affine-mcp-server:latest
 ```
 
 Then add to your MCP client config:
