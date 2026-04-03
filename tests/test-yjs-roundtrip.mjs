@@ -16,7 +16,7 @@
 
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../dist/markdown/parse.js";
-import { renderBlocksToMarkdown } from "../dist/markdown/render.js";
+import { renderBlocksToMarkdown, deltasToMarkdown } from "../dist/markdown/render.js";
 
 let passed = 0;
 let failed = 0;
@@ -223,6 +223,37 @@ console.log("\nTest 5: Quote and callout formatting preserved through Yjs");
   const calloutOp = calloutOps.find(op => op.type === "callout");
   assert(calloutOp !== undefined, "callout operation parsed");
   assert(calloutOp?.deltas?.some(d => d.attributes?.bold), "callout deltas contain bold run");
+}
+
+// ── Test 6: Nested bold+italic — markers must not double up at run boundaries ─
+
+console.log("\nTest 6: Nested bold+italic — markers must not double up at run boundaries");
+{
+  // [bold] [bold+italic] [bold] → "**text *inner* text**"
+  const r1 = deltasToMarkdown([
+    { insert: "Bold and " , attributes: { bold: true } },
+    { insert: "italic"    , attributes: { bold: true, italic: true } },
+    { insert: " combined" , attributes: { bold: true } },
+  ]);
+  assert(r1 === "**Bold and *italic* combined**", `bold-contains-italic: got "${r1}"`);
+  assert(!r1.includes("*****"), "no ***** artifacts");
+
+  // [italic] [bold+italic] [italic] → "*text **inner** text*"
+  const r2 = deltasToMarkdown([
+    { insert: "Italic with ", attributes: { italic: true } },
+    { insert: "bold"        , attributes: { bold: true, italic: true } },
+    { insert: " inside"     , attributes: { italic: true } },
+  ]);
+  assert(r2 === "*Italic with **bold** inside*", `italic-contains-bold: got "${r2}"`);
+  assert(!r2.includes("*****"), "no ***** artifacts");
+
+  // [bold] [plain] [bold] — two separate bold runs must not merge
+  const r3 = deltasToMarkdown([
+    { insert: "first" , attributes: { bold: true } },
+    { insert: " plain " },
+    { insert: "second", attributes: { bold: true } },
+  ]);
+  assert(r3 === "**first** plain **second**", `two separate bold runs: got "${r3}"`);
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────

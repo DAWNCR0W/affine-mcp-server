@@ -66,21 +66,33 @@ function renderTable(tableData: string[][]): string[] {
 }
 
 export function deltasToMarkdown(deltas: TextDelta[]): string {
+  // Bold and italic markers are streamed across adjacent runs so that shared
+  // formatting is not closed and reopened at every boundary.
+  // e.g. [{bold}, {bold+italic}, {bold}] → "**text *inner* text**"
+  // Code, link, and strike are always self-contained wrappers.
   let result = "";
   let boldOpen = false;
   let italicOpen = false;
+
   const flushBoldItalic = () => {
+    // Close innermost first
     if (italicOpen) { result += "*"; italicOpen = false; }
     if (boldOpen) { result += "**"; boldOpen = false; }
   };
+
   for (const d of deltas) {
     const attrs = d.attributes ?? {};
     const wantBold = attrs.bold === true;
     const wantItalic = attrs.italic === true;
+
+    // code, link, and strike interrupt the bold/italic stream
     if (attrs.code || attrs.link || attrs.strike) {
       flushBoldItalic();
       let inner = d.insert;
-      if (attrs.code) { result += `\`${inner}\``; continue; }
+      if (attrs.code) {
+        result += `\`${inner}\``;
+        continue;
+      }
       if (wantBold && wantItalic) { inner = `***${inner}***`; }
       else if (wantBold) { inner = `**${inner}**`; }
       else if (wantItalic) { inner = `*${inner}*`; }
@@ -89,12 +101,16 @@ export function deltasToMarkdown(deltas: TextDelta[]): string {
       result += inner;
       continue;
     }
+
+    // Streaming bold/italic: close innermost-first, open outermost-first
     if (italicOpen && !wantItalic) { result += "*"; italicOpen = false; }
     if (boldOpen && !wantBold) { result += "**"; boldOpen = false; }
     if (wantBold && !boldOpen) { result += "**"; boldOpen = true; }
     if (wantItalic && !italicOpen) { result += "*"; italicOpen = true; }
+
     result += d.insert;
   }
+
   flushBoldItalic();
   return result;
 }
