@@ -167,8 +167,54 @@ async function main() {
     });
     checkMarkdown(templateExport.markdown, "create_doc_from_template round-trip");
 
-    // ── 4. find_and_replace preserves inline attrs ──────────────────────────
-    console.log("\n4. find_and_replace preserves inline formatting attrs");
+    // ── 4. append_markdown preserves inline formatting ─────────────────────
+    console.log("\n4. append_markdown → export_doc_markdown");
+    const appendDoc = await call("create_doc", {
+      workspaceId: WORKSPACE_ID,
+      title: "e2e-append-markdown-test",
+    });
+    check(!!appendDoc.docId, `append test doc created (${appendDoc.docId})`);
+    createdDocs.push(appendDoc.docId);
+
+    const APPEND_MARKDOWN = [
+      "## Appended Section",
+      "",
+      "This is **bold** appended text.",
+      "",
+      "This is *italic* appended text.",
+      "",
+      "This is ***bold italic*** appended.",
+      "",
+      "This is ~~strikethrough~~ appended.",
+      "",
+      "See [appended link](https://affine.pro) here.",
+      "",
+      "See [**bold appended link**](https://affine.pro) here.",
+      "",
+      "> A **bold** appended quote.",
+    ].join("\n");
+
+    await call("append_markdown", {
+      workspaceId: WORKSPACE_ID,
+      docId: appendDoc.docId,
+      markdown: APPEND_MARKDOWN,
+    });
+
+    const appendExport = await call("export_doc_markdown", {
+      workspaceId: WORKSPACE_ID,
+      docId: appendDoc.docId,
+    });
+    console.log(`\n  Checking append_markdown round-trip:`);
+    check(/\*\*bold\*\* appended text/.test(appendExport.markdown), "bold preserved after append");
+    check(/\*italic\* appended text/.test(appendExport.markdown), "italic preserved after append");
+    check(/\*\*\*bold italic\*\*\* appended/.test(appendExport.markdown), "bold italic preserved after append");
+    check(/~~strikethrough~~ appended/.test(appendExport.markdown), "strikethrough preserved after append");
+    check(/\[appended link\]\(https:\/\/affine\.pro\)/.test(appendExport.markdown), "plain link preserved after append");
+    check(/\[\*\*bold appended link\*\*\]\(https:\/\/affine\.pro\)/.test(appendExport.markdown), "bold link preserved after append");
+    check(/> .*\*\*bold\*\*.*appended quote/.test(appendExport.markdown), "bold quote preserved after append");
+
+    // ── 5. find_and_replace preserves inline attrs ──────────────────────────
+    console.log("\n5. find_and_replace preserves inline formatting attrs");
     await call("find_and_replace", {
       workspaceId: WORKSPACE_ID,
       docId: created.docId,
