@@ -1952,7 +1952,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const columnsValue = block.get("prop:columns");
     const cellsValue = block.get("prop:cells");
 
-    const rowEntries = mapEntries(rowsValue)
+    let rowEntries = mapEntries(rowsValue)
       .map(([rowId, payload]) => ({
         rowId,
         order:
@@ -1962,7 +1962,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }))
       .sort((a, b) => a.order.localeCompare(b.order));
 
-    const columnEntries = mapEntries(columnsValue)
+    let columnEntries = mapEntries(columnsValue)
       .map(([columnId, payload]) => ({
         columnId,
         order:
@@ -1972,19 +1972,58 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }))
       .sort((a, b) => a.order.localeCompare(b.order));
 
+    let cells = new Map<string, string>();
+
     if (rowEntries.length === 0 || columnEntries.length === 0) {
-      return null;
+      // Fallback: AFFiNE self-hosted stores table props as flat dot-notation keys
+      // directly on the block Y.Map instead of nested Y.Maps:
+      //   prop:rows.{rowId}.order
+      //   prop:columns.{colId}.order
+      //   prop:cells.{rowId}:{colId}.text  (Y.Text)
+      const flatRows = new Map<string, string>(); // rowId -> order
+      const flatColumns = new Map<string, string>(); // colId -> order
+      const flatCells = new Map<string, string>(); // rowId:colId -> text
+
+      block.forEach((value: unknown, key: string) => {
+        const rowMatch = key.match(/^prop:rows\.([^.]+)\.order$/);
+        if (rowMatch) {
+          flatRows.set(rowMatch[1], typeof value === "string" ? value : rowMatch[1]);
+          return;
+        }
+        const colMatch = key.match(/^prop:columns\.([^.]+)\.order$/);
+        if (colMatch) {
+          flatColumns.set(colMatch[1], typeof value === "string" ? value : colMatch[1]);
+          return;
+        }
+        const cellMatch = key.match(/^prop:cells\.([^.]+:[^.]+)\.text$/);
+        if (cellMatch) {
+          flatCells.set(cellMatch[1], richTextValueToString(value));
+        }
+      });
+
+      if (flatRows.size > 0 && flatColumns.size > 0) {
+        rowEntries = Array.from(flatRows.entries())
+          .map(([rowId, order]) => ({ rowId, order }))
+          .sort((a, b) => a.order.localeCompare(b.order));
+        columnEntries = Array.from(flatColumns.entries())
+          .map(([columnId, order]) => ({ columnId, order }))
+          .sort((a, b) => a.order.localeCompare(b.order));
+        cells = flatCells;
+      }
+    } else {
+      for (const [cellKey, payload] of mapEntries(cellsValue)) {
+        if (payload instanceof Y.Map) {
+          cells.set(cellKey, richTextValueToString(payload.get("text")));
+          continue;
+        }
+        if (payload && typeof payload === "object" && "text" in payload) {
+          cells.set(cellKey, richTextValueToString((payload as any).text));
+        }
+      }
     }
 
-    const cells = new Map<string, string>();
-    for (const [cellKey, payload] of mapEntries(cellsValue)) {
-      if (payload instanceof Y.Map) {
-        cells.set(cellKey, richTextValueToString(payload.get("text")));
-        continue;
-      }
-      if (payload && typeof payload === "object" && "text" in payload) {
-        cells.set(cellKey, richTextValueToString((payload as any).text));
-      }
+    if (rowEntries.length === 0 || columnEntries.length === 0) {
+      return null;
     }
 
     const tableData: string[][] = [];
