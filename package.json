@@ -58,6 +58,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:yjs-roundtrip": "node tests/test-yjs-roundtrip.mjs",
     "test:formatting-e2e": "node tests/test-formatting-e2e.mjs",
+    "test:create-doc-formatting": "node tests/test-create-doc-formatting.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
