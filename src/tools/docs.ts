@@ -213,6 +213,35 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return yText;
   }
 
+  /**
+   * Build a Y.Text containing a LinkedPage reference delta.
+   * This is the mechanism AFFiNE uses to associate a database row with a
+   * linked doc that opens in "center peek" when the row title is clicked.
+   */
+  function makeLinkedDocText(docId: string): Y.Text {
+    const delta = [{ insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } }];
+    // Cast needed: TextDelta.attributes doesn't declare `reference`, but
+    // makeText spreads all attributes at runtime via `{ ...delta.attributes }`.
+    return makeText(delta as TextDelta[]);
+  }
+
+  /**
+   * Extract a linked-doc page ID from a database row block's prop:text,
+   * if it contains a LinkedPage reference delta.  Returns null otherwise.
+   */
+  function readLinkedDocId(rowBlock: Y.Map<any>): string | null {
+    const propText = rowBlock.get("prop:text");
+    if (!(propText instanceof Y.Text)) return null;
+    const delta = propText.toDelta();
+    if (!Array.isArray(delta)) return null;
+    for (const d of delta) {
+      if (d.attributes?.reference?.type === "LinkedPage" && d.attributes.reference.pageId) {
+        return d.attributes.reference.pageId;
+      }
+    }
+    return null;
+  }
+
   function asText(value: unknown): string {
     if (value instanceof Y.Text) return value.toString();
     if (typeof value === "string") return value;
@@ -4783,6 +4812,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     docId: string;
     databaseBlockId: string;
     cells: Record<string, unknown>;
+    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
@@ -4795,8 +4825,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       rowBlock.set("sys:parent", parsed.databaseBlockId);
       rowBlock.set("sys:children", new Y.Array<string>());
       rowBlock.set("prop:type", "text");
-      const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
-      rowBlock.set("prop:text", makeText(String(titleValue)));
+      if (parsed.linkedDocId) {
+        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+      } else {
+        const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
+        rowBlock.set("prop:text", makeText(String(titleValue)));
+      }
       ctx.blocks.set(rowBlockId, rowBlock);
 
       // Add row block to database's children
@@ -4825,6 +4859,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         rowBlockId,
         databaseBlockId: parsed.databaseBlockId,
         cellCount: Object.keys(parsed.cells).length,
+        linkedDocId: parsed.linkedDocId || null,
       });
     } finally {
       ctx.socket.disconnect();
@@ -4840,6 +4875,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. For select columns, pass the display label (option auto-created if new)."),
+        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
     addDatabaseRowHandler as any
@@ -4947,6 +4983,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return {
           rowBlockId,
           title,
+          linkedDocId: readLinkedDocId(rowBlock),
           cells,
         };
       });
@@ -5023,6 +5060,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     column: string;
     value: unknown;
     createOption?: boolean;
+    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
@@ -5040,7 +5078,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         writeDatabaseCellValue(rowCells, col, parsed.value, parsed.createOption ?? true);
       }
 
-      if (isTitleAliasKey(parsed.column) || (col && (col.type === "title" || isTitleAliasKey(col.name)))) {
+      if (parsed.linkedDocId) {
+        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+      } else if (isTitleAliasKey(parsed.column) || (col && (col.type === "title" || isTitleAliasKey(col.name)))) {
         rowBlock.set("prop:text", makeText(String(parsed.value ?? "")));
       }
 
@@ -5070,6 +5110,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         column: z.string().min(1).describe("Column name or ID. Use `title` for the built-in row title."),
         value: z.unknown().describe("New cell value"),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
+        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. Replaces any existing title with a linked doc reference."),
       },
     },
     updateDatabaseCellHandler as any
@@ -5082,6 +5123,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     rowBlockId: string;
     cells: Record<string, unknown>;
     createOption?: boolean;
+    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
@@ -5107,7 +5149,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      if (titleValue !== null) {
+      if (parsed.linkedDocId) {
+        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+      } else if (titleValue !== null) {
         rowBlock.set("prop:text", makeText(titleValue));
       }
 
@@ -5135,6 +5179,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
         cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Use `title` for the built-in row title."),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
+        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
     updateDatabaseRowHandler as any
