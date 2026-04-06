@@ -1708,13 +1708,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const noteChildren = new Y.Array<string>();
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         const noteBg = new Y.Map<any>();
-        noteBg.set("light", normalized.background !== "transparent" ? normalized.background : "#ffffff");
-        noteBg.set("dark", normalized.background !== "transparent" ? normalized.background : "#252525");
+        noteBg.set("light", "#ffffff");
+        noteBg.set("dark", "#252525");
         block.set("prop:background", noteBg);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
-        block.set("prop:displayMode", "edgeless");
+        block.set("prop:displayMode", "both");
         const edgeless = new Y.Map<any>();
         const style = new Y.Map<any>();
         style.set("borderRadius", 8);
