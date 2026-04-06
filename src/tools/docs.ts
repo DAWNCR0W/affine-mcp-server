@@ -1707,10 +1707,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:parent", null);
         const noteChildren = new Y.Array<string>();
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
-        const noteBg = new Y.Map<any>();
-        noteBg.set("light", normalized.background !== "transparent" ? normalized.background : "#ffffff");
-        noteBg.set("dark", normalized.background !== "transparent" ? normalized.background : "#252525");
-        block.set("prop:background", noteBg);
+        block.set("prop:background", normalized.background);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
@@ -1732,7 +1729,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           para.set("sys:parent", null);
           para.set("sys:children", new Y.Array<string>());
           para.set("prop:type", "text");
-          para.set("prop:text", makeText([{ insert: content, attributes: { color: "var(--affine-text-primary-color)" } }]));
+          para.set("prop:text", makeText(content));
           noteChildren.push([paraId]);
           noteExtraBlocks.push({ blockId: paraId, block: para });
         }
