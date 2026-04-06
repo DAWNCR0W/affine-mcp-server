@@ -5340,6 +5340,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     value.set(elementId, el);
   }
 
+  function resolveNewlines(s: string): string {
+    return s.replace(/\\n/g, "\n");
+  }
+
   function buildSurfaceElement(input: SurfaceElementInput): { elementId: string; data: Record<string, any> } {
     const elementId = generateId();
     const seed = Math.floor(Math.random() * 2 ** 31);
@@ -5381,7 +5385,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         };
         if (input.text) {
           const yText = new Y.Text();
-          yText.insert(0, input.text);
+          yText.insert(0, resolveNewlines(input.text));
           data.text = yText;
         }
         return { elementId, data };
@@ -5429,7 +5433,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         };
         if (input.label) {
           const yText = new Y.Text();
-          yText.insert(0, input.label);
+          yText.insert(0, resolveNewlines(input.label));
           data.text = yText;
         }
         return { elementId, data };
@@ -5440,7 +5444,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const w = input.width ?? 200;
         const h = input.height ?? 30;
         const yText = new Y.Text();
-        if (input.text) yText.insert(0, input.text);
+        if (input.text) yText.insert(0, resolveNewlines(input.text));
         const data: Record<string, any> = {
           type: "text",
           id: elementId,
