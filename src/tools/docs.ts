@@ -4532,6 +4532,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   function getDatabaseRowBlock(
     blocks: Y.Map<any>,
+    dbBlock: Y.Map<any>,
     databaseBlockId: string,
     rowBlockId: string,
   ): Y.Map<any> {
@@ -4539,7 +4540,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!rowBlock) {
       throw new Error(`Row block '${rowBlockId}' not found`);
     }
-    if (rowBlock.get("sys:parent") !== databaseBlockId) {
+    const parentId = rowBlock.get("sys:parent");
+    const isDatabaseChild = getDatabaseRowIds(dbBlock).includes(rowBlockId);
+    if (parentId !== databaseBlockId && !isDatabaseChild) {
       throw new Error(`Row block '${rowBlockId}' does not belong to database '${databaseBlockId}'`);
     }
     if (rowBlock.get("sys:flavour") !== "affine:paragraph") {
@@ -4855,7 +4858,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const descendantBlockIds = collectDescendantBlockIds(ctx.blocks, [parsed.rowBlockId, ...childIdsFrom(rowBlock.get("sys:children"))]);
       const dbChildren = ensureChildrenArray(ctx.dbBlock);
       const rowIndex = indexOfChild(dbChildren, parsed.rowBlockId);
@@ -4923,7 +4926,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const requestedColumnIds = new Set(requestedColumns.map(col => col.id));
 
       const rows = requestedRows.map(rowBlockId => {
-        const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, rowBlockId);
+        const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, rowBlockId);
         const title = readDatabaseRowTitle(rowBlock) || null;
         const rowCells = ctx.cellsMap.get(rowBlockId);
         const cells: Record<string, Record<string, unknown>> = {};
@@ -5028,7 +5031,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
       const col = findDatabaseColumn(parsed.column, ctx);
 
@@ -5087,7 +5090,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
       let titleValue: string | null = null;
 

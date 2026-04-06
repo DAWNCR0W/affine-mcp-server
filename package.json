@@ -43,6 +43,7 @@
     "test:e2e": "bash tests/run-e2e.sh",
     "test:db-create": "node tests/test-database-creation.mjs",
     "test:db-cells": "node tests/test-database-cells.mjs",
+    "test:db-ui-rows": "node tests/test-database-ui-rows.mjs",
     "test:db-schema": "node tests/test-database-schema.mjs",
     "test:data-view": "node tests/test-data-view.mjs",
     "test:doc-discovery": "node tests/test-doc-discovery.mjs",
