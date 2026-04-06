@@ -1732,7 +1732,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           para.set("sys:parent", null);
           para.set("sys:children", new Y.Array<string>());
           para.set("prop:type", "text");
-          para.set("prop:text", makeText(content));
+          para.set("prop:text", makeText([{ insert: content, attributes: { color: "var(--affine-text-primary-color)" } }]));
           noteChildren.push([paraId]);
           noteExtraBlocks.push({ blockId: paraId, block: para });
         }
