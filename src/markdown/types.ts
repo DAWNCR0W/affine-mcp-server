@@ -8,6 +8,7 @@ export type TextDelta = {
     strike?: boolean;
     code?: boolean;
     link?: string;
+    color?: string;
   };
 };
 
