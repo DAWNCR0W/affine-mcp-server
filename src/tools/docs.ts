@@ -1705,7 +1705,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       case "note": {
         setSysFields(block, blockId, "affine:note");
         block.set("sys:parent", null);
-        block.set("sys:children", new Y.Array<string>());
+        const noteChildren = new Y.Array<string>();
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:background", normalized.background);
         block.set("prop:index", "a0");
@@ -1721,7 +1721,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         edgeless.set("style", style);
         block.set("prop:edgeless", edgeless);
         block.set("prop:comments", undefined);
-        return { blockId, block, flavour: "affine:note" };
+        const noteExtraBlocks: Array<{ blockId: string; block: Y.Map<any> }> = [];
+        if (content) {
+          const paraId = generateId();
+          const para = new Y.Map<any>();
+          setSysFields(para, paraId, "affine:paragraph");
+          para.set("sys:parent", null);
+          para.set("sys:children", new Y.Array<string>());
+          para.set("prop:type", "text");
+          para.set("prop:text", makeText(content));
+          noteChildren.push([paraId]);
+          noteExtraBlocks.push({ blockId: paraId, block: para });
+        }
+        block.set("sys:children", noteChildren);
+        return { blockId, block, flavour: "affine:note", extraBlocks: noteExtraBlocks };
       }
     }
   }
