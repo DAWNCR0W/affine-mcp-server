@@ -87,6 +87,8 @@ type AppendBlockInput = {
   design?: string;
   reference?: string;
   refFlavour?: string;
+  x?: number;
+  y?: number;
   width?: number;
   height?: number;
   background?: string;
@@ -125,6 +127,8 @@ type NormalizedAppendBlockInput = {
   design: string;
   reference: string;
   refFlavour: string;
+  x: number;
+  y: number;
   width: number;
   height: number;
   background: string;
@@ -956,6 +960,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const design = parsed.design ?? "";
     const reference = (parsed.reference ?? "").trim();
     const refFlavour = (parsed.refFlavour ?? "").trim();
+    const x = Number.isFinite(parsed.x) ? Math.floor(parsed.x as number) : 0;
+    const y = Number.isFinite(parsed.y) ? Math.floor(parsed.y as number) : 0;
     const width = Number.isFinite(parsed.width) ? Math.max(1, Math.floor(parsed.width as number)) : 100;
     const height = Number.isFinite(parsed.height) ? Math.max(1, Math.floor(parsed.height as number)) : 100;
     const background = (parsed.background ?? "transparent").trim() || "transparent";
@@ -983,6 +989,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       design,
       reference,
       refFlavour,
+      x,
+      y,
       width,
       height,
       background,
@@ -1669,7 +1677,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:title", makeText(content || "Frame"));
         block.set("prop:background", normalized.background);
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
         block.set("prop:childElementIds", new Y.Map<any>());
         block.set("prop:presentationIndex", "a0");
@@ -1680,7 +1688,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         setSysFields(block, blockId, "affine:edgeless-text");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
@@ -1698,7 +1706,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         setSysFields(block, blockId, "affine:note");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:background", normalized.background);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
@@ -3313,6 +3321,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         design: z.string().optional().describe("Design payload for embed_html"),
         reference: z.string().optional().describe("Target id for surface_ref"),
         refFlavour: z.string().optional().describe("Target flavour for surface_ref (e.g. affine:frame)"),
+        x: z.number().int().optional().describe("X position for frame/edgeless_text/note on the edgeless canvas (default 0)"),
+        y: z.number().int().optional().describe("Y position for frame/edgeless_text/note on the edgeless canvas (default 0)"),
         width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note"),
         height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note"),
         background: z.string().optional().describe("Background for frame/note"),
