@@ -1707,7 +1707,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:parent", null);
         const noteChildren = new Y.Array<string>();
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
-        block.set("prop:background", normalized.background);
+        const noteBg = new Y.Map<any>();
+        noteBg.set("light", normalized.background !== "transparent" ? normalized.background : "#ffffff");
+        noteBg.set("dark", normalized.background !== "transparent" ? normalized.background : "#252525");
+        block.set("prop:background", noteBg);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
