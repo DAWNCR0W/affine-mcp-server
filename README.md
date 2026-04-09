@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted or cloud). It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`).
 
-[![Version](https://img.shields.io/badge/version-1.11.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.12.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Tools: 76 focused tools with WebSocket-based document editing
 - Status: Active
  
-> New in v1.11.2: Corrected stale deleted-document visibility in `list_docs` after `delete_doc`, completing the `v1.11.1` delete-metadata fix.
+> New in v1.12.0: Added linked documents on database rows, restored MCP CRUD for rows created in the AFFiNE UI, fixed self-hosted table exports, and documented GHCR Docker releases.
 
 ## Features
 
@@ -250,6 +250,42 @@ If you prefer `npx`:
   }
 }
 ```
+
+### Docker
+
+Pre-built multi-arch images (`linux/amd64`, `linux/arm64`) are published to the GitHub Container Registry on every release tag:
+
+```
+ghcr.io/dawncr0w/affine-mcp-server:latest      # latest release
+ghcr.io/dawncr0w/affine-mcp-server:1.12.0      # specific version
+```
+
+Quick start:
+
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -e AFFINE_BASE_URL=https://your-affine-instance.com \
+  -e AFFINE_API_TOKEN=ut_your_token \
+  -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
+  ghcr.io/dawncr0w/affine-mcp-server:latest
+```
+
+Then add to your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp",
+      "headers": { "Authorization": "Bearer your-strong-secret" }
+    }
+  }
+}
+```
+
+The container runs as a non-root user and exposes `/healthz` and `/readyz` for liveness/readiness probes.
 
 ### Remote Server
 

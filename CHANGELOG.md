@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [1.12.0] - 2026-04-09
+
+### Added
+- Database rows can now point to linked AFFiNE documents via `linkedDocId` on `add_database_row`, `update_database_cell`, and `update_database_row`. `read_database_cells` now returns `linkedDocId` when present.
+- Release tags now publish multi-arch GHCR images with a committed Docker runtime (`Dockerfile`, `.dockerignore`, `.github/workflows/docker.yml`) and documented container startup instructions.
+
+### Fixed
+- Database row read, update, and delete flows now work for rows created from the AFFiNE UI, even when the row is attached through database children instead of `sys:parent`.
+- `extractTableData` now reads `affine:table` blocks stored with flat dot-notation Y.js keys (`prop:rows.{rowId}.order`, `prop:columns.{colId}.order`, `prop:cells.{rowId}:{colId}.text`) used by self-hosted AFFiNE instances. Previously `block.get("prop:rows")` returned `undefined` for this schema, causing table exports to show empty tables with `had no readable cell data` warnings.
+
+### Tests
+- Added live regression coverage for linked database rows in `tests/test-database-linked-doc.mjs`.
+- Added live regression coverage for UI-created database rows in `tests/test-database-ui-rows.mjs`.
+
+### Dependencies
+- Refreshed locked dependencies used by verification flows, including `@modelcontextprotocol/sdk` `1.29.0` and `@playwright/test` `1.59.1`.
+
 ## [1.11.2] - 2026-03-31
 
 ### Fixed
@@ -358,6 +375,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.12.0
 [1.11.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.2
 [1.11.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.1
 [1.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.0
@@ -377,4 +395,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.11.2...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.12.0...HEAD

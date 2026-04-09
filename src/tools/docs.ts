@@ -213,6 +213,35 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return yText;
   }
 
+  /**
+   * Build a Y.Text containing a LinkedPage reference delta.
+   * This is the mechanism AFFiNE uses to associate a database row with a
+   * linked doc that opens in "center peek" when the row title is clicked.
+   */
+  function makeLinkedDocText(docId: string): Y.Text {
+    const delta = [{ insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } }];
+    // Cast needed: TextDelta.attributes doesn't declare `reference`, but
+    // makeText spreads all attributes at runtime via `{ ...delta.attributes }`.
+    return makeText(delta as TextDelta[]);
+  }
+
+  /**
+   * Extract a linked-doc page ID from a database row block's prop:text,
+   * if it contains a LinkedPage reference delta.  Returns null otherwise.
+   */
+  function readLinkedDocId(rowBlock: Y.Map<any>): string | null {
+    const propText = rowBlock.get("prop:text");
+    if (!(propText instanceof Y.Text)) return null;
+    const delta = propText.toDelta();
+    if (!Array.isArray(delta)) return null;
+    for (const d of delta) {
+      if (d.attributes?.reference?.type === "LinkedPage" && d.attributes.reference.pageId) {
+        return d.attributes.reference.pageId;
+      }
+    }
+    return null;
+  }
+
   function asText(value: unknown): string {
     if (value instanceof Y.Text) return value.toString();
     if (typeof value === "string") return value;
@@ -1952,7 +1981,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const columnsValue = block.get("prop:columns");
     const cellsValue = block.get("prop:cells");
 
-    const rowEntries = mapEntries(rowsValue)
+    let rowEntries = mapEntries(rowsValue)
       .map(([rowId, payload]) => ({
         rowId,
         order:
@@ -1962,7 +1991,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }))
       .sort((a, b) => a.order.localeCompare(b.order));
 
-    const columnEntries = mapEntries(columnsValue)
+    let columnEntries = mapEntries(columnsValue)
       .map(([columnId, payload]) => ({
         columnId,
         order:
@@ -1972,19 +2001,58 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }))
       .sort((a, b) => a.order.localeCompare(b.order));
 
+    let cells = new Map<string, string>();
+
     if (rowEntries.length === 0 || columnEntries.length === 0) {
-      return null;
+      // Fallback: AFFiNE self-hosted stores table props as flat dot-notation keys
+      // directly on the block Y.Map instead of nested Y.Maps:
+      //   prop:rows.{rowId}.order
+      //   prop:columns.{colId}.order
+      //   prop:cells.{rowId}:{colId}.text  (Y.Text)
+      const flatRows = new Map<string, string>(); // rowId -> order
+      const flatColumns = new Map<string, string>(); // colId -> order
+      const flatCells = new Map<string, string>(); // rowId:colId -> text
+
+      block.forEach((value: unknown, key: string) => {
+        const rowMatch = key.match(/^prop:rows\.([^.]+)\.order$/);
+        if (rowMatch) {
+          flatRows.set(rowMatch[1], typeof value === "string" ? value : rowMatch[1]);
+          return;
+        }
+        const colMatch = key.match(/^prop:columns\.([^.]+)\.order$/);
+        if (colMatch) {
+          flatColumns.set(colMatch[1], typeof value === "string" ? value : colMatch[1]);
+          return;
+        }
+        const cellMatch = key.match(/^prop:cells\.([^.]+:[^.]+)\.text$/);
+        if (cellMatch) {
+          flatCells.set(cellMatch[1], richTextValueToString(value));
+        }
+      });
+
+      if (flatRows.size > 0 && flatColumns.size > 0) {
+        rowEntries = Array.from(flatRows.entries())
+          .map(([rowId, order]) => ({ rowId, order }))
+          .sort((a, b) => a.order.localeCompare(b.order));
+        columnEntries = Array.from(flatColumns.entries())
+          .map(([columnId, order]) => ({ columnId, order }))
+          .sort((a, b) => a.order.localeCompare(b.order));
+        cells = flatCells;
+      }
+    } else {
+      for (const [cellKey, payload] of mapEntries(cellsValue)) {
+        if (payload instanceof Y.Map) {
+          cells.set(cellKey, richTextValueToString(payload.get("text")));
+          continue;
+        }
+        if (payload && typeof payload === "object" && "text" in payload) {
+          cells.set(cellKey, richTextValueToString((payload as any).text));
+        }
+      }
     }
 
-    const cells = new Map<string, string>();
-    for (const [cellKey, payload] of mapEntries(cellsValue)) {
-      if (payload instanceof Y.Map) {
-        cells.set(cellKey, richTextValueToString(payload.get("text")));
-        continue;
-      }
-      if (payload && typeof payload === "object" && "text" in payload) {
-        cells.set(cellKey, richTextValueToString((payload as any).text));
-      }
+    if (rowEntries.length === 0 || columnEntries.length === 0) {
+      return null;
     }
 
     const tableData: string[][] = [];
@@ -4532,6 +4600,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   function getDatabaseRowBlock(
     blocks: Y.Map<any>,
+    dbBlock: Y.Map<any>,
     databaseBlockId: string,
     rowBlockId: string,
   ): Y.Map<any> {
@@ -4539,7 +4608,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!rowBlock) {
       throw new Error(`Row block '${rowBlockId}' not found`);
     }
-    if (rowBlock.get("sys:parent") !== databaseBlockId) {
+    const parentId = rowBlock.get("sys:parent");
+    const isDatabaseChild = getDatabaseRowIds(dbBlock).includes(rowBlockId);
+    if (parentId !== databaseBlockId && !isDatabaseChild) {
       throw new Error(`Row block '${rowBlockId}' does not belong to database '${databaseBlockId}'`);
     }
     if (rowBlock.get("sys:flavour") !== "affine:paragraph") {
@@ -4783,6 +4854,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     docId: string;
     databaseBlockId: string;
     cells: Record<string, unknown>;
+    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
@@ -4795,8 +4867,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       rowBlock.set("sys:parent", parsed.databaseBlockId);
       rowBlock.set("sys:children", new Y.Array<string>());
       rowBlock.set("prop:type", "text");
-      const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
-      rowBlock.set("prop:text", makeText(String(titleValue)));
+      if (parsed.linkedDocId) {
+        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+      } else {
+        const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
+        rowBlock.set("prop:text", makeText(String(titleValue)));
+      }
       ctx.blocks.set(rowBlockId, rowBlock);
 
       // Add row block to database's children
@@ -4825,6 +4901,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         rowBlockId,
         databaseBlockId: parsed.databaseBlockId,
         cellCount: Object.keys(parsed.cells).length,
+        linkedDocId: parsed.linkedDocId || null,
       });
     } finally {
       ctx.socket.disconnect();
@@ -4840,6 +4917,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. For select columns, pass the display label (option auto-created if new)."),
+        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
     addDatabaseRowHandler as any
@@ -4855,7 +4933,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const descendantBlockIds = collectDescendantBlockIds(ctx.blocks, [parsed.rowBlockId, ...childIdsFrom(rowBlock.get("sys:children"))]);
       const dbChildren = ensureChildrenArray(ctx.dbBlock);
       const rowIndex = indexOfChild(dbChildren, parsed.rowBlockId);
@@ -4923,7 +5001,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const requestedColumnIds = new Set(requestedColumns.map(col => col.id));
 
       const rows = requestedRows.map(rowBlockId => {
-        const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, rowBlockId);
+        const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, rowBlockId);
         const title = readDatabaseRowTitle(rowBlock) || null;
         const rowCells = ctx.cellsMap.get(rowBlockId);
         const cells: Record<string, Record<string, unknown>> = {};
@@ -4947,6 +5025,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return {
           rowBlockId,
           title,
+          linkedDocId: readLinkedDocId(rowBlock),
           cells,
         };
       });
@@ -5023,12 +5102,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     column: string;
     value: unknown;
     createOption?: boolean;
+    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
       const col = findDatabaseColumn(parsed.column, ctx);
 
@@ -5040,7 +5120,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         writeDatabaseCellValue(rowCells, col, parsed.value, parsed.createOption ?? true);
       }
 
-      if (isTitleAliasKey(parsed.column) || (col && (col.type === "title" || isTitleAliasKey(col.name)))) {
+      if (parsed.linkedDocId) {
+        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+      } else if (isTitleAliasKey(parsed.column) || (col && (col.type === "title" || isTitleAliasKey(col.name)))) {
         rowBlock.set("prop:text", makeText(String(parsed.value ?? "")));
       }
 
@@ -5070,6 +5152,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         column: z.string().min(1).describe("Column name or ID. Use `title` for the built-in row title."),
         value: z.unknown().describe("New cell value"),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
+        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. Replaces any existing title with a linked doc reference."),
       },
     },
     updateDatabaseCellHandler as any
@@ -5082,12 +5165,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     rowBlockId: string;
     cells: Record<string, unknown>;
     createOption?: boolean;
+    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, parsed.databaseBlockId, parsed.rowBlockId);
+      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
       let titleValue: string | null = null;
 
@@ -5107,7 +5191,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      if (titleValue !== null) {
+      if (parsed.linkedDocId) {
+        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+      } else if (titleValue !== null) {
         rowBlock.set("prop:text", makeText(titleValue));
       }
 
@@ -5135,6 +5221,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
         cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Use `title` for the built-in row title."),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
+        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
     updateDatabaseRowHandler as any
