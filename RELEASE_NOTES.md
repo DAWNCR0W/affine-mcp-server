@@ -1,5 +1,39 @@
 # Release Notes
 
+## Version 1.12.0 (2026-04-09)
+
+### Highlights
+- Added linked-document support on database rows so a row can open an AFFiNE doc in center peek.
+- Restored MCP CRUD compatibility for database rows created directly in the AFFiNE UI.
+- Fixed self-hosted `affine:table` exports that store row, column, and cell data as flat dot-notation Y.js keys.
+- Added GHCR Docker publishing on release tags, guarded so image publication only proceeds when the tagged commit is reachable from `origin/main`.
+
+### What Changed
+- `src/tools/docs.ts`
+  - Added linked-doc row text encoding and decoding for `linkedDocId`.
+  - Relaxed database row ownership checks so MCP accepts rows created through the AFFiNE UI.
+  - Added a flat dot-notation fallback for `affine:table` extraction on self-hosted AFFiNE instances.
+- `tests/test-database-linked-doc.mjs`, `tests/test-database-ui-rows.mjs`, `package.json`
+  - Added live regressions for linked database rows and UI-created database rows.
+  - Added the targeted `npm run test:db-ui-rows` validation entrypoint.
+- `.github/workflows/docker.yml`, `Dockerfile`, `.dockerignore`, `README.md`
+  - Added a multi-arch Docker build and GHCR publish workflow for release tags.
+  - Documented container startup and HTTP MCP client configuration.
+- `package-lock.json`
+  - Refreshed locked verification dependencies for `@modelcontextprotocol/sdk` `1.29.0` and `@playwright/test` `1.59.1`.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `1.12.0`.
+  - Refreshed release-facing docs for the minor release.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+- Focused live verification passed:
+  - `node tests/test-database-linked-doc.mjs`
+  - `npm run test:db-ui-rows`
+
 ## Version 1.11.2 (2026-03-31)
 
 ### Highlights
