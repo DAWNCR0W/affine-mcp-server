@@ -22,20 +22,26 @@ jobs:
         if: ${{ github.event.pull_request.base.ref == 'develop' }}
         run: echo "PR base branch is develop."
 
+      - name: Allow release PRs targeting main
+        if: ${{ github.event.pull_request.base.ref == 'main' && startsWith(github.event.pull_request.head.ref, 'release/') }}
+        run: echo "Release PR targeting main is allowed."
+
       - name: Close PRs targeting non-develop branches
-        if: ${{ github.event.pull_request.base.ref != 'develop' }}
+        if: ${{ github.event.pull_request.base.ref != 'develop' && !(github.event.pull_request.base.ref == 'main' && startsWith(github.event.pull_request.head.ref, 'release/')) }}
         uses: actions/github-script@v8
         with:
           script: |
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
             const baseRef = context.payload.pull_request.base.ref;
+            const headRef = context.payload.pull_request.head.ref;
             const message = [
-              "This repository only accepts pull requests targeting `develop`.",
+              "This repository only accepts pull requests targeting `develop`, plus `release/*` pull requests targeting `main`.",
               "",
               `Current base branch: \`${baseRef}\``,
+              `Current head branch: \`${headRef}\``,
               "",
-              "Please change the base branch to `develop` and reopen this pull request.",
+              "Please change the base branch to `develop`, or use a `release/*` branch when targeting `main`, and reopen this pull request.",
             ].join("\n");
 
             await github.rest.issues.createComment({
@@ -52,4 +58,4 @@ jobs:
               state: "closed",
             });
 
-            core.setFailed("Pull requests must target develop.");
+            core.setFailed("Pull requests must target develop, or use release/* when targeting main.");
