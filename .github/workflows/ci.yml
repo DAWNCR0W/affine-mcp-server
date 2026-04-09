@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - develop
+      - main
   push:
     branches:
       - main
@@ -13,6 +14,7 @@ on:
 
 jobs:
   validate:
+    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'develop' || (github.base_ref == 'main' && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
