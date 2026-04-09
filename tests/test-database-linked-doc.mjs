@@ -102,6 +102,10 @@ async function main() {
     console.log('[Setup] Finding workspace...');
     const workspaces = await call('list_workspaces');
     workspaceId = workspaces[0]?.id;
+    if (!workspaceId) {
+      const workspace = await call('create_workspace', { name: `linked-doc-test-${Date.now()}` });
+      workspaceId = workspace?.id;
+    }
     if (!workspaceId) throw new Error('No workspace available');
     console.log(`  Workspace: ${workspaceId}\n`);
 
