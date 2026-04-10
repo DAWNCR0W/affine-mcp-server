@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { receipt, text } from "../util/mcp.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
@@ -3212,7 +3212,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         pageId: parsed.docId,
       });
 
-      return text({ moved: true, docId: parsed.docId, toParentDocId: parsed.toParentDocId, removedFromParent });
+      return receipt("doc.move", {
+        workspaceId,
+        moved: true,
+        docId: parsed.docId,
+        toParentDocId: parsed.toParentDocId,
+        removedFromParent,
+      });
     } finally {
       socket.disconnect();
     }
@@ -3240,7 +3246,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       const mutation = `mutation PublishDoc($workspaceId:String!,$docId:String!,$mode:PublicDocMode){ publishDoc(workspaceId:$workspaceId, docId:$docId, mode:$mode){ id workspaceId public mode } }`;
       const data = await gql.request<{ publishDoc: any }>(mutation, { workspaceId, docId: parsed.docId, mode: parsed.mode });
-      return text(data.publishDoc);
+      return receipt("doc.publish", {
+        workspaceId,
+        docId: parsed.docId,
+        ...data.publishDoc,
+      });
     };
   server.registerTool(
     "publish_doc",
@@ -3263,7 +3273,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       const mutation = `mutation RevokeDoc($workspaceId:String!,$docId:String!){ revokePublicDoc(workspaceId:$workspaceId, docId:$docId){ id workspaceId public } }`;
       const data = await gql.request<{ revokePublicDoc: any }>(mutation, { workspaceId, docId: parsed.docId });
-      return text(data.revokePublicDoc);
+      return receipt("doc.revoke_public", {
+        workspaceId,
+        docId: parsed.docId,
+        ...data.revokePublicDoc,
+      });
     };
   server.registerTool(
     "revoke_doc",
@@ -3281,7 +3295,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   // CREATE DOC (high-level)
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string }) => {
     const created = await createDocInternal(parsed);
-    return text({ docId: created.docId, title: created.title });
+    return receipt("doc.create", {
+      workspaceId: created.workspaceId,
+      docId: created.docId,
+      title: created.title,
+    });
   };
   server.registerTool(
     'create_doc',
@@ -3305,7 +3323,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       type: "paragraph",
       text: parsed.text,
     });
-    return text({ appended: result.appended, paragraphId: result.blockId });
+    return receipt("doc.append_paragraph", {
+      workspaceId: parsed.workspaceId || defaults.workspaceId || null,
+      docId: parsed.docId,
+      appended: result.appended,
+      blockId: result.blockId,
+      paragraphId: result.blockId,
+      blockType: result.blockType || null,
+      normalizedType: result.normalizedType,
+      legacyType: result.legacyType,
+    });
   };
   server.registerTool(
     'append_paragraph',
@@ -3355,11 +3382,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     placement?: AppendPlacement;
   }) => {
     const result = await appendBlockInternal(parsed);
-    return text({
+    return receipt("doc.append_block", {
+      workspaceId: parsed.workspaceId || defaults.workspaceId || null,
+      docId: parsed.docId,
       appended: result.appended,
       blockId: result.blockId,
       flavour: result.flavour,
       type: result.blockType || null,
+      blockType: result.blockType || null,
       normalizedType: result.normalizedType,
       legacyType: result.legacyType,
     });
@@ -3595,7 +3625,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     markdown: string;
     strict?: boolean;
   }) => {
-    return text(await createDocFromMarkdownCore(parsed));
+    return receipt("doc.create_from_markdown", await createDocFromMarkdownCore(parsed));
   };
   server.registerTool(
     "create_doc_from_markdown",
@@ -3693,7 +3723,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
         : [];
 
-    return text({
+    return receipt("doc.append_markdown", {
       workspaceId,
       docId: parsed.docId,
       appended: applied.appendedCount > 0,
@@ -3757,7 +3787,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
         : [];
 
-    return text({
+    return receipt("doc.replace_with_markdown", {
       workspaceId,
       docId: parsed.docId,
       replaced: true,
@@ -3814,7 +3844,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString('base64'));
       // delete doc content
       wsDeleteDoc(socket, workspaceId, parsed.docId);
-      return text({ deleted: true });
+      return receipt("doc.delete", {
+        workspaceId,
+        docId: parsed.docId,
+        deleted: true,
+      });
     } finally {
       socket.disconnect();
     }
@@ -4179,7 +4213,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
         await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
       }
-      return text({ updated: true, docId: parsed.docId, title: newTitle });
+      return receipt("doc.update_title", {
+        workspaceId,
+        updated: true,
+        docId: parsed.docId,
+        title: newTitle,
+      });
     } finally { socket.disconnect(); }
   };
   server.registerTool("update_doc_title", {
@@ -4304,7 +4343,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           linkedToParent = true;
         } catch { /* non-fatal */ }
       }
-      return text({ sourceDocId: parsed.docId, docId: created.docId, title: created.title, linkedToParent, warnings: created.warnings ?? [] });
+      return receipt("doc.duplicate", {
+        workspaceId,
+        sourceDocId: parsed.docId,
+        docId: created.docId,
+        title: created.title,
+        linkedToParent,
+        cloneMode: "markdown-roundtrip",
+        lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
+        warnings: created.warnings ?? [],
+        stats: created.stats ?? null,
+      });
     } catch (err) {
       try { socket.disconnect(); } catch { /* already disconnected */ }
       throw err;
@@ -4356,7 +4405,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           linkedToParent = true;
         } catch { /* non-fatal */ }
       }
-      return text({ ...created, sourceTemplateDocId: parsed.templateDocId, linkedToParent, unfilledVariables: unfilled });
+      return receipt("doc.create_from_template", {
+        workspaceId,
+        ...created,
+        sourceTemplateDocId: parsed.templateDocId,
+        linkedToParent,
+        cloneMode: "markdown-roundtrip",
+        lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
+        unfilledVariables: unfilled,
+      });
     } catch (err) {
       try { socket.disconnect(); } catch { /* already disconnected */ }
       throw err;
