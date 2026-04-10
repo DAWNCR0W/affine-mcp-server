@@ -319,12 +319,17 @@ echo ""
 echo "=== Running MCP data-view setup test ==="
 node "$SCRIPT_DIR/test-data-view.mjs"
 
-# --- Step 11: Run MCP doc discovery regression test ---
+# --- Step 11: Run MCP create-with-placement regression test ---
+echo ""
+echo "=== Running MCP create-with-placement regression test ==="
+node "$SCRIPT_DIR/test-create-placement.mjs"
+
+# --- Step 12: Run MCP doc discovery regression test ---
 echo ""
 echo "=== Running MCP doc discovery regression test ==="
 node "$SCRIPT_DIR/test-doc-discovery.mjs"
 
-# --- Step 12: Run Playwright verification ---
+# --- Step 13: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready
