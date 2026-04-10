@@ -16,7 +16,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 76 focused tools with WebSocket-based document editing
+- Tools: 87 focused tools with WebSocket-based document editing
 - Status: Active
  
 > New in v1.12.0: Added linked documents on database rows, restored MCP CRUD for rows created in the AFFiNE UI, fixed self-hosted table exports, and documented GHCR Docker releases.
@@ -25,7 +25,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
-- Sidebar data: collections, folders, and organize links for AFFiNE workspace trees
+- Sidebar data: collections, rule-backed allow-list sync, folders, and organize links for AFFiNE workspace trees
 - Database workflows: create database blocks, inspect schema, add/update/delete rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
@@ -414,11 +414,13 @@ Endpoints currently available:
 - `get_collection` – get a collection by id
 - `create_collection` – create a collection
 - `update_collection` – rename a collection
+- `update_collection_rules` – replace a collection's rules and rebuild its allow-list from workspace docs
 - `delete_collection` – delete a collection
 - `add_doc_to_collection` – add a document to a collection allow-list
 - `remove_doc_from_collection` – remove a document from a collection allow-list
 - `list_organize_nodes` – experimental organize/folder tree dump
 - `create_folder` – experimental root or nested folder creation
+- `create_workspace_blueprint` – create a simple workspace folder blueprint
 - `rename_folder` – experimental folder rename
 - `delete_folder` – experimental recursive folder delete
 - `move_organize_node` – experimental folder/link move
@@ -438,9 +440,11 @@ Endpoints currently available:
 - `export_doc_markdown` – export document content as markdown
 - `publish_doc` – make document public
 - `revoke_doc` – revoke public access
-- `create_doc` – create a new document (WebSocket)
+- `create_doc` – create a new document (WebSocket), optionally under `parentDocId`
 - `create_doc_from_markdown` – create a document from markdown content
 - `create_doc_from_template` – clone a template doc, substitute `{{variables}}`, and optionally link it under a parent doc
+- `inspect_template_structure` – inspect a template's native AFFiNE structure and native-clone support
+- `instantiate_template_native` – instantiate a template via native AFFiNE block cloning, with optional markdown fallback
 - `duplicate_doc` – clone a document into a new doc, optionally under a parent doc
 - `create_tag` – create a reusable workspace-level tag
 - `add_tag_to_doc` – attach a tag to a document
@@ -448,6 +452,8 @@ Endpoints currently available:
 - `update_doc_title` – rename a document in both workspace metadata and the internal page block
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`viewMode=kanban` enables preset-backed data views; `data_view` defaults to kanban)
+- `create_semantic_page` – create an AFFiNE-native page with an intentional section skeleton and native block composition
+- `append_semantic_section` – append a semantic section to an existing page by heading title
 - `move_doc` – move a document in the sidebar by relinking it under a different parent
 - `batch_create_docs` – create up to 20 documents in a single call
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
@@ -466,7 +472,7 @@ Endpoints currently available:
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
-- `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment`
+- `list_comments`, `list_unresolved_threads`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment`
 
 ### Version History
 - `list_histories`
@@ -490,10 +496,10 @@ Optional environment variables to narrow the exposed surface.
 | Group name | Tools included |
 |---|---|
 | `workspaces` | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `delete_workspace` |
-| `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_doc_from_markdown`, `create_doc_from_template`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
-| `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
+| `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_semantic_page`, `append_semantic_section`, `create_doc_from_markdown`, `create_doc_from_template`, `inspect_template_structure`, `instantiate_template_native`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
+| `comments` | `list_comments`, `list_unresolved_threads`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
 | `history` | `list_histories` |
-| `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
+| `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `update_collection_rules`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `create_workspace_blueprint`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
 | `users` | `current_user`, `sign_in`, `update_profile`, `update_settings` |
 | `access_tokens` | `list_access_tokens`, `generate_access_token`, `revoke_access_token` |
 | `blobs` | `upload_blob`, `delete_blob`, `cleanup_blobs` |
@@ -543,7 +549,7 @@ npm run pack:check
 - For full tool-surface verification, run `npm run test:comprehensive` (self-bootstraps a local Docker AFFiNE stack).
 - For pre-provisioned environments, use `npm run test:comprehensive:raw`.
 - For full environment verification, run `npm run test:e2e` (Docker + MCP + Playwright).
-- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:organize`, `npm run test:bearer`, `npm run test:http-email-password`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:cli-live`, `npm run test:tool-filtering`, `npm run test:markdown-rich-text-import`, `npm run test:playwright`.
+- Additional focused runners: `npm run test:db-create`, `npm run test:db-cells`, `npm run test:db-schema`, `npm run test:supporting-tools`, `npm run test:organize`, `npm run test:bearer`, `npm run test:http-email-password`, `npm run test:http-bearer`, `npm run test:oauth-http`, `npm run test:doc-discovery`, `npm run test:create-placement`, `npm run test:cli-version`, `npm run test:cli-commands`, `npm run test:cli-live`, `npm run test:tool-filtering`, `npm run test:markdown-rich-text-import`, `npm run test:playwright`.
 
 ## Troubleshooting
 

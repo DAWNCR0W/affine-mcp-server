@@ -163,6 +163,13 @@ async function main() {
     });
     expectEqual(emptyComments?.totalCount, 0, 'list_comments totalCount before create');
 
+    const emptyThreads = await call('list_unresolved_threads', {
+      workspaceId,
+      docId,
+      first: 20,
+    });
+    expectEqual(emptyThreads?.unresolvedThreadCount, 0, 'list_unresolved_threads count before create');
+
     const createdComment = await call('create_comment', {
       workspaceId,
       docId,
@@ -183,6 +190,17 @@ async function main() {
       throw new Error('list_comments did not include created comment');
     }
 
+    const unresolvedThreadsAfterCreate = await call('list_unresolved_threads', {
+      workspaceId,
+      docId,
+      first: 20,
+    });
+    expectEqual(unresolvedThreadsAfterCreate?.unresolvedThreadCount, 1, 'list_unresolved_threads count after create');
+    expectArray(unresolvedThreadsAfterCreate?.threads, 'list_unresolved_threads threads');
+    if (!unresolvedThreadsAfterCreate.threads.some(thread => thread?.id === commentId)) {
+      throw new Error('list_unresolved_threads did not include the created comment');
+    }
+
     const updatedComment = await call('update_comment', {
       id: commentId,
       content: { text: 'supporting comment updated' },
@@ -194,6 +212,13 @@ async function main() {
       resolved: true,
     });
     expectEqual(resolvedComment?.success, true, 'resolve_comment success');
+
+    const unresolvedThreadsAfterResolve = await call('list_unresolved_threads', {
+      workspaceId,
+      docId,
+      first: 20,
+    });
+    expectEqual(unresolvedThreadsAfterResolve?.unresolvedThreadCount, 0, 'list_unresolved_threads count after resolve');
 
     const deletedComment = await call('delete_comment', { id: commentId });
     expectEqual(deletedComment?.success, true, 'delete_comment success');
