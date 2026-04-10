@@ -66,6 +66,23 @@ const AppendBlockBookmarkStyle = z.enum(APPEND_BLOCK_BOOKMARK_STYLE_VALUES);
 const APPEND_BLOCK_DATA_VIEW_MODE_VALUES = ["table", "kanban"] as const;
 type AppendBlockDataViewMode = typeof APPEND_BLOCK_DATA_VIEW_MODE_VALUES[number];
 const AppendBlockDataViewMode = z.enum(APPEND_BLOCK_DATA_VIEW_MODE_VALUES);
+const DATABASE_INTENT_VALUES = ["task_board", "issue_tracker"] as const;
+type DatabaseIntent = typeof DATABASE_INTENT_VALUES[number];
+const DatabaseIntent = z.enum(DATABASE_INTENT_VALUES);
+type DatabaseIntentSeedRow = Record<string, unknown>;
+type DatabaseIntentColumnSpec = {
+  name: string;
+  type: "rich-text" | "select" | "multi-select" | "number" | "checkbox" | "link" | "date";
+  options?: string[];
+  width?: number;
+};
+type DatabaseIntentPreset = {
+  title: string;
+  viewName: string;
+  statusOptions: string[];
+  extraColumns: DatabaseIntentColumnSpec[];
+  starterRows: DatabaseIntentSeedRow[];
+};
 
 type AppendPlacement = {
   parentId?: string;
@@ -1234,6 +1251,30 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return column;
   }
 
+  function replaceSelectColumnOptions(column: Y.Map<any>, options: string[]): void {
+    let data = column.get("data");
+    if (!(data instanceof Y.Map)) {
+      data = new Y.Map<any>();
+      column.set("data", data);
+    }
+
+    let rawOptions = data.get("options");
+    if (!(rawOptions instanceof Y.Array)) {
+      rawOptions = new Y.Array<any>();
+      data.set("options", rawOptions);
+    } else if (rawOptions.length > 0) {
+      rawOptions.delete(0, rawOptions.length);
+    }
+
+    options.forEach((value, index) => {
+      const option = new Y.Map<any>();
+      option.set("id", generateId());
+      option.set("value", value);
+      option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+      rawOptions.push([option]);
+    });
+  }
+
   function createDatabaseColumnDefinition(input: {
     id: string;
     name: string;
@@ -1262,6 +1303,51 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     return column;
+  }
+
+  function addDatabaseColumnToBlock(dbBlock: Y.Map<any>, spec: DatabaseIntentColumnSpec): string {
+    const columns = dbBlock.get("prop:columns");
+    if (!(columns instanceof Y.Array)) {
+      throw new Error("Database has no columns array");
+    }
+
+    const currentDefs = readColumnDefs(dbBlock);
+    const existing = currentDefs.find(column => column.name === spec.name);
+    if (existing) {
+      if (existing.type !== spec.type) {
+        throw new Error(`Column '${spec.name}' already exists with type '${existing.type}'`);
+      }
+      return existing.id;
+    }
+
+    const columnId = generateId();
+    columns.push([createDatabaseColumnDefinition({
+      id: columnId,
+      name: spec.name,
+      type: spec.type,
+      width: spec.width,
+      options: spec.options,
+    })]);
+
+    const views = dbBlock.get("prop:views");
+    if (views instanceof Y.Array) {
+      views.forEach((view: any) => {
+        if (!(view instanceof Y.Map)) {
+          return;
+        }
+        const viewColumns = view.get("columns");
+        if (!(viewColumns instanceof Y.Array)) {
+          return;
+        }
+        const viewColumn = new Y.Map<any>();
+        viewColumn.set("id", columnId);
+        viewColumn.set("hide", false);
+        viewColumn.set("width", spec.width ?? 200);
+        viewColumns.push([viewColumn]);
+      });
+    }
+
+    return columnId;
   }
 
   function createPresetBackedDataViewBlock(
@@ -5038,6 +5124,85 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     cellsMap: Y.Map<any>;
   };
 
+  function buildDatabaseIntentPreset(intent: DatabaseIntent): DatabaseIntentPreset {
+    switch (intent) {
+      case "task_board":
+        return {
+          title: "Task Board",
+          viewName: "Task Board",
+          statusOptions: ["Todo", "In Progress", "Blocked", "Done"],
+          extraColumns: [
+            { name: "Type", type: "select", options: ["Task", "Bug", "Chore"], width: 140 },
+            { name: "Priority", type: "select", options: ["P0", "P1", "P2", "P3"], width: 120 },
+            { name: "Owner", type: "rich-text", width: 180 },
+            { name: "Due Date", type: "date", width: 160 },
+          ],
+          starterRows: [
+            {
+              title: "Define the scope",
+              Status: "Todo",
+              Type: "Task",
+              Priority: "P1",
+              Owner: "Product",
+            },
+            {
+              title: "Build the first pass",
+              Status: "In Progress",
+              Type: "Task",
+              Priority: "P1",
+              Owner: "Engineering",
+            },
+            {
+              title: "Review and ship",
+              Status: "Done",
+              Type: "Chore",
+              Priority: "P2",
+              Owner: "Delivery",
+            },
+          ],
+        };
+      case "issue_tracker":
+        return {
+          title: "Issue Tracker",
+          viewName: "Issue Tracker",
+          statusOptions: ["Open", "In Progress", "In Review", "Blocked", "Resolved", "Closed"],
+          extraColumns: [
+            { name: "Type", type: "select", options: ["Bug", "Feature", "Task", "Incident"], width: 140 },
+            { name: "Priority", type: "select", options: ["P0", "P1", "P2", "P3"], width: 120 },
+            { name: "Assignee", type: "rich-text", width: 180 },
+            { name: "Due Date", type: "date", width: 160 },
+          ],
+          starterRows: [
+            {
+              title: "Document reproduction steps",
+              Status: "Open",
+              Type: "Bug",
+              Priority: "P0",
+              Assignee: "Unassigned",
+            },
+            {
+              title: "Fix the regression",
+              Status: "In Progress",
+              Type: "Bug",
+              Priority: "P1",
+              Assignee: "Engineering",
+            },
+            {
+              title: "Verify the release candidate",
+              Status: "Resolved",
+              Type: "Task",
+              Priority: "P2",
+              Assignee: "QA",
+            },
+          ],
+        };
+      default: {
+        const exhaustiveCheck: never = intent;
+        throw new Error(`Unsupported database intent '${exhaustiveCheck}'`);
+      }
+    }
+  }
+
   /** Read column definitions including select options from a database block */
   function readColumnDefs(dbBlock: Y.Map<any>): DatabaseColumnDef[] {
     const columnsRaw = dbBlock.get("prop:columns");
@@ -5209,6 +5374,47 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const rowCells = new Y.Map<any>();
     cellsMap.set(rowBlockId, rowCells);
     return rowCells;
+  }
+
+  function addDatabaseRowToBlock(parsed: {
+    blocks: Y.Map<any>;
+    dbBlock: Y.Map<any>;
+    cellsMap: Y.Map<any>;
+    databaseBlockId: string;
+    lookup: DatabaseColumnLookup;
+    cells: Record<string, unknown>;
+    linkedDocId?: string;
+  }): string {
+    const rowBlockId = generateId();
+    const rowBlock = new Y.Map<any>();
+    setSysFields(rowBlock, rowBlockId, "affine:paragraph");
+    rowBlock.set("sys:parent", parsed.databaseBlockId);
+    rowBlock.set("sys:children", new Y.Array<string>());
+    rowBlock.set("prop:type", "text");
+    if (parsed.linkedDocId) {
+      rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
+    } else {
+      const titleValue = resolveDatabaseTitleValue(parsed.cells, parsed.lookup);
+      rowBlock.set("prop:text", makeText(String(titleValue)));
+    }
+    parsed.blocks.set(rowBlockId, rowBlock);
+
+    const dbChildren = ensureChildrenArray(parsed.dbBlock);
+    dbChildren.push([rowBlockId]);
+
+    const rowCells = ensureDatabaseRowCells(parsed.cellsMap, rowBlockId);
+    for (const [key, value] of Object.entries(parsed.cells)) {
+      const col = findDatabaseColumn(key, parsed.lookup);
+      if (!col) {
+        if (isTitleAliasKey(key)) {
+          continue;
+        }
+        throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(parsed.lookup)}`);
+      }
+      writeDatabaseCellValue(rowCells, col, value, true);
+    }
+
+    return rowBlockId;
   }
 
   function getDatabaseRowBlock(
@@ -5838,6 +6044,135 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     updateDatabaseRowHandler as any
+  );
+
+  const composeDatabaseFromIntentCore = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    intent: DatabaseIntent;
+    title?: string;
+    seedRows?: DatabaseIntentSeedRow[];
+    placement?: AppendPlacement;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required");
+    }
+
+    const preset = buildDatabaseIntentPreset(parsed.intent);
+    const title = (parsed.title ?? preset.title).trim() || preset.title;
+    const starterRows = Array.isArray(parsed.seedRows) ? parsed.seedRows : preset.starterRows;
+    const creation = await appendBlockInternal({
+      workspaceId,
+      docId: parsed.docId,
+      type: "data_view",
+      viewMode: "kanban",
+      text: title,
+      placement: parsed.placement,
+    });
+
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, creation.blockId);
+    try {
+      const warnings: string[] = [];
+
+      const statusLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
+      const statusColumn = statusLookup.colByNameLower.get("status");
+      if (statusColumn?.raw instanceof Y.Map) {
+        replaceSelectColumnOptions(statusColumn.raw, preset.statusOptions);
+      } else {
+        warnings.push("Status column was not found after database creation.");
+      }
+
+      const addedColumnIds: string[] = [];
+      for (const columnSpec of preset.extraColumns) {
+        addedColumnIds.push(addDatabaseColumnToBlock(ctx.dbBlock, columnSpec));
+      }
+
+      const viewEntries = ctx.dbBlock.get("prop:views");
+      if (viewEntries instanceof Y.Array) {
+        const primaryView = viewEntries.get(0);
+        if (primaryView instanceof Y.Map) {
+          primaryView.set("name", preset.viewName);
+        }
+      }
+
+      const rowBlockIds: string[] = [];
+      for (const rowInput of starterRows) {
+        rowBlockIds.push(addDatabaseRowToBlock({
+          blocks: ctx.blocks,
+          dbBlock: ctx.dbBlock,
+          cellsMap: ctx.cellsMap,
+          databaseBlockId: creation.blockId,
+          lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
+          cells: rowInput,
+        }));
+      }
+
+      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
+      const finalViews = readDatabaseViewDefs(ctx.dbBlock, finalLookup);
+      const columnSummary = finalLookup.columnDefs.map(column => ({
+        id: column.id,
+        name: column.name || null,
+        type: column.type,
+        options: column.options,
+      }));
+
+      return {
+        workspaceId,
+        docId: parsed.docId,
+        intent: parsed.intent,
+        title,
+        databaseBlockId: creation.blockId,
+        primaryViewId: finalViews[0]?.id || null,
+        viewIds: finalViews.map(view => view.id),
+        columnIds: finalLookup.columnDefs.map(column => column.id),
+        rowBlockIds: getDatabaseRowIds(ctx.dbBlock),
+        columns: columnSummary,
+        views: finalViews,
+        warnings: mergeWarnings(warnings),
+        lossy: false,
+        stats: {
+          columnCount: columnSummary.length,
+          viewCount: finalViews.length,
+          rowCount: getDatabaseRowIds(ctx.dbBlock).length,
+          addedColumnCount: addedColumnIds.length,
+          seededRowCount: rowBlockIds.length,
+        },
+      };
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "compose_database_from_intent",
+    {
+      title: "Compose Database From Intent",
+      description: "Create a useful AFFiNE database/data-view from declarative intent. Supports task_board and issue_tracker presets with starter schema, kanban view, and optional starter rows.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        intent: DatabaseIntent.describe("Declarative database intent to compose."),
+        title: z.string().optional().describe("Optional database title. Defaults to the intent preset title."),
+        seedRows: z.array(z.record(z.unknown())).optional().describe("Optional starter rows. If omitted, the preset starter rows are used."),
+        placement: z.object({
+          parentId: z.string().optional(),
+          afterBlockId: z.string().optional(),
+          beforeBlockId: z.string().optional(),
+          index: z.number().int().min(0).optional(),
+        }).optional().describe("Optional insertion target/position"),
+      },
+    },
+    async (parsed: {
+      workspaceId?: string;
+      docId: string;
+      intent: DatabaseIntent;
+      title?: string;
+      seedRows?: DatabaseIntentSeedRow[];
+      placement?: AppendPlacement;
+    }) => text(await composeDatabaseFromIntentCore(parsed)) as any
   );
 
   // ADD DATABASE COLUMN

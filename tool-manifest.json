@@ -13,6 +13,7 @@
     "batch_create_docs",
     "cleanup_blobs",
     "cleanup_orphan_embeds",
+    "compose_database_from_intent",
     "create_collection",
     "create_comment",
     "create_doc",
