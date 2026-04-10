@@ -2152,6 +2152,284 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     };
   }
 
+  type NativeTemplateSupportIssue = {
+    path: string;
+    reason: string;
+  };
+
+  type NativeTemplateBlockSummary = {
+    id: string;
+    parentId: string | null;
+    flavour: string | null;
+    type: string | null;
+    textPreview: string | null;
+    textLength: number;
+    childIds: string[];
+  };
+
+  type NativeTemplateStructureSummary = {
+    workspaceId: string;
+    templateDocId: string;
+    title: string;
+    tags: string[];
+    pageId: string | null;
+    surfaceId: string | null;
+    noteId: string | null;
+    rootBlockIds: string[];
+    blockCount: number;
+    blocks: NativeTemplateBlockSummary[];
+    nativeCloneSupported: boolean;
+    fallbackReasons: string[];
+  };
+
+  type NativeTemplateCloneContext = {
+    sourceDocId: string;
+    targetDocId: string;
+    blockIdMap: Map<string, string>;
+    variables: Record<string, string>;
+    unresolvedVariables: Set<string>;
+    replacedVariableCount: number;
+  };
+
+  function truncateTemplatePreview(text: string, maxLength: number = 140): string {
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return `${text.slice(0, maxLength - 1)}…`;
+  }
+
+  function substituteTemplateVariables(input: string, ctx: NativeTemplateCloneContext): string {
+    return input.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key: string) => {
+      const value = ctx.variables[key];
+      if (value === undefined) {
+        ctx.unresolvedVariables.add(match);
+        return match;
+      }
+      ctx.replacedVariableCount += 1;
+      return value;
+    });
+  }
+
+  function remapTemplateString(value: string, ctx: NativeTemplateCloneContext): string {
+    const remapped = ctx.blockIdMap.get(value) ?? (value === ctx.sourceDocId ? ctx.targetDocId : value);
+    return substituteTemplateVariables(remapped, ctx);
+  }
+
+  function cloneNativeTemplateValue(value: unknown, ctx: NativeTemplateCloneContext, path: string): unknown {
+    if (typeof value === "string") {
+      return remapTemplateString(value, ctx);
+    }
+    if (typeof value === "number" || typeof value === "boolean" || value === null || value === undefined) {
+      return value;
+    }
+    if (value instanceof Y.Text) {
+      const next = new Y.Text();
+      let offset = 0;
+      value.toDelta().forEach((delta: any) => {
+        const insert = typeof delta?.insert === "string"
+          ? substituteTemplateVariables(delta.insert, ctx)
+          : delta?.insert;
+        const attributes = delta?.attributes ? cloneNativeTemplateValue(delta.attributes, ctx, `${path}.attributes`) : undefined;
+        if (typeof insert === "string") {
+          next.insert(offset, insert, (attributes && typeof attributes === "object") ? attributes as any : {});
+          offset += insert.length;
+        } else if (insert !== undefined) {
+          const text = String(insert);
+          next.insert(offset, text, (attributes && typeof attributes === "object") ? attributes as any : {});
+          offset += text.length;
+        }
+      });
+      return next;
+    }
+    if (value instanceof Y.Array) {
+      const next = new Y.Array<any>();
+      value.forEach((entry: unknown) => {
+        next.push([cloneNativeTemplateValue(entry, ctx, `${path}[]`)]);
+      });
+      return next;
+    }
+    if (value instanceof Y.Map) {
+      const next = new Y.Map<any>();
+      for (const [key, entry] of value) {
+        next.set(String(key), cloneNativeTemplateValue(entry, ctx, `${path}.${String(key)}`));
+      }
+      return next;
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry, index) => cloneNativeTemplateValue(entry, ctx, `${path}[${index}]`));
+    }
+    if (value instanceof Date) {
+      return new Date(value.getTime());
+    }
+    if (value instanceof RegExp) {
+      return new RegExp(value.source, value.flags);
+    }
+    if (typeof value === "object") {
+      const proto = Object.getPrototypeOf(value);
+      if (proto === Object.prototype || proto === null) {
+        const next: Record<string, unknown> = {};
+        for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+          next[key] = cloneNativeTemplateValue(entry, ctx, `${path}.${key}`);
+        }
+        return next;
+      }
+      throw new Error(`Unsupported native template value at ${path}: ${value.constructor?.name || "unknown"}.`);
+    }
+    return value;
+  }
+
+  function scanNativeTemplateValue(value: unknown, path: string, issues: NativeTemplateSupportIssue[], seen: WeakSet<object>): void {
+    if (value === null || value === undefined) {
+      return;
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return;
+    }
+    if (value instanceof Y.Text) {
+      for (const delta of value.toDelta()) {
+        if (delta?.attributes && typeof delta.attributes === "object") {
+          scanNativeTemplateValue(delta.attributes, `${path}.attributes`, issues, seen);
+        }
+      }
+      return;
+    }
+    if (value instanceof Y.Array) {
+      if (seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      let index = 0;
+      value.forEach((entry: unknown) => {
+        scanNativeTemplateValue(entry, `${path}[${index}]`, issues, seen);
+        index += 1;
+      });
+      return;
+    }
+    if (value instanceof Y.Map) {
+      if (seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      for (const [key, entry] of value) {
+        scanNativeTemplateValue(entry, `${path}.${String(key)}`, issues, seen);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      value.forEach((entry, index) => {
+        scanNativeTemplateValue(entry, `${path}[${index}]`, issues, seen);
+      });
+      return;
+    }
+    if (value instanceof Date || value instanceof RegExp) {
+      return;
+    }
+    if (typeof value === "object") {
+      const proto = Object.getPrototypeOf(value);
+      if (proto === Object.prototype || proto === null) {
+        if (seen.has(value)) {
+          return;
+        }
+        seen.add(value);
+        for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+          scanNativeTemplateValue(entry, `${path}.${key}`, issues, seen);
+        }
+        return;
+      }
+      issues.push({
+        path,
+        reason: `Unsupported native template value type: ${value.constructor?.name || "unknown"}.`,
+      });
+    }
+  }
+
+  function summarizeNativeTemplateStructure(
+    doc: Y.Doc,
+    workspaceId: string,
+    templateDocId: string,
+    tagLabels: string[],
+    supportIssues: NativeTemplateSupportIssue[]
+  ): NativeTemplateStructureSummary {
+    const meta = doc.getMap("meta");
+    const blocks = doc.getMap("blocks") as Y.Map<any>;
+    const pageId = findBlockIdByFlavour(blocks, "affine:page");
+    const surfaceId = findBlockIdByFlavour(blocks, "affine:surface");
+    const noteId = findBlockIdByFlavour(blocks, "affine:note");
+    const visited = new Set<string>();
+    const summaries: NativeTemplateBlockSummary[] = [];
+    const rootBlockIds: string[] = [];
+
+    if (pageId) {
+      const pageBlock = findBlockById(blocks, pageId);
+      if (pageBlock) {
+        rootBlockIds.push(...childIdsFrom(pageBlock.get("sys:children")));
+      }
+    } else if (noteId) {
+      rootBlockIds.push(noteId);
+    }
+    if (rootBlockIds.length === 0) {
+      for (const [id] of blocks) {
+        rootBlockIds.push(String(id));
+      }
+    }
+
+    const visit = (blockId: string) => {
+      if (visited.has(blockId)) {
+        return;
+      }
+      visited.add(blockId);
+
+      const block = findBlockById(blocks, blockId);
+      if (!block) {
+        return;
+      }
+
+      const childIds = childIdsFrom(block.get("sys:children"));
+      const textValue = asText(block.get("prop:text"));
+      summaries.push({
+        id: blockId,
+        parentId: resolveBlockParentId(blocks, blockId),
+        flavour: asStringOrNull(block.get("sys:flavour")),
+        type: asStringOrNull(block.get("prop:type")),
+        textPreview: textValue.length > 0 ? truncateTemplatePreview(textValue) : null,
+        textLength: textValue.length,
+        childIds,
+      });
+
+      for (const childId of childIds) {
+        visit(childId);
+      }
+    };
+
+    for (const rootId of rootBlockIds) {
+      visit(rootId);
+    }
+    for (const [id] of blocks) {
+      visit(String(id));
+    }
+
+    const title = asText(meta.get("title")) || "Untitled";
+
+    return {
+      workspaceId,
+      templateDocId,
+      title,
+      tags: tagLabels,
+      pageId,
+      surfaceId,
+      noteId,
+      rootBlockIds,
+      blockCount: summaries.length,
+      blocks: summaries,
+      nativeCloneSupported: supportIssues.length === 0,
+      fallbackReasons: supportIssues.map(issue => `${issue.path}: ${issue.reason}`),
+    };
+  }
+
   async function applyMarkdownOperationsInternal(parsed: {
     workspaceId: string;
     docId: string;
@@ -4373,6 +4651,334 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: z.string().optional().describe("Parent doc to link the new doc under in the sidebar."),
     },
   }, createDocFromTemplateHandler as any);
+
+  async function syncRawTagsToDoc(parsed: {
+    workspaceId: string;
+    docId: string;
+    tags: string[];
+  }): Promise<void> {
+    if (parsed.tags.length === 0) {
+      return;
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, parsed.workspaceId);
+
+      const workspaceSnapshot = await loadDoc(socket, parsed.workspaceId, parsed.workspaceId);
+      if (!workspaceSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${parsed.workspaceId}`);
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+      const page = getWorkspacePageEntries(wsMeta).find(entry => entry.id === parsed.docId);
+      if (!page) {
+        throw new Error(`docId ${parsed.docId} is not present in workspace ${parsed.workspaceId}`);
+      }
+
+      const pageTags = ensureTagArray(page.entry);
+      pageTags.delete(0, pageTags.length);
+      for (const tag of parsed.tags) {
+        pageTags.push([tag]);
+      }
+
+      const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+      await pushDocUpdate(socket, parsed.workspaceId, parsed.workspaceId, Buffer.from(wsDelta).toString("base64"));
+
+      const docSnapshot = await loadDoc(socket, parsed.workspaceId, parsed.docId);
+      if (!docSnapshot.missing) {
+        throw new Error(`Document ${parsed.docId} not found in workspace ${parsed.workspaceId}`);
+      }
+
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
+      const docPrevSV = Y.encodeStateVector(doc);
+      const docMeta = doc.getMap("meta");
+      const docTags = ensureTagArray(docMeta);
+      docTags.delete(0, docTags.length);
+      for (const tag of parsed.tags) {
+        docTags.push([tag]);
+      }
+
+      const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
+      await pushDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  const inspectTemplateStructureHandler = async (parsed: { workspaceId?: string; templateDocId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!workspaceSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+      const workspaceDoc = new Y.Doc();
+      Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      const tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+
+      const templateSnapshot = await loadDoc(socket, workspaceId, parsed.templateDocId);
+      if (!templateSnapshot.missing) {
+        throw new Error(`Template doc ${parsed.templateDocId} not found.`);
+      }
+
+      const templateDoc = new Y.Doc();
+      Y.applyUpdate(templateDoc, Buffer.from(templateSnapshot.missing, "base64"));
+      const meta = templateDoc.getMap("meta");
+      const rawTags = getStringArray(getTagArray(meta));
+      const resolvedTags = resolveTagLabels(rawTags, tagOptionsById);
+      const supportIssues: NativeTemplateSupportIssue[] = [];
+      scanNativeTemplateValue(meta, "meta", supportIssues, new WeakSet<object>());
+      scanNativeTemplateValue(templateDoc.getMap("blocks"), "blocks", supportIssues, new WeakSet<object>());
+
+      return text(summarizeNativeTemplateStructure(
+        templateDoc,
+        workspaceId,
+        parsed.templateDocId,
+        resolvedTags,
+        supportIssues
+      ));
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "inspect_template_structure",
+    {
+      title: "Inspect Template Structure",
+      description: "Inspect a template doc's native structure, tags, and fallback risk before instantiation.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        templateDocId: z.string().describe("The template doc to inspect."),
+      },
+    },
+    inspectTemplateStructureHandler as any
+  );
+
+  const instantiateTemplateNativeHandler = async (parsed: {
+    workspaceId?: string;
+    templateDocId: string;
+    title?: string;
+    variables?: Record<string, string>;
+    parentDocId?: string;
+    allowFallback?: boolean;
+    preserveTags?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID.");
+    }
+
+    const allowFallback = parsed.allowFallback !== false;
+    const preserveTags = parsed.preserveTags !== false;
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!workspaceSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+      const workspaceDoc = new Y.Doc();
+      Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      const workspaceMeta = workspaceDoc.getMap("meta");
+      const tagOptionById = getWorkspaceTagOptionMaps(workspaceMeta).byId;
+      const sourcePage = getWorkspacePageEntries(workspaceMeta).find(entry => entry.id === parsed.templateDocId);
+      if (!sourcePage) {
+        throw new Error(`Template doc ${parsed.templateDocId} was not found in workspace ${workspaceId}.`);
+      }
+
+      const templateSnapshot = await loadDoc(socket, workspaceId, parsed.templateDocId);
+      if (!templateSnapshot.missing) {
+        throw new Error(`Template doc ${parsed.templateDocId} not found.`);
+      }
+
+      const templateDoc = new Y.Doc();
+      Y.applyUpdate(templateDoc, Buffer.from(templateSnapshot.missing, "base64"));
+      const templateMeta = templateDoc.getMap("meta");
+      const templateBlocks = templateDoc.getMap("blocks") as Y.Map<any>;
+      const rawTags = getStringArray(sourcePage.tagsArray);
+      const resolvedTags = resolveTagLabels(rawTags, tagOptionById);
+      const supportIssues: NativeTemplateSupportIssue[] = [];
+      scanNativeTemplateValue(templateMeta, "meta", supportIssues, new WeakSet<object>());
+      scanNativeTemplateValue(templateBlocks, "blocks", supportIssues, new WeakSet<object>());
+      const nativeSummary = summarizeNativeTemplateStructure(
+        templateDoc,
+        workspaceId,
+        parsed.templateDocId,
+        resolvedTags,
+        supportIssues
+      );
+
+      const sourceTitle = nativeSummary.title || sourcePage.title || "Untitled";
+      const targetTitle = (parsed.title ?? sourceTitle).trim() || sourceTitle;
+
+      if (!nativeSummary.nativeCloneSupported) {
+        if (!allowFallback) {
+          throw new Error(`Native template instantiation is not supported: ${nativeSummary.fallbackReasons.join(" | ")}`);
+        }
+
+        const fallbackResult = await createDocFromTemplateHandler({
+          workspaceId,
+          templateDocId: parsed.templateDocId,
+          title: targetTitle,
+          variables: parsed.variables,
+          parentDocId: parsed.parentDocId,
+        });
+        const created = JSON.parse((fallbackResult as any).content[0].text);
+        return text({
+          ...created,
+          mode: "markdown_fallback",
+          nativeCloneSupported: false,
+          warnings: mergeWarnings(
+            created.warnings ?? [],
+            nativeSummary.fallbackReasons,
+            ["Native template instantiation fell back to markdown materialization."]
+          ),
+        });
+      }
+
+      const created = await createDocInternal({
+        workspaceId,
+        title: targetTitle,
+      });
+
+      const targetSnapshot = await loadDoc(socket, workspaceId, created.docId);
+      if (!targetSnapshot.missing) {
+        throw new Error(`Created doc ${created.docId} was not found for native template instantiation.`);
+      }
+
+      const targetDoc = new Y.Doc();
+      Y.applyUpdate(targetDoc, Buffer.from(targetSnapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(targetDoc);
+      const targetMeta = targetDoc.getMap("meta");
+      const targetBlocks = targetDoc.getMap("blocks") as Y.Map<any>;
+
+      const blockIdMap = new Map<string, string>();
+      for (const [sourceBlockId] of templateBlocks) {
+        blockIdMap.set(String(sourceBlockId), generateId());
+      }
+      const cloneContext: NativeTemplateCloneContext = {
+        sourceDocId: parsed.templateDocId,
+        targetDocId: created.docId,
+        blockIdMap,
+        variables: parsed.variables ?? {},
+        unresolvedVariables: new Set<string>(),
+        replacedVariableCount: 0,
+      };
+
+      for (const [existingBlockId] of targetBlocks) {
+        targetBlocks.delete(String(existingBlockId));
+      }
+      for (const [sourceBlockId, rawBlock] of templateBlocks) {
+        if (!(rawBlock instanceof Y.Map)) {
+          continue;
+        }
+        const nextBlockId = blockIdMap.get(String(sourceBlockId))!;
+        const cloned = cloneNativeTemplateValue(rawBlock, cloneContext, `blocks.${String(sourceBlockId)}`) as Y.Map<any>;
+        cloned.set("sys:id", nextBlockId);
+        targetBlocks.set(nextBlockId, cloned);
+      }
+
+      targetMeta.set("id", created.docId);
+      targetMeta.set("title", targetTitle);
+      if (preserveTags) {
+        const targetMetaTags = ensureTagArray(targetMeta);
+        targetMetaTags.delete(0, targetMetaTags.length);
+        for (const tag of rawTags) {
+          targetMetaTags.push([tag]);
+        }
+      }
+
+      const pageId = findBlockIdByFlavour(targetBlocks, "affine:page");
+      if (pageId) {
+        const pageBlock = findBlockById(targetBlocks, pageId);
+        if (pageBlock) {
+          pageBlock.set("prop:title", makeText(targetTitle));
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(targetDoc, prevSV);
+      await pushDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
+
+      if (preserveTags && rawTags.length > 0) {
+        await syncRawTagsToDoc({
+          workspaceId,
+          docId: created.docId,
+          tags: rawTags,
+        });
+      }
+
+      let linkedToParent = false;
+      const warnings: string[] = [];
+      if (parsed.parentDocId) {
+        try {
+          await appendBlockInternal({
+            workspaceId,
+            docId: parsed.parentDocId,
+            type: "embed_linked_doc",
+            pageId: created.docId,
+          });
+          linkedToParent = true;
+        } catch (err: any) {
+          warnings.push(`Doc created but could not be linked to parent "${parsed.parentDocId}": ${err?.message ?? "unknown error"}`);
+        }
+      }
+
+      return text({
+        workspaceId,
+        sourceTemplateDocId: parsed.templateDocId,
+        docId: created.docId,
+        title: targetTitle,
+        mode: "native",
+        nativeCloneSupported: true,
+        linkedToParent,
+        preservedTags: preserveTags ? resolvedTags : [],
+        replacedVariableCount: cloneContext.replacedVariableCount,
+        unresolvedVariables: Array.from(cloneContext.unresolvedVariables),
+        warnings,
+        blockCount: nativeSummary.blockCount,
+        rootBlockIds: nativeSummary.rootBlockIds.map(blockId => blockIdMap.get(blockId) ?? blockId),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "instantiate_template_native",
+    {
+      title: "Instantiate Template Natively",
+      description: "Instantiate a template using native AFFiNE block cloning when supported, falling back to markdown materialization only when necessary.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        templateDocId: z.string().describe("The template doc to instantiate."),
+        title: z.string().optional().describe("Optional title for the new document. Defaults to the template title."),
+        variables: z.record(z.string(), z.string()).optional().describe("Key-value map of {{variable}} substitutions applied during cloning."),
+        parentDocId: z.string().optional().describe("Optional parent doc to link the instantiated doc under in the sidebar."),
+        allowFallback: z.boolean().optional().describe("If false, fail instead of falling back to markdown materialization when native cloning is unsupported."),
+        preserveTags: z.boolean().optional().describe("If true (default), copy the template's tags onto the instantiated doc."),
+      },
+    },
+    instantiateTemplateNativeHandler as any
+  );
 
   // ── helpers for database select columns ──
 
