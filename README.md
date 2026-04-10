@@ -16,7 +16,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 - Purpose: Manage AFFiNE workspaces and documents through MCP
 - Transport: stdio (default) and optional HTTP (`/mcp`) for remote MCP deployments
 - Auth: Token, Cookie, or Email/Password (priority order)
-- Tools: 78 focused tools with WebSocket-based document editing
+- Tools: 87 focused tools with WebSocket-based document editing
 - Status: Active
  
 > New in v1.12.0: Added linked documents on database rows, restored MCP CRUD for rows created in the AFFiNE UI, fixed self-hosted table exports, and documented GHCR Docker releases.
@@ -472,7 +472,7 @@ Endpoints currently available:
 - `delete_doc` – delete a document (WebSocket)
 
 ### Comments
-- `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment`
+- `list_comments`, `list_unresolved_threads`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment`
 
 ### Version History
 - `list_histories`
@@ -497,7 +497,7 @@ Optional environment variables to narrow the exposed surface.
 |---|---|
 | `workspaces` | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `delete_workspace` |
 | `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_semantic_page`, `append_semantic_section`, `create_doc_from_markdown`, `create_doc_from_template`, `inspect_template_structure`, `instantiate_template_native`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
-| `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
+| `comments` | `list_comments`, `list_unresolved_threads`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
 | `history` | `list_histories` |
 | `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `update_collection_rules`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `create_workspace_blueprint`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
 | `users` | `current_user`, `sign_in`, `update_profile`, `update_settings` |
