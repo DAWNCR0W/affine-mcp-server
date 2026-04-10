@@ -155,6 +155,35 @@ type CreateDocInput = {
   content?: string;
 };
 
+type SemanticPageType = "meeting_notes" | "project_hub" | "spec_page" | "wiki_page";
+
+type SemanticSectionInput = {
+  title: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  callouts?: string[];
+};
+
+type SemanticPageInput = {
+  workspaceId?: string;
+  title?: string;
+  pageType?: SemanticPageType;
+  parentDocId?: string;
+  sections?: SemanticSectionInput[];
+};
+
+type AppendSemanticSectionInput = {
+  workspaceId?: string;
+  docId: string;
+  sectionTitle: string;
+  afterSectionTitle?: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  callouts?: string[];
+};
+
+type SemanticBlockDraft = Omit<AppendBlockInput, "workspaceId" | "docId">;
+
 type CreateDocResult = {
   workspaceId: string;
   docId: string;
@@ -2361,6 +2390,407 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   }
 
+  function createDocSkeleton(title: string, docId: string): {
+    doc: Y.Doc;
+    blocks: Y.Map<any>;
+    pageId: string;
+    surfaceId: string;
+    noteId: string;
+  } {
+    const doc = new Y.Doc();
+    const blocks = doc.getMap("blocks");
+    const pageId = generateId();
+    const page = new Y.Map();
+    setSysFields(page, pageId, "affine:page");
+    const titleText = new Y.Text();
+    titleText.insert(0, title);
+    page.set("prop:title", titleText);
+    page.set("sys:children", new Y.Array());
+    blocks.set(pageId, page);
+
+    const surfaceId = generateId();
+    const surface = new Y.Map();
+    setSysFields(surface, surfaceId, "affine:surface");
+    surface.set("sys:parent", null);
+    surface.set("sys:children", new Y.Array());
+    const elements = new Y.Map<any>();
+    elements.set("type", "$blocksuite:internal:native$");
+    elements.set("value", new Y.Map<any>());
+    surface.set("prop:elements", elements);
+    blocks.set(surfaceId, surface);
+    (page.get("sys:children") as Y.Array<any>).push([surfaceId]);
+
+    const noteId = generateId();
+    const note = new Y.Map();
+    setSysFields(note, noteId, "affine:note");
+    note.set("sys:parent", null);
+    note.set("prop:displayMode", "both");
+    note.set("prop:xywh", "[0,0,800,95]");
+    note.set("prop:index", "a0");
+    note.set("prop:hidden", false);
+    const background = new Y.Map<any>();
+    background.set("light", "#ffffff");
+    background.set("dark", "#252525");
+    note.set("prop:background", background);
+    note.set("sys:children", new Y.Array());
+    blocks.set(noteId, note);
+    (page.get("sys:children") as Y.Array<any>).push([noteId]);
+
+    const meta = doc.getMap("meta");
+    meta.set("id", docId);
+    meta.set("title", title);
+    meta.set("createDate", Date.now());
+    meta.set("tags", new Y.Array());
+
+    return { doc, blocks, pageId, surfaceId, noteId };
+  }
+
+  function makeWorkspacePageEntry(docId: string, title: string): Y.Map<any> {
+    const entry = new Y.Map();
+    entry.set("id", docId);
+    entry.set("title", title);
+    entry.set("createDate", Date.now());
+    entry.set("tags", new Y.Array());
+    return entry;
+  }
+
+  function defaultSemanticSections(pageType: SemanticPageType): SemanticSectionInput[] {
+    switch (pageType) {
+      case "meeting_notes":
+        return [
+          { title: "Attendees" },
+          { title: "Agenda" },
+          { title: "Notes" },
+          { title: "Action Items" },
+        ];
+      case "project_hub":
+        return [
+          { title: "Overview" },
+          { title: "Milestones" },
+          { title: "Risks" },
+          { title: "References" },
+        ];
+      case "spec_page":
+        return [
+          { title: "Context" },
+          { title: "Goals" },
+          { title: "Non-Goals" },
+          { title: "Proposal" },
+          { title: "Open Questions" },
+        ];
+      case "wiki_page":
+      default:
+        return [
+          { title: "Summary" },
+          { title: "Details" },
+          { title: "Related Resources" },
+        ];
+    }
+  }
+
+  function normalizeSemanticSections(
+    pageType: SemanticPageType | undefined,
+    sections: SemanticSectionInput[] | undefined
+  ): SemanticSectionInput[] {
+    const source = sections?.length ? sections : defaultSemanticSections(pageType ?? "wiki_page");
+    return source.map((section) => ({
+      title: section.title.trim(),
+      paragraphs: section.paragraphs?.map((paragraph) => paragraph.trim()).filter(Boolean),
+      bullets: section.bullets?.map((bullet) => bullet.trim()).filter(Boolean),
+      callouts: section.callouts?.map((callout) => callout.trim()).filter(Boolean),
+    }));
+  }
+
+  function semanticSectionToAppendInputs(section: SemanticSectionInput): SemanticBlockDraft[] {
+    const inputs: SemanticBlockDraft[] = [
+      {
+        type: "heading",
+        text: section.title,
+        level: 2,
+      },
+    ];
+
+    for (const paragraph of section.paragraphs ?? []) {
+      inputs.push({
+        type: "paragraph",
+        text: paragraph,
+      });
+    }
+
+    for (const bullet of section.bullets ?? []) {
+      inputs.push({
+        type: "list",
+        text: bullet,
+        style: "bulleted",
+      });
+    }
+
+    for (const callout of section.callouts ?? []) {
+      inputs.push({
+        type: "callout",
+        text: callout,
+      });
+    }
+
+    return inputs;
+  }
+
+  function appendNativeBlocks(
+    blocks: Y.Map<any>,
+    parentId: string,
+    inputs: SemanticBlockDraft[],
+    workspaceId: string,
+    docId: string,
+    strict: boolean = true,
+    initialPlacement?: AppendPlacement
+  ): { blockIds: string[]; headingIds: string[] } {
+    const parentBlock = findBlockById(blocks, parentId);
+    if (!parentBlock) {
+      throw new Error(`Target parent block '${parentId}' was not found.`);
+    }
+    let anchorPlacement: AppendPlacement | undefined = initialPlacement ?? { parentId };
+    const blockIds: string[] = [];
+    const headingIds: string[] = [];
+
+    for (const input of inputs) {
+      const normalized = normalizeAppendBlockInput({
+        workspaceId,
+        docId,
+        strict,
+        placement: anchorPlacement,
+        ...input,
+      });
+      const context = resolveInsertContext(blocks, normalized);
+      const { blockId, block, extraBlocks } = createBlock(normalized);
+      blocks.set(blockId, block);
+      if (Array.isArray(extraBlocks)) {
+        for (const extra of extraBlocks) {
+          blocks.set(extra.blockId, extra.block);
+        }
+      }
+      if (context.insertIndex >= context.children.length) {
+        context.children.push([blockId]);
+      } else {
+        context.children.insert(context.insertIndex, [blockId]);
+      }
+      blockIds.push(blockId);
+      if (normalized.type === "heading") {
+        headingIds.push(blockId);
+      }
+      anchorPlacement = { afterBlockId: blockId };
+    }
+
+    return { blockIds, headingIds };
+  }
+
+  function isHeadingBlock(block: Y.Map<any>): boolean {
+    return block.get("sys:flavour") === "affine:paragraph" && /^h[1-6]$/.test(String(block.get("prop:type") || ""));
+  }
+
+  function getHeadingLevel(block: Y.Map<any>): number | null {
+    const type = String(block.get("prop:type") || "");
+    const match = type.match(/^h([1-6])$/);
+    return match ? Number(match[1]) : null;
+  }
+
+  function normalizedText(value: unknown): string {
+    return richTextValueToString(value).trim().toLocaleLowerCase();
+  }
+
+  function findSectionInsertionIndex(blocks: Y.Map<any>, noteId: string, sectionTitle: string): number {
+    const noteBlock = findBlockById(blocks, noteId);
+    if (!noteBlock) {
+      throw new Error(`Note block '${noteId}' was not found.`);
+    }
+    const children = childIdsFrom(noteBlock.get("sys:children"));
+    const target = normalizedText(sectionTitle);
+    for (let i = 0; i < children.length; i += 1) {
+      const childBlock = findBlockById(blocks, children[i]);
+      if (!childBlock || !isHeadingBlock(childBlock)) {
+        continue;
+      }
+      if (normalizedText(childBlock.get("prop:text")) !== target) {
+        continue;
+      }
+      const targetLevel = getHeadingLevel(childBlock) ?? 2;
+      let endIndex = i + 1;
+      while (endIndex < children.length) {
+        const nextBlock = findBlockById(blocks, children[endIndex]);
+        if (nextBlock && isHeadingBlock(nextBlock)) {
+          const nextLevel = getHeadingLevel(nextBlock) ?? 2;
+          if (nextLevel <= targetLevel) {
+            break;
+          }
+        }
+        endIndex += 1;
+      }
+      return endIndex;
+    }
+    throw new Error(`Section heading '${sectionTitle}' was not found.`);
+  }
+
+  async function commitNewDocument(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+    title: string,
+    doc: Y.Doc
+  ) {
+    const updateFull = Y.encodeStateAsUpdate(doc);
+    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(updateFull).toString("base64"));
+
+    const wsDoc = new Y.Doc();
+    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+    if (snapshot.missing) {
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+    }
+    const prevSV = Y.encodeStateVector(wsDoc);
+    const wsMeta = wsDoc.getMap("meta");
+    let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
+    if (!pages) {
+      pages = new Y.Array();
+      wsMeta.set("pages", pages);
+    }
+    pages.push([makeWorkspacePageEntry(docId, title)]);
+    const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
+    await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+  }
+
+  async function createSemanticPageInternal(parsed: SemanticPageInput): Promise<{
+    workspaceId: string;
+    docId: string;
+    title: string;
+    pageType: SemanticPageType;
+    noteId: string;
+    pageId: string;
+    sectionHeadingIds: string[];
+    blockIds: string[];
+    parentLinked: boolean;
+    warnings: string[];
+  }> {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const docId = generateId();
+      const title = parsed.title || "Untitled";
+      const pageType = parsed.pageType ?? "wiki_page";
+      const sections = normalizeSemanticSections(pageType, parsed.sections);
+      const docShell = createDocSkeleton(title, docId);
+      const { blockIds, headingIds } = appendNativeBlocks(
+        docShell.blocks,
+        docShell.noteId,
+        sections.flatMap(semanticSectionToAppendInputs),
+        workspaceId,
+        docId
+      );
+
+      await commitNewDocument(socket, workspaceId, docId, title, docShell.doc);
+
+      let parentLinked = false;
+      const warnings: string[] = [];
+      if (parsed.parentDocId) {
+        try {
+          await appendBlockInternal({
+            workspaceId,
+            docId: parsed.parentDocId,
+            type: "embed_linked_doc",
+            pageId: docId,
+          });
+          parentLinked = true;
+        } catch {
+          warnings.push(`Semantic page created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`);
+        }
+      }
+
+      return {
+        workspaceId,
+        docId,
+        title,
+        pageType,
+        noteId: docShell.noteId,
+        pageId: docShell.pageId,
+        sectionHeadingIds: headingIds,
+        blockIds,
+        parentLinked,
+        warnings,
+      };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  async function appendSemanticSectionInternal(parsed: AppendSemanticSectionInput): Promise<{
+    workspaceId: string;
+    docId: string;
+    noteId: string;
+    sectionTitle: string;
+    sectionHeadingId: string;
+    afterSectionTitle: string | null;
+    blockIds: string[];
+  }> {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document ${parsed.docId} was not found in workspace ${workspaceId}.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const noteId = ensureNoteBlock(blocks);
+      const insertionIndex = parsed.afterSectionTitle
+        ? findSectionInsertionIndex(blocks, noteId, parsed.afterSectionTitle)
+        : childIdsFrom(findBlockById(blocks, noteId)?.get("sys:children")).length;
+      const { blockIds, headingIds } = appendNativeBlocks(
+        blocks,
+        noteId,
+        semanticSectionToAppendInputs({
+          title: parsed.sectionTitle,
+          paragraphs: parsed.paragraphs,
+          bullets: parsed.bullets,
+          callouts: parsed.callouts,
+        }),
+        workspaceId,
+        parsed.docId,
+        true,
+        { parentId: noteId, index: insertionIndex }
+      );
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return {
+        workspaceId,
+        docId: parsed.docId,
+        noteId,
+        sectionTitle: parsed.sectionTitle,
+        sectionHeadingId: headingIds[0] || blockIds[0],
+        afterSectionTitle: parsed.afterSectionTitle ?? null,
+        blockIds,
+      };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
   const listDocsHandler = async (parsed: { workspaceId?: string; first?: number; offset?: number; after?: string }) => {
       const workspaceId = parsed.workspaceId || defaults.workspaceId;
       if (!workspaceId) {
@@ -3295,6 +3725,90 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     createDocHandler as any
+  );
+
+  const semanticSectionSchema = z.object({
+    title: z.string().min(1).describe("Semantic section title."),
+    paragraphs: z.array(z.string().min(1)).optional().describe("Paragraphs to append under the section heading."),
+    bullets: z.array(z.string().min(1)).optional().describe("Bulleted items to append under the section heading."),
+    callouts: z.array(z.string().min(1)).optional().describe("Callout blocks to append under the section heading."),
+  });
+
+  const createSemanticPageHandler = async (parsed: {
+    workspaceId?: string;
+    title?: string;
+    pageType?: SemanticPageType;
+    parentDocId?: string;
+    sections?: SemanticSectionInput[];
+  }) => {
+    const created = await createSemanticPageInternal(parsed);
+    return text({
+      workspaceId: created.workspaceId,
+      docId: created.docId,
+      title: created.title,
+      pageType: created.pageType,
+      pageId: created.pageId,
+      noteId: created.noteId,
+      sectionCount: created.sectionHeadingIds.length,
+      sectionHeadingIds: created.sectionHeadingIds,
+      blockIds: created.blockIds,
+      parentLinked: created.parentLinked,
+      warnings: created.warnings,
+    });
+  };
+  server.registerTool(
+    "create_semantic_page",
+    {
+      title: "Create Semantic Page",
+      description: "Create an AFFiNE-native page with intentional section structure and native block composition.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        title: z.string().optional().describe("Page title."),
+        pageType: z.enum(["meeting_notes", "project_hub", "spec_page", "wiki_page"]).optional().describe("Semantic page template to seed default sections."),
+        parentDocId: z.string().optional().describe("Optional parent doc to link the new page under in the sidebar."),
+        sections: z.array(semanticSectionSchema).optional().describe("Optional explicit section structure. If omitted, the page type defaults are used."),
+      },
+    },
+    createSemanticPageHandler as any
+  );
+
+  const appendSemanticSectionHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    sectionTitle: string;
+    afterSectionTitle?: string;
+    paragraphs?: string[];
+    bullets?: string[];
+    callouts?: string[];
+  }) => {
+    const result = await appendSemanticSectionInternal(parsed);
+    return text({
+      workspaceId: result.workspaceId,
+      docId: result.docId,
+      noteId: result.noteId,
+      sectionTitle: result.sectionTitle,
+      sectionHeadingId: result.sectionHeadingId,
+      afterSectionTitle: result.afterSectionTitle,
+      blockIds: result.blockIds,
+      appendedCount: result.blockIds.length,
+    });
+  };
+  server.registerTool(
+    "append_semantic_section",
+    {
+      title: "Append Semantic Section",
+      description: "Append a semantic section to an existing AFFiNE document by heading title and native block composition.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        sectionTitle: z.string().min(1).describe("Heading text for the new semantic section."),
+        afterSectionTitle: z.string().optional().describe("Optional existing section heading to append after."),
+        paragraphs: z.array(z.string().min(1)).optional().describe("Paragraphs to append under the new section."),
+        bullets: z.array(z.string().min(1)).optional().describe("Bulleted items to append under the new section."),
+        callouts: z.array(z.string().min(1)).optional().describe("Callout blocks to append under the new section."),
+      },
+    },
+    appendSemanticSectionHandler as any
   );
 
   // APPEND PARAGRAPH

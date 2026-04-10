@@ -448,6 +448,8 @@ Endpoints currently available:
 - `update_doc_title` – rename a document in both workspace metadata and the internal page block
 - `append_paragraph` – append a paragraph block (WebSocket)
 - `append_block` – append canonical block types (text/list/code/media/embed/database/edgeless) with strict validation and placement control (`viewMode=kanban` enables preset-backed data views; `data_view` defaults to kanban)
+- `create_semantic_page` – create an AFFiNE-native page with an intentional section skeleton and native block composition
+- `append_semantic_section` – append a semantic section to an existing page by heading title
 - `move_doc` – move a document in the sidebar by relinking it under a different parent
 - `batch_create_docs` – create up to 20 documents in a single call
 - `add_database_column` – add a column to a database block (`rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, `date`)
@@ -490,7 +492,7 @@ Optional environment variables to narrow the exposed surface.
 | Group name | Tools included |
 |---|---|
 | `workspaces` | `list_workspaces`, `get_workspace`, `create_workspace`, `update_workspace`, `delete_workspace` |
-| `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_doc_from_markdown`, `create_doc_from_template`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
+| `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_semantic_page`, `append_semantic_section`, `create_doc_from_markdown`, `create_doc_from_template`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
 | `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
 | `history` | `list_histories` |
 | `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
