@@ -4,6 +4,33 @@ import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
 
 export function registerCommentTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
+  function normalizeCommentNode(node: any) {
+    if (!node || typeof node !== "object") {
+      return null;
+    }
+    const replies = Array.isArray(node.replies)
+      ? node.replies
+          .filter((reply: any) => reply && typeof reply === "object")
+          .map((reply: any) => ({
+            id: typeof reply.id === "string" ? reply.id : null,
+            content: reply.content ?? null,
+            createdAt: reply.createdAt ?? null,
+            updatedAt: reply.updatedAt ?? null,
+            user: reply.user ?? null,
+          }))
+      : [];
+
+    return {
+      id: typeof node.id === "string" ? node.id : null,
+      content: node.content ?? null,
+      createdAt: node.createdAt ?? null,
+      updatedAt: node.updatedAt ?? null,
+      resolved: node.resolved === true,
+      user: node.user ?? null,
+      replies,
+    };
+  }
+
   const listCommentsHandler = async (parsed: { workspaceId?: string; docId: string; first?: number; offset?: number; after?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
     if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
@@ -25,6 +52,43 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
       }
     },
     listCommentsHandler as any
+  );
+
+  const listUnresolvedThreadsHandler = async (parsed: { workspaceId?: string; docId: string; first?: number; offset?: number; after?: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
+    const query = `query ListComments($workspaceId:String!,$docId:String!,$first:Int,$offset:Int,$after:String){ workspace(id:$workspaceId){ comments(docId:$docId, pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id content createdAt updatedAt resolved user{ id name avatarUrl } replies{ id content createdAt updatedAt user{ id name avatarUrl } } } } } } }`;
+    const data = await gql.request<{ workspace: any }>(query, { workspaceId, docId: parsed.docId, first: parsed.first, offset: parsed.offset, after: parsed.after });
+    const comments = data.workspace.comments;
+    const unresolvedThreads = Array.isArray(comments?.edges)
+      ? comments.edges
+          .map((edge: any) => normalizeCommentNode(edge?.node))
+          .filter((node: any) => node && node.resolved !== true)
+      : [];
+
+    return text({
+      workspaceId,
+      docId: parsed.docId,
+      totalComments: comments?.totalCount ?? unresolvedThreads.length,
+      unresolvedThreadCount: unresolvedThreads.length,
+      threads: unresolvedThreads,
+      pageInfo: comments?.pageInfo ?? null,
+    });
+  };
+  server.registerTool(
+    "list_unresolved_threads",
+    {
+      title: "List Unresolved Threads",
+      description: "List unresolved comment threads for a document. Replies are included read-only under each root comment.",
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string(),
+        first: z.number().optional(),
+        offset: z.number().optional(),
+        after: z.string().optional()
+      }
+    },
+    listUnresolvedThreadsHandler as any
   );
 
   const createCommentHandler = async (parsed: { workspaceId?: string; docId: string; docTitle?: string; docMode?: "Page"|"Edgeless"|"page"|"edgeless"; content: any; mentions?: string[] }) => {

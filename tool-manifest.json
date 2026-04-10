@@ -50,6 +50,7 @@
     "list_notifications",
     "list_organize_nodes",
     "list_tags",
+    "list_unresolved_threads",
     "list_workspace_tree",
     "list_workspaces",
     "move_doc",
