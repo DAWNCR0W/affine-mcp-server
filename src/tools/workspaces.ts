@@ -4,7 +4,7 @@ import { GraphQLClient } from "../graphqlClient.js";
 import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
-import { text } from "../util/mcp.js";
+import { receipt, text } from "../util/mcp.js";
 import { connectWorkspaceSocket, joinWorkspace, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
 
 // Generate AFFiNE-style document ID
@@ -259,29 +259,38 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           }
         } catch (_wsError) {
           // Keep workspace creation successful even if initial websocket sync fails.
-          return text({
+          return receipt("workspace.create", {
+            workspaceId: workspace.id,
             ...workspace,
             name,
             avatar,
             firstDocId,
+            syncStatus: "partial",
             status: "partial",
             message: "Workspace created (document sync may be pending)",
             url: `${baseUrl}/workspace/${workspace.id}`
           });
         }
 
-        return text({
+        return receipt("workspace.create", {
+          workspaceId: workspace.id,
           ...workspace,
           name,
           avatar,
           firstDocId,
+          syncStatus: "success",
           status: "success",
           message: "Workspace created successfully",
           url: `${baseUrl}/workspace/${workspace.id}`
         });
         
       } catch (error: any) {
-        return text({ error: error.message, status: "failed" });
+        return text({
+          kind: "workspace.create",
+          ok: false,
+          status: "failed",
+          error: error.message,
+        });
       }
     };
 
@@ -317,7 +326,11 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         
         const data = await gql.request<{ updateWorkspace: any }>(mutation, { input });
         
-        return text(data.updateWorkspace);
+        return receipt("workspace.update", {
+          workspaceId: id,
+          id,
+          ...data.updateWorkspace,
+        });
       } catch (error: any) {
         return text({ error: error.message });
       }
@@ -347,7 +360,13 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         
         const data = await gql.request<{ deleteWorkspace: boolean }>(mutation, { id });
         
-        return text({ success: data.deleteWorkspace, message: "Workspace deleted successfully" });
+        return receipt("workspace.delete", {
+          workspaceId: id,
+          id,
+          deleted: data.deleteWorkspace,
+          success: data.deleteWorkspace,
+          message: "Workspace deleted successfully",
+        });
       } catch (error: any) {
         return text({ error: error.message });
       }
