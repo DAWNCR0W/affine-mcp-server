@@ -1339,7 +1339,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               ? "quote"
               : "text";
         block.set("prop:type", blockType);
-        block.set("prop:text", makeText(content));
+        block.set("prop:text", makeText(normalized.deltas ?? content));
         return { blockId, block, flavour: "affine:paragraph", blockType };
       }
       case "list": {
@@ -1378,7 +1378,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         textBlock.set("sys:parent", null);
         textBlock.set("sys:children", new Y.Array<string>());
         textBlock.set("prop:type", "text");
-        textBlock.set("prop:text", makeText(content));
+        textBlock.set("prop:text", makeText(normalized.deltas ?? content));
         calloutChildren.push([textBlockId]);
         block.set("sys:children", calloutChildren);
         block.set("prop:icon", { type: "emoji", unicode: "💡" });
@@ -1815,6 +1815,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           type: "heading",
           text: operation.text,
           level: operation.level,
+          deltas: operation.deltas,
           strict,
           placement,
         };
@@ -1824,6 +1825,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           docId,
           type: "paragraph",
           text: operation.text,
+          deltas: operation.deltas,
           strict,
           placement,
         };
@@ -1833,6 +1835,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           docId,
           type: "quote",
           text: operation.text,
+          deltas: operation.deltas,
           strict,
           placement,
         };
@@ -1842,6 +1845,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           docId,
           type: "callout",
           text: operation.text,
+          deltas: operation.deltas,
           strict,
           placement,
         };

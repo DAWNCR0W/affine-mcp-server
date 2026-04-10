@@ -21,7 +21,14 @@ if (!PASSWORD) {
 
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || "60000");
 const MARKDOWN = [
+  "## A **bold** heading",
+  "",
   "Intro **paragraph** text",
+  "",
+  "> A **bold** blockquote",
+  "",
+  "> [!NOTE]",
+  "> A **bold** callout",
   "",
   "- **Top level** item",
   "  - **Nested level** item",
@@ -122,6 +129,43 @@ function tableCellDeltas(tableBlock) {
   return result;
 }
 
+/**
+ * Collect deltas from affine:paragraph blocks matching a given prop:type
+ * (e.g. "text", "quote", "h1"–"h6").
+ */
+function paragraphBlockDeltas(blocks, propType) {
+  const deltas = [];
+  for (const [, block] of blocks) {
+    if (!(block instanceof Y.Map)) continue;
+    if (block.get("sys:flavour") !== "affine:paragraph") continue;
+    if (block.get("prop:type") !== propType) continue;
+    const text = block.get("prop:text");
+    if (!(text instanceof Y.Text)) continue;
+    deltas.push(text.toDelta());
+  }
+  return deltas;
+}
+
+/**
+ * Collect deltas from the child paragraph blocks inside affine:callout blocks.
+ */
+function calloutChildDeltas(blocks) {
+  const deltas = [];
+  for (const [, block] of blocks) {
+    if (!(block instanceof Y.Map)) continue;
+    if (block.get("sys:flavour") !== "affine:callout") continue;
+    const children = block.get("sys:children");
+    for (const childId of childIdsFrom(children)) {
+      const child = blocks.get(childId);
+      if (!(child instanceof Y.Map)) continue;
+      const text = child.get("prop:text");
+      if (!(text instanceof Y.Text)) continue;
+      deltas.push(text.toDelta());
+    }
+  }
+  return deltas;
+}
+
 async function loadLiveDoc(workspaceId, docId, cookie) {
   const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie, undefined);
   try {
@@ -190,6 +234,24 @@ async function main() {
 
     const createdDoc = await loadLiveDoc(workspaceId, createdDocId, cookie);
     const createdBlocks = getBlocks(createdDoc);
+
+    // --- Heading ---
+    const createdHeadingDeltas = paragraphBlockDeltas(createdBlocks, "h2");
+    expect(createdHeadingDeltas.some(delta => hasBoldRun(delta, "bold")), "heading did not preserve bold");
+
+    // --- Paragraph ---
+    const createdParagraphDeltas = paragraphBlockDeltas(createdBlocks, "text");
+    expect(createdParagraphDeltas.some(delta => hasBoldRun(delta, "paragraph")), "paragraph did not preserve bold");
+
+    // --- Quote ---
+    const createdQuoteDeltas = paragraphBlockDeltas(createdBlocks, "quote");
+    expect(createdQuoteDeltas.some(delta => hasBoldRun(delta, "bold")), "quote did not preserve bold");
+
+    // --- Callout ---
+    const createdCalloutDeltas = calloutChildDeltas(createdBlocks);
+    expect(createdCalloutDeltas.some(delta => hasBoldRun(delta, "bold")), "callout did not preserve bold");
+
+    // --- List ---
     const createdListDeltas = listBlockDeltas(createdBlocks);
     expect(createdListDeltas.some(delta => hasBoldRun(delta, "Top level")), "top-level list item did not preserve bold");
     expect(createdListDeltas.some(delta => hasBoldRun(delta, "Nested level")), "nested list item did not preserve bold");
@@ -216,6 +278,24 @@ async function main() {
 
     const replacedDoc = await loadLiveDoc(workspaceId, replaceDocId, cookie);
     const replacedBlocks = getBlocks(replacedDoc);
+
+    // --- Heading ---
+    const replacedHeadingDeltas = paragraphBlockDeltas(replacedBlocks, "h2");
+    expect(replacedHeadingDeltas.some(delta => hasBoldRun(delta, "bold")), "replace_doc_with_markdown heading lost bold");
+
+    // --- Paragraph ---
+    const replacedParagraphDeltas = paragraphBlockDeltas(replacedBlocks, "text");
+    expect(replacedParagraphDeltas.some(delta => hasBoldRun(delta, "paragraph")), "replace_doc_with_markdown paragraph lost bold");
+
+    // --- Quote ---
+    const replacedQuoteDeltas = paragraphBlockDeltas(replacedBlocks, "quote");
+    expect(replacedQuoteDeltas.some(delta => hasBoldRun(delta, "bold")), "replace_doc_with_markdown quote lost bold");
+
+    // --- Callout ---
+    const replacedCalloutDeltas = calloutChildDeltas(replacedBlocks);
+    expect(replacedCalloutDeltas.some(delta => hasBoldRun(delta, "bold")), "replace_doc_with_markdown callout lost bold");
+
+    // --- List ---
     const replacedListDeltas = listBlockDeltas(replacedBlocks);
     expect(replacedListDeltas.some(delta => hasBoldRun(delta, "Top level")), "replace_doc_with_markdown top-level list item lost bold");
     expect(replacedListDeltas.some(delta => hasBoldRun(delta, "Nested level")), "replace_doc_with_markdown nested list item lost bold");
