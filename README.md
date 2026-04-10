@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-1.12.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-1.13.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -29,7 +29,6 @@ A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces a
 ## Overview
 
 AFFiNE MCP Server is designed for three common scenarios:
-
 - Run a local stdio MCP server for Claude Code, Codex CLI, Cursor, or Claude Desktop
 - Expose a remote HTTP MCP endpoint for hosted or browser-connected clients
 - Automate AFFiNE workspace, document, database, organization, and comment workflows through a stable MCP tool surface
@@ -49,10 +48,9 @@ Scope boundaries:
 - Browser-local workspaces stored only in local storage are not available through AFFiNE server APIs
 - AFFiNE Cloud requires API-token-based access for MCP usage; programmatic email/password sign-in is blocked by Cloudflare
 
-> New in v1.12.0: Added linked documents on database rows, restored MCP CRUD for rows created in the AFFiNE UI, fixed self-hosted table exports, and documented GHCR Docker releases.
+> New in v1.13.0: Added high-level semantic page, native template, fidelity, and workspace blueprint workflows, plus structured receipts and productized setup docs.
 
 ## Choose Your Path
-
 | Goal | Start here |
 | --- | --- |
 | Set up a local stdio server with the least friction | [docs/getting-started.md](docs/getting-started.md) |

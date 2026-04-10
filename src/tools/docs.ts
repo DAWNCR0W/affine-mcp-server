@@ -3453,7 +3453,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
                 continue;
               }
               const edgeSnapshot = await loadDoc(socket, workspaceId, nodeId);
-              const edgeExists = Boolean(edgeSnapshot.missing || edgeSnapshot.state || edgeSnapshot.timestamp);
+              // Treat timestamp-only responses as deleted tombstones so list_docs can
+              // hide stale GraphQL edges after delete_doc eventually converges.
+              const edgeExists = Boolean(edgeSnapshot.missing || edgeSnapshot.state);
               if (!edgeExists) {
                 deletedDocIds.add(nodeId);
               }
