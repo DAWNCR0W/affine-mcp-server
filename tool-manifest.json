@@ -45,6 +45,8 @@
     "get_docs_by_tag",
     "get_orphan_docs",
     "get_workspace",
+    "inspect_template_structure",
+    "instantiate_template_native",
     "list_access_tokens",
     "list_backlinks",
     "list_children",
