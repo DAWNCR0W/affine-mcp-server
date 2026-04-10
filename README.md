@@ -25,7 +25,7 @@ A Model Context Protocol (MCP) server that integrates with AFFiNE (self‑hosted
 
 - Workspace: create (with initial doc), read, update, delete
 - Documents: list/get/read/publish/revoke + create/append/replace/delete + markdown import/export + tags (WebSocket‑based)
-- Sidebar data: collections, folders, and organize links for AFFiNE workspace trees
+- Sidebar data: collections, rule-backed allow-list sync, folders, and organize links for AFFiNE workspace trees
 - Database workflows: create database blocks, inspect schema, add/update/delete rows, and read or update cell values via MCP tools
 - Comments: full CRUD and resolve
 - Version History: list
@@ -414,11 +414,13 @@ Endpoints currently available:
 - `get_collection` – get a collection by id
 - `create_collection` – create a collection
 - `update_collection` – rename a collection
+- `update_collection_rules` – replace a collection's rules and rebuild its allow-list from workspace docs
 - `delete_collection` – delete a collection
 - `add_doc_to_collection` – add a document to a collection allow-list
 - `remove_doc_from_collection` – remove a document from a collection allow-list
 - `list_organize_nodes` – experimental organize/folder tree dump
 - `create_folder` – experimental root or nested folder creation
+- `create_workspace_blueprint` – create a simple workspace folder blueprint
 - `rename_folder` – experimental folder rename
 - `delete_folder` – experimental recursive folder delete
 - `move_organize_node` – experimental folder/link move
@@ -497,7 +499,7 @@ Optional environment variables to narrow the exposed surface.
 | `docs` | `list_docs`, `read_doc`, `search_docs`, `create_doc`, `create_semantic_page`, `append_semantic_section`, `create_doc_from_markdown`, `create_doc_from_template`, `inspect_template_structure`, `instantiate_template_native`, `duplicate_doc`, `append_paragraph`, `append_block`, `append_markdown`, `replace_doc_with_markdown`, `delete_doc`, `publish_doc`, `revoke_doc`, `list_tags`, `list_docs_by_tag`, `create_tag`, `add_tag_to_doc`, `remove_tag_from_doc`, `list_workspace_tree`, `get_orphan_docs`, `list_children`, `update_doc_title`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `move_doc`, `batch_create_docs`, `cleanup_orphan_embeds`, `find_and_replace`, `add_database_column`, `add_database_row`, `delete_database_row`, `read_database_columns`, `read_database_cells`, `update_database_cell`, `update_database_row` |
 | `comments` | `list_comments`, `create_comment`, `update_comment`, `delete_comment`, `resolve_comment` |
 | `history` | `list_histories` |
-| `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
+| `organize` | `list_collections`, `get_collection`, `create_collection`, `update_collection`, `update_collection_rules`, `delete_collection`, `add_doc_to_collection`, `remove_doc_from_collection`, `list_organize_nodes`, `create_folder`, `create_workspace_blueprint`, `rename_folder`, `delete_folder`, `move_organize_node`, `add_organize_link`, `delete_organize_link` |
 | `users` | `current_user`, `sign_in`, `update_profile`, `update_settings` |
 | `access_tokens` | `list_access_tokens`, `generate_access_token`, `revoke_access_token` |
 | `blobs` | `upload_blob`, `delete_blob`, `cleanup_blobs` |

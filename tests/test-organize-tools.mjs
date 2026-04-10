@@ -170,6 +170,90 @@ async function main() {
       throw new Error('remove_doc_from_collection did not remove child doc');
     }
 
+    const blueprintTag = await call('create_tag', {
+      workspaceId,
+      tag: 'blueprint',
+    });
+    expectEqual(blueprintTag?.created, true, 'create_tag blueprint created');
+
+    const parentTagged = await call('add_tag_to_doc', {
+      workspaceId,
+      docId: parentDocId,
+      tag: 'blueprint',
+    });
+    expectArray(parentTagged?.tags, 'add_tag_to_doc parent tags');
+    if (!parentTagged.tags.includes('blueprint')) {
+      throw new Error('add_tag_to_doc did not apply blueprint tag to parent doc');
+    }
+
+    const childTagged = await call('add_tag_to_doc', {
+      workspaceId,
+      docId: childDocId,
+      tag: 'blueprint',
+    });
+    expectArray(childTagged?.tags, 'add_tag_to_doc child tags');
+    if (!childTagged.tags.includes('blueprint')) {
+      throw new Error('add_tag_to_doc did not apply blueprint tag to child doc');
+    }
+
+    const updatedRulesAll = await call('update_collection_rules', {
+      workspaceId,
+      collectionId,
+      rules: {
+        match: 'all',
+        filters: [
+          { field: 'title', operator: 'contains', value: 'Organize Parent' },
+          { field: 'tag', operator: 'equals', value: 'blueprint' },
+        ],
+      },
+    });
+    expectEqual(updatedRulesAll?.matchedCount, 1, 'update_collection_rules all matchedCount');
+    expectArray(updatedRulesAll?.allowList, 'update_collection_rules all allowList');
+    if (!updatedRulesAll.allowList.includes(parentDocId) || updatedRulesAll.allowList.includes(childDocId)) {
+      throw new Error('update_collection_rules all did not rebuild the allow-list from rules');
+    }
+
+    const updatedRulesAny = await call('update_collection_rules', {
+      workspaceId,
+      collectionId,
+      rules: {
+        match: 'any',
+        filters: [
+          { field: 'title', operator: 'contains', value: 'Organize Parent' },
+          { field: 'tag', operator: 'equals', value: 'blueprint' },
+        ],
+      },
+    });
+    expectEqual(updatedRulesAny?.matchedCount, 2, 'update_collection_rules any matchedCount');
+    if (!updatedRulesAny.allowList.includes(parentDocId) || !updatedRulesAny.allowList.includes(childDocId)) {
+      throw new Error('update_collection_rules any did not include both tagged docs');
+    }
+
+    const blueprint = await call('create_workspace_blueprint', {
+      workspaceId,
+      rootFolderName: 'Blueprint Root',
+      childFolderNames: ['Blueprint Child A', 'Blueprint Child B'],
+    });
+    const blueprintRootId = blueprint?.rootFolderId;
+    expectTruthy(blueprintRootId, 'create_workspace_blueprint rootFolderId');
+    expectEqual(blueprint?.childFolderCount, 2, 'create_workspace_blueprint childFolderCount');
+
+    const organizeNodesAfterBlueprint = await call('list_organize_nodes', { workspaceId });
+    expectArray(organizeNodesAfterBlueprint?.nodes, 'list_organize_nodes after blueprint nodes');
+    if (!organizeNodesAfterBlueprint.nodes.some(node => node?.id === blueprintRootId && node?.type === 'folder')) {
+      throw new Error('create_workspace_blueprint did not create the root folder');
+    }
+    const blueprintChildren = organizeNodesAfterBlueprint.nodes.filter(node => node?.parentId === blueprintRootId);
+    if (blueprintChildren.length !== 2) {
+      throw new Error(`create_workspace_blueprint did not create the expected child folders: ${blueprintChildren.length}`);
+    }
+
+    const deletedBlueprintRoot = await call('delete_folder', {
+      workspaceId,
+      folderId: blueprintRootId,
+    });
+    expectEqual(deletedBlueprintRoot?.success, true, 'delete_folder blueprint root success');
+
     const rootFolder = await call('create_folder', {
       workspaceId,
       name: 'Root Folder',
