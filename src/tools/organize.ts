@@ -21,14 +21,47 @@ const CollectionId = z.string().min(1, "collectionId required");
 const FolderId = z.string().min(1, "folderId required");
 const OrganizeNodeId = z.string().min(1, "nodeId required");
 const FolderName = z.string().trim().min(1, "name required");
+const CollectionRuleFieldSchema = z.enum(["title", "tag", "docId"]);
+const CollectionRuleOperatorSchema = z.enum(["contains", "equals", "startsWith", "in"]);
+const CollectionRuleSchema = z.object({
+  field: CollectionRuleFieldSchema,
+  operator: CollectionRuleOperatorSchema,
+  value: z.union([z.string(), z.array(z.string())]),
+});
+const CollectionRulesSchema = z.object({
+  match: z.enum(["all", "any"]).optional(),
+  filters: z.array(CollectionRuleSchema),
+});
 
 type CollectionInfo = {
   id: string;
   name: string;
   rules: {
-    filters: unknown[];
+    match: "all" | "any";
+    filters: CollectionRuleFilter[];
   };
   allowList: string[];
+};
+
+type CollectionRuleField = "title" | "tag" | "docId";
+type CollectionRuleOperator = "contains" | "equals" | "startsWith" | "in";
+type CollectionRuleFilter = {
+  field: CollectionRuleField;
+  operator: CollectionRuleOperator;
+  value: string | string[];
+};
+
+type WorkspaceTagOption = {
+  id: string;
+  value: string;
+};
+
+type WorkspaceDocSummary = {
+  id: string;
+  title: string | null;
+  tags: string[];
+  createDate: number | null;
+  updatedDate: number | null;
 };
 
 type OrganizeNodeRecord = {
@@ -112,15 +145,7 @@ function normalizeCollection(value: unknown): CollectionInfo | null {
   const allowList = Array.isArray(collection.allowList)
     ? collection.allowList.filter((entry): entry is string => typeof entry === "string")
     : [];
-  const rules =
-    collection.rules &&
-    typeof collection.rules === "object" &&
-    !Array.isArray(collection.rules) &&
-    Array.isArray((collection.rules as Record<string, unknown>).filters)
-      ? {
-          filters: ((collection.rules as Record<string, unknown>).filters as unknown[]).slice(),
-        }
-      : { filters: [] };
+  const rules = normalizeCollectionRules(collection.rules);
 
   return {
     id: collection.id,
@@ -220,6 +245,257 @@ function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
 
 function organizeNodeMap(nodes: OrganizeNodeRecord[]): Map<string, OrganizeNodeRecord> {
   return new Map(nodes.map(node => [node.id, node] as const));
+}
+
+function getYMap(target: Y.Map<any>, key: string): Y.Map<any> | null {
+  const value = target.get(key);
+  return value instanceof Y.Map ? value : null;
+}
+
+function getStringArray(value: unknown): string[] {
+  if (!(value instanceof Y.Array)) {
+    return [];
+  }
+  const values: string[] = [];
+  value.forEach((entry: unknown) => {
+    if (typeof entry === "string") {
+      values.push(entry);
+    }
+  });
+  return values;
+}
+
+function getTagArray(target: Y.Map<any>, key = "tags"): Y.Array<string> | null {
+  const value = target.get(key);
+  return value instanceof Y.Array ? (value as Y.Array<string>) : null;
+}
+
+function getWorkspaceTagOptionsArray(meta: Y.Map<any>): Y.Array<any> | null {
+  const properties = getYMap(meta, "properties");
+  if (!properties) {
+    return null;
+  }
+  const tags = getYMap(properties, "tags");
+  if (!tags) {
+    return null;
+  }
+  const options = tags.get("options");
+  return options instanceof Y.Array ? options : null;
+}
+
+function getWorkspaceTagOptions(meta: Y.Map<any>): WorkspaceTagOption[] {
+  const options = getWorkspaceTagOptionsArray(meta);
+  if (!options) {
+    return [];
+  }
+
+  const parsed: WorkspaceTagOption[] = [];
+  options.forEach((raw: unknown) => {
+    let id: unknown;
+    let value: unknown;
+    if (raw instanceof Y.Map) {
+      id = raw.get("id");
+      value = raw.get("value");
+    } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const record = raw as Record<string, unknown>;
+      id = record.id;
+      value = record.value;
+    }
+
+    if (typeof id !== "string" || typeof value !== "string") {
+      return;
+    }
+    const normalizedId = id.trim();
+    const normalizedValue = value.trim();
+    if (!normalizedId || !normalizedValue) {
+      return;
+    }
+    parsed.push({ id: normalizedId, value: normalizedValue });
+  });
+  return parsed;
+}
+
+function getWorkspaceTagOptionMaps(meta: Y.Map<any>): {
+  byId: Map<string, WorkspaceTagOption>;
+  byValueLower: Map<string, WorkspaceTagOption>;
+} {
+  const options = getWorkspaceTagOptions(meta);
+  const byId = new Map<string, WorkspaceTagOption>();
+  const byValueLower = new Map<string, WorkspaceTagOption>();
+  for (const option of options) {
+    if (!byId.has(option.id)) {
+      byId.set(option.id, option);
+    }
+    const key = option.value.toLocaleLowerCase();
+    if (!byValueLower.has(key)) {
+      byValueLower.set(key, option);
+    }
+  }
+  return { byId, byValueLower };
+}
+
+function resolveTagLabels(tagEntries: string[], byId: Map<string, WorkspaceTagOption>): string[] {
+  const deduped = new Set<string>();
+  const resolved: string[] = [];
+  for (const entry of tagEntries) {
+    const raw = entry.trim();
+    if (!raw) {
+      continue;
+    }
+    const option = byId.get(raw);
+    const label = (option ? option.value : raw).trim();
+    if (!label) {
+      continue;
+    }
+    const dedupeKey = label.toLocaleLowerCase();
+    if (deduped.has(dedupeKey)) {
+      continue;
+    }
+    deduped.add(dedupeKey);
+    resolved.push(label);
+  }
+  return resolved;
+}
+
+function getWorkspacePageEntries(
+  meta: Y.Map<any>,
+  tagOptionById: Map<string, WorkspaceTagOption>
+): WorkspaceDocSummary[] {
+  const pages = meta.get("pages");
+  if (!(pages instanceof Y.Array)) {
+    return [];
+  }
+
+  const entries: WorkspaceDocSummary[] = [];
+  pages.forEach((value: unknown) => {
+    if (!(value instanceof Y.Map)) {
+      return;
+    }
+    const id = value.get("id");
+    if (typeof id !== "string" || id.length === 0) {
+      return;
+    }
+    const title = value.get("title");
+    const createDate = value.get("createDate");
+    const updatedDate = value.get("updatedDate");
+    entries.push({
+      id,
+      title: typeof title === "string" ? title : null,
+      createDate: typeof createDate === "number" ? createDate : null,
+      updatedDate: typeof updatedDate === "number" ? updatedDate : null,
+      tags: resolveTagLabels(getStringArray(getTagArray(value)), tagOptionById),
+    });
+  });
+  return entries;
+}
+
+function normalizeCollectionRuleFilter(value: unknown): CollectionRuleFilter | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const filter = value as Record<string, unknown>;
+  if (filter.field !== "title" && filter.field !== "tag" && filter.field !== "docId") {
+    return null;
+  }
+  const allowedOperators =
+    filter.field === "docId"
+      ? ["equals", "in"]
+      : filter.field === "title"
+        ? ["contains", "equals", "startsWith"]
+        : ["contains", "equals"];
+  if (!allowedOperators.includes(filter.operator as string)) {
+    return null;
+  }
+
+  if (filter.operator === "in") {
+    if (!Array.isArray(filter.value)) {
+      return null;
+    }
+    const values = filter.value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map(entry => entry.trim())
+      .filter(Boolean);
+    if (values.length === 0) {
+      return null;
+    }
+    return {
+      field: filter.field,
+      operator: "in",
+      value: Array.from(new Set(values)),
+    };
+  }
+
+  if (typeof filter.value !== "string") {
+    return null;
+  }
+  const valueText = filter.value.trim();
+  if (!valueText) {
+    return null;
+  }
+  return {
+    field: filter.field,
+    operator: filter.operator as CollectionRuleOperator,
+    value: valueText,
+  };
+}
+
+function normalizeCollectionRules(value: unknown): CollectionInfo["rules"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { match: "all", filters: [] };
+  }
+
+  const rules = value as Record<string, unknown>;
+  const match = rules.match === "any" ? "any" : "all";
+  const filters = Array.isArray(rules.filters)
+    ? rules.filters
+        .map(normalizeCollectionRuleFilter)
+        .filter((entry): entry is CollectionRuleFilter => entry !== null)
+    : [];
+
+  return { match, filters };
+}
+
+function matchesCollectionRule(doc: WorkspaceDocSummary, filter: CollectionRuleFilter): boolean {
+  const title = (doc.title ?? "").trim();
+  const lowerTitle = title.toLocaleLowerCase();
+  const tagValues = doc.tags.map(tag => tag.toLocaleLowerCase());
+
+  switch (filter.field) {
+    case "title": {
+      const target = filter.value.toString().toLocaleLowerCase();
+      if (filter.operator === "contains") {
+        return lowerTitle.includes(target);
+      }
+      if (filter.operator === "startsWith") {
+        return lowerTitle.startsWith(target);
+      }
+      return lowerTitle === target;
+    }
+    case "tag": {
+      const target = filter.value.toString().toLocaleLowerCase();
+      if (filter.operator === "contains") {
+        return tagValues.some(tag => tag.includes(target));
+      }
+      return tagValues.some(tag => tag === target);
+    }
+    case "docId": {
+      if (filter.operator === "in") {
+        return Array.isArray(filter.value)
+          ? filter.value.some(value => value === doc.id)
+          : false;
+      }
+      return doc.id === filter.value;
+    }
+  }
+}
+
+function matchesCollectionRules(doc: WorkspaceDocSummary, rules: CollectionInfo["rules"]): boolean {
+  if (rules.filters.length === 0) {
+    return false;
+  }
+
+  const matches = rules.filters.map(filter => matchesCollectionRule(doc, filter));
+  return rules.match === "any" ? matches.some(Boolean) : matches.every(Boolean);
 }
 
 function sortOrganizeNodes(nodes: OrganizeNodeRecord[]): OrganizeNodeRecord[] {
@@ -332,9 +608,152 @@ export function registerOrganizeTools(
     return { docId, doc, snapshot };
   }
 
-  async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
-    const update = Y.encodeStateAsUpdate(doc);
-    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
+async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
+  const update = Y.encodeStateAsUpdate(doc);
+  await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: string): Promise<WorkspaceDocSummary[]> {
+  const { doc } = await loadWorkspaceRootDoc(socket, workspaceId);
+  const meta = doc.getMap("meta");
+  const tagOptionById = getWorkspaceTagOptionMaps(meta).byId;
+  const pageEntries = getWorkspacePageEntries(meta, tagOptionById);
+    const docs: WorkspaceDocSummary[] = [];
+
+    for (const entry of pageEntries) {
+      let mergedTitle = entry.title;
+      let mergedTags = entry.tags;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const snapshot = await loadDoc(socket, workspaceId, entry.id);
+      if (snapshot.missing) {
+        const pageDoc = new Y.Doc();
+        Y.applyUpdate(pageDoc, Buffer.from(snapshot.missing, "base64"));
+        const pageMeta = pageDoc.getMap("meta");
+        const docTitle = pageMeta.get("title");
+        if (typeof docTitle === "string" && docTitle.trim().length > 0) {
+          mergedTitle = docTitle;
+        }
+        const docTags = getStringArray(getTagArray(pageMeta));
+        const resolvedDocTags = resolveTagLabels(docTags, tagOptionById);
+        if (resolvedDocTags.length > 0) {
+          mergedTags = resolvedDocTags;
+        }
+      }
+
+      if (mergedTitle || mergedTags.length > 0 || attempt === 4) {
+        break;
+      }
+      await sleep(150);
+    }
+
+    docs.push({
+      id: entry.id,
+        title: mergedTitle,
+        tags: mergedTags,
+        createDate: entry.createDate,
+        updatedDate: entry.updatedDate,
+      });
+    }
+
+    return docs;
+  }
+
+  async function createFolderInternal({
+    workspaceId,
+    name,
+    parentId,
+    index,
+  }: {
+    workspaceId: string;
+    name: string;
+    parentId?: string | null;
+    index?: string;
+  }) {
+    const resolvedParentId = parentId ?? null;
+    const { socket } = await getSocketContext();
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const { docId, doc } = await loadFoldersDoc(socket, workspaceId);
+      const nodes = readOrganizeNodes(doc);
+      const nodeMap = organizeNodeMap(nodes);
+      ensureFolderParent(nodeMap, resolvedParentId);
+      const folderId = generateId();
+      const folderIndex = index ?? nextOrganizeIndex(nodes, resolvedParentId);
+      const record = ensureRecord(doc, folderId);
+      record.set("id", folderId);
+      record.set("type", "folder");
+      record.set("data", name);
+      record.set("parentId", resolvedParentId);
+      record.set("index", folderIndex);
+      record.delete("$$DELETED");
+      await saveFoldersDoc(socket, workspaceId, docId, doc);
+      return {
+        id: folderId,
+        parentId: resolvedParentId,
+        type: "folder" as const,
+        data: name,
+        index: folderIndex,
+        storageDocId: docId,
+      };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  async function updateCollectionRulesInternal({
+    workspaceId,
+    collectionId,
+    rules,
+  }: {
+    workspaceId: string;
+    collectionId: string;
+    rules: CollectionInfo["rules"];
+  }) {
+    const { socket } = await getSocketContext();
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const { doc } = await loadWorkspaceRootDoc(socket, workspaceId);
+      const setting = doc.getMap("setting");
+      const current = setting.get("collections");
+      if (!(current instanceof Y.Array)) {
+        throw new Error("Workspace does not contain any collections.");
+      }
+      const index = findCollectionIndex(current, collectionId);
+      if (index < 0) {
+        throw new Error(`Collection '${collectionId}' was not found.`);
+      }
+      const previous = normalizeCollection(current.get(index));
+      if (!previous) {
+        throw new Error(`Collection '${collectionId}' is malformed.`);
+      }
+
+      const docs = await listWorkspaceDocsForCollectionRules(socket, workspaceId);
+      const allowList = docs.filter(doc => matchesCollectionRules(doc, rules)).map(doc => doc.id);
+      const next: CollectionInfo = {
+        ...previous,
+        rules,
+        allowList,
+      };
+
+      doc.transact(() => {
+        current.delete(index, 1);
+        current.insert(index, [next]);
+      });
+
+      await saveWorkspaceRootDoc(socket, workspaceId, doc);
+      return {
+        collection: next,
+        matchedDocIds: allowList,
+        matchedCount: allowList.length,
+      };
+    } finally {
+      socket.disconnect();
+    }
   }
 
   function requireWorkspaceId(workspaceId?: string): string {
@@ -407,9 +826,11 @@ export function registerOrganizeTools(
   const createCollectionHandler = async ({
     workspaceId,
     name,
+    rules,
   }: {
     workspaceId?: string;
     name: string;
+    rules?: { match?: "all" | "any"; filters: CollectionRuleFilter[] };
   }) => {
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
     const { socket } = await getSocketContext();
@@ -426,9 +847,7 @@ export function registerOrganizeTools(
       const collection: CollectionInfo = {
         id: generateId(),
         name,
-        rules: {
-          filters: [],
-        },
+        rules: rules ? normalizeCollectionRules(rules) : { match: "all", filters: [] },
         allowList: [],
       };
 
@@ -448,9 +867,50 @@ export function registerOrganizeTools(
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         name: FolderName.describe("Collection name"),
+        rules: CollectionRulesSchema.optional().describe("Optional rule set to initialize the collection with."),
       },
     },
     createCollectionHandler as any
+  );
+
+  const updateCollectionRulesHandler = async ({
+    workspaceId,
+    collectionId,
+    rules,
+  }: {
+    workspaceId?: string;
+    collectionId: string;
+    rules: { match?: "all" | "any"; filters: CollectionRuleFilter[] };
+  }) => {
+    const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
+    const normalizedRules = normalizeCollectionRules(rules);
+    const result = await updateCollectionRulesInternal({
+      workspaceId: resolvedWorkspaceId,
+      collectionId,
+      rules: normalizedRules,
+    });
+    return text({
+      workspaceId: resolvedWorkspaceId,
+      collectionId,
+      rules: normalizedRules,
+      allowList: result.collection.allowList,
+      matchedDocIds: result.matchedDocIds,
+      matchedCount: result.matchedCount,
+    });
+  };
+
+  server.registerTool(
+    "update_collection_rules",
+    {
+      title: "Update Collection Rules",
+      description: "Replace a collection's rules and rebuild its allow-list from workspace docs.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        collectionId: CollectionId,
+        rules: CollectionRulesSchema.describe("Rule set used to rebuild the collection allow-list."),
+      },
+    },
+    updateCollectionRulesHandler as any
   );
 
   const updateCollectionHandler = async ({
@@ -707,35 +1167,12 @@ export function registerOrganizeTools(
     index?: string;
   }) => {
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
-    const resolvedParentId = parentId ?? null;
-    const { socket } = await getSocketContext();
-    try {
-      await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
-      const nodes = readOrganizeNodes(doc);
-      const nodeMap = organizeNodeMap(nodes);
-      ensureFolderParent(nodeMap, resolvedParentId);
-      const folderId = generateId();
-      const folderIndex = index ?? nextOrganizeIndex(nodes, resolvedParentId);
-      const record = ensureRecord(doc, folderId);
-      record.set("id", folderId);
-      record.set("type", "folder");
-      record.set("data", name);
-      record.set("parentId", resolvedParentId);
-      record.set("index", folderIndex);
-      record.delete("$$DELETED");
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
-      return text({
-        id: folderId,
-        parentId: resolvedParentId,
-        type: "folder",
-        data: name,
-        index: folderIndex,
-        storageDocId: docId,
-      });
-    } finally {
-      socket.disconnect();
-    }
+    return text(await createFolderInternal({
+      workspaceId: resolvedWorkspaceId,
+      name,
+      parentId,
+      index,
+    }));
   };
 
   server.registerTool(
@@ -751,6 +1188,58 @@ export function registerOrganizeTools(
       },
     },
     createFolderHandler as any
+  );
+
+  const createWorkspaceBlueprintHandler = async ({
+    workspaceId,
+    rootFolderName,
+    childFolderNames,
+  }: {
+    workspaceId?: string;
+    rootFolderName: string;
+    childFolderNames?: string[];
+  }) => {
+    const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
+    const normalizedChildFolderNames = Array.from(
+      new Set((childFolderNames ?? []).map(name => name.trim()).filter(Boolean))
+    );
+
+    const rootFolder = await createFolderInternal({
+      workspaceId: resolvedWorkspaceId,
+      name: rootFolderName,
+    });
+
+    const childFolders = [];
+    for (const childName of normalizedChildFolderNames) {
+      childFolders.push(await createFolderInternal({
+        workspaceId: resolvedWorkspaceId,
+        name: childName,
+        parentId: rootFolder.id,
+      }));
+    }
+
+    return text({
+      workspaceId: resolvedWorkspaceId,
+      rootFolderId: rootFolder.id,
+      rootFolderName,
+      childFolders,
+      childFolderCount: childFolders.length,
+      storageDocId: rootFolder.storageDocId,
+    });
+  };
+
+  server.registerTool(
+    "create_workspace_blueprint",
+    {
+      title: "Create Workspace Blueprint",
+      description: "Create a simple workspace folder blueprint under the organize tree.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        rootFolderName: FolderName.describe("Root folder name"),
+        childFolderNames: z.array(FolderName).optional().describe("Optional child folder names to seed under the root folder."),
+      },
+    },
+    createWorkspaceBlueprintHandler as any
   );
 
   const renameFolderHandler = async ({

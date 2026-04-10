@@ -1,9 +1,36 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { receipt, text } from "../util/mcp.js";
 
 export function registerCommentTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
+  function normalizeCommentNode(node: any) {
+    if (!node || typeof node !== "object") {
+      return null;
+    }
+    const replies = Array.isArray(node.replies)
+      ? node.replies
+          .filter((reply: any) => reply && typeof reply === "object")
+          .map((reply: any) => ({
+            id: typeof reply.id === "string" ? reply.id : null,
+            content: reply.content ?? null,
+            createdAt: reply.createdAt ?? null,
+            updatedAt: reply.updatedAt ?? null,
+            user: reply.user ?? null,
+          }))
+      : [];
+
+    return {
+      id: typeof node.id === "string" ? node.id : null,
+      content: node.content ?? null,
+      createdAt: node.createdAt ?? null,
+      updatedAt: node.updatedAt ?? null,
+      resolved: node.resolved === true,
+      user: node.user ?? null,
+      replies,
+    };
+  }
+
   const listCommentsHandler = async (parsed: { workspaceId?: string; docId: string; first?: number; offset?: number; after?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
     if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
@@ -27,6 +54,43 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     listCommentsHandler as any
   );
 
+  const listUnresolvedThreadsHandler = async (parsed: { workspaceId?: string; docId: string; first?: number; offset?: number; after?: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
+    const query = `query ListComments($workspaceId:String!,$docId:String!,$first:Int,$offset:Int,$after:String){ workspace(id:$workspaceId){ comments(docId:$docId, pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id content createdAt updatedAt resolved user{ id name avatarUrl } replies{ id content createdAt updatedAt user{ id name avatarUrl } } } } } } }`;
+    const data = await gql.request<{ workspace: any }>(query, { workspaceId, docId: parsed.docId, first: parsed.first, offset: parsed.offset, after: parsed.after });
+    const comments = data.workspace.comments;
+    const unresolvedThreads = Array.isArray(comments?.edges)
+      ? comments.edges
+          .map((edge: any) => normalizeCommentNode(edge?.node))
+          .filter((node: any) => node && node.resolved !== true)
+      : [];
+
+    return text({
+      workspaceId,
+      docId: parsed.docId,
+      totalComments: comments?.totalCount ?? unresolvedThreads.length,
+      unresolvedThreadCount: unresolvedThreads.length,
+      threads: unresolvedThreads,
+      pageInfo: comments?.pageInfo ?? null,
+    });
+  };
+  server.registerTool(
+    "list_unresolved_threads",
+    {
+      title: "List Unresolved Threads",
+      description: "List unresolved comment threads for a document. Replies are included read-only under each root comment.",
+      inputSchema: {
+        workspaceId: z.string().optional(),
+        docId: z.string(),
+        first: z.number().optional(),
+        offset: z.number().optional(),
+        after: z.string().optional()
+      }
+    },
+    listUnresolvedThreadsHandler as any
+  );
+
   const createCommentHandler = async (parsed: { workspaceId?: string; docId: string; docTitle?: string; docMode?: "Page"|"Edgeless"|"page"|"edgeless"; content: any; mentions?: string[] }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
     if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
@@ -35,7 +99,14 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
     const input = { content: normalizedContent, docId: parsed.docId, workspaceId, docTitle: parsed.docTitle || "", docMode: normalizedDocMode, mentions: parsed.mentions };
     const data = await gql.request<{ createComment: any }>(mutation, { input });
-    return text(data.createComment);
+    return receipt("comment.create", {
+      workspaceId,
+      docId: parsed.docId,
+      commentId: data.createComment.id,
+      id: data.createComment.id,
+      ...data.createComment,
+      comment: data.createComment,
+    });
   };
   server.registerTool(
     "create_comment",
@@ -57,7 +128,11 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   const updateCommentHandler = async (parsed: { id: string; content: any }) => {
     const mutation = `mutation UpdateComment($input: CommentUpdateInput!){ updateComment(input:$input) }`;
     const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: parsed.content } });
-    return text({ success: data.updateComment });
+    return receipt("comment.update", {
+      commentId: parsed.id,
+      id: parsed.id,
+      success: data.updateComment,
+    });
   };
   server.registerTool(
     "update_comment",
@@ -75,7 +150,11 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   const deleteCommentHandler = async (parsed: { id: string }) => {
     const mutation = `mutation DeleteComment($id:String!){ deleteComment(id:$id) }`;
     const data = await gql.request<{ deleteComment: boolean }>(mutation, { id: parsed.id });
-    return text({ success: data.deleteComment });
+    return receipt("comment.delete", {
+      commentId: parsed.id,
+      id: parsed.id,
+      success: data.deleteComment,
+    });
   };
   server.registerTool(
     "delete_comment",
@@ -92,7 +171,12 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   const resolveCommentHandler = async (parsed: { id: string; resolved: boolean }) => {
     const mutation = `mutation ResolveComment($input: CommentResolveInput!){ resolveComment(input:$input) }`;
     const data = await gql.request<{ resolveComment: boolean }>(mutation, { input: parsed });
-    return text({ success: data.resolveComment });
+    return receipt("comment.resolve", {
+      commentId: parsed.id,
+      id: parsed.id,
+      resolved: parsed.resolved,
+      success: data.resolveComment,
+    });
   };
   server.registerTool(
     "resolve_comment",
