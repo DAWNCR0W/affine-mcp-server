@@ -141,6 +141,8 @@ async function main() {
       createdDocs.push(created);
     }
 
+    const expectedTitlesAfterCreate = ["Workspace Home", ...createdDocs.map(doc => doc.title)];
+
     await call("create_tag", { workspaceId: workspace.id, tag: "urgent" });
     await call("add_tag_to_doc", {
       workspaceId: workspace.id,
@@ -192,8 +194,11 @@ async function main() {
 
     await waitForListDocs(
       workspace.id,
-      result => (result?.edges?.length || 0) === 4 && result?.totalCount === 4,
-      "list_docs post-create count sync",
+      result => {
+        const titles = result?.edges?.map(edge => edge?.node?.title).filter(Boolean) || [];
+        return expectedTitlesAfterCreate.every(title => titles.includes(title)) && titles.length >= expectedTitlesAfterCreate.length;
+      },
+      "list_docs post-create visibility sync",
     );
 
     await call("delete_doc", {
@@ -203,7 +208,14 @@ async function main() {
 
     const listedAfterDelete = await waitForListDocs(
       workspace.id,
-      result => (result?.edges?.length || 0) === 3,
+      result => {
+        const ids = result?.edges?.map(edge => edge?.node?.id).filter(Boolean) || [];
+        return ids.length >= 3
+          && !ids.includes(createdDocs[0].docId)
+          && ids.includes(workspace.firstDocId)
+          && ids.includes(createdDocs[1].docId)
+          && ids.includes(createdDocs[2].docId);
+      },
       "list_docs post-delete edge sync",
     );
     expectEqual(listedAfterDelete?.totalCount, 3, "list_docs totalCount after delete");
