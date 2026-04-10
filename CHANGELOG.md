@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `extractTableData` now reads `affine:table` blocks stored with flat dot-notation Y.js keys (`prop:rows.{rowId}.order`, `prop:columns.{colId}.order`, `prop:cells.{rowId}:{colId}.text`) used by self-hosted AFFiNE instances. Previously `block.get("prop:rows")` returned `undefined` for this schema, causing all table exports to show empty tables with `had no readable cell data` warnings.
 
+## [1.13.0] - 2026-04-10
+
+### Added
+- High-level AFFiNE-native workflows:
+  - `create_semantic_page`
+  - `append_semantic_section`
+  - `compose_database_from_intent`
+  - `inspect_template_structure`
+  - `instantiate_template_native`
+  - `get_capabilities`
+  - `analyze_doc_fidelity`
+  - `export_with_fidelity_report`
+  - `update_collection_rules`
+  - `create_workspace_blueprint`
+  - `list_unresolved_threads`
+- Structured mutation receipts for write-oriented document, workspace, and comment flows.
+- Productized documentation under `docs/` with dedicated getting-started, client setup, deployment, workflow, and tool reference guides.
+
+### Changed
+- Tool surface expanded from 76 to 87 canonical tools.
+- Document creation and duplication flows now support placement-aware creation and richer machine-readable receipts.
+- Native template, fidelity, and capability workflows now surface explicit loss-risk and feature support metadata.
+- Release and setup documentation now include first-class Docker and HTTP deployment paths.
+
+### Fixed
+- Rich-text marks are preserved for paragraphs, headings, quotes, and callouts instead of degrading to raw markdown syntax.
+- `list_docs` now treats timestamp-only tombstone snapshots as deleted documents, preventing stale GraphQL edges from resurfacing after `delete_doc`.
+- Document discovery end-to-end coverage now waits for eventual workspace convergence after delete/list synchronization.
+
+### Tests
+- Added live regression coverage for structured receipts, semantic page composition, placement-aware document creation, intent-driven databases, capability/fidelity reporting, native templates, organize flows, and supporting tools.
+- Re-ran full Docker-backed Playwright validation through `npm run test:e2e`.
+
+### Dependencies
+- Refreshed GitHub Actions and runtime/development dependencies, including `actions/github-script`, `actions/checkout`, `docker/build-push-action`, `docker/metadata-action`, `docker/login-action`, `docker/setup-buildx-action`, `undici`, and `@types/node`.
+
 ## [1.12.0] - 2026-04-09
 
 ### Added
@@ -376,6 +412,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[1.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.13.0
 [1.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.12.0
 [1.11.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.2
 [1.11.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.11.1
@@ -396,4 +433,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v1.13.0...HEAD
