@@ -1,5 +1,45 @@
 # Release Notes
 
+## Version 1.13.0 (2026-04-10)
+
+### Highlights
+- Added high-level AFFiNE-native authoring workflows for semantic pages, native templates, fidelity analysis, and workspace blueprints.
+- Added structured mutation receipts so MCP clients can reliably consume IDs, warnings, and follow-up handles from write operations.
+- Expanded public docs into a productized landing page plus dedicated setup, deployment, workflow, and tool reference guides.
+- Refreshed CI and release dependencies across GitHub Actions, Docker publishing, and runtime lockfile entries.
+
+### What Changed
+- `src/tools/docs.ts`, `src/util/mcp.ts`, `src/tools/workspaces.ts`, `src/tools/comments.ts`
+  - Added structured mutation receipts and machine-readable write responses.
+  - Added semantic page composition, placement-aware document creation, intent-driven database creation, native template inspection/instantiation, and capability/fidelity reporting.
+  - Added unresolved-thread listing and workspace blueprint / collection-rule workflows.
+  - Corrected `list_docs` tombstone handling so deleted documents no longer linger in stale GraphQL edge results during convergence.
+- `src/markdown/parse.ts`, `src/markdown/types.ts`, `src/tools/docs.ts`
+  - Improved markdown fidelity and preserved inline rich-text marks for paragraphs, headings, quotes, and callouts.
+- `tests/test-structured-receipts.mjs`, `tests/test-semantic-page-composer.mjs`, `tests/test-create-placement.mjs`, `tests/test-database-intent.mjs`, `tests/test-capabilities-fidelity.mjs`, `tests/test-native-template-instantiation.mjs`, `tests/test-organize-tools.mjs`, `tests/test-supporting-tools.mjs`, `tests/test-doc-discovery.mjs`
+  - Added focused live regressions for the new tool surface and stabilized document discovery end-to-end assertions around eventual consistency.
+- `README.md`, `docs/getting-started.md`, `docs/client-setup.md`, `docs/configuration-and-deployment.md`, `docs/workflow-recipes.md`, `docs/tool-reference.md`
+  - Reworked the public docs into a productized release-ready documentation set with first-class Docker coverage.
+- `.github/workflows/*.yml`, `package.json`, `package-lock.json`
+  - Refreshed release pipeline dependencies and workflow actions, including `actions/github-script`, `actions/checkout`, `docker/build-push-action`, `docker/metadata-action`, `docker/login-action`, `docker/setup-buildx-action`, `undici`, and `@types/node`.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `1.13.0`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+- Focused live verification passed:
+  - `node tests/test-structured-receipts.mjs`
+  - `node tests/test-semantic-page-composer.mjs`
+  - `npm run test:create-placement`
+  - `node tests/test-database-intent.mjs`
+  - `npm run test:capabilities-fidelity`
+  - `npm run test:native-template`
+  - `node tests/test-organize-tools.mjs`
+  - `node tests/test-supporting-tools.mjs`
+
 ## Version 1.12.0 (2026-04-09)
 
 ### Highlights
