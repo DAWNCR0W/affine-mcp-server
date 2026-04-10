@@ -83,6 +83,54 @@ type DatabaseIntentPreset = {
   extraColumns: DatabaseIntentColumnSpec[];
   starterRows: DatabaseIntentSeedRow[];
 };
+const DATABASE_COLUMN_TYPE_VALUES = ["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
+
+const MARKDOWN_EXPORT_SUPPORTED_FLAVOURS = new Set<string>([
+  "affine:paragraph",
+  "affine:list",
+  "affine:code",
+  "affine:divider",
+  "affine:bookmark",
+  "affine:embed-youtube",
+  "affine:embed-github",
+  "affine:embed-figma",
+  "affine:embed-loom",
+  "affine:embed-iframe",
+  "affine:image",
+  "affine:table",
+  "affine:callout",
+  "affine:note",
+  "affine:page",
+  "affine:surface",
+]);
+
+const KNOWN_BLOCK_FLAVOURS = new Set<string>([
+  "affine:page",
+  "affine:surface",
+  "affine:paragraph",
+  "affine:list",
+  "affine:code",
+  "affine:divider",
+  "affine:callout",
+  "affine:latex",
+  "affine:table",
+  "affine:bookmark",
+  "affine:image",
+  "affine:attachment",
+  "affine:embed-youtube",
+  "affine:embed-github",
+  "affine:embed-figma",
+  "affine:embed-loom",
+  "affine:embed-html",
+  "affine:embed-linked-doc",
+  "affine:embed-synced-doc",
+  "affine:embed-iframe",
+  "affine:database",
+  "affine:surface-ref",
+  "affine:frame",
+  "affine:edgeless-text",
+  "affine:note",
+]);
 
 type AppendPlacement = {
   parentId?: string;
@@ -2270,6 +2318,141 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     };
   }
 
+  function collectDocBlockRows(doc: Y.Doc): Array<{
+    id: string;
+    flavour: string | null;
+    type: string | null;
+    hasText: boolean;
+    hasUrl: boolean;
+    hasSourceId: boolean;
+    childCount: number;
+  }> {
+    const blocks = doc.getMap("blocks") as Y.Map<any>;
+    const rows: Array<{
+      id: string;
+      flavour: string | null;
+      type: string | null;
+      hasText: boolean;
+      hasUrl: boolean;
+      hasSourceId: boolean;
+      childCount: number;
+    }> = [];
+
+    for (const [id, raw] of blocks) {
+      if (!(raw instanceof Y.Map)) {
+        continue;
+      }
+      const textValue = asText(raw.get("prop:text"));
+      rows.push({
+        id: String(id),
+        flavour: asStringOrNull(raw.get("sys:flavour")),
+        type: asStringOrNull(raw.get("prop:type")),
+        hasText: textValue.length > 0,
+        hasUrl: asText(raw.get("prop:url")).trim().length > 0,
+        hasSourceId: asText(raw.get("prop:sourceId")).trim().length > 0,
+        childCount: childIdsFrom(raw.get("sys:children")).length,
+      });
+    }
+
+    return rows;
+  }
+
+  function summarizeDocFidelity(doc: Y.Doc, tagOptionsById: Map<string, WorkspaceTagOption> = new Map()) {
+    const collected = collectDocForMarkdown(doc, tagOptionsById);
+    const rendered = renderBlocksToMarkdown({
+      rootBlockIds: collected.rootBlockIds,
+      blocksById: collected.blocksById,
+    });
+    const blockRows = collectDocBlockRows(doc);
+    const flavourCounts: Record<string, number> = {};
+    const unsupportedBlocks: Array<{ id: string; flavour: string | null; reason: string }> = [];
+    const conditionallyRiskyBlocks: Array<{ id: string; flavour: string | null; reason: string }> = [];
+
+    for (const block of blockRows) {
+      const flavourKey = block.flavour || "unknown";
+      flavourCounts[flavourKey] = (flavourCounts[flavourKey] ?? 0) + 1;
+
+      if (!block.flavour) {
+        unsupportedBlocks.push({ id: block.id, flavour: null, reason: "Block flavour is missing." });
+        continue;
+      }
+
+      if (!KNOWN_BLOCK_FLAVOURS.has(block.flavour)) {
+        unsupportedBlocks.push({
+          id: block.id,
+          flavour: block.flavour,
+          reason: "Block flavour is unknown to this MCP build.",
+        });
+        continue;
+      }
+
+      if (!MARKDOWN_EXPORT_SUPPORTED_FLAVOURS.has(block.flavour)) {
+        unsupportedBlocks.push({
+          id: block.id,
+          flavour: block.flavour,
+          reason: "Markdown export does not have a native renderer for this flavour.",
+        });
+        continue;
+      }
+
+      if (block.flavour === "affine:image" && !block.hasSourceId) {
+        conditionallyRiskyBlocks.push({
+          id: block.id,
+          flavour: block.flavour,
+          reason: "Image block has no sourceId; markdown export will skip it.",
+        });
+      }
+
+      if (
+        (block.flavour === "affine:bookmark" ||
+          block.flavour === "affine:embed-youtube" ||
+          block.flavour === "affine:embed-github" ||
+          block.flavour === "affine:embed-figma" ||
+          block.flavour === "affine:embed-loom" ||
+          block.flavour === "affine:embed-iframe") &&
+        !block.hasUrl
+      ) {
+        conditionallyRiskyBlocks.push({
+          id: block.id,
+          flavour: block.flavour,
+          reason: "Embed/bookmark block has no URL; markdown export will skip it.",
+        });
+      }
+    }
+
+    const overallRisk =
+      unsupportedBlocks.length > 0
+        ? "high"
+        : conditionallyRiskyBlocks.length > 0 || rendered.lossy
+          ? "medium"
+          : "low";
+
+    return {
+      title: collected.title || null,
+      tags: collected.tags,
+      rootBlockIds: collected.rootBlockIds,
+      markdown: rendered.markdown,
+      markdownWarnings: rendered.warnings,
+      markdownLossy: rendered.lossy,
+      flavourCounts,
+      unsupportedBlocks,
+      conditionallyRiskyBlocks,
+      overallRisk,
+      recommendedPath:
+        overallRisk === "low"
+          ? "markdown_export_ok"
+          : overallRisk === "medium"
+            ? "markdown_export_with_review"
+            : "prefer_native_read_or_clone",
+      stats: {
+        blockCount: blockRows.length,
+        markdownUnsupportedCount: rendered.stats.unsupportedCount,
+        unsupportedBlockCount: unsupportedBlocks.length,
+        conditionallyRiskyBlockCount: conditionallyRiskyBlocks.length,
+      },
+    };
+  }
+
   async function applyMarkdownOperationsInternal(parsed: {
     workspaceId: string;
     docId: string;
@@ -3722,6 +3905,132 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     readDocHandler as any
   );
 
+  const getCapabilitiesHandler = async () => {
+    return text({
+      server: {
+        name: "affine-mcp",
+        capabilityVersion: 1,
+      },
+      docs: {
+        canonicalBlockTypes: [...APPEND_BLOCK_CANONICAL_TYPE_VALUES],
+        legacyBlockAliases: Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
+        markdownImport: {
+          supported: true,
+          lossy: true,
+          knownLosses: [
+            "Nested markdown lists are flattened during import.",
+            "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
+            "HTML blocks are imported as plain paragraph text.",
+          ],
+        },
+        markdownExport: {
+          supportedFlavours: [...MARKDOWN_EXPORT_SUPPORTED_FLAVOURS].sort(),
+          lossyForUnsupportedFlavours: true,
+          knownUnsupportedFlavours: [...KNOWN_BLOCK_FLAVOURS].filter(
+            flavour => !MARKDOWN_EXPORT_SUPPORTED_FLAVOURS.has(flavour)
+          ).sort(),
+        },
+        highLevelAuthoring: {
+          semanticPageComposer: false,
+          nativeTemplateInstantiation: false,
+          createDocWithPlacement: false,
+          semanticSectionEditing: false,
+        },
+      },
+      database: {
+        supported: true,
+        columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
+        initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
+        advancedViewMutation: false,
+        intentDrivenComposition: false,
+        linkedDocRows: true,
+      },
+      workspace: {
+        organizeToolsExperimental: true,
+        ruleBackedCollections: false,
+        workspaceBlueprints: false,
+      },
+      collaboration: {
+        docComments: true,
+        repliesListed: true,
+        replyCreation: false,
+        anchoredComments: false,
+        selectionRangeComments: false,
+        sharePolicyManagement: false,
+      },
+      export: {
+        markdown: true,
+        html: false,
+        fidelityReport: true,
+        snapshotBundle: false,
+      },
+    });
+  };
+  server.registerTool(
+    "get_capabilities",
+    {
+      title: "Get Capabilities",
+      description: "Return machine-readable capability flags for this MCP server, including block, database, collaboration, and export support.",
+      inputSchema: {},
+    },
+    getCapabilitiesHandler as any
+  );
+
+  const analyzeDocFidelityHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (workspaceSnapshot.missing) {
+        const workspaceDoc = new Y.Doc();
+        Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+        tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+      }
+
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) {
+        return text({
+          docId: parsed.docId,
+          exists: false,
+          unsupportedBlocks: [],
+          conditionallyRiskyBlocks: [],
+        });
+      }
+
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const summary = summarizeDocFidelity(doc, tagOptionsById);
+
+      return text({
+        docId: parsed.docId,
+        exists: true,
+        ...summary,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "analyze_doc_fidelity",
+    {
+      title: "Analyze Document Fidelity",
+      description: "Inspect a document for markdown export fidelity risk, including unsupported AFFiNE block flavours and risky content paths.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    analyzeDocFidelityHandler as any
+  );
+
   // move_doc: move a doc in the sidebar by removing its embed_linked_doc from the old parent
   // and adding it to the new parent. fromParentDocId is optional — if omitted, only adds to new parent.
   const moveDocHandler = async (parsed: { workspaceId?: string; docId: string; toParentDocId: string; fromParentDocId?: string }) => {
@@ -4204,6 +4513,98 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     exportDocMarkdownHandler as any
+  );
+
+  const exportWithFidelityReportHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    includeFrontmatter?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+
+    try {
+      await joinWorkspace(socket, workspaceId);
+      let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (workspaceSnapshot.missing) {
+        const wsDoc = new Y.Doc();
+        Y.applyUpdate(wsDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+        tagOptionsById = getWorkspaceTagOptionMaps(wsDoc.getMap("meta")).byId;
+      }
+
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) {
+        return text({
+          docId: parsed.docId,
+          exists: false,
+          markdown: "",
+          fidelity: {
+            overallRisk: "high",
+            recommendedPath: "prefer_native_read_or_clone",
+            unsupportedBlocks: [],
+            conditionallyRiskyBlocks: [],
+          },
+        });
+      }
+
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const summary = summarizeDocFidelity(doc, tagOptionsById);
+      let markdown = summary.markdown;
+
+      if (parsed.includeFrontmatter) {
+        const escapedTitle = (summary.title || "Untitled").replace(/\"/g, "\\\"");
+        const frontmatterLines = [
+          "---",
+          `docId: \"${parsed.docId}\"`,
+          `title: \"${escapedTitle}\"`,
+          "tags:",
+          ...(summary.tags.length > 0 ? summary.tags.map(tag => `  - \"${tag.replace(/\"/g, "\\\"")}\"`) : ["  -"]),
+          `lossy: ${summary.markdownLossy ? "true" : "false"}`,
+          `fidelityRisk: \"${summary.overallRisk}\"`,
+          "---",
+        ];
+        markdown = `${frontmatterLines.join("\n")}\n\n${markdown}`;
+      }
+
+      return text({
+        docId: parsed.docId,
+        exists: true,
+        markdown,
+        fidelity: {
+          overallRisk: summary.overallRisk,
+          recommendedPath: summary.recommendedPath,
+          unsupportedBlocks: summary.unsupportedBlocks,
+          conditionallyRiskyBlocks: summary.conditionallyRiskyBlocks,
+          markdownWarnings: summary.markdownWarnings,
+          markdownLossy: summary.markdownLossy,
+          flavourCounts: summary.flavourCounts,
+          stats: summary.stats,
+        },
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "export_with_fidelity_report",
+    {
+      title: "Export With Fidelity Report",
+      description: "Export document markdown together with a structured fidelity report that highlights markdown loss risk and unsupported AFFiNE-native content.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        includeFrontmatter: z.boolean().optional(),
+      },
+    },
+    exportWithFidelityReportHandler as any
   );
 
   // Core logic for creating a doc from markdown — returns structured data, no MCP envelope.

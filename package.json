@@ -48,6 +48,7 @@
     "test:data-view": "node tests/test-data-view.mjs",
     "test:doc-discovery": "node tests/test-doc-discovery.mjs",
     "test:create-placement": "node tests/test-create-placement.mjs",
+    "test:capabilities-fidelity": "node tests/test-capabilities-fidelity.mjs",
     "test:data-view-ui": "npx playwright test tests/playwright/verify-data-view.pw.ts --config tests/playwright/playwright.config.ts",
     "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:http-email-password": "node tests/test-http-email-password.mjs",
