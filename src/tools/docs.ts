@@ -4464,13 +4464,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   // CREATE DOC (high-level)
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string }) => {
     const created = await createDocInternal(parsed);
+    const placement = await finalizeDocPlacement({
+      workspaceId: created.workspaceId,
+      docId: created.docId,
+      parentDocId: parsed.parentDocId,
+      context: "create_doc",
+    });
     return receipt("doc.create", {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
-      parentDocId: created.parentDocId,
-      linkedToParent: created.linkedToParent,
-      warnings: created.warnings ?? [],
+      parentDocId: placement.parentDocId,
+      linkedToParent: placement.linkedToParent,
+      warnings: mergeWarnings(created.warnings ?? [], placement.warnings),
     });
   };
   server.registerTool(
