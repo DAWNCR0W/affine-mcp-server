@@ -188,6 +188,9 @@ type CreateDocResult = {
   workspaceId: string;
   docId: string;
   title: string;
+  parentDocId: string | null;
+  linkedToParent: boolean;
+  warnings: string[];
 };
 
 function blockVersion(flavour: string): number {
@@ -2384,7 +2387,70 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const wsDeltaBase64 = Buffer.from(wsDelta).toString("base64");
       await pushDocUpdate(socket, workspaceId, workspaceId, wsDeltaBase64);
 
-      return { workspaceId, docId, title };
+      return {
+        workspaceId,
+        docId,
+        title,
+        parentDocId: null,
+        linkedToParent: false,
+        warnings: [],
+      };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  async function finalizeDocPlacement(parsed: {
+    workspaceId: string;
+    docId: string;
+    parentDocId?: string;
+    context: string;
+  }): Promise<{ parentDocId: string | null; linkedToParent: boolean; warnings: string[] }> {
+    const parentDocId = parsed.parentDocId?.trim();
+    if (!parentDocId) {
+      return { parentDocId: null, linkedToParent: false, warnings: [] };
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, parsed.workspaceId);
+      const workspaceSnapshot = await loadDoc(socket, parsed.workspaceId, parsed.workspaceId);
+      if (!workspaceSnapshot.missing) {
+        return {
+          parentDocId,
+          linkedToParent: false,
+          warnings: [`${parsed.context}: workspace metadata could not be loaded to verify parent doc "${parentDocId}". Link it manually.`],
+        };
+      }
+
+      const workspaceDoc = new Y.Doc();
+      Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      const parentExists = getWorkspacePageEntries(workspaceDoc.getMap("meta")).some(page => page.id === parentDocId);
+      if (!parentExists) {
+        return {
+          parentDocId,
+          linkedToParent: false,
+          warnings: [`${parsed.context}: parent doc "${parentDocId}" was not found in workspace "${parsed.workspaceId}". Doc was left at the workspace root.`],
+        };
+      }
+
+      try {
+        await appendBlockInternal({
+          workspaceId: parsed.workspaceId,
+          docId: parentDocId,
+          type: "embed_linked_doc",
+          pageId: parsed.docId,
+        });
+        return { parentDocId, linkedToParent: true, warnings: [] };
+      } catch {
+        return {
+          parentDocId,
+          linkedToParent: false,
+          warnings: [`${parsed.context}: doc created but could not be linked to parent doc "${parentDocId}". Link it manually.`],
+        };
+      }
     } finally {
       socket.disconnect();
     }
@@ -3723,23 +3789,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // CREATE DOC (high-level)
-  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string }) => {
+  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string }) => {
     const created = await createDocInternal(parsed);
     return receipt("doc.create", {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
+      parentDocId: created.parentDocId,
+      linkedToParent: created.linkedToParent,
+      warnings: created.warnings ?? [],
     });
   };
   server.registerTool(
     'create_doc',
     {
       title: 'Create Document',
-      description: 'Create a new AFFiNE document with optional content',
+      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately.',
       inputSchema: {
         workspaceId: z.string().optional(),
         title: z.string().optional(),
         content: z.string().optional(),
+        parentDocId: z.string().optional().describe("Optional parent doc to link the new doc under in the sidebar."),
       },
     },
     createDocHandler as any
@@ -4093,37 +4163,25 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       });
     }
 
-    // If parentDocId is provided, embed the new doc into the parent so it
-    // appears in the sidebar as a child instead of being an orphan.
-    let linkedToParent = false;
-    if (parsed.parentDocId) {
-      try {
-        await appendBlockInternal({
-          workspaceId: created.workspaceId,
-          docId: parsed.parentDocId,
-          type: "embed_linked_doc",
-          pageId: created.docId,
-        });
-        linkedToParent = true;
-      } catch {
-        // Non-fatal: doc was created, just not linked. Warn below.
-      }
-    }
+    const placement = await finalizeDocPlacement({
+      workspaceId: created.workspaceId,
+      docId: created.docId,
+      parentDocId: parsed.parentDocId,
+      context: "create_doc_from_markdown",
+    });
 
     const applyWarnings: string[] = [];
     if (applied.skippedCount > 0) {
       applyWarnings.push(`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`);
-    }
-    if (parsed.parentDocId && !linkedToParent) {
-      applyWarnings.push(`Doc created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`);
     }
 
     return {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
-      linkedToParent,
-      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
+      parentDocId: placement.parentDocId,
+      linkedToParent: placement.linkedToParent,
+      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings, placement.warnings),
       lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
@@ -4138,6 +4196,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     title?: string;
     markdown: string;
     strict?: boolean;
+    parentDocId?: string;
   }) => {
     return receipt("doc.create_from_markdown", await createDocFromMarkdownCore(parsed));
   };
@@ -4167,26 +4226,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!Array.isArray(parsed.docs) || parsed.docs.length === 0) throw new Error("docs array is required.");
     if (parsed.docs.length > 20) throw new Error("Maximum 20 docs per batch.");
 
-    const results: Array<{ title: string; docId: string; linkedToParent: boolean; warnings: string[] }> = [];
+    const results: Array<{ title: string; docId: string; parentDocId: string | null; linkedToParent: boolean; warnings: string[] }> = [];
 
     for (const item of parsed.docs) {
       try {
-        const d = await createDocFromMarkdownCore({ workspaceId, title: item.title, markdown: item.markdown });
-
-        // Link to parent if provided
-        let linkedToParent = false;
-        if (item.parentDocId) {
-          try {
-            await appendBlockInternal({ workspaceId, docId: item.parentDocId, type: "embed_linked_doc", pageId: d.docId });
-            linkedToParent = true;
-          } catch {
-            d.warnings?.push(`Doc created but could not be linked to parent "${item.parentDocId}". Link it manually.`);
-          }
-        }
-
-        results.push({ title: d.title, docId: d.docId, linkedToParent, warnings: d.warnings ?? [] });
+        const d = await createDocFromMarkdownCore({ workspaceId, title: item.title, markdown: item.markdown, parentDocId: item.parentDocId });
+        results.push({
+          title: d.title,
+          docId: d.docId,
+          parentDocId: d.parentDocId,
+          linkedToParent: d.linkedToParent,
+          warnings: d.warnings ?? [],
+        });
       } catch (err: any) {
-        results.push({ title: item.title, docId: "", linkedToParent: false, warnings: [`Failed: ${err?.message ?? String(err)}`] });
+        results.push({ title: item.title, docId: "", parentDocId: item.parentDocId ?? null, linkedToParent: false, warnings: [`Failed: ${err?.message ?? String(err)}`] });
       }
     }
 
@@ -4848,21 +4901,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
       const newTitle = (parsed.title ?? `${collected.title || "Untitled"} (copy)`).trim();
       socket.disconnect();
-      const r = await createDocFromMarkdownHandler({ workspaceId, title: newTitle, markdown: rendered.markdown });
-      const created = JSON.parse((r as any).content[0].text);
-      let linkedToParent = false;
-      if (parsed.parentDocId && created.docId) {
-        try {
-          await appendBlockInternal({ workspaceId, docId: parsed.parentDocId, type: "embed_linked_doc", pageId: created.docId });
-          linkedToParent = true;
-        } catch { /* non-fatal */ }
-      }
+      const created = await createDocFromMarkdownCore({ workspaceId, title: newTitle, markdown: rendered.markdown, parentDocId: parsed.parentDocId });
       return receipt("doc.duplicate", {
         workspaceId,
         sourceDocId: parsed.docId,
         docId: created.docId,
         title: created.title,
-        linkedToParent,
+        parentDocId: created.parentDocId,
+        linkedToParent: created.linkedToParent,
         cloneMode: "markdown-roundtrip",
         lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
         warnings: created.warnings ?? [],
@@ -4910,22 +4956,18 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
       const unfilled = [...markdown.matchAll(/\{\{\s*[\w.-]+\s*\}\}/g)].map(match => match[0]);
       socket.disconnect();
-      const result = await createDocFromMarkdownHandler({ workspaceId, title: parsed.title, markdown });
-      const created = JSON.parse((result as any).content[0].text);
-      let linkedToParent = false;
-      if (parsed.parentDocId && created.docId) {
-        try {
-          await appendBlockInternal({ workspaceId, docId: parsed.parentDocId, type: "embed_linked_doc", pageId: created.docId });
-          linkedToParent = true;
-        } catch { /* non-fatal */ }
-      }
+      const created = await createDocFromMarkdownCore({ workspaceId, title: parsed.title, markdown, parentDocId: parsed.parentDocId });
       return receipt("doc.create_from_template", {
         workspaceId,
-        ...created,
         sourceTemplateDocId: parsed.templateDocId,
-        linkedToParent,
+        docId: created.docId,
+        title: created.title,
+        parentDocId: created.parentDocId,
+        linkedToParent: created.linkedToParent,
         cloneMode: "markdown-roundtrip",
         lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
+        warnings: created.warnings ?? [],
+        stats: created.stats ?? null,
         unfilledVariables: unfilled,
       });
     } catch (err) {
