@@ -68,7 +68,9 @@
   "files": [
     "bin",
     "dist",
+    "docs",
     "README.md",
+    "tool-manifest.json",
     "LICENSE"
   ],
   "engines": {
