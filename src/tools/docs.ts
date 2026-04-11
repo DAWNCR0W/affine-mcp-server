@@ -152,6 +152,8 @@ type AppendBlockInput = {
   design?: string;
   reference?: string;
   refFlavour?: string;
+  x?: number;
+  y?: number;
   width?: number;
   height?: number;
   background?: string;
@@ -190,6 +192,8 @@ type NormalizedAppendBlockInput = {
   design: string;
   reference: string;
   refFlavour: string;
+  x: number;
+  y: number;
   width: number;
   height: number;
   background: string;
@@ -1082,6 +1086,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const design = parsed.design ?? "";
     const reference = (parsed.reference ?? "").trim();
     const refFlavour = (parsed.refFlavour ?? "").trim();
+    const x = Number.isFinite(parsed.x) ? Math.floor(parsed.x as number) : 0;
+    const y = Number.isFinite(parsed.y) ? Math.floor(parsed.y as number) : 0;
     const width = Number.isFinite(parsed.width) ? Math.max(1, Math.floor(parsed.width as number)) : 100;
     const height = Number.isFinite(parsed.height) ? Math.max(1, Math.floor(parsed.height as number)) : 100;
     const background = (parsed.background ?? "transparent").trim() || "transparent";
@@ -1109,6 +1115,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       design,
       reference,
       refFlavour,
+      x,
+      y,
       width,
       height,
       background,
@@ -1864,7 +1872,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:title", makeText(content || "Frame"));
         block.set("prop:background", normalized.background);
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
         block.set("prop:childElementIds", new Y.Map<any>());
         block.set("prop:presentationIndex", "a0");
@@ -1875,7 +1883,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         setSysFields(block, blockId, "affine:edgeless-text");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
@@ -1892,9 +1900,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       case "note": {
         setSysFields(block, blockId, "affine:note");
         block.set("sys:parent", null);
-        block.set("sys:children", new Y.Array<string>());
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
-        block.set("prop:background", normalized.background);
+        const noteChildren = new Y.Array<string>();
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
+        const noteBg = new Y.Map<any>();
+        noteBg.set("light", "#ffffff");
+        noteBg.set("dark", "#252525");
+        block.set("prop:background", noteBg);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
@@ -1908,7 +1919,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         edgeless.set("style", style);
         block.set("prop:edgeless", edgeless);
         block.set("prop:comments", undefined);
-        return { blockId, block, flavour: "affine:note" };
+        const noteExtraBlocks: Array<{ blockId: string; block: Y.Map<any> }> = [];
+        if (content) {
+          const paraId = generateId();
+          const para = new Y.Map<any>();
+          setSysFields(para, paraId, "affine:paragraph");
+          para.set("sys:parent", null);
+          para.set("sys:children", new Y.Array<string>());
+          para.set("prop:type", "text");
+          para.set("prop:text", makeText(content));
+          noteChildren.push([paraId]);
+          noteExtraBlocks.push({ blockId: paraId, block: para });
+        }
+        block.set("sys:children", noteChildren);
+        return { blockId, block, flavour: "affine:note", extraBlocks: noteExtraBlocks };
       }
     }
   }
@@ -4680,6 +4704,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         design: z.string().optional().describe("Design payload for embed_html"),
         reference: z.string().optional().describe("Target id for surface_ref"),
         refFlavour: z.string().optional().describe("Target flavour for surface_ref (e.g. affine:frame)"),
+        x: z.number().int().optional().describe("X position for frame/edgeless_text/note on the edgeless canvas (default 0)"),
+        y: z.number().int().optional().describe("Y position for frame/edgeless_text/note on the edgeless canvas (default 0)"),
         width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note"),
         height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note"),
         background: z.string().optional().describe("Background for frame/note"),
@@ -7306,5 +7332,278 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     addDatabaseColumnHandler as any
+  );
+
+  // ── Surface Element Tool ──────────────────────────────────────────
+
+  type SurfaceElementInput = {
+    workspaceId?: string;
+    docId: string;
+    type: "shape" | "connector" | "text" | "group";
+    // shape & text
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    // shape
+    shapeType?: "rect" | "ellipse" | "diamond" | "triangle";
+    radius?: number;
+    filled?: boolean;
+    fillColor?: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    strokeStyle?: "solid" | "dash" | "none";
+    text?: string;
+    color?: string;
+    fontSize?: number;
+    fontWeight?: string;
+    // connector
+    sourceId?: string;
+    targetId?: string;
+    sourcePosition?: [number, number];
+    targetPosition?: [number, number];
+    mode?: number;
+    frontEndpointStyle?: string;
+    rearEndpointStyle?: string;
+    stroke?: string;
+    label?: string;
+    // group
+    children?: string[];
+    title?: string;
+  };
+
+  function addElementToSurface(
+    blocks: Y.Map<any>,
+    elementId: string,
+    elementData: Record<string, any>
+  ): void {
+    const surfaceId = ensureSurfaceBlock(blocks);
+    const surface = blocks.get(surfaceId) as Y.Map<any>;
+    let elements = surface.get("prop:elements") as Y.Map<any> | undefined;
+    if (!elements) {
+      elements = new Y.Map<any>();
+      elements.set("type", "$blocksuite:internal:native$");
+      elements.set("value", new Y.Map<any>());
+      surface.set("prop:elements", elements);
+    }
+    const value = elements.get("value") as Y.Map<any>;
+    const el = new Y.Map<any>();
+    for (const [k, v] of Object.entries(elementData)) {
+      el.set(k, v);
+    }
+    value.set(elementId, el);
+  }
+
+  function resolveNewlines(s: string): string {
+    return s.replace(/\\n/g, "\n");
+  }
+
+  function buildSurfaceElement(input: SurfaceElementInput): { elementId: string; data: Record<string, any> } {
+    const elementId = generateId();
+    const seed = Math.floor(Math.random() * 2 ** 31);
+
+    switch (input.type) {
+      case "shape": {
+        const x = input.x ?? 0;
+        const y = input.y ?? 0;
+        const w = input.width ?? 100;
+        const h = input.height ?? 100;
+        const data: Record<string, any> = {
+          type: "shape",
+          id: elementId,
+          index: "a0",
+          seed,
+          xywh: `[${x},${y},${w},${h}]`,
+          rotate: 0,
+          shapeType: input.shapeType ?? "rect",
+          shapeStyle: "General",
+          radius: input.radius ?? 0,
+          filled: input.filled ?? true,
+          fillColor: input.fillColor ?? "--affine-palette-shape-yellow",
+          strokeWidth: input.strokeWidth ?? 2,
+          strokeColor: input.strokeColor ?? "--affine-palette-line-yellow",
+          strokeStyle: input.strokeStyle ?? "solid",
+          roughness: 1.4,
+          color: input.color ?? "#000000",
+          fontFamily: "blocksuite:surface:Inter",
+          fontSize: input.fontSize ?? 20,
+          fontStyle: "normal",
+          fontWeight: input.fontWeight ?? "600",
+          textAlign: "center",
+          textHorizontalAlign: "center",
+          textVerticalAlign: "center",
+          textResizing: 1,
+          maxWidth: false,
+          padding: [10, 20],
+          shadow: null,
+        };
+        if (input.text) {
+          const yText = new Y.Text();
+          yText.insert(0, resolveNewlines(input.text));
+          data.text = yText;
+        }
+        return { elementId, data };
+      }
+      case "connector": {
+        const source: Record<string, any> = {};
+        if (input.sourceId) {
+          source.id = input.sourceId;
+          source.position = input.sourcePosition ?? undefined;
+        } else if (input.sourcePosition) {
+          source.position = input.sourcePosition;
+        }
+        const target: Record<string, any> = {};
+        if (input.targetId) {
+          target.id = input.targetId;
+          target.position = input.targetPosition ?? undefined;
+        } else if (input.targetPosition) {
+          target.position = input.targetPosition;
+        }
+        const data: Record<string, any> = {
+          type: "connector",
+          id: elementId,
+          index: "a0",
+          seed,
+          mode: input.mode ?? 2,
+          stroke: input.stroke ?? "#000000",
+          strokeWidth: input.strokeWidth ?? 2,
+          strokeStyle: input.strokeStyle ?? "solid",
+          roughness: 1.4,
+          frontEndpointStyle: input.frontEndpointStyle ?? "None",
+          rearEndpointStyle: input.rearEndpointStyle ?? "Arrow",
+          source,
+          target,
+          labelDisplay: true,
+          labelOffset: { distance: 0.5, anchor: "center" },
+          labelStyle: {
+            color: "#000000",
+            fontFamily: "blocksuite:surface:Inter",
+            fontSize: 16,
+            fontStyle: "normal",
+            fontWeight: "400",
+            textAlign: "center",
+          },
+          labelConstraints: { hasMaxWidth: true, maxWidth: 280 },
+        };
+        if (input.label) {
+          const yText = new Y.Text();
+          yText.insert(0, resolveNewlines(input.label));
+          data.text = yText;
+        }
+        return { elementId, data };
+      }
+      case "text": {
+        const x = input.x ?? 0;
+        const y = input.y ?? 0;
+        const w = input.width ?? 200;
+        const h = input.height ?? 30;
+        const yText = new Y.Text();
+        if (input.text) yText.insert(0, resolveNewlines(input.text));
+        const data: Record<string, any> = {
+          type: "text",
+          id: elementId,
+          index: "a0",
+          seed,
+          xywh: `[${x},${y},${w},${h}]`,
+          rotate: 0,
+          text: yText,
+          color: input.color ?? "#000000",
+          fontFamily: "blocksuite:surface:Inter",
+          fontSize: input.fontSize ?? 16,
+          fontStyle: "normal",
+          fontWeight: input.fontWeight ?? "400",
+          textAlign: "center",
+          hasMaxWidth: false,
+        };
+        return { elementId, data };
+      }
+      case "group": {
+        const childMap = new Y.Map<boolean>();
+        for (const childId of (input.children ?? [])) {
+          childMap.set(childId, true);
+        }
+        const yTitle = new Y.Text();
+        if (input.title) yTitle.insert(0, input.title);
+        const data: Record<string, any> = {
+          type: "group",
+          id: elementId,
+          index: "a0",
+          seed,
+          children: childMap,
+          title: yTitle,
+        };
+        return { elementId, data };
+      }
+    }
+  }
+
+  const addSurfaceElementHandler = async (params: SurfaceElementInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (snapshot.missing) {
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      }
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const { elementId, data } = buildSurfaceElement(params);
+      addElementToSurface(blocks, elementId, data);
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(socket, workspaceId, params.docId, Buffer.from(delta).toString("base64"));
+      return text(JSON.stringify({ added: true, elementId, type: params.type }));
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "add_surface_element",
+    {
+      title: "Add Surface Element",
+      description: "Add a shape, connector, text, or group element to an AFFiNE edgeless canvas surface. Shapes support rect/ellipse/diamond/triangle with fill, stroke, and text. Connectors draw arrows between shapes. Use for building diagrams.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        type: z.enum(["shape", "connector", "text", "group"]).describe("Element type"),
+        // shape & text positioning
+        x: z.number().optional().describe("X position on canvas"),
+        y: z.number().optional().describe("Y position on canvas"),
+        width: z.number().optional().describe("Width"),
+        height: z.number().optional().describe("Height"),
+        // shape
+        shapeType: z.enum(["rect", "ellipse", "diamond", "triangle"]).optional().describe("Shape type (default rect)"),
+        radius: z.number().optional().describe("Corner radius for rect (0.1 = rounded)"),
+        filled: z.boolean().optional().describe("Whether shape is filled (default true)"),
+        fillColor: z.string().optional().describe("Fill color (e.g. '--affine-palette-shape-yellow' or hex)"),
+        strokeColor: z.string().optional().describe("Stroke color"),
+        strokeWidth: z.number().optional().describe("Stroke width (default 2)"),
+        strokeStyle: z.enum(["solid", "dash", "none"]).optional().describe("Stroke style"),
+        text: z.string().optional().describe("Text inside shape or standalone text content"),
+        color: z.string().optional().describe("Text color (default #000000)"),
+        fontSize: z.number().optional().describe("Font size (default 20 for shapes, 16 for text)"),
+        fontWeight: z.string().optional().describe("Font weight (default 600 for shapes, 400 for text)"),
+        // connector
+        sourceId: z.string().optional().describe("Source element ID for connector"),
+        targetId: z.string().optional().describe("Target element ID for connector"),
+        sourcePosition: z.tuple([z.number(), z.number()]).optional().describe("Source position [x,y] — relative [0-1] if sourceId set, absolute otherwise"),
+        targetPosition: z.tuple([z.number(), z.number()]).optional().describe("Target position [x,y] — relative [0-1] if targetId set, absolute otherwise"),
+        mode: z.number().optional().describe("Connector mode: 0=straight, 1=orthogonal, 2=curve (default 2)"),
+        frontEndpointStyle: z.enum(["None", "Arrow", "Triangle", "Circle", "Diamond"]).optional().describe("Front endpoint style (default None)"),
+        rearEndpointStyle: z.enum(["None", "Arrow", "Triangle", "Circle", "Diamond"]).optional().describe("Rear endpoint style (default Arrow)"),
+        stroke: z.string().optional().describe("Connector stroke color"),
+        label: z.string().optional().describe("Connector label text"),
+        // group
+        children: z.array(z.string()).optional().describe("Element IDs to group"),
+        title: z.string().optional().describe("Group title"),
+      },
+    },
+    addSurfaceElementHandler as any
   );
 }
