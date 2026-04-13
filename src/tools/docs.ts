@@ -291,10 +291,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "var(--affine-tag-teal)", "var(--affine-tag-pink)", "var(--affine-tag-gray)",
   ];
 
-  // Null-valued attrs explicitly clear marks in Yjs, preventing them from
-  // bleeding into adjacent plain-text runs via left-neighbour inheritance.
-  const CLEARED_MARKS: Record<string, null> = { bold: null, italic: null, strike: null, code: null, link: null };
-
   function makeText(content: string | TextDelta[]): Y.Text {
     const yText = new Y.Text();
     if (typeof content === "string") {
@@ -305,10 +301,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let offset = 0;
       for (const delta of content) {
         if (delta.insert.length > 0) {
-          const attrs: Record<string, unknown> = delta.attributes
-            ? { ...CLEARED_MARKS, ...delta.attributes }
-            : { ...CLEARED_MARKS };
-          yText.insert(offset, delta.insert, attrs);
+          yText.insert(offset, delta.insert, delta.attributes ? { ...delta.attributes } : {});
           offset += delta.insert.length;
         }
       }
