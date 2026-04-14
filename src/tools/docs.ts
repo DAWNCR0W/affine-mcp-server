@@ -7,6 +7,7 @@ import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
+import { specialWorkspaceDbDocId, readOrganizeNodes, organizeNodeMap, ensureNodeIsFolder, nextOrganizeIndex, ensureRecord } from "./organize.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
@@ -4490,7 +4491,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // CREATE DOC (high-level)
-  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string }) => {
+  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
     const created = await createDocInternal(parsed);
     const placement = await finalizeDocPlacement({
       workspaceId: created.workspaceId,
@@ -4498,25 +4499,65 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: parsed.parentDocId,
       context: "create_doc",
     });
+
+    const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
+    let folderNodeId: string | null = null;
+
+    if (parsed.folderId) {
+      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+      const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+      const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+      try {
+        await joinWorkspace(socket, created.workspaceId);
+        const foldersDocId = specialWorkspaceDbDocId(created.workspaceId, "folders");
+        const snapshot = await loadDoc(socket, created.workspaceId, foldersDocId);
+        const foldersDoc = new Y.Doc();
+        if (snapshot.missing) {
+          Y.applyUpdate(foldersDoc, Buffer.from(snapshot.missing, "base64"));
+        }
+        const nodes = readOrganizeNodes(foldersDoc);
+        const nodeMap = organizeNodeMap(nodes);
+        ensureNodeIsFolder(nodeMap, parsed.folderId);
+        const linkId = generateId();
+        const record = ensureRecord(foldersDoc, linkId);
+        record.set("id", linkId);
+        record.set("type", "doc");
+        record.set("data", created.docId);
+        record.set("parentId", parsed.folderId);
+        record.set("index", nextOrganizeIndex(nodes, parsed.folderId));
+        record.delete("$$DELETED");
+        const update = Y.encodeStateAsUpdate(foldersDoc);
+        await pushDocUpdate(socket, created.workspaceId, foldersDocId, Buffer.from(update).toString("base64"));
+        folderNodeId = linkId;
+      } catch (err: any) {
+        warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
+      } finally {
+        socket.disconnect();
+      }
+    }
+
     return receipt("doc.create", {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
-      warnings: mergeWarnings(created.warnings ?? [], placement.warnings),
+      folderId: parsed.folderId ?? null,
+      folderNodeId,
+      warnings,
     });
   };
   server.registerTool(
     'create_doc',
     {
       title: 'Create Document',
-      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately.',
+      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately. If folderId is provided, the doc is placed inside that folder in the sidebar.',
       inputSchema: {
         workspaceId: z.string().optional(),
         title: z.string().optional(),
         content: z.string().optional(),
         parentDocId: z.string().optional().describe("Optional parent doc to link the new doc under in the sidebar."),
+        folderId: z.string().optional().describe("Optional folder ID to place the doc in. Use list_organize_nodes to find folder IDs."),
       },
     },
     createDocHandler as any
