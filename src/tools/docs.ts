@@ -7,6 +7,7 @@ import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
+import { specialWorkspaceDbDocId, readOrganizeNodes, organizeNodeMap, ensureNodeIsFolder, nextOrganizeIndex, ensureRecord } from "./organize.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
@@ -297,15 +298,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (content.length > 0) {
         yText.insert(0, content);
       }
-      return yText;
-    }
-    let offset = 0;
-    for (const delta of content) {
-      if (!delta.insert) {
-        continue;
+    } else {
+      let offset = 0;
+      for (const delta of content) {
+        if (delta.insert.length > 0) {
+          yText.insert(offset, delta.insert, delta.attributes ? { ...delta.attributes } : {});
+          offset += delta.insert.length;
+        }
       }
-      yText.insert(offset, delta.insert, delta.attributes ? { ...delta.attributes } : {});
-      offset += delta.insert.length;
     }
     return yText;
   }
@@ -337,6 +337,28 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
     }
     return null;
+  }
+
+  function asDeltaArray(value: unknown): TextDelta[] | undefined {
+    if (!(value instanceof Y.Text)) return undefined;
+    const raw = value.toDelta() as Array<{ insert?: unknown; attributes?: Record<string, unknown> }>;
+    if (!raw.length) return undefined;
+    const result: TextDelta[] = [];
+    for (const d of raw) {
+      if (typeof d.insert !== "string") continue;
+      const td: TextDelta = { insert: d.insert };
+      if (d.attributes) {
+        const attrs: NonNullable<TextDelta["attributes"]> = {};
+        if (d.attributes.bold === true) attrs.bold = true;
+        if (d.attributes.italic === true) attrs.italic = true;
+        if (d.attributes.strike === true) attrs.strike = true;
+        if (d.attributes.code === true) attrs.code = true;
+        if (typeof d.attributes.link === "string") attrs.link = d.attributes.link;
+        if (Object.keys(attrs).length > 0) td.attributes = attrs;
+      }
+      result.push(td);
+    }
+    return result.length ? result : undefined;
   }
 
   function asText(value: unknown): string {
@@ -2291,6 +2313,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         flavour: asStringOrNull(block.get("sys:flavour")),
         type: asStringOrNull(block.get("prop:type")),
         text: asText(block.get("prop:text")) || null,
+        deltas: asDeltaArray(block.get("prop:text")),
         checked: typeof block.get("prop:checked") === "boolean" ? Boolean(block.get("prop:checked")) : null,
         language: asStringOrNull(block.get("prop:language")),
         childIds,
@@ -4468,7 +4491,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // CREATE DOC (high-level)
-  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string }) => {
+  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
     const created = await createDocInternal(parsed);
     const placement = await finalizeDocPlacement({
       workspaceId: created.workspaceId,
@@ -4476,25 +4499,65 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: parsed.parentDocId,
       context: "create_doc",
     });
+
+    const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
+    let folderNodeId: string | null = null;
+
+    if (parsed.folderId) {
+      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+      const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+      const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+      try {
+        await joinWorkspace(socket, created.workspaceId);
+        const foldersDocId = specialWorkspaceDbDocId(created.workspaceId, "folders");
+        const snapshot = await loadDoc(socket, created.workspaceId, foldersDocId);
+        const foldersDoc = new Y.Doc();
+        if (snapshot.missing) {
+          Y.applyUpdate(foldersDoc, Buffer.from(snapshot.missing, "base64"));
+        }
+        const nodes = readOrganizeNodes(foldersDoc);
+        const nodeMap = organizeNodeMap(nodes);
+        ensureNodeIsFolder(nodeMap, parsed.folderId);
+        const linkId = generateId();
+        const record = ensureRecord(foldersDoc, linkId);
+        record.set("id", linkId);
+        record.set("type", "doc");
+        record.set("data", created.docId);
+        record.set("parentId", parsed.folderId);
+        record.set("index", nextOrganizeIndex(nodes, parsed.folderId));
+        record.delete("$$DELETED");
+        const update = Y.encodeStateAsUpdate(foldersDoc);
+        await pushDocUpdate(socket, created.workspaceId, foldersDocId, Buffer.from(update).toString("base64"));
+        folderNodeId = linkId;
+      } catch (err: any) {
+        warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
+      } finally {
+        socket.disconnect();
+      }
+    }
+
     return receipt("doc.create", {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
-      warnings: mergeWarnings(created.warnings ?? [], placement.warnings),
+      folderId: parsed.folderId ?? null,
+      folderNodeId,
+      warnings,
     });
   };
   server.registerTool(
     'create_doc',
     {
       title: 'Create Document',
-      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately.',
+      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately. If folderId is provided, the doc is placed inside that folder in the sidebar.',
       inputSchema: {
         workspaceId: z.string().optional(),
         title: z.string().optional(),
         content: z.string().optional(),
         parentDocId: z.string().optional().describe("Optional parent doc to link the new doc under in the sidebar."),
+        folderId: z.string().optional().describe("Optional folder ID to place the doc in. Use list_organize_nodes to find folder IDs."),
       },
     },
     createDocHandler as any
@@ -5294,8 +5357,32 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           matchLog.push({ blockId, flavour: flavour ?? "unknown", original, replaced });
           if (!parsed.dryRun) {
             const prevSV = Y.encodeStateVector(doc);
-            val.delete(0, val.length);
-            val.insert(0, replaced);
+            // Snapshot delta runs before modification so we can look up attrs at each match position.
+            const deltaRuns = val.toDelta() as Array<{ insert: string; attributes?: Record<string, unknown> }>;
+            // Collect positions right-to-left so earlier offsets stay valid after each replacement.
+            const positions: number[] = [];
+            let idx = 0;
+            while (true) {
+              const pos = original.indexOf(parsed.search, idx);
+              if (pos === -1) break;
+              positions.push(pos);
+              if (!matchAll) break;
+              idx = pos + parsed.search.length;
+            }
+            for (let i = positions.length - 1; i >= 0; i--) {
+              let cur = 0;
+              let matchAttrs: Record<string, unknown> | undefined;
+              for (const run of deltaRuns) {
+                if (positions[i] < cur + run.insert.length) { matchAttrs = run.attributes; break; }
+                cur += run.insert.length;
+              }
+              val.delete(positions[i], parsed.search.length);
+              if (matchAttrs && Object.keys(matchAttrs).length > 0) {
+                val.insert(positions[i], parsed.replace, matchAttrs);
+              } else {
+                val.insert(positions[i], parsed.replace);
+              }
+            }
             const delta = Y.encodeStateAsUpdate(doc, prevSV);
             await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
           }

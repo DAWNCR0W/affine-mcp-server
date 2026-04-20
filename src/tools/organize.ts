@@ -181,7 +181,7 @@ function normalizeOrganizeNode(value: unknown): OrganizeNodeRecord | null {
   };
 }
 
-function specialWorkspaceDbDocId(workspaceId: string, tableName: string): string {
+export function specialWorkspaceDbDocId(workspaceId: string, tableName: string): string {
   return `db$${workspaceId}$${tableName}`;
 }
 
@@ -189,7 +189,7 @@ function isDeletedRecord(record: Y.Map<any>): boolean {
   return record.get("$$DELETED") === true || record.size === 0;
 }
 
-function ensureRecord(doc: Y.Doc, id: string): Y.Map<any> {
+export function ensureRecord(doc: Y.Doc, id: string): Y.Map<any> {
   return doc.getMap(id);
 }
 
@@ -225,7 +225,7 @@ function findCollectionIndex(array: Y.Array<any>, id: string): number {
   return -1;
 }
 
-function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
+export function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
   const nodes: OrganizeNodeRecord[] = [];
   for (const key of doc.share.keys()) {
     if (!doc.share.has(key)) {
@@ -243,7 +243,7 @@ function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
   return nodes;
 }
 
-function organizeNodeMap(nodes: OrganizeNodeRecord[]): Map<string, OrganizeNodeRecord> {
+export function organizeNodeMap(nodes: OrganizeNodeRecord[]): Map<string, OrganizeNodeRecord> {
   return new Map(nodes.map(node => [node.id, node] as const));
 }
 
@@ -525,7 +525,7 @@ function ensureFolderParent(
   }
 }
 
-function ensureNodeIsFolder(nodes: Map<string, OrganizeNodeRecord>, nodeId: string): OrganizeNodeRecord {
+export function ensureNodeIsFolder(nodes: Map<string, OrganizeNodeRecord>, nodeId: string): OrganizeNodeRecord {
   const node = nodes.get(nodeId);
   if (!node || node.type !== "folder") {
     throw new Error(`Folder '${nodeId}' was not found.`);
@@ -559,7 +559,7 @@ function isAncestor(
   }
 }
 
-function nextOrganizeIndex(
+export function nextOrganizeIndex(
   nodes: OrganizeNodeRecord[],
   parentId: string | null
 ): string {
