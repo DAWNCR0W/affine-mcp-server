@@ -329,7 +329,37 @@ echo ""
 echo "=== Running MCP doc discovery regression test ==="
 node "$SCRIPT_DIR/test-doc-discovery.mjs"
 
-# --- Step 13: Run Playwright verification ---
+# --- Step 13: Run MCP surface-element CRUD + edgeless canvas test ---
+echo ""
+echo "=== Running MCP surface-element CRUD + edgeless canvas test ==="
+node "$SCRIPT_DIR/test-surface-elements.mjs"
+
+# --- Step 13b: Seed an edgeless-canvas doc for the Playwright verification ---
+echo ""
+echo "=== Seeding edgeless canvas doc for Playwright verification ==="
+node "$SCRIPT_DIR/test-edgeless-canvas-setup.mjs"
+
+# --- Step 13c: Canvas tool-map demo + layout-helper assertions ---
+echo ""
+echo "=== Running MCP canvas tool-map demo + layout-helper assertions ==="
+node "$SCRIPT_DIR/test-canvas-tool-map-demo.mjs"
+
+# --- Step 13c1: Cookbook auth-flow scene + per-claim assertions ---
+echo ""
+echo "=== Running MCP edgeless-canvas cookbook auth-flow scene ==="
+node "$SCRIPT_DIR/test-edgeless-canvas-cookbook.mjs"
+
+# --- Step 13c2: stackAfter direction coverage (4-way star) ---
+echo ""
+echo "=== Running MCP stackAfter direction assertions (4-way star) ==="
+node "$SCRIPT_DIR/test-stack-after-directions.mjs"
+
+# --- Step 13d: Theme-default CRDT assertions + state for Playwright ---
+echo ""
+echo "=== Seeding theme-defaults doc + asserting palette tokens ==="
+node "$SCRIPT_DIR/test-theme-defaults-setup.mjs"
+
+# --- Step 14: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready
