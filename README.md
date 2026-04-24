@@ -189,6 +189,7 @@ For the grouped catalog, notes, and operational caveats, see [docs/tool-referenc
 | [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md) | Environment variables, auth modes, Docker, HTTP mode, and deployment guidance |
 | [docs/workflow-recipes.md](docs/workflow-recipes.md) | End-to-end workflows and example tool sequences |
 | [docs/tool-reference.md](docs/tool-reference.md) | Tool catalog grouped by domain |
+| [docs/edgeless-canvas-cookbook.md](docs/edgeless-canvas-cookbook.md) | Edgeless canvas layout helpers and surface elements, worked end-to-end |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow |
 | [SECURITY.md](SECURITY.md) | Security reporting |
 

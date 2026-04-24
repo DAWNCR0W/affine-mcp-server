@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { generateKeyBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
@@ -7,6 +8,22 @@ import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
+import {
+  type Bound,
+  DEFAULT_NOTE_XYWH,
+  DEFAULT_STACK_GAP_HORIZONTAL,
+  DEFAULT_STACK_GAP_VERTICAL,
+  SIDE_TO_NORMALIZED_POSITION,
+  encloseBounds,
+  estimateConnectorLabelXYWH,
+  estimateNoteHeightForMarkdown,
+  formatXywhString,
+  parseXywhString,
+  pickConnectorSides,
+  pickFurthestInDirection,
+  sortByFractionalIndex,
+  stackRelativeTo,
+} from "../edgeless/layout.js";
 
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
@@ -152,6 +169,8 @@ type AppendBlockInput = {
   design?: string;
   reference?: string;
   refFlavour?: string;
+  x?: number;
+  y?: number;
   width?: number;
   height?: number;
   background?: string;
@@ -174,6 +193,14 @@ type AppendBlockInput = {
   placement?: AppendPlacement;
   tableData?: string[][];
   tableCellDeltas?: TextDelta[][][];
+  markdown?: string;
+  childElementIds?: string[];
+  stackAfter?: {
+    blockId: string | string[];
+    direction?: "down" | "up" | "right" | "left";
+    gap?: number;
+  };
+  padding?: number;
 };
 
 type NormalizedAppendBlockInput = {
@@ -190,9 +217,12 @@ type NormalizedAppendBlockInput = {
   design: string;
   reference: string;
   refFlavour: string;
+  x: number;
+  y: number;
   width: number;
   height: number;
-  background: string;
+  // string = palette token or raw CSS color; { light, dark } = theme-adaptive hex pair.
+  background: string | { light?: string; dark?: string };
   sourceId: string;
   name: string;
   mimeType: string;
@@ -212,6 +242,22 @@ type NormalizedAppendBlockInput = {
   tableData?: string[][];
   deltas?: TextDelta[];
   tableCellDeltas?: TextDelta[][][];
+  childElementIds?: string[];
+  stackAfter?: {
+    blockId: string | string[];
+    direction?: "down" | "up" | "right" | "left";
+    gap?: number;
+  };
+  padding?: number;
+  xProvided?: boolean;
+  yProvided?: boolean;
+  heightProvided?: boolean;
+  widthProvided?: boolean;
+  markdown?: string;
+  // Resolved by resolveEdgelessLayoutHints from `childElementIds`; carries
+  // both the ids to write and the ones that didn't resolve for the receipt.
+  _frameOwnedIds?: string[];
+  _frameMissing?: string[];
 };
 
 type CreateDocInput = {
@@ -757,20 +803,30 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("Document has no page block; unable to insert content.");
     }
 
+    // Mirror BlockSuite's createDefaultDoc shape so the editor doesn't re-seed
+     // its own default note alongside ours.
     const noteId = generateId();
     const note = new Y.Map<any>();
     setSysFields(note, noteId, "affine:note");
     note.set("sys:parent", null);
-    note.set("sys:children", new Y.Array<string>());
-    note.set("prop:xywh", "[0,0,800,95]");
+    const noteChildren = new Y.Array<string>();
+    note.set("sys:children", noteChildren);
+    note.set("prop:xywh", DEFAULT_NOTE_XYWH);
     note.set("prop:index", "a0");
     note.set("prop:hidden", false);
     note.set("prop:displayMode", "both");
-    const background = new Y.Map<any>();
-    background.set("light", "#ffffff");
-    background.set("dark", "#252525");
-    note.set("prop:background", background);
+    note.set("prop:background", buildDefaultNoteBackground());
     blocks.set(noteId, note);
+
+    const paragraphId = generateId();
+    const paragraph = new Y.Map<any>();
+    setSysFields(paragraph, paragraphId, "affine:paragraph");
+    paragraph.set("sys:parent", null);
+    paragraph.set("sys:children", new Y.Array<string>());
+    paragraph.set("prop:type", "text");
+    paragraph.set("prop:text", makeText(""));
+    blocks.set(paragraphId, paragraph);
+    noteChildren.push([paragraphId]);
 
     const page = blocks.get(pageId) as Y.Map<any>;
     let pageChildren = page.get("sys:children") as Y.Array<string> | undefined;
@@ -780,6 +836,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
     pageChildren.push([noteId]);
     return noteId;
+  }
+
+  function buildDefaultNoteBackground(): Y.Map<any> {
+    const map = new Y.Map<any>();
+    map.set("light", "#ffffff");
+    map.set("dark", "#252525");
+    return map;
   }
 
   function ensureSurfaceBlock(blocks: Y.Map<any>): string {
@@ -1082,9 +1145,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const design = parsed.design ?? "";
     const reference = (parsed.reference ?? "").trim();
     const refFlavour = (parsed.refFlavour ?? "").trim();
-    const width = Number.isFinite(parsed.width) ? Math.max(1, Math.floor(parsed.width as number)) : 100;
-    const height = Number.isFinite(parsed.height) ? Math.max(1, Math.floor(parsed.height as number)) : 100;
-    const background = (parsed.background ?? "transparent").trim() || "transparent";
+    const x = Number.isFinite(parsed.x) ? Math.floor(parsed.x as number) : 0;
+    const y = Number.isFinite(parsed.y) ? Math.floor(parsed.y as number) : 0;
+    const widthProvided = Number.isFinite(parsed.width);
+    const heightProvided = Number.isFinite(parsed.height);
+    const width = widthProvided ? Math.max(1, Math.floor(parsed.width as number)) : 100;
+    let height = heightProvided ? Math.max(1, Math.floor(parsed.height as number)) : 100;
+    // Pre-inflate the stored height so stackAfter'd siblings don't overlap the
+    // note before the editor's ResizeObserver corrects it on first render.
+    if (typeInfo.type === "note" && !heightProvided && typeof parsed.markdown === "string" && parsed.markdown.length > 0) {
+      height = Math.max(height, estimateNoteHeightForMarkdown(parsed.markdown, widthProvided ? width : 400));
+    }
+    const background: string | { light?: string; dark?: string } =
+      typeof parsed.background === "string"
+        ? (parsed.background.trim() || "transparent")
+        : (parsed.background && typeof parsed.background === "object" ? parsed.background : "transparent");
     const sourceId = (parsed.sourceId ?? "").trim();
     const name = (parsed.name ?? "attachment").trim() || "attachment";
     const mimeType = (parsed.mimeType ?? "application/octet-stream").trim() || "application/octet-stream";
@@ -1109,6 +1184,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       design,
       reference,
       refFlavour,
+      x,
+      y,
       width,
       height,
       background,
@@ -1131,6 +1208,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       tableData,
       deltas: parsed.deltas,
       tableCellDeltas,
+      childElementIds: Array.isArray(parsed.childElementIds) ? parsed.childElementIds : undefined,
+      stackAfter: parsed.stackAfter,
+      padding: Number.isFinite(parsed.padding) ? Math.max(0, Math.floor(parsed.padding as number)) : undefined,
+      xProvided: Number.isFinite(parsed.x),
+      yProvided: Number.isFinite(parsed.y),
+      widthProvided,
+      heightProvided,
+      markdown: typeof parsed.markdown === "string" ? parsed.markdown : undefined,
     };
 
     validateNormalizedAppendBlockInput(normalized, parsed);
@@ -1863,10 +1948,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:title", makeText(content || "Frame"));
-        block.set("prop:background", normalized.background);
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        // 'transparent' matches FrameBlockSchema; any other value renders as a
+        // solid fill (the border is separate).
+        block.set("prop:background", normalized.background ?? "transparent");
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
-        block.set("prop:childElementIds", new Y.Map<any>());
+        const childIds = new Y.Map<boolean>();
+        for (const id of normalized._frameOwnedIds ?? []) childIds.set(id, true);
+        block.set("prop:childElementIds", childIds);
         block.set("prop:presentationIndex", "a0");
         block.set("prop:lockedBySelf", false);
         return { blockId, block, flavour: "affine:frame" };
@@ -1874,27 +1963,51 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       case "edgeless_text": {
         setSysFields(block, blockId, "affine:edgeless-text");
         block.set("sys:parent", null);
-        block.set("sys:children", new Y.Array<string>());
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
+        const edgelessTextChildren = new Y.Array<string>();
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
         block.set("prop:rotate", 0);
         block.set("prop:hasMaxWidth", false);
         block.set("prop:comments", undefined);
-        block.set("prop:color", "black");
+        // Theme-adaptive token so canvas text stays legible in dark mode.
+        block.set("prop:color", "--affine-text-primary-color");
         block.set("prop:fontFamily", "Inter");
         block.set("prop:fontStyle", "normal");
         block.set("prop:fontWeight", "regular");
         block.set("prop:textAlign", "left");
-        return { blockId, block, flavour: "affine:edgeless-text" };
+        const edgelessTextExtraBlocks: Array<{ blockId: string; block: Y.Map<any> }> = [];
+        if (content) {
+          const paraId = generateId();
+          const para = new Y.Map<any>();
+          setSysFields(para, paraId, "affine:paragraph");
+          para.set("sys:parent", null);
+          para.set("sys:children", new Y.Array<string>());
+          para.set("prop:type", "text");
+          para.set("prop:text", makeText(normalized.deltas ?? content));
+          edgelessTextChildren.push([paraId]);
+          edgelessTextExtraBlocks.push({ blockId: paraId, block: para });
+        }
+        block.set("sys:children", edgelessTextChildren);
+        return { blockId, block, flavour: "affine:edgeless-text", extraBlocks: edgelessTextExtraBlocks };
       }
       case "note": {
         setSysFields(block, blockId, "affine:note");
         block.set("sys:parent", null);
-        block.set("sys:children", new Y.Array<string>());
-        block.set("prop:xywh", `[0,0,${normalized.width},${normalized.height}]`);
-        block.set("prop:background", normalized.background);
+        const noteChildren = new Y.Array<string>();
+        block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
+        // BlockSuite reads the adaptive-bg case as a Y.Map; a plain JS object
+        // would serialize to a JSON string and break theme switching.
+        const bg = normalized.background;
+        if (bg && typeof bg === "object" && !Array.isArray(bg) && ("light" in bg || "dark" in bg)) {
+          const bgMap = new Y.Map<any>();
+          if (typeof (bg as any).light === "string") bgMap.set("light", (bg as any).light);
+          if (typeof (bg as any).dark === "string") bgMap.set("dark", (bg as any).dark);
+          block.set("prop:background", bgMap);
+        } else {
+          block.set("prop:background", bg);
+        }
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
@@ -1908,7 +2021,162 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         edgeless.set("style", style);
         block.set("prop:edgeless", edgeless);
         block.set("prop:comments", undefined);
-        return { blockId, block, flavour: "affine:note" };
+        const noteExtraBlocks: Array<{ blockId: string; block: Y.Map<any> }> = [];
+        if (content) {
+          const paraId = generateId();
+          const para = new Y.Map<any>();
+          setSysFields(para, paraId, "affine:paragraph");
+          para.set("sys:parent", null);
+          para.set("sys:children", new Y.Array<string>());
+          para.set("prop:type", "text");
+          para.set("prop:text", makeText(normalized.deltas ?? content));
+          noteChildren.push([paraId]);
+          noteExtraBlocks.push({ blockId: paraId, block: para });
+        }
+        block.set("sys:children", noteChildren);
+        return { blockId, block, flavour: "affine:note", extraBlocks: noteExtraBlocks };
+      }
+    }
+  }
+
+  function resolveBlockBoundAsBound(blocks: Y.Map<any>, blockId: string): Bound | null {
+    const b = blocks.get(blockId);
+    if (b instanceof Y.Map) {
+      const xywh = parseXywhString(b.get("prop:xywh"));
+      if (xywh) return { x: xywh.x, y: xywh.y, w: xywh.width, h: xywh.height };
+    }
+    return null;
+  }
+
+  function resolveEdgelessLayoutHints(
+    blocks: Y.Map<any>,
+    normalized: NormalizedAppendBlockInput
+  ): void {
+    const defaultPadding = normalized.padding ?? 40;
+    let placed = false;
+
+    if (normalized.stackAfter) {
+      const idList = Array.isArray(normalized.stackAfter.blockId)
+        ? normalized.stackAfter.blockId
+        : [normalized.stackAfter.blockId];
+      const direction = normalized.stackAfter.direction ?? "down";
+      const missing: string[] = [];
+      const bounds: Bound[] = [];
+      for (const id of idList) {
+        const b = resolveBlockBoundAsBound(blocks, id);
+        if (!b) missing.push(id);
+        else bounds.push(b);
+      }
+      const ref = pickFurthestInDirection(bounds, direction);
+      if (!ref) {
+        throw new Error(
+          `stackAfter: no blockIds resolved to xywh. Missing: ${JSON.stringify(missing)}`
+        );
+      }
+      // Gap precedence: explicit `gap` > explicit `padding` > direction default
+      // (horizontal larger because notes are wide-short and tight sideways).
+      const isHorizontal = direction === "left" || direction === "right";
+      const directionDefaultGap = isHorizontal ? DEFAULT_STACK_GAP_HORIZONTAL : DEFAULT_STACK_GAP_VERTICAL;
+      const gap = normalized.stackAfter.gap
+        ?? (normalized.padding !== undefined ? normalized.padding : directionDefaultGap);
+      // Center on the anchor group's orthogonal-axis union; caller x/y wins.
+      const isVertical = direction === "down" || direction === "up";
+      let preserveX: number | undefined;
+      let preserveY: number | undefined;
+      if (normalized.xProvided === true) {
+        preserveX = normalized.x;
+      } else if (isVertical) {
+        const minX = bounds.reduce((m, b) => Math.min(m, b.x), Infinity);
+        const maxX = bounds.reduce((m, b) => Math.max(m, b.x + b.w), -Infinity);
+        preserveX = Math.round((minX + maxX) / 2 - normalized.width / 2);
+      }
+      if (normalized.yProvided === true) {
+        preserveY = normalized.y;
+      } else if (!isVertical) {
+        const minY = bounds.reduce((m, b) => Math.min(m, b.y), Infinity);
+        const maxY = bounds.reduce((m, b) => Math.max(m, b.y + b.h), -Infinity);
+        preserveY = Math.round((minY + maxY) / 2 - normalized.height / 2);
+      }
+      const { x, y } = stackRelativeTo(
+        ref,
+        { w: normalized.width, h: normalized.height },
+        { direction, gap, preserveX, preserveY }
+      );
+      normalized.x = x;
+      normalized.y = y;
+      placed = true;
+    }
+
+    // prop:childElementIds accepts both surface-element ids and block ids —
+    // that's what the editor writes when you drag a note into a frame.
+    if (normalized.type === "frame" && normalized.childElementIds && normalized.childElementIds.length > 0) {
+      const surfaceCtx = getSurfaceElementsValueMap(blocks, { create: false });
+      const surfaceValueMap = surfaceCtx?.value ?? new Y.Map<any>();
+      const ownedIds: string[] = [];
+      const missing: string[] = [];
+      const kids: Bound[] = [];
+      for (const id of normalized.childElementIds) {
+        const resolved = resolveChildBound(surfaceValueMap, blocks, id);
+        if (resolved.kind === "missing") {
+          missing.push(id);
+        } else {
+          ownedIds.push(id);
+          if (resolved.bound) kids.push(resolved.bound);
+        }
+      }
+      if (ownedIds.length === 0) {
+        throw new Error(
+          `None of the ids in childElementIds were found: ${JSON.stringify(missing)}.`
+        );
+      }
+      normalized._frameOwnedIds = ownedIds;
+      normalized._frameMissing = missing;
+
+      if (!normalized.widthProvided || !normalized.heightProvided || !normalized.xProvided || !normalized.yProvided) {
+        const wrapped = encloseBounds(kids, { padding: defaultPadding, titleBand: 60 });
+        if (wrapped) {
+          if (!normalized.xProvided) normalized.x = wrapped.x;
+          if (!normalized.yProvided) normalized.y = wrapped.y;
+          if (!normalized.widthProvided) normalized.width = wrapped.w;
+          if (!normalized.heightProvided) normalized.height = wrapped.h;
+          placed = true;
+        }
+      }
+    }
+
+    // Auto-stack-below fallback: avoids dropping new edgeless blocks on top of
+    // the seeded default note at [0,0,…] when the caller gave no placement.
+    const isEdgelessBlock =
+      normalized.type === "frame" ||
+      normalized.type === "note" ||
+      normalized.type === "edgeless_text";
+    if (!placed && isEdgelessBlock && !normalized.yProvided) {
+      const existing: Bound[] = [];
+      for (const [, b] of blocks.entries()) {
+        if (!(b instanceof Y.Map)) continue;
+        const flavour = b.get("sys:flavour");
+        if (
+          flavour !== "affine:note" &&
+          flavour !== "affine:frame" &&
+          flavour !== "affine:edgeless-text"
+        ) continue;
+        const xywh = parseXywhString(b.get("prop:xywh"));
+        if (!xywh) continue;
+        existing.push({ x: xywh.x, y: xywh.y, w: xywh.width, h: xywh.height });
+      }
+      const ref = pickFurthestInDirection(existing, "down");
+      if (ref) {
+        const { x, y } = stackRelativeTo(
+          ref,
+          { w: normalized.width, h: normalized.height },
+          {
+            direction: "down",
+            gap: defaultPadding,
+            preserveX: normalized.xProvided === true ? normalized.x : undefined,
+          }
+        );
+        normalized.x = x;
+        normalized.y = y;
       }
     }
   }
@@ -1932,6 +2200,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const prevSV = Y.encodeStateVector(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
+      resolveEdgelessLayoutHints(blocks, normalized);
       const context = resolveInsertContext(blocks, normalized);
       const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized);
 
@@ -1950,7 +2219,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
-      return { appended: true, blockId, flavour, blockType, normalizedType: normalized.type, legacyType: normalized.legacyType || null };
+      return {
+        appended: true,
+        blockId,
+        flavour,
+        blockType,
+        normalizedType: normalized.type,
+        legacyType: normalized.legacyType || null,
+        ownedIds: normalized._frameOwnedIds,
+        missing: normalized._frameMissing,
+      };
     } finally {
       socket.disconnect();
     }
@@ -2880,31 +3158,26 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       setSysFields(note, noteId, "affine:note");
       note.set("sys:parent", null);
       note.set("prop:displayMode", "both");
-      note.set("prop:xywh", "[0,0,800,95]");
+      note.set("prop:xywh", DEFAULT_NOTE_XYWH);
       note.set("prop:index", "a0");
       note.set("prop:hidden", false);
-      const background = new Y.Map<any>();
-      background.set("light", "#ffffff");
-      background.set("dark", "#252525");
-      note.set("prop:background", background);
+      note.set("prop:background", buildDefaultNoteBackground());
       const noteChildren = new Y.Array();
       note.set("sys:children", noteChildren);
       blocks.set(noteId, note);
       children.push([noteId]);
 
-      if (parsed.content) {
-        const paraId = generateId();
-        const para = new Y.Map();
-        setSysFields(para, paraId, "affine:paragraph");
-        para.set("sys:parent", null);
-        para.set("sys:children", new Y.Array());
-        para.set("prop:type", "text");
-        const paragraphText = new Y.Text();
-        paragraphText.insert(0, parsed.content);
-        para.set("prop:text", paragraphText);
-        blocks.set(paraId, para);
-        noteChildren.push([paraId]);
-      }
+      const paraId = generateId();
+      const para = new Y.Map();
+      setSysFields(para, paraId, "affine:paragraph");
+      para.set("sys:parent", null);
+      para.set("sys:children", new Y.Array());
+      para.set("prop:type", "text");
+      const paragraphText = new Y.Text();
+      if (parsed.content) paragraphText.insert(0, parsed.content);
+      para.set("prop:text", paragraphText);
+      blocks.set(paraId, para);
+      noteChildren.push([paraId]);
 
       const meta = ydoc.getMap("meta");
       meta.set("id", docId);
@@ -3042,16 +3315,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     setSysFields(note, noteId, "affine:note");
     note.set("sys:parent", null);
     note.set("prop:displayMode", "both");
-    note.set("prop:xywh", "[0,0,800,95]");
+    note.set("prop:xywh", DEFAULT_NOTE_XYWH);
     note.set("prop:index", "a0");
     note.set("prop:hidden", false);
-    const background = new Y.Map<any>();
-    background.set("light", "#ffffff");
-    background.set("dark", "#252525");
-    note.set("prop:background", background);
-    note.set("sys:children", new Y.Array());
+    note.set("prop:background", buildDefaultNoteBackground());
+    const skeletonNoteChildren = new Y.Array<string>();
+    note.set("sys:children", skeletonNoteChildren);
     blocks.set(noteId, note);
     (page.get("sys:children") as Y.Array<any>).push([noteId]);
+
+    const skeletonParaId = generateId();
+    const skeletonPara = new Y.Map();
+    setSysFields(skeletonPara, skeletonParaId, "affine:paragraph");
+    skeletonPara.set("sys:parent", null);
+    skeletonPara.set("sys:children", new Y.Array());
+    skeletonPara.set("prop:type", "text");
+    skeletonPara.set("prop:text", new Y.Text());
+    blocks.set(skeletonParaId, skeletonPara);
+    skeletonNoteChildren.push([skeletonParaId]);
 
     const meta = doc.getMap("meta");
     meta.set("id", docId);
@@ -4649,8 +4930,42 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     viewMode?: AppendBlockDataViewMode;
     strict?: boolean;
     placement?: AppendPlacement;
+    markdown?: string;
+    childElementIds?: string[];
+    stackAfter?: { blockId: string | string[]; direction?: "down" | "up" | "right" | "left"; gap?: number };
+    padding?: number;
   }) => {
-    const result = await appendBlockInternal(parsed);
+    // Drop `text` when `markdown` is set so markdown-parsed children don't
+    // sit next to a stale one-paragraph echo.
+    const shouldApplyMarkdown = parsed.type === "note" && !!parsed.markdown;
+    const coreParsed = shouldApplyMarkdown ? { ...parsed, text: undefined } : parsed;
+    const result = await appendBlockInternal(coreParsed);
+
+    let markdownApplied: {
+      appendedCount: number;
+      skippedCount: number;
+      blockIds: string[];
+      warnings: string[];
+    } | undefined;
+    if (shouldApplyMarkdown && result.appended && result.blockId) {
+      const parsedMd = parseMarkdownToOperations(parsed.markdown!);
+      if (parsedMd.operations.length > 0) {
+        const applied = await applyMarkdownOperationsInternal({
+          workspaceId: parsed.workspaceId || defaults.workspaceId!,
+          docId: parsed.docId,
+          operations: parsedMd.operations,
+          strict: parsed.strict,
+          placement: { parentId: result.blockId },
+        });
+        markdownApplied = {
+          appendedCount: applied.appendedCount,
+          skippedCount: applied.skippedCount,
+          blockIds: applied.blockIds,
+          warnings: parsedMd.warnings,
+        };
+      }
+    }
+
     return receipt("doc.append_block", {
       workspaceId: parsed.workspaceId || defaults.workspaceId || null,
       docId: parsed.docId,
@@ -4661,6 +4976,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       blockType: result.blockType || null,
       normalizedType: result.normalizedType,
       legacyType: result.legacyType,
+      ...(result.ownedIds ? { ownedIds: result.ownedIds } : {}),
+      ...(result.missing ? { missing: result.missing } : {}),
+      ...(markdownApplied ? { markdown: markdownApplied } : {}),
     });
   };
   server.registerTool(
@@ -4680,9 +4998,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         design: z.string().optional().describe("Design payload for embed_html"),
         reference: z.string().optional().describe("Target id for surface_ref"),
         refFlavour: z.string().optional().describe("Target flavour for surface_ref (e.g. affine:frame)"),
-        width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note"),
-        height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note"),
-        background: z.string().optional().describe("Background for frame/note"),
+        x: z.number().int().optional().describe("X position on the edgeless canvas for frame/edgeless_text/note (default 0). Prefer ≥40px between sibling bounds; BlockSuite does not auto-arrange."),
+        y: z.number().int().optional().describe("Y position on the edgeless canvas for frame/edgeless_text/note (default 0)."),
+        width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note."),
+        height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note. When `markdown` is set and height is omitted, an over-estimate is computed from the content — AFFiNE's render-time ResizeObserver corrects `prop:xywh` to the true DOM-measured height on first browser open."),
+        background: z.any().optional().describe("Background for frame/note. Frame default 'transparent'. For notes, prefer AFFiNE's adaptive `--affine-note-background-<color>` family — `blue` / `purple` / `yellow` / `green` / `teal` / `red` / `orange` / `magenta` / `grey` / `white` / `black`. For specific per-theme colors, pass a `{light, dark}` hex object like `{light:'#fff', dark:'#252525'}`."),
+        markdown: z.string().optional().describe("When type='note', parse this markdown into heading/paragraph/list/code child blocks inside the note (BlockSuite-native: mirrors what happens when you paste markdown into an edgeless note). Takes precedence over 'text' for note children. Ignored for other block types."),
+        childElementIds: z.array(z.string()).optional().describe("For type='frame' only. The frame's contents. Accepts ids of surface elements (shapes/connectors/groups) AND edgeless blocks (notes/frames/edgeless-text) — BlockSuite's prop:childElementIds holds both, matching what the editor writes when you drag a note into a frame. Dragging the frame drags every owned member. Ids that don't resolve come back under 'missing'. When width/height are omitted the frame is sized to the union of resolvable child bounds + padding + a 30px title band."),
+        stackAfter: z.object({
+          blockId: z.union([z.string(), z.array(z.string())]).describe("Block(s) to stack relative to. String = a single anchor; array = pick whichever is furthest in the stack direction (bottommost for 'down', rightmost for 'right', etc.)."),
+          direction: z.enum(["down", "up", "right", "left"]).optional().describe("Direction (default 'down')"),
+          gap: z.number().int().optional().describe("Gap in px between the anchor and the new block. Default is direction-aware: 80 for left/right, 40 for down/up — mirrors native-flowchart spacing where the flow axis gets more breathing room than the cross axis. Explicit `padding` on the block overrides this default; explicit `gap` wins over both."),
+        }).optional().describe("Layout helper — position this block relative to one or more existing edgeless blocks. Picks the furthest anchor in `direction` for the stack axis, and centers the new block on the anchor group's union on the orthogonal axis (matches how BlockSuite aligns selection-derived blocks; reduces to inherit-anchor-x when widths match). Caller-provided x/y on the orthogonal axis still wins. Works for frame/note/edgeless_text. Example: `stackAfter: { blockId: [f1, f2, f3], gap: 80 }` stacks below whichever column frame ends lowest, centered across all three. Note heights shift at first render (page-root grows with the title, content notes shrink/grow with their children); give extra gap and fix up with `update_edgeless_block` if the down/right chain drifts."),
+        padding: z.number().int().optional().describe("Default padding (px) for `childElementIds` auto-sizing on frames (each side, plus +30px title band) and fallback gap for `stackAfter` (default 40)."),
         sourceId: z.string().optional().describe("Blob source id for image/attachment"),
         name: z.string().optional().describe("Attachment file name"),
         mimeType: z.string().optional().describe("Attachment mime type"),
@@ -7306,5 +7634,1472 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     addDatabaseColumnHandler as any
+  );
+
+  type SurfaceElementType = "shape" | "connector" | "text" | "group";
+
+  type SurfaceElementFields = {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    shapeType?: "rect" | "ellipse" | "diamond" | "triangle";
+    radius?: number;
+    filled?: boolean;
+    fillColor?: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    strokeStyle?: "solid" | "dash" | "none";
+    text?: string;
+    color?: string;
+    fontSize?: number;
+    fontWeight?: string;
+    sourceId?: string;
+    targetId?: string;
+    sourcePosition?: [number, number];
+    targetPosition?: [number, number];
+    mode?: number;
+    frontEndpointStyle?: string;
+    rearEndpointStyle?: string;
+    stroke?: string;
+    label?: string;
+    children?: string[];
+    title?: string;
+    index?: string;
+  };
+
+  type AddSurfaceElementInput = SurfaceElementFields & {
+    workspaceId?: string;
+    docId: string;
+    type: SurfaceElementType;
+  };
+
+  type UpdateSurfaceElementInput = SurfaceElementFields & {
+    workspaceId?: string;
+    docId: string;
+    elementId: string;
+  };
+
+  type DeleteSurfaceElementInput = {
+    workspaceId?: string;
+    docId: string;
+    elementId: string;
+    pruneConnectors?: boolean;
+  };
+
+  type ListSurfaceElementsInput = {
+    workspaceId?: string;
+    docId: string;
+    type?: SurfaceElementType;
+    elementId?: string;
+  };
+
+  type GetEdgelessCanvasInput = {
+    workspaceId?: string;
+    docId: string;
+  };
+
+  function resolveSurfaceNewlines(s: string): string {
+    return s.replace(/\\n/g, "\n");
+  }
+
+  function getSurfaceElementsValueMap(
+    blocks: Y.Map<any>,
+    options: { create: boolean }
+  ): { surfaceId: string; value: Y.Map<any> } | null {
+    let surfaceId = findBlockIdByFlavour(blocks, "affine:surface");
+    if (!surfaceId) {
+      if (!options.create) return null;
+      surfaceId = ensureSurfaceBlock(blocks);
+    }
+    const surface = blocks.get(surfaceId) as Y.Map<any>;
+    let elements = surface.get("prop:elements") as Y.Map<any> | undefined;
+    if (!(elements instanceof Y.Map)) {
+      if (!options.create) return null;
+      elements = new Y.Map<any>();
+      elements.set("type", "$blocksuite:internal:native$");
+      elements.set("value", new Y.Map<any>());
+      surface.set("prop:elements", elements);
+    }
+    let value = elements.get("value") as Y.Map<any> | undefined;
+    if (!(value instanceof Y.Map)) {
+      if (!options.create) return null;
+      value = new Y.Map<any>();
+      elements.set("value", value);
+    }
+    return { surfaceId, value };
+  }
+
+  function serializeSurfaceElement(elementId: string, el: Y.Map<any>): Record<string, any> {
+    const out: Record<string, any> = { id: elementId };
+    for (const [k, v] of el.entries()) {
+      if (v instanceof Y.Text) {
+        out[k] = v.toString();
+      } else if (v instanceof Y.Map) {
+        out[k] = v.toJSON();
+      } else if (v instanceof Y.Array) {
+        out[k] = v.toArray();
+      } else {
+        out[k] = v;
+      }
+    }
+    const xywh = parseXywhString(out.xywh);
+    if (xywh) out.bounds = xywh;
+    return out;
+  }
+
+  function buildShapeElementData(
+    elementId: string,
+    seed: number,
+    index: string,
+    input: SurfaceElementFields
+  ): Record<string, any> {
+    const x = input.x ?? 0;
+    const y = input.y ?? 0;
+    const w = input.width ?? 100;
+    const h = input.height ?? 100;
+    const data: Record<string, any> = {
+      type: "shape",
+      id: elementId,
+      index,
+      seed,
+      xywh: formatXywhString(x, y, w, h),
+      rotate: 0,
+      shapeType: input.shapeType ?? "rect",
+      shapeStyle: "General",
+      radius: input.radius ?? 0,
+      filled: input.filled ?? true,
+      fillColor: input.fillColor ?? "--affine-palette-shape-yellow",
+      strokeWidth: input.strokeWidth ?? 2,
+      strokeColor: input.strokeColor ?? "--affine-palette-line-yellow",
+      strokeStyle: input.strokeStyle ?? "solid",
+      roughness: 1.4,
+      // Fixed #000000 matches BlockSuite's shape tool: shape fills don't
+      // theme-adapt, so label color stays pinned too. Override for dark fills.
+      color: input.color ?? "#000000",
+      fontFamily: "blocksuite:surface:Inter",
+      fontSize: input.fontSize ?? 20,
+      fontStyle: "normal",
+      fontWeight: input.fontWeight ?? "600",
+      textAlign: "center",
+      textHorizontalAlign: "center",
+      textVerticalAlign: "center",
+      textResizing: 1,
+      maxWidth: false,
+      padding: [10, 20],
+      shadow: null,
+    };
+    if (input.text) {
+      const yText = new Y.Text();
+      yText.insert(0, resolveSurfaceNewlines(input.text));
+      data.text = yText;
+    }
+    return data;
+  }
+
+  function resolveConnectorEndpointBoundAsBound(
+    surfaceValueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    endpointId: string | undefined
+  ): Bound | null {
+    if (!endpointId) return null;
+    const surfaceEl = surfaceValueMap.get(endpointId);
+    if (surfaceEl instanceof Y.Map) {
+      const xywh = parseXywhString(surfaceEl.get("xywh"));
+      if (xywh) return { x: xywh.x, y: xywh.y, w: xywh.width, h: xywh.height };
+    }
+    const block = blocks.get(endpointId);
+    if (block instanceof Y.Map) {
+      const xywh = parseXywhString(block.get("prop:xywh"));
+      if (xywh) return { x: xywh.x, y: xywh.y, w: xywh.width, h: xywh.height };
+    }
+    return null;
+  }
+
+  function resolveChildBound(
+    surfaceValueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    id: string
+  ): { kind: "surface" | "block" | "missing"; bound: Bound | null } {
+    const surfaceEl = surfaceValueMap.get(id);
+    if (surfaceEl instanceof Y.Map) {
+      const xywh = parseXywhString(surfaceEl.get("xywh"));
+      return {
+        kind: "surface",
+        bound: xywh ? { x: xywh.x, y: xywh.y, w: xywh.width, h: xywh.height } : null,
+      };
+    }
+    const block = blocks.get(id);
+    if (block instanceof Y.Map) {
+      const xywh = parseXywhString(block.get("prop:xywh"));
+      return {
+        kind: "block",
+        bound: xywh ? { x: xywh.x, y: xywh.y, w: xywh.width, h: xywh.height } : null,
+      };
+    }
+    return { kind: "missing", bound: null };
+  }
+
+  function resolveConnectorEndpointCenter(
+    surfaceValueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    endpointId: string | undefined,
+    endpointPosition: [number, number] | undefined
+  ): { x: number; y: number } | null {
+    if (endpointPosition && Array.isArray(endpointPosition) && endpointPosition.length === 2) {
+      return { x: endpointPosition[0], y: endpointPosition[1] };
+    }
+    if (!endpointId) return null;
+    const surfaceEl = surfaceValueMap.get(endpointId);
+    if (surfaceEl instanceof Y.Map) {
+      const xywh = parseXywhString(surfaceEl.get("xywh"));
+      if (xywh) return { x: xywh.x + xywh.width / 2, y: xywh.y + xywh.height / 2 };
+    }
+    const block = blocks.get(endpointId);
+    if (block instanceof Y.Map) {
+      const xywh = parseXywhString(block.get("prop:xywh"));
+      if (xywh) return { x: xywh.x + xywh.width / 2, y: xywh.y + xywh.height / 2 };
+    }
+    return null;
+  }
+
+  function buildConnectorElementData(
+    elementId: string,
+    seed: number,
+    index: string,
+    input: SurfaceElementFields
+  ): Record<string, any> {
+    const source: Record<string, any> = {};
+    if (input.sourceId) {
+      source.id = input.sourceId;
+      if (input.sourcePosition) source.position = input.sourcePosition;
+    } else if (input.sourcePosition) {
+      source.position = input.sourcePosition;
+    }
+    const target: Record<string, any> = {};
+    if (input.targetId) {
+      target.id = input.targetId;
+      if (input.targetPosition) target.position = input.targetPosition;
+    } else if (input.targetPosition) {
+      target.position = input.targetPosition;
+    }
+    const data: Record<string, any> = {
+      type: "connector",
+      id: elementId,
+      index,
+      seed,
+      mode: input.mode ?? 2,
+      // Theme-adaptive token so connectors stay legible in dark mode.
+      stroke: input.stroke ?? "--affine-text-primary-color",
+      strokeWidth: input.strokeWidth ?? 2,
+      strokeStyle: input.strokeStyle ?? "solid",
+      roughness: 1.4,
+      frontEndpointStyle: input.frontEndpointStyle ?? "None",
+      rearEndpointStyle: input.rearEndpointStyle ?? "Arrow",
+      source,
+      target,
+      labelDisplay: true,
+      labelOffset: { distance: 0.5, anchor: "center" },
+      labelStyle: {
+        color: "--affine-text-primary-color",
+        fontFamily: "blocksuite:surface:Inter",
+        fontSize: 16,
+        fontStyle: "normal",
+        fontWeight: "400",
+        textAlign: "center",
+      },
+      labelConstraints: { hasMaxWidth: true, maxWidth: 280 },
+    };
+    if (input.label) {
+      const yText = new Y.Text();
+      yText.insert(0, resolveSurfaceNewlines(input.label));
+      data.text = yText;
+    }
+    return data;
+  }
+
+  function buildTextElementData(
+    elementId: string,
+    seed: number,
+    index: string,
+    input: SurfaceElementFields
+  ): Record<string, any> {
+    const x = input.x ?? 0;
+    const y = input.y ?? 0;
+    const w = input.width ?? 200;
+    const h = input.height ?? 30;
+    const yText = new Y.Text();
+    if (input.text) yText.insert(0, resolveSurfaceNewlines(input.text));
+    return {
+      type: "text",
+      id: elementId,
+      index,
+      seed,
+      xywh: formatXywhString(x, y, w, h),
+      rotate: 0,
+      text: yText,
+      color: input.color ?? "--affine-text-primary-color",
+      fontFamily: "blocksuite:surface:Inter",
+      fontSize: input.fontSize ?? 16,
+      fontStyle: "normal",
+      fontWeight: input.fontWeight ?? "400",
+      textAlign: "center",
+      hasMaxWidth: false,
+    };
+  }
+
+  function buildGroupElementData(
+    elementId: string,
+    seed: number,
+    index: string,
+    input: SurfaceElementFields
+  ): Record<string, any> {
+    const childMap = new Y.Map<boolean>();
+    for (const childId of input.children ?? []) {
+      childMap.set(childId, true);
+    }
+    const yTitle = new Y.Text();
+    if (input.title) yTitle.insert(0, input.title);
+    return {
+      type: "group",
+      id: elementId,
+      index,
+      seed,
+      children: childMap,
+      title: yTitle,
+    };
+  }
+
+  function nextSurfaceElementIndex(valueMap: Y.Map<any>): string {
+    let maxIndex: string | null = null;
+    for (const [, el] of valueMap.entries()) {
+      if (!(el instanceof Y.Map)) continue;
+      const idx = el.get("index");
+      if (typeof idx !== "string") continue;
+      if (maxIndex === null || idx > maxIndex) maxIndex = idx;
+    }
+    return generateKeyBetween(maxIndex, null);
+  }
+
+  function buildSurfaceElementData(
+    type: SurfaceElementType,
+    index: string,
+    input: SurfaceElementFields
+  ): { elementId: string; data: Record<string, any> } {
+    const elementId = generateId();
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    switch (type) {
+      case "shape":
+        return { elementId, data: buildShapeElementData(elementId, seed, index, input) };
+      case "connector":
+        return { elementId, data: buildConnectorElementData(elementId, seed, index, input) };
+      case "text":
+        return { elementId, data: buildTextElementData(elementId, seed, index, input) };
+      case "group":
+        return { elementId, data: buildGroupElementData(elementId, seed, index, input) };
+    }
+  }
+
+  function writeSurfaceElement(
+    valueMap: Y.Map<any>,
+    elementId: string,
+    data: Record<string, any>
+  ): void {
+    const el = new Y.Map<any>();
+    for (const [k, v] of Object.entries(data)) {
+      el.set(k, v);
+    }
+    valueMap.set(elementId, el);
+  }
+
+  const addSurfaceElementHandler = async (params: AddSurfaceElementInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (snapshot.missing) {
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      }
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const ctx = getSurfaceElementsValueMap(blocks, { create: true })!;
+      const index = params.index ?? nextSurfaceElementIndex(ctx.value);
+      const { elementId, data } = buildSurfaceElementData(params.type, index, params);
+      if (params.type === "connector") {
+        const srcBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.sourceId);
+        const tgtBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.targetId);
+
+        // Auto-snap to the four tangent-carrying sides when the caller only
+        // supplied ids — the renderer needs tangents to draw arrow heads.
+        if (srcBounds && tgtBounds && !params.sourcePosition && !params.targetPosition) {
+          const natural = pickConnectorSides(srcBounds, tgtBounds);
+          data.source = { ...(data.source as any), position: SIDE_TO_NORMALIZED_POSITION[natural.from] };
+          data.target = { ...(data.target as any), position: SIDE_TO_NORMALIZED_POSITION[natural.to] };
+        }
+
+        if (params.label) {
+          const srcCenter = srcBounds
+            ? { x: srcBounds.x + srcBounds.w / 2, y: srcBounds.y + srcBounds.h / 2 }
+            : resolveConnectorEndpointCenter(ctx.value, blocks, params.sourceId, params.sourcePosition as [number, number] | undefined);
+          const tgtCenter = tgtBounds
+            ? { x: tgtBounds.x + tgtBounds.w / 2, y: tgtBounds.y + tgtBounds.h / 2 }
+            : resolveConnectorEndpointCenter(ctx.value, blocks, params.targetId, params.targetPosition as [number, number] | undefined);
+          const midpoint =
+            srcCenter && tgtCenter
+              ? { x: (srcCenter.x + tgtCenter.x) / 2, y: (srcCenter.y + tgtCenter.y) / 2 }
+              : (srcCenter ?? tgtCenter);
+          data.labelXYWH = estimateConnectorLabelXYWH(params.label, 16, midpoint, 280);
+        }
+      }
+      writeSurfaceElement(ctx.value, elementId, data);
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({
+        added: true,
+        elementId,
+        type: params.type,
+        surfaceBlockId: ctx.surfaceId,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const listSurfaceElementsHandler = async (params: ListSurfaceElementsInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        return text({
+          docId: params.docId,
+          exists: false,
+          surfaceBlockId: null,
+          count: 0,
+          elements: [],
+        });
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const ctx = getSurfaceElementsValueMap(blocks, { create: false });
+      if (!ctx) {
+        return text({
+          docId: params.docId,
+          exists: true,
+          surfaceBlockId: null,
+          count: 0,
+          elements: [],
+        });
+      }
+      const elements: Record<string, any>[] = [];
+      for (const [id, value] of ctx.value.entries()) {
+        const entryId = String(id);
+        if (params.elementId && entryId !== params.elementId) continue;
+        if (!(value instanceof Y.Map)) continue;
+        const serialized = serializeSurfaceElement(entryId, value);
+        if (params.type && serialized.type !== params.type) continue;
+        elements.push(serialized);
+      }
+      const sorted = sortByFractionalIndex(elements);
+      return text({
+        docId: params.docId,
+        exists: true,
+        surfaceBlockId: ctx.surfaceId,
+        count: sorted.length,
+        elements: sorted,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const updateSurfaceElementHandler = async (params: UpdateSurfaceElementInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const ctx = getSurfaceElementsValueMap(blocks, { create: false });
+      if (!ctx) throw new Error("Document has no surface elements to update.");
+      const el = ctx.value.get(params.elementId);
+      if (!(el instanceof Y.Map)) {
+        throw new Error(`Surface element '${params.elementId}' not found.`);
+      }
+
+      const elementType = el.get("type");
+      const changed: string[] = [];
+      const ignored: string[] = [];
+
+      const geomProvided =
+        params.x !== undefined ||
+        params.y !== undefined ||
+        params.width !== undefined ||
+        params.height !== undefined;
+      if (geomProvided) {
+        if (elementType === "shape" || elementType === "text") {
+          const current = parseXywhString(el.get("xywh")) ?? {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+          };
+          const nx = params.x ?? current.x;
+          const ny = params.y ?? current.y;
+          const nw = params.width ?? current.width;
+          const nh = params.height ?? current.height;
+          el.set("xywh", formatXywhString(nx, ny, nw, nh));
+          changed.push("xywh");
+        } else {
+          if (params.x !== undefined) ignored.push("x");
+          if (params.y !== undefined) ignored.push("y");
+          if (params.width !== undefined) ignored.push("width");
+          if (params.height !== undefined) ignored.push("height");
+        }
+      }
+
+      const setYText = (key: string, value: string) => {
+        const yText = new Y.Text();
+        yText.insert(0, resolveSurfaceNewlines(value));
+        el.set(key, yText);
+        changed.push(key);
+      };
+
+      if (params.text !== undefined) {
+        if (elementType === "shape" || elementType === "text" || elementType === "connector") {
+          setYText("text", params.text);
+        } else {
+          ignored.push("text");
+        }
+      }
+      if (params.label !== undefined) {
+        if (elementType === "connector") {
+          setYText("text", params.label);
+        } else {
+          ignored.push("label");
+        }
+      }
+      if (params.title !== undefined) {
+        if (elementType === "group") {
+          setYText("title", params.title);
+        } else {
+          ignored.push("title");
+        }
+      }
+
+      const scalarFields: Array<keyof SurfaceElementFields> = [
+        "shapeType",
+        "radius",
+        "filled",
+        "fillColor",
+        "strokeColor",
+        "strokeWidth",
+        "strokeStyle",
+        "color",
+        "fontSize",
+        "fontWeight",
+      ];
+      for (const k of scalarFields) {
+        if (params[k] === undefined) continue;
+        el.set(k as string, params[k]);
+        changed.push(k as string);
+      }
+
+      if (params.index !== undefined) {
+        el.set("index", params.index);
+        changed.push("index");
+      }
+
+      if (params.sourceId !== undefined || params.sourcePosition !== undefined) {
+        if (elementType === "connector") {
+          const source: Record<string, any> = {};
+          if (params.sourceId) source.id = params.sourceId;
+          if (params.sourcePosition) source.position = params.sourcePosition;
+          el.set("source", source);
+          changed.push("source");
+        } else {
+          if (params.sourceId !== undefined) ignored.push("sourceId");
+          if (params.sourcePosition !== undefined) ignored.push("sourcePosition");
+        }
+      }
+      if (params.targetId !== undefined || params.targetPosition !== undefined) {
+        if (elementType === "connector") {
+          const target: Record<string, any> = {};
+          if (params.targetId) target.id = params.targetId;
+          if (params.targetPosition) target.position = params.targetPosition;
+          el.set("target", target);
+          changed.push("target");
+        } else {
+          if (params.targetId !== undefined) ignored.push("targetId");
+          if (params.targetPosition !== undefined) ignored.push("targetPosition");
+        }
+      }
+      if (params.mode !== undefined) {
+        if (elementType === "connector") {
+          el.set("mode", params.mode);
+          changed.push("mode");
+        } else {
+          ignored.push("mode");
+        }
+      }
+      if (params.frontEndpointStyle !== undefined) {
+        if (elementType === "connector") {
+          el.set("frontEndpointStyle", params.frontEndpointStyle);
+          changed.push("frontEndpointStyle");
+        } else {
+          ignored.push("frontEndpointStyle");
+        }
+      }
+      if (params.rearEndpointStyle !== undefined) {
+        if (elementType === "connector") {
+          el.set("rearEndpointStyle", params.rearEndpointStyle);
+          changed.push("rearEndpointStyle");
+        } else {
+          ignored.push("rearEndpointStyle");
+        }
+      }
+      if (params.stroke !== undefined) {
+        if (elementType === "connector") {
+          el.set("stroke", params.stroke);
+          changed.push("stroke");
+        } else {
+          ignored.push("stroke");
+        }
+      }
+
+      if (params.children !== undefined) {
+        if (elementType === "group") {
+          const childMap = new Y.Map<boolean>();
+          for (const childId of params.children) childMap.set(childId, true);
+          el.set("children", childMap);
+          changed.push("children");
+        } else {
+          ignored.push("children");
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({
+        updated: changed.length > 0,
+        elementId: params.elementId,
+        type: typeof elementType === "string" ? elementType : null,
+        changed,
+        ignored,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const deleteSurfaceElementHandler = async (params: DeleteSurfaceElementInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const ctx = getSurfaceElementsValueMap(blocks, { create: false });
+      if (!ctx) {
+        return text({
+          deleted: false,
+          elementId: params.elementId,
+          reason: "no-surface",
+          prunedConnectors: [],
+        });
+      }
+      const existing = ctx.value.get(params.elementId);
+      if (!(existing instanceof Y.Map)) {
+        return text({
+          deleted: false,
+          elementId: params.elementId,
+          reason: "not-found",
+          prunedConnectors: [],
+        });
+      }
+      ctx.value.delete(params.elementId);
+
+      const prunedConnectors: string[] = [];
+      if (params.pruneConnectors) {
+        const toDelete: string[] = [];
+        for (const [otherId, otherVal] of ctx.value.entries()) {
+          if (!(otherVal instanceof Y.Map)) continue;
+          if (otherVal.get("type") !== "connector") continue;
+          const source = otherVal.get("source");
+          const target = otherVal.get("target");
+          const srcId =
+            source && typeof source === "object" ? (source as any).id : undefined;
+          const tgtId =
+            target && typeof target === "object" ? (target as any).id : undefined;
+          if (srcId === params.elementId || tgtId === params.elementId) {
+            toDelete.push(String(otherId));
+          }
+        }
+        for (const id of toDelete) {
+          ctx.value.delete(id);
+          prunedConnectors.push(id);
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({ deleted: true, elementId: params.elementId, prunedConnectors });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const updateFrameChildrenHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    childElementIds: string[];
+    resizeToFit?: boolean;
+    padding?: number;
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const frameBlock = blocks.get(params.blockId);
+      if (!(frameBlock instanceof Y.Map) || frameBlock.get("sys:flavour") !== "affine:frame") {
+        throw new Error(`Frame block '${params.blockId}' not found.`);
+      }
+
+      // All-missing is legit here: it's how callers clear ownership.
+      const surfaceCtx = getSurfaceElementsValueMap(blocks, { create: false });
+      const surfaceValueMap = surfaceCtx?.value ?? new Y.Map<any>();
+      const ownedIds: string[] = [];
+      const missing: string[] = [];
+      const kids: Bound[] = [];
+      for (const id of params.childElementIds) {
+        const resolved = resolveChildBound(surfaceValueMap, blocks, id);
+        if (resolved.kind === "missing") {
+          missing.push(id);
+        } else {
+          ownedIds.push(id);
+          if (resolved.bound) kids.push(resolved.bound);
+        }
+      }
+
+      const childMap = new Y.Map<boolean>();
+      for (const id of ownedIds) childMap.set(id, true);
+      frameBlock.set("prop:childElementIds", childMap);
+
+      // Resize-to-fit is default; skip on all-missing so clear-ownership
+      // doesn't collapse the frame to zero.
+      const resize = params.resizeToFit !== false;
+      const padding = Number.isFinite(params.padding)
+        ? Math.max(0, Math.floor(params.padding as number))
+        : 40;
+      let xywh: { x: number; y: number; width: number; height: number } | null = null;
+      if (resize && kids.length > 0) {
+        const wrapped = encloseBounds(kids, { padding, titleBand: 60 });
+        if (wrapped) {
+          xywh = { x: wrapped.x, y: wrapped.y, width: wrapped.w, height: wrapped.h };
+          frameBlock.set("prop:xywh", formatXywhString(xywh.x, xywh.y, xywh.width, xywh.height));
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({
+        updated: true,
+        blockId: params.blockId,
+        flavour: "affine:frame",
+        ownedIds,
+        missing,
+        resized: xywh !== null,
+        ...(xywh ? { xywh } : {}),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const updateEdgelessBlockHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    background?: string | { light?: string; dark?: string };
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = blocks.get(params.blockId);
+      if (!(block instanceof Y.Map)) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+      const flavour = block.get("sys:flavour");
+      if (flavour !== "affine:note" && flavour !== "affine:frame" && flavour !== "affine:edgeless-text") {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(flavour)}' — update_edgeless_block only mutates note/frame/edgeless-text blocks.`
+        );
+      }
+
+      const changed: string[] = [];
+      const ignored: string[] = [];
+
+      if (params.x !== undefined || params.y !== undefined || params.width !== undefined || params.height !== undefined) {
+        const prev = parseXywhString(block.get("prop:xywh")) ?? { x: 0, y: 0, width: 0, height: 0 };
+        block.set("prop:xywh", formatXywhString(
+          params.x ?? prev.x,
+          params.y ?? prev.y,
+          params.width ?? prev.width,
+          params.height ?? prev.height,
+        ));
+        changed.push("xywh");
+      }
+
+      if (params.background !== undefined) {
+        if (flavour === "affine:edgeless-text") {
+          ignored.push("background"); // edgeless-text has no prop:background
+        } else {
+          const bg = params.background;
+          if (bg && typeof bg === "object" && !Array.isArray(bg) && ("light" in bg || "dark" in bg)) {
+            const bgMap = new Y.Map<any>();
+            if (typeof bg.light === "string") bgMap.set("light", bg.light);
+            if (typeof bg.dark === "string") bgMap.set("dark", bg.dark);
+            block.set("prop:background", bgMap);
+          } else {
+            block.set("prop:background", bg);
+          }
+          changed.push("background");
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({ updated: changed.length > 0, blockId: params.blockId, flavour, changed, ignored });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const deleteBlockHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    deleteChildren?: boolean;
+    pruneConnectors?: boolean;
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = blocks.get(params.blockId);
+      if (!(block instanceof Y.Map)) {
+        return text({ deleted: false, blockId: params.blockId, reason: "not-found" });
+      }
+
+      const flavour = block.get("sys:flavour");
+      if (flavour === "affine:page") {
+        throw new Error(`Refusing to delete page-root block '${params.blockId}' — use delete_doc for whole-doc removal.`);
+      }
+
+      const deletedIds: string[] = [];
+      const deleteRecursive = params.deleteChildren !== false;
+      const walk = (id: string) => {
+        const b = blocks.get(id);
+        if (!(b instanceof Y.Map)) return;
+        if (deleteRecursive) {
+          const children = b.get("sys:children");
+          if (children instanceof Y.Array) {
+            for (const c of children.toArray()) {
+              if (typeof c === "string") walk(c);
+            }
+          }
+        }
+        blocks.delete(id);
+        deletedIds.push(id);
+      };
+      walk(params.blockId);
+
+      for (const [, maybeParent] of blocks.entries()) {
+        if (!(maybeParent instanceof Y.Map)) continue;
+        const kids = maybeParent.get("sys:children");
+        if (!(kids instanceof Y.Array)) continue;
+        const arr = kids.toArray();
+        for (let i = arr.length - 1; i >= 0; i--) {
+          if (typeof arr[i] === "string" && deletedIds.includes(arr[i] as string)) {
+            kids.delete(i, 1);
+          }
+        }
+      }
+
+      // Mirror delete_surface_element's pruneConnectors semantics.
+      const prunedConnectors: string[] = [];
+      if (params.pruneConnectors) {
+        const ctx = getSurfaceElementsValueMap(blocks, { create: false });
+        if (ctx) {
+          const toDelete: string[] = [];
+          for (const [otherId, otherVal] of ctx.value.entries()) {
+            if (!(otherVal instanceof Y.Map)) continue;
+            if (otherVal.get("type") !== "connector") continue;
+            const source = otherVal.get("source");
+            const target = otherVal.get("target");
+            const srcId = source && typeof source === "object" ? (source as any).id : undefined;
+            const tgtId = target && typeof target === "object" ? (target as any).id : undefined;
+            if (
+              (typeof srcId === "string" && deletedIds.includes(srcId)) ||
+              (typeof tgtId === "string" && deletedIds.includes(tgtId))
+            ) {
+              toDelete.push(String(otherId));
+            }
+          }
+          for (const id of toDelete) {
+            ctx.value.delete(id);
+            prunedConnectors.push(id);
+          }
+        }
+      }
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({ deleted: true, blockId: params.blockId, deletedIds, prunedConnectors });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const getEdgelessCanvasHandler = async (params: GetEdgelessCanvasInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        return text({
+          docId: params.docId,
+          exists: false,
+          surfaceBlockId: null,
+          edgelessBlocks: [],
+          surfaceElements: [],
+          bounds: null,
+          elementCounts: { shape: 0, connector: 0, text: 0, group: 0 },
+        });
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      const edgelessFlavours = new Set([
+        "affine:frame",
+        "affine:edgeless-text",
+        "affine:note",
+      ]);
+
+      const collectNoteText = (rootId: string): string[] => {
+        const out: string[] = [];
+        const seen = new Set<string>();
+        const visit = (id: string) => {
+          if (seen.has(id)) return;
+          seen.add(id);
+          const b = blocks.get(id);
+          if (!(b instanceof Y.Map)) return;
+          const t = asText(b.get("prop:text"));
+          if (t) out.push(t);
+          for (const childId of childIdsFrom(b.get("sys:children"))) {
+            visit(childId);
+          }
+        };
+        const root = blocks.get(rootId);
+        if (root instanceof Y.Map) {
+          for (const childId of childIdsFrom(root.get("sys:children"))) {
+            visit(childId);
+          }
+        }
+        return out;
+      };
+
+      // Structured tree rather than flat-joined text so markdown-seeded notes
+      // round-trip with heading/paragraph/list structure intact.
+      const collectNoteChildren = (rootId: string): Array<Record<string, any>> => {
+        const result: Array<Record<string, any>> = [];
+        const seen = new Set<string>();
+        const visit = (id: string): Record<string, any> | null => {
+          if (seen.has(id)) return null;
+          seen.add(id);
+          const b = blocks.get(id);
+          if (!(b instanceof Y.Map)) return null;
+          const childFlavour = b.get("sys:flavour");
+          if (typeof childFlavour !== "string") return null;
+          const entry: Record<string, any> = { id, flavour: childFlavour };
+          const t = asText(b.get("prop:text"));
+          if (t) entry.text = t;
+          const propType = b.get("prop:type");
+          if (typeof propType === "string") entry.type = propType;
+          const checked = b.get("prop:checked");
+          if (typeof checked === "boolean") entry.checked = checked;
+          const language = b.get("prop:language");
+          if (typeof language === "string" && language.length > 0) entry.language = language;
+          const subChildren: Array<Record<string, any>> = [];
+          for (const childId of childIdsFrom(b.get("sys:children"))) {
+            const c = visit(childId);
+            if (c) subChildren.push(c);
+          }
+          if (subChildren.length) entry.children = subChildren;
+          return entry;
+        };
+        const root = blocks.get(rootId);
+        if (root instanceof Y.Map) {
+          for (const childId of childIdsFrom(root.get("sys:children"))) {
+            const c = visit(childId);
+            if (c) result.push(c);
+          }
+        }
+        return result;
+      };
+
+      const edgelessBlocks: Record<string, any>[] = [];
+      for (const [id, raw] of blocks.entries()) {
+        if (!(raw instanceof Y.Map)) continue;
+        const flavour = raw.get("sys:flavour");
+        if (typeof flavour !== "string" || !edgelessFlavours.has(flavour)) continue;
+        const xywhRaw = raw.get("prop:xywh");
+        const bounds = parseXywhString(xywhRaw);
+        const propIndex = raw.get("prop:index");
+        const entry: Record<string, any> = {
+          id: String(id),
+          flavour,
+          xywh: typeof xywhRaw === "string" ? xywhRaw : null,
+          bounds,
+          index: typeof propIndex === "string" ? propIndex : null,
+        };
+        if (flavour === "affine:frame") {
+          entry.title = asText(raw.get("prop:title")) || null;
+          const bg = raw.get("prop:background");
+          entry.background = bg instanceof Y.Map ? bg.toJSON() : bg ?? null;
+          const owned = raw.get("prop:childElementIds");
+          entry.childElementIds = owned instanceof Y.Map ? Object.keys(owned.toJSON()) : [];
+        } else if (flavour === "affine:edgeless-text") {
+          const lines = collectNoteText(String(id));
+          entry.text = lines.length ? lines.join("\n") : null;
+          entry.color = raw.get("prop:color") ?? null;
+        } else if (flavour === "affine:note") {
+          const lines = collectNoteText(String(id));
+          entry.text = lines.length ? lines.join("\n") : null;
+          // `text` is the flat-join legacy view; `children` carries structure.
+          entry.children = collectNoteChildren(String(id));
+          entry.displayMode = raw.get("prop:displayMode") ?? null;
+          const bg = raw.get("prop:background");
+          entry.background = bg instanceof Y.Map ? bg.toJSON() : bg ?? null;
+        }
+        edgelessBlocks.push(entry);
+      }
+
+      const ctx = getSurfaceElementsValueMap(blocks, { create: false });
+      const surfaceElements: Record<string, any>[] = [];
+      const counts: Record<SurfaceElementType, number> = {
+        shape: 0,
+        connector: 0,
+        text: 0,
+        group: 0,
+      };
+      if (ctx) {
+        for (const [elId, val] of ctx.value.entries()) {
+          if (!(val instanceof Y.Map)) continue;
+          const serialized = serializeSurfaceElement(String(elId), val);
+          surfaceElements.push(serialized);
+          const t = serialized.type as SurfaceElementType | undefined;
+          if (t && t in counts) counts[t]++;
+        }
+      }
+      const sortedSurfaceElements = sortByFractionalIndex(surfaceElements);
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let hasAny = false;
+      const include = (b: { x: number; y: number; width: number; height: number } | null | undefined) => {
+        if (!b) return;
+        hasAny = true;
+        minX = Math.min(minX, b.x);
+        minY = Math.min(minY, b.y);
+        maxX = Math.max(maxX, b.x + b.width);
+        maxY = Math.max(maxY, b.y + b.height);
+      };
+      const sortedEdgelessBlocks = sortByFractionalIndex(edgelessBlocks);
+      for (const eb of sortedEdgelessBlocks) include(eb.bounds);
+      for (const se of sortedSurfaceElements) include(se.bounds);
+
+      return text({
+        docId: params.docId,
+        exists: true,
+        surfaceBlockId: ctx?.surfaceId ?? null,
+        edgelessBlocks: sortedEdgelessBlocks,
+        surfaceElements: sortedSurfaceElements,
+        elementCounts: counts,
+        bounds: hasAny
+          ? { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
+          : null,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const surfaceElementFieldSchemas = {
+    x: z.number().optional().describe("X position on canvas (shape/text; default 0)."),
+    y: z.number().optional().describe("Y position on canvas (shape/text; default 0)."),
+    width: z.number().optional().describe("Width (shape default 100, text default 200)."),
+    height: z.number().optional().describe("Height (shape default 100, text default 30)."),
+    shapeType: z
+      .enum(["rect", "ellipse", "diamond", "triangle"])
+      .optional()
+      .describe("Shape type (default rect). Shape only."),
+    radius: z.number().optional().describe("Corner radius for rect (0.1 = rounded). Shape only."),
+    filled: z.boolean().optional().describe("Whether shape is filled (default true). Shape only."),
+    fillColor: z
+      .string()
+      .optional()
+      .describe("Fill color. Prefer the `--affine-palette-shape-<color>` family (yellow/orange/red/magenta/purple/navy/blue/green/teal/grey/white/black). These are fixed colors — AFFiNE shape colors are not theme-adaptive by design. Shape only."),
+    strokeColor: z.string().optional().describe("Stroke color. Prefer the `--affine-palette-line-<color>` family (same color names as fillColor). Fixed colors, not theme-adaptive. Shape only."),
+    strokeWidth: z.number().optional().describe("Stroke width (default 2). Shape/connector."),
+    strokeStyle: z
+      .enum(["solid", "dash", "none"])
+      .optional()
+      .describe("Stroke style. Shape/connector."),
+    text: z
+      .string()
+      .optional()
+      .describe("Text content (shape/text) or connector label. Replaces existing Y.Text on update."),
+    color: z.string().optional().describe("Text color. Shape default `#000000` — keep unless the fill is dark, then pass a contrasting hex. Canvas text default `--affine-text-primary-color` (theme-adaptive). Shape/text."),
+    fontSize: z
+      .number()
+      .optional()
+      .describe("Font size (shape default 20, text default 16). Shape/text."),
+    fontWeight: z
+      .string()
+      .optional()
+      .describe("Font weight (shape default 600, text default 400). Shape/text."),
+    sourceId: z.string().optional().describe("Connector source element id. Connector only."),
+    targetId: z.string().optional().describe("Connector target element id. Connector only."),
+    sourcePosition: z
+      .array(z.number())
+      .length(2)
+      .optional()
+      .describe("Source [x,y]: relative [0-1] if sourceId set, absolute otherwise. Connector only."),
+    targetPosition: z
+      .array(z.number())
+      .length(2)
+      .optional()
+      .describe("Target [x,y]: relative [0-1] if targetId set, absolute otherwise. Connector only. When both source/target are bound by id and neither position is provided, endpoints snap to the BlockSuite side-midpoint facing the other endpoint so connectors flow in a clear direction. Pass [0.5,0] top, [0.5,1] bottom, [0,0.5] left, [1,0.5] right to force a specific side."),
+    mode: z
+      .number()
+      .optional()
+      .describe("Connector mode: 0=straight, 1=orthogonal (elbow), 2=curve (default 2). Connector only."),
+    frontEndpointStyle: z
+      .enum(["None", "Arrow", "Triangle", "Circle", "Diamond"])
+      .optional()
+      .describe("Front endpoint style (default None). Connector only."),
+    rearEndpointStyle: z
+      .enum(["None", "Arrow", "Triangle", "Circle", "Diamond"])
+      .optional()
+      .describe("Rear endpoint style (default Arrow). Connector only."),
+    stroke: z.string().optional().describe("Connector stroke color (default '--affine-text-primary-color' — theme-adaptive, near-black in light / near-white in dark). Accepts any CSS color or AFFiNE palette token. Connector only."),
+    label: z.string().optional().describe("Connector label (stored as text on the connector). Connector only."),
+    children: z.array(z.string()).optional().describe("Child element ids. Group only."),
+    title: z.string().optional().describe("Group title. Group only."),
+    index: z
+      .string()
+      .optional()
+      .describe(
+        "BlockSuite fractional-index string controlling z-order. On add, defaults to a key above every existing element's index (new elements render on top). On update, replaces the stored value — pass a key less than some existing index to send-to-back, or greater to bring-to-front. Use the value returned by list_surface_elements to pick a specific position."
+      ),
+  } as const;
+
+  server.registerTool(
+    "add_surface_element",
+    {
+      title: "Add Surface Element",
+      description:
+        "Add a shape, connector, text, or group to the AFFiNE edgeless canvas surface. Shapes support rect/ellipse/diamond/triangle with fill, stroke, and text. Connectors draw arrows between shapes (by id) or between absolute points. Use for building diagrams programmatically.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        type: z.enum(["shape", "connector", "text", "group"]).describe("Element type"),
+        ...surfaceElementFieldSchemas,
+      },
+    },
+    addSurfaceElementHandler as any
+  );
+
+  server.registerTool(
+    "list_surface_elements",
+    {
+      title: "List Surface Elements",
+      description:
+        "List all shape/connector/text/group elements on the AFFiNE edgeless canvas surface. Returns raw xywh strings plus parsed {x,y,width,height} bounds, with Y.Text fields serialized to plain strings. Optional filters by element type or id.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        type: z
+          .enum(["shape", "connector", "text", "group"])
+          .optional()
+          .describe("Filter by element type"),
+        elementId: z.string().optional().describe("Filter to a single element id"),
+      },
+    },
+    listSurfaceElementsHandler as any
+  );
+
+  server.registerTool(
+    "update_surface_element",
+    {
+      title: "Update Surface Element",
+      description:
+        "Partially update a surface element by id. x/y/width/height merge with the element's current xywh (move without resizing, or vice versa). text/label/title replace their Y.Text wholesale. Fields that don't apply to the element's type are reported in the response 'ignored' list.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        elementId: z.string().min(1).describe("Element ID to update"),
+        ...surfaceElementFieldSchemas,
+      },
+    },
+    updateSurfaceElementHandler as any
+  );
+
+  server.registerTool(
+    "delete_surface_element",
+    {
+      title: "Delete Surface Element",
+      description:
+        "Delete a surface element by id. Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        elementId: z.string().min(1).describe("Element ID to delete"),
+        pruneConnectors: z
+          .boolean()
+          .optional()
+          .describe("Also delete connectors referencing this element (default false)"),
+      },
+    },
+    deleteSurfaceElementHandler as any
+  );
+
+  server.registerTool(
+    "update_frame_children",
+    {
+      title: "Update Frame Children",
+      description:
+        "Replace a frame block's contents wholesale. Accepts ids of surface elements (shapes/connectors/groups) AND edgeless blocks (notes/frames/edgeless-text) — all go into BlockSuite's prop:childElementIds map, matching what the editor writes when you drag members into a frame. Dragging the frame drags every owned member. Ids that don't resolve come back under 'missing'. By default the frame is resized to fit its new contents (plus padding + title band); set resizeToFit=false to leave xywh untouched. Pass `[]` to clear ownership (resize is skipped in that case).",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        blockId: z.string().min(1).describe("Frame block id (flavour affine:frame)."),
+        childElementIds: z
+          .array(z.string())
+          .describe("Full list of ids the frame should own/contain. Replaces any existing ownership."),
+        resizeToFit: z
+          .boolean()
+          .optional()
+          .describe("If true (default), recompute xywh from the union of resolvable child bounds + padding + title band. Set to false to preserve the frame's current box (useful when you want ownership-only edits or manual positioning)."),
+        padding: z
+          .number()
+          .int()
+          .optional()
+          .describe("Padding (px) used when resizeToFit is true (default 40). Ignored when resizeToFit=false."),
+      },
+    },
+    updateFrameChildrenHandler as any
+  );
+
+  server.registerTool(
+    "update_edgeless_block",
+    {
+      title: "Update Edgeless Block",
+      description:
+        "Partially update a note/frame/edgeless-text block by id. x/y/width/height merge with current prop:xywh (move without resizing, or vice versa). background replaces prop:background (AFFiNE token or `{light, dark}` hex object). Fields that don't apply to the block's flavour come back under `ignored`.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        blockId: z.string().min(1).describe("Block id (flavour affine:note/affine:frame/affine:edgeless-text)."),
+        x: z.number().optional(),
+        y: z.number().optional(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        background: z
+          .union([
+            z.string(),
+            z.object({ light: z.string().optional(), dark: z.string().optional() }),
+          ])
+          .optional()
+          .describe("Note/frame only. Prefer `--affine-note-background-<color>` or `{light, dark}` hex."),
+      },
+    },
+    updateEdgelessBlockHandler as any
+  );
+
+  server.registerTool(
+    "delete_block",
+    {
+      title: "Delete Block",
+      description:
+        "Delete a block by id. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        blockId: z.string().min(1).describe("Block id to delete."),
+        deleteChildren: z.boolean().optional().describe("Also delete descendants (default true)."),
+        pruneConnectors: z.boolean().optional().describe("Also delete connectors bound to any deleted id (default false)."),
+      },
+    },
+    deleteBlockHandler as any
+  );
+
+  server.registerTool(
+    "get_edgeless_canvas",
+    {
+      title: "Get Edgeless Canvas",
+      description:
+        "Read the full edgeless canvas: all edgeless-positioned blocks (notes, frames, edgeless-text) with their xywh, plus all surface elements (shapes, connectors, text, groups). Includes aggregate bounding box and per-type element counts. Use this when you need to understand canvas layout end-to-end before placing new elements.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+      },
+    },
+    getEdgelessCanvasHandler as any
   );
 }

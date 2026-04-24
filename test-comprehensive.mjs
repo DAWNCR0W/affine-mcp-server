@@ -401,6 +401,60 @@ class ComprehensiveRunner {
     await this.callTool('update_profile', { name: 'Dev User' });
     await this.callTool('update_settings', { settings: { receiveCommentEmail: true } });
 
+    let frameBlockId = null;
+    let noteBlockId = null;
+    let shapeAId = null;
+    let shapeBId = null;
+    await this.callTool(
+      'append_block',
+      { workspaceId, docId, type: 'frame', text: 'Edgeless Frame', x: 100, y: 100, width: 600, height: 400 },
+      parsed => { frameBlockId = parsed?.blockId || null; }
+    );
+    if (!frameBlockId) throw new Error('append_block(frame) did not return blockId');
+    await this.callTool(
+      'append_block',
+      { workspaceId, docId, type: 'note', text: 'Edgeless Note', x: 120, y: 140, width: 400, height: 200 },
+      parsed => { noteBlockId = parsed?.blockId || null; }
+    );
+    if (!noteBlockId) throw new Error('append_block(note) did not return blockId');
+    await this.callTool(
+      'add_surface_element',
+      { workspaceId, docId, type: 'shape', shapeType: 'rect', x: 200, y: 600, width: 120, height: 80, text: 'A' },
+      parsed => { shapeAId = parsed?.elementId || null; }
+    );
+    if (!shapeAId) throw new Error('add_surface_element(shape A) did not return elementId');
+    await this.callTool(
+      'add_surface_element',
+      { workspaceId, docId, type: 'shape', shapeType: 'ellipse', x: 400, y: 620, width: 120, height: 80, text: 'B' },
+      parsed => { shapeBId = parsed?.elementId || null; }
+    );
+    if (!shapeBId) throw new Error('add_surface_element(shape B) did not return elementId');
+    await this.callTool('add_surface_element', {
+      workspaceId, docId, type: 'connector',
+      sourceId: shapeAId, targetId: shapeBId, label: 'flows to',
+    });
+    await this.callTool('update_surface_element', {
+      workspaceId, docId, elementId: shapeAId, text: 'A-updated',
+    });
+    await this.callTool('list_surface_elements', { workspaceId, docId }, parsed => {
+      if (!parsed || !Array.isArray(parsed.elements)) {
+        throw new Error('list_surface_elements did not return elements[]');
+      }
+    });
+    await this.callTool('update_edgeless_block', {
+      workspaceId, docId, blockId: noteBlockId, x: 150, y: 170,
+    });
+    await this.callTool('update_frame_children', {
+      workspaceId, docId, blockId: frameBlockId, childElementIds: [shapeAId, shapeBId, noteBlockId],
+    });
+    await this.callTool('get_edgeless_canvas', { workspaceId, docId }, parsed => {
+      if (!parsed || !Array.isArray(parsed.edgelessBlocks) || !Array.isArray(parsed.surfaceElements)) {
+        throw new Error('get_edgeless_canvas did not return expected shape');
+      }
+    });
+    await this.callTool('delete_surface_element', { workspaceId, docId, elementId: shapeBId });
+    await this.callTool('delete_block', { workspaceId, docId, blockId: noteBlockId });
+
     await this.callTool('delete_doc', { workspaceId, docId });
     await this.callTool('delete_workspace', { id: workspaceId });
 

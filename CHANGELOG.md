@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- First-class edgeless canvas support on the native BlockSuite schema (no overlay types). Eight new tools cover the full surface: `add_surface_element`, `list_surface_elements`, `update_surface_element`, `delete_surface_element` (shapes, connectors, canvas text, groups on `affine:surface` → `prop:elements`), plus `update_edgeless_block`, `delete_block`, `update_frame_children`, and `get_edgeless_canvas` — closing the gap where notes, frames, and edgeless-text blocks were append-only.
+- Layout helpers on `append_block`: `x` / `y` for canvas blocks, `stackAfter` for direction-aware placement relative to one or more siblings (default gap 80px horizontal / 40px vertical, orthogonal-axis centering), `childElementIds` to write `prop:childElementIds` like the editor's drag-into-frame flow so dragging the frame drags every owned member. When `y` is omitted, new edgeless blocks stack below the bottommost existing block.
+- `get_edgeless_canvas` returns edgeless blocks with parsed `{x, y, width, height}`, all surface elements with bounds, aggregate bounding box, per-type counts, and structured `children[]` per note so markdown-seeded content round-trips with heading / list / code semantics. Z-order is deterministic (fractional-index sort).
+- Connector auto-snap: when both endpoints are bound by id and positions are omitted, `add_surface_element(type="connector")` picks one of BlockSuite's four tangent-carrying side-midpoints using the editor's tiered axis rule. `labelXYWH` is seeded at the source→target midpoint so labels render on first paint.
+- Markdown-seeded notes: `append_block(type="note", markdown: "...")` parses into heading / paragraph / list / code child blocks, mirroring BlockSuite's paste-into-note behavior. `append_block(type="edgeless_text", text: "…")` auto-attaches a child paragraph so the block renders glyphs.
+- `src/edgeless/layout.ts` — dependency-free pure-function layout module (`pickConnectorSides`, `stackRelativeTo`, `encloseBounds`, `estimateNoteHeightForMarkdown`, `sortByFractionalIndex`, …).
+- `docs/edgeless-canvas-cookbook.md` worked walkthrough; `tests/test-canvas-tool-map-demo.mjs` doubles as the regression guard for stacking, frame ownership, connector snapping, and label seeding, wired into `tests/run-e2e.sh`.
+
 ### Fixed
 - `extractTableData` now reads `affine:table` blocks stored with flat dot-notation Y.js keys (`prop:rows.{rowId}.order`, `prop:columns.{colId}.order`, `prop:cells.{rowId}:{colId}.text`) used by self-hosted AFFiNE instances. Previously `block.get("prop:rows")` returned `undefined` for this schema, causing all table exports to show empty tables with `had no readable cell data` warnings.
+- Caller-supplied note `background` strings are no longer silently replaced with the default Y.Map. The default-background helper is now shared across `ensureNoteBlock`, `batch_create_docs`, and template instantiation so they can't drift — closes the PR #142 review blocker.
+- Default stroke and text colors on surface connectors, canvas text, and edgeless-text blocks moved off hardcoded `#000000` onto `--affine-text-primary-color`, restoring legibility in dark mode. Shape labels stay at `#000000` to match AFFiNE's native `shapeTextColor` (shape fills are fixed palette colors).
 
 ## [1.13.0] - 2026-04-10
 

@@ -40,6 +40,9 @@ coverage/
 # OS-specific
 .DS_Store
 
+# Local MCP client configs (may contain bearer tokens)
+.mcp.json
+
 # Temporary files
 tmp/
 temp/
@@ -55,6 +58,10 @@ tests/test-tag-visibility-state.json
 tests/playwright-auth-state.json
 tests/playwright/test-results/
 tests/playwright/playwright-report.json
+tests/test-results-evidence/
+tests/test-edgeless-state.json
+tests/test-surface-elements-state.json
+tests/test-theme-defaults-state.json
 
 # Package artifacts
 *.tgz
