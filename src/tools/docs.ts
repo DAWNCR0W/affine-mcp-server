@@ -391,6 +391,28 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return "";
   }
 
+  function asDeltaArray(value: unknown): TextDelta[] | undefined {
+    if (!(value instanceof Y.Text)) return undefined;
+    const raw = value.toDelta() as Array<{ insert?: unknown; attributes?: Record<string, unknown> }>;
+    if (!raw.length) return undefined;
+    const result: TextDelta[] = [];
+    for (const d of raw) {
+      if (typeof d.insert !== "string") continue;
+      const td: TextDelta = { insert: d.insert };
+      if (d.attributes) {
+        const attrs: NonNullable<TextDelta["attributes"]> = {};
+        if (d.attributes.bold === true) attrs.bold = true;
+        if (d.attributes.italic === true) attrs.italic = true;
+        if (d.attributes.strike === true) attrs.strike = true;
+        if (d.attributes.code === true) attrs.code = true;
+        if (typeof d.attributes.link === "string") attrs.link = d.attributes.link;
+        if (Object.keys(attrs).length > 0) td.attributes = attrs;
+      }
+      result.push(td);
+    }
+    return result.length ? result : undefined;
+  }
+
   function childIdsFrom(value: unknown): string[] {
     if (!(value instanceof Y.Array)) return [];
     const childIds: string[] = [];
@@ -2590,6 +2612,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         sourceId: asStringOrNull(block.get("prop:sourceId")),
         caption: asStringOrNull(block.get("prop:caption")),
         tableData: block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null,
+        deltas: asDeltaArray(block.get("prop:text")),
       };
       blocksById.set(blockId, entry);
 

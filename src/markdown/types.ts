@@ -85,6 +85,7 @@ export type MarkdownRenderableBlock = {
   sourceId: string | null;
   caption: string | null;
   tableData: string[][] | null;
+  deltas?: TextDelta[];
 };
 
 export type MarkdownRenderResult = {
