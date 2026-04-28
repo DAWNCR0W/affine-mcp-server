@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/dawncr0w-affine-mcp-server-badge.png)](https://mseep.ai/app/dawncr0w-affine-mcp-server)
+
 # AFFiNE MCP Server
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
