@@ -91,7 +91,7 @@
     "socket.io-client": "^4.8.1",
     "undici": "^8.0.2",
     "yjs": "^13.6.27",
-    "zod": "^3.23.8"
+    "zod": "^4.4.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",
