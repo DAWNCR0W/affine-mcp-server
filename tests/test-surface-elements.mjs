@@ -441,6 +441,219 @@ async function main() {
     const codeEntry = mdNoteEntry.children.find(c => c.flavour === "affine:code");
     expectEqual(codeEntry?.language, "ts", "code block language preserved");
 
+    // 12. Field-gating matrix: every (elementType × FIELD_APPLICABILITY field) pair.
+    //     Static parity with src/tools/docs.ts is enforced by
+    //     scripts/verify-surface-element-gating.mjs.
+    const FIELD_APPLICABILITY_EXPECTED = {
+      shapeType:   ["shape"],
+      radius:      ["shape"],
+      filled:      ["shape"],
+      fillColor:   ["shape"],
+      strokeColor: ["shape", "connector"],
+      strokeWidth: ["shape", "connector"],
+      strokeStyle: ["shape", "connector"],
+      color:       ["shape", "connector", "text"],
+      fontSize:    ["shape", "connector", "text"],
+      fontWeight:  ["shape", "connector", "text"],
+    };
+    const SAMPLE_VALUES = {
+      shapeType:   "diamond",
+      radius:      0.25,
+      filled:      false,
+      fillColor:   "--affine-palette-shape-magenta",
+      strokeColor: "--affine-palette-line-purple",
+      strokeWidth: 6,
+      strokeStyle: "dash",
+      color:       "#abcdef",
+      fontSize:    24,
+      fontWeight:  "700",
+    };
+
+    const matrixDoc = await call("create_doc", {
+      workspaceId: workspace.id,
+      title: "Field Gating Matrix",
+    });
+    const matrixDocId = matrixDoc.docId;
+
+    const matrixSeed = {
+      shape: await call("add_surface_element", {
+        workspaceId: workspace.id, docId: matrixDocId,
+        type: "shape", shapeType: "rect", x: 0, y: 0, width: 100, height: 100,
+      }),
+      connector: await call("add_surface_element", {
+        workspaceId: workspace.id, docId: matrixDocId,
+        type: "connector", sourcePosition: [0, 0], targetPosition: [200, 0],
+      }),
+      text: await call("add_surface_element", {
+        workspaceId: workspace.id, docId: matrixDocId,
+        type: "text", text: "matrix-text", x: 300, y: 0, width: 100, height: 30,
+      }),
+    };
+    // Group needs a child; give it a throwaway shape outside the matrix targets.
+    const matrixGroupChild = await call("add_surface_element", {
+      workspaceId: workspace.id, docId: matrixDocId,
+      type: "shape", shapeType: "rect", x: 0, y: 500, width: 50, height: 50,
+    });
+    matrixSeed.group = await call("add_surface_element", {
+      workspaceId: workspace.id, docId: matrixDocId,
+      type: "group", title: "matrix-group", children: [matrixGroupChild.elementId],
+    });
+
+    const matrixFixtures = Object.fromEntries(
+      Object.entries(matrixSeed).map(([t, r]) => [t, r.elementId])
+    );
+
+    for (const [elementType, elementId] of Object.entries(matrixFixtures)) {
+      for (const [field, applicableTypes] of Object.entries(FIELD_APPLICABILITY_EXPECTED)) {
+        const shouldApply = applicableTypes.includes(elementType);
+        const value = SAMPLE_VALUES[field];
+        const result = await call("update_surface_element", {
+          workspaceId: workspace.id,
+          docId: matrixDocId,
+          elementId,
+          [field]: value,
+        });
+        const inChanged = (result?.changed || []).includes(field);
+        const inIgnored = (result?.ignored || []).includes(field);
+        if (shouldApply) {
+          if (!inChanged || inIgnored) {
+            throw new Error(
+              `field-gating matrix: update ${elementType}.${field} should be APPLIED but was not. ` +
+              `changed=${JSON.stringify(result?.changed)} ignored=${JSON.stringify(result?.ignored)}`
+            );
+          }
+        } else {
+          if (!inIgnored || inChanged) {
+            throw new Error(
+              `field-gating matrix: update ${elementType}.${field} should be IGNORED but was applied. ` +
+              `changed=${JSON.stringify(result?.changed)} ignored=${JSON.stringify(result?.ignored)}`
+            );
+          }
+          const readback = await call("list_surface_elements", {
+            workspaceId: workspace.id,
+            docId: matrixDocId,
+            elementId,
+          });
+          const stored = readback?.elements?.[0];
+          if (stored && stored[field] === value) {
+            throw new Error(
+              `field-gating matrix: ${elementType}.${field}=${JSON.stringify(value)} reported ignored ` +
+              `but the value WAS persisted. read-back element[${field}]=${JSON.stringify(stored[field])}`
+            );
+          }
+        }
+      }
+    }
+
+    // 13. Frame ownership invariant: no affine:frame may hold an id absent from
+    //     the surface map or blocks tree. Asserted after each delete-class call
+    //     across every frame member type.
+    const ownerDoc = await call("create_doc", {
+      workspaceId: workspace.id,
+      title: "Frame Ownership Invariant",
+    });
+    const ownerDocId = ownerDoc.docId;
+
+    const ownedShape = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "shape", shapeType: "rect", x: 0, y: 0, width: 100, height: 100,
+    })).elementId;
+    const ownedConnector = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "connector", sourcePosition: [0, 0], targetPosition: [200, 0],
+    })).elementId;
+    const ownedText = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "text", text: "in-frame text", x: 0, y: 200, width: 100, height: 30,
+    })).elementId;
+    const groupOnlyChild = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "shape", shapeType: "rect", x: 0, y: 600, width: 50, height: 50,
+    })).elementId;
+    const ownedGroup = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "group", title: "owned group", children: [groupOnlyChild],
+    })).elementId;
+    const ownedNote = (await call("append_block", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "note", text: "in-frame note", x: 300, y: 0, width: 200, height: 100,
+    })).blockId;
+    const ownedEdgelessText = (await call("append_block", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "edgeless_text", text: "in-frame edgeless text", x: 600, y: 0, width: 200, height: 60,
+    })).blockId;
+    const ownedNestedFrame = (await call("append_block", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "frame", text: "nested", x: 900, y: 0, width: 200, height: 200,
+    })).blockId;
+
+    const owningFrame = (await call("append_block", {
+      workspaceId: workspace.id, docId: ownerDocId,
+      type: "frame", text: "owner",
+      x: -100, y: -100, width: 1500, height: 800,
+      childElementIds: [
+        ownedShape, ownedConnector, ownedText, ownedGroup,
+        ownedNote, ownedEdgelessText, ownedNestedFrame,
+      ],
+    })).blockId;
+
+    function assertFrameOwnershipConsistent(canvas, label) {
+      const liveSurfaceIds = new Set((canvas.surfaceElements || []).map(e => e.id));
+      const liveBlockIds = new Set((canvas.edgelessBlocks || []).map(b => b.id));
+      for (const fb of canvas.edgelessBlocks || []) {
+        if (fb.flavour !== "affine:frame") continue;
+        for (const childId of fb.childElementIds || []) {
+          if (!liveSurfaceIds.has(childId) && !liveBlockIds.has(childId)) {
+            throw new Error(
+              `frame ownership invariant (${label}): frame ${fb.id} owns dangling id ` +
+              `${childId} which is absent from both surface map and blocks tree. ` +
+              `pruneFromFrameChildElementIds was not invoked on the prior delete.`
+            );
+          }
+        }
+      }
+    }
+    async function readOwningFrameChildIds() {
+      const c = await call("get_edgeless_canvas", {
+        workspaceId: workspace.id,
+        docId: ownerDocId,
+      });
+      const f = c.edgelessBlocks.find(b => b.id === owningFrame);
+      if (!f) throw new Error(`owning frame ${owningFrame} missing from canvas readback`);
+      return { canvas: c, childIds: f.childElementIds || [] };
+    }
+
+    const baseline = await readOwningFrameChildIds();
+    expectEqual(baseline.childIds.length, 7, "baseline: owning frame holds all 7 child ids");
+    assertFrameOwnershipConsistent(baseline.canvas, "baseline");
+
+    const deleteSweep = [
+      { id: ownedShape,        tool: "delete_surface_element", label: "shape" },
+      { id: ownedConnector,    tool: "delete_surface_element", label: "connector" },
+      { id: ownedText,         tool: "delete_surface_element", label: "text" },
+      { id: ownedGroup,        tool: "delete_surface_element", label: "group" },
+      { id: ownedNote,         tool: "delete_block",           label: "note" },
+      { id: ownedEdgelessText, tool: "delete_block",           label: "edgeless_text" },
+      { id: ownedNestedFrame,  tool: "delete_block",           label: "nested_frame" },
+    ];
+    for (const step of deleteSweep) {
+      const args = step.tool === "delete_surface_element"
+        ? { workspaceId: workspace.id, docId: ownerDocId, elementId: step.id }
+        : { workspaceId: workspace.id, docId: ownerDocId, blockId: step.id };
+      await call(step.tool, args);
+      const after = await readOwningFrameChildIds();
+      if (after.childIds.includes(step.id)) {
+        throw new Error(
+          `frame childElementIds prune: after ${step.tool}(${step.label}=${step.id}), ` +
+          `owning frame still references it. childIds=${JSON.stringify(after.childIds)}`
+        );
+      }
+      assertFrameOwnershipConsistent(after.canvas, `after delete ${step.label}`);
+    }
+
+    const finalState = await readOwningFrameChildIds();
+    expectEqual(finalState.childIds.length, 0, "after sweep: owning frame holds no child ids");
+
     console.log();
     console.log("✅ All surface-element CRUD + canvas read assertions passed");
   } finally {

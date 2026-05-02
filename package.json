@@ -49,6 +49,7 @@
     "test:doc-discovery": "node tests/test-doc-discovery.mjs",
     "test:create-placement": "node tests/test-create-placement.mjs",
     "test:surface-elements": "node tests/test-surface-elements.mjs",
+    "test:surface-element-gating": "node scripts/verify-surface-element-gating.mjs",
     "test:edgeless-seed": "node tests/test-edgeless-canvas-setup.mjs",
     "test:edgeless-ui": "npx playwright test tests/playwright/verify-edgeless-canvas.pw.ts --config tests/playwright/playwright.config.ts",
     "test:capabilities-fidelity": "node tests/test-capabilities-fidelity.mjs",

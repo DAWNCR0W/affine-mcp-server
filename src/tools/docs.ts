@@ -792,6 +792,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return null;
   }
 
+  function pruneFromFrameChildElementIds(blocks: Y.Map<any>, deletedIds: string[]): void {
+    if (deletedIds.length === 0) return;
+    const idSet = new Set(deletedIds);
+    for (const [, value] of blocks) {
+      if (!(value instanceof Y.Map)) continue;
+      if (value.get("sys:flavour") !== "affine:frame") continue;
+      const owned = value.get("prop:childElementIds");
+      if (!(owned instanceof Y.Map)) continue;
+      for (const id of idSet) {
+        if (owned.has(id)) owned.delete(id);
+      }
+    }
+  }
+
   function ensureNoteBlock(blocks: Y.Map<any>): string {
     const existingNoteId = findBlockIdByFlavour(blocks, "affine:note");
     if (existingNoteId) {
@@ -8138,6 +8152,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   };
 
+  // Also parsed by scripts/verify-surface-element-gating.mjs — adding a styling
+  // field to surfaceElementFieldSchemas without a row here fails that gate.
+  const FIELD_APPLICABILITY: Readonly<Record<string, ReadonlyArray<SurfaceElementType>>> = {
+    shapeType:   ["shape"],
+    radius:      ["shape"],
+    filled:      ["shape"],
+    fillColor:   ["shape"],
+    strokeColor: ["shape", "connector"],
+    strokeWidth: ["shape", "connector"],
+    strokeStyle: ["shape", "connector"],
+    color:       ["shape", "connector", "text"],
+    fontSize:    ["shape", "connector", "text"],
+    fontWeight:  ["shape", "connector", "text"],
+  };
+
   const updateSurfaceElementHandler = async (params: UpdateSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -8226,22 +8255,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      const scalarFields: Array<keyof SurfaceElementFields> = [
-        "shapeType",
-        "radius",
-        "filled",
-        "fillColor",
-        "strokeColor",
-        "strokeWidth",
-        "strokeStyle",
-        "color",
-        "fontSize",
-        "fontWeight",
-      ];
-      for (const k of scalarFields) {
-        if (params[k] === undefined) continue;
-        el.set(k as string, params[k]);
-        changed.push(k as string);
+      for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
+        const key = field as keyof SurfaceElementFields;
+        if (params[key] === undefined) continue;
+        if (applicable.includes(elementType as SurfaceElementType)) {
+          el.set(field, params[key]);
+          changed.push(field);
+        } else {
+          ignored.push(field);
+        }
       }
 
       if (params.index !== undefined) {
@@ -8398,6 +8420,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           prunedConnectors.push(id);
         }
       }
+
+      pruneFromFrameChildElementIds(blocks, [params.elementId]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(
@@ -8679,6 +8703,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           }
         }
       }
+
+      pruneFromFrameChildElementIds(blocks, deletedIds);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(
