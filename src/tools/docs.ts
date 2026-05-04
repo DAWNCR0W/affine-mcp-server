@@ -8048,6 +8048,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: true })!;
       const index = params.index ?? nextSurfaceElementIndex(ctx.value);
+
+      // Mirror updateSurfaceElementHandler: report inapplicable gated fields
+      // in `ignored` instead of silently dropping them at the per-type builder.
+      const ignored: string[] = [];
+      for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
+        if (params[field as keyof SurfaceElementFields] === undefined) continue;
+        if (!applicable.includes(params.type)) ignored.push(field);
+      }
+
       const { elementId, data } = buildSurfaceElementData(params.type, index, params);
       if (params.type === "connector") {
         const srcBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.sourceId);
@@ -8088,6 +8097,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         elementId,
         type: params.type,
         surfaceBlockId: ctx.surfaceId,
+        ignored,
       });
     } finally {
       socket.disconnect();
@@ -8980,7 +8990,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     {
       title: "Add Surface Element",
       description:
-        "Add a shape, connector, text, or group to the AFFiNE edgeless canvas surface. Shapes support rect/ellipse/diamond/triangle with fill, stroke, and text. Connectors draw arrows between shapes (by id) or between absolute points. Use for building diagrams programmatically.",
+        "Add a shape, connector, text, or group to the AFFiNE edgeless canvas surface. Shapes support rect/ellipse/diamond/triangle with fill, stroke, and text. Connectors draw arrows between shapes (by id) or between absolute points. Use for building diagrams programmatically. Style fields that don't apply to the chosen element type are reported in the response 'ignored' list (mirrors update_surface_element).",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),

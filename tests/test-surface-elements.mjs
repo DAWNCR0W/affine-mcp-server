@@ -545,6 +545,38 @@ async function main() {
       }
     }
 
+    // 12b. add_surface_element symmetry: same FIELD_APPLICABILITY contract at
+    //      construction time. Spot-check the inapplicable cells (per type, the
+    //      first inapplicable gated field). Catches regressions of the symmetry
+    //      that mirror DAWNCR0W's update finding into the add path.
+    for (const [elementType, applicableTypes] of [
+      ["connector", ["shape"]],   // shapeType / radius / filled / fillColor
+      ["text",      ["shape", "connector"]], // strokeColor / strokeWidth / strokeStyle
+      ["group",     ["shape", "connector", "text"]], // color / fontSize / fontWeight
+    ]) {
+      const inapplicableField = Object.entries(FIELD_APPLICABILITY_EXPECTED)
+        .find(([, types]) => JSON.stringify(types) === JSON.stringify(applicableTypes))?.[0];
+      if (!inapplicableField) continue;
+      const baseArgs =
+        elementType === "connector"
+          ? { type: "connector", sourcePosition: [0, 0], targetPosition: [100, 0] }
+          : elementType === "text"
+            ? { type: "text", text: "add-gating-probe", x: 0, y: 0, width: 100, height: 30 }
+            : { type: "group", title: "add-gating-probe", children: [matrixGroupChild.elementId] };
+      const created = await call("add_surface_element", {
+        workspaceId: workspace.id,
+        docId: matrixDocId,
+        ...baseArgs,
+        [inapplicableField]: SAMPLE_VALUES[inapplicableField],
+      });
+      if (!Array.isArray(created?.ignored) || !created.ignored.includes(inapplicableField)) {
+        throw new Error(
+          `add_surface_element gating: ${elementType} should report ${inapplicableField} in ignored. ` +
+          `got ignored=${JSON.stringify(created?.ignored)}`
+        );
+      }
+    }
+
     // 13. Frame ownership invariant: no affine:frame may hold an id absent from
     //     the surface map or blocks tree. Asserted after each delete-class call
     //     across every frame member type.
