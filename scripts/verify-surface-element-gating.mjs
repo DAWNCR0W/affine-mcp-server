@@ -21,7 +21,6 @@ const KNOWN_NON_GATED_FIELDS = new Set([
   'x', 'y', 'width', 'height',
   'text', 'label', 'title',
   'sourceId', 'targetId', 'sourcePosition', 'targetPosition',
-  'mode', 'frontEndpointStyle', 'rearEndpointStyle', 'stroke',
   'children',
   'index',
 ]);

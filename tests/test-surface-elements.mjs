@@ -445,28 +445,36 @@ async function main() {
     //     Static parity with src/tools/docs.ts is enforced by
     //     scripts/verify-surface-element-gating.mjs.
     const FIELD_APPLICABILITY_EXPECTED = {
-      shapeType:   ["shape"],
-      radius:      ["shape"],
-      filled:      ["shape"],
-      fillColor:   ["shape"],
-      strokeColor: ["shape", "connector"],
-      strokeWidth: ["shape", "connector"],
-      strokeStyle: ["shape", "connector"],
-      color:       ["shape", "connector", "text"],
-      fontSize:    ["shape", "connector", "text"],
-      fontWeight:  ["shape", "connector", "text"],
+      shapeType:          ["shape"],
+      radius:             ["shape"],
+      filled:             ["shape"],
+      fillColor:          ["shape"],
+      strokeColor:        ["shape"],                  // connectors use top-level `stroke`
+      strokeWidth:        ["shape", "connector"],
+      strokeStyle:        ["shape", "connector"],
+      color:              ["shape", "text"],          // connectors use labelStyle.*
+      fontSize:           ["shape", "text"],
+      fontWeight:         ["shape", "text"],
+      stroke:             ["connector"],
+      mode:               ["connector"],
+      frontEndpointStyle: ["connector"],
+      rearEndpointStyle:  ["connector"],
     };
     const SAMPLE_VALUES = {
-      shapeType:   "diamond",
-      radius:      0.25,
-      filled:      false,
-      fillColor:   "--affine-palette-shape-magenta",
-      strokeColor: "--affine-palette-line-purple",
-      strokeWidth: 6,
-      strokeStyle: "dash",
-      color:       "#abcdef",
-      fontSize:    24,
-      fontWeight:  "700",
+      shapeType:          "diamond",
+      radius:             0.25,
+      filled:             false,
+      fillColor:          "--affine-palette-shape-magenta",
+      strokeColor:        "--affine-palette-line-purple",
+      strokeWidth:        6,
+      strokeStyle:        "dash",
+      color:              "#abcdef",
+      fontSize:           24,
+      fontWeight:         "700",
+      stroke:             "#ff0000",
+      mode:               0,
+      frontEndpointStyle: "Arrow",
+      rearEndpointStyle:  "Diamond",
     };
 
     const matrixDoc = await call("create_doc", {
@@ -550,9 +558,10 @@ async function main() {
     //      first inapplicable gated field). Catches regressions of the symmetry
     //      that mirror DAWNCR0W's update finding into the add path.
     for (const [elementType, applicableTypes] of [
-      ["connector", ["shape"]],   // shapeType / radius / filled / fillColor
-      ["text",      ["shape", "connector"]], // strokeColor / strokeWidth / strokeStyle
-      ["group",     ["shape", "connector", "text"]], // color / fontSize / fontWeight
+      ["connector", ["shape"]],              // shapeType / radius / filled / fillColor / strokeColor
+      ["text",      ["shape", "connector"]], // strokeWidth / strokeStyle
+      ["group",     ["shape", "text"]],      // color / fontSize / fontWeight
+      ["shape",     ["connector"]],          // stroke / mode / frontEndpointStyle / rearEndpointStyle
     ]) {
       const inapplicableField = Object.entries(FIELD_APPLICABILITY_EXPECTED)
         .find(([, types]) => JSON.stringify(types) === JSON.stringify(applicableTypes))?.[0];
@@ -562,7 +571,9 @@ async function main() {
           ? { type: "connector", sourcePosition: [0, 0], targetPosition: [100, 0] }
           : elementType === "text"
             ? { type: "text", text: "add-gating-probe", x: 0, y: 0, width: 100, height: 30 }
-            : { type: "group", title: "add-gating-probe", children: [matrixGroupChild.elementId] };
+            : elementType === "shape"
+              ? { type: "shape", shapeType: "rect", x: 0, y: 0, width: 100, height: 100 }
+              : { type: "group", title: "add-gating-probe", children: [matrixGroupChild.elementId] };
       const created = await call("add_surface_element", {
         workspaceId: workspace.id,
         docId: matrixDocId,
@@ -685,6 +696,85 @@ async function main() {
 
     const finalState = await readOwningFrameChildIds();
     expectEqual(finalState.childIds.length, 0, "after sweep: owning frame holds no child ids");
+
+    // 14. pruneConnectors frame-ownership: a connector pruned as a side effect
+    //     of delete_surface_element/delete_block must also be removed from any
+    //     frame's childElementIds, not just the directly-deleted id.
+    const pruneDoc = await call("create_doc", {
+      workspaceId: workspace.id,
+      title: "Prune Connector Frame Ownership",
+    });
+    const pruneDocId = pruneDoc.docId;
+
+    const anchorShape = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      type: "shape", shapeType: "rect", x: 0, y: 0, width: 100, height: 100,
+    })).elementId;
+    const surfaceConnector = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      type: "connector", sourceId: anchorShape, targetPosition: [400, 0],
+    })).elementId;
+    const anchorNote = (await call("append_block", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      type: "note", text: "anchor", x: 600, y: 0, width: 200, height: 100,
+    })).blockId;
+    const blockConnector = (await call("add_surface_element", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      type: "connector", sourceId: anchorNote, targetPosition: [1000, 0],
+    })).elementId;
+
+    const pruneFrame = (await call("append_block", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      type: "frame", text: "prune-owner",
+      x: -100, y: -100, width: 1500, height: 400,
+      childElementIds: [anchorShape, surfaceConnector, anchorNote, blockConnector],
+    })).blockId;
+
+    const readPruneFrame = async () => {
+      const c = await call("get_edgeless_canvas", { workspaceId: workspace.id, docId: pruneDocId });
+      const f = c.edgelessBlocks.find(b => b.id === pruneFrame);
+      if (!f) throw new Error(`prune frame ${pruneFrame} missing from canvas readback`);
+      return { canvas: c, childIds: f.childElementIds || [] };
+    };
+
+    const beforeSurfacePrune = await readPruneFrame();
+    expectEqual(beforeSurfacePrune.childIds.length, 4, "prune-frame baseline holds 4 ids");
+
+    const surfacePrune = await call("delete_surface_element", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      elementId: anchorShape, pruneConnectors: true,
+    });
+    if (!surfacePrune.prunedConnectors?.includes(surfaceConnector)) {
+      throw new Error(
+        `expected ${surfaceConnector} in prunedConnectors, got ${JSON.stringify(surfacePrune.prunedConnectors)}`
+      );
+    }
+    const afterSurfacePrune = await readPruneFrame();
+    if (afterSurfacePrune.childIds.includes(anchorShape) || afterSurfacePrune.childIds.includes(surfaceConnector)) {
+      throw new Error(
+        `delete_surface_element pruneConnectors leaked frame ownership: ` +
+        `childIds=${JSON.stringify(afterSurfacePrune.childIds)} still references deleted shape or pruned connector`
+      );
+    }
+    assertFrameOwnershipConsistent(afterSurfacePrune.canvas, "after surface prune");
+
+    const blockPrune = await call("delete_block", {
+      workspaceId: workspace.id, docId: pruneDocId,
+      blockId: anchorNote, pruneConnectors: true,
+    });
+    if (!blockPrune.prunedConnectors?.includes(blockConnector)) {
+      throw new Error(
+        `expected ${blockConnector} in prunedConnectors, got ${JSON.stringify(blockPrune.prunedConnectors)}`
+      );
+    }
+    const afterBlockPrune = await readPruneFrame();
+    if (afterBlockPrune.childIds.includes(anchorNote) || afterBlockPrune.childIds.includes(blockConnector)) {
+      throw new Error(
+        `delete_block pruneConnectors leaked frame ownership: ` +
+        `childIds=${JSON.stringify(afterBlockPrune.childIds)} still references deleted note or pruned connector`
+      );
+    }
+    assertFrameOwnershipConsistent(afterBlockPrune.canvas, "after block prune");
 
     console.log();
     console.log("✅ All surface-element CRUD + canvas read assertions passed");

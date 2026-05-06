@@ -8164,17 +8164,23 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   // Also parsed by scripts/verify-surface-element-gating.mjs — adding a styling
   // field to surfaceElementFieldSchemas without a row here fails that gate.
+  // Per-type rows mirror blocksuite's @field decorators (toeverything/blocksuite@5cb5cb6
+  // packages/affine/model/src/elements/{connector,shape}.ts).
   const FIELD_APPLICABILITY: Readonly<Record<string, ReadonlyArray<SurfaceElementType>>> = {
-    shapeType:   ["shape"],
-    radius:      ["shape"],
-    filled:      ["shape"],
-    fillColor:   ["shape"],
-    strokeColor: ["shape", "connector"],
-    strokeWidth: ["shape", "connector"],
-    strokeStyle: ["shape", "connector"],
-    color:       ["shape", "connector", "text"],
-    fontSize:    ["shape", "connector", "text"],
-    fontWeight:  ["shape", "connector", "text"],
+    shapeType:          ["shape"],
+    radius:             ["shape"],
+    filled:             ["shape"],
+    fillColor:          ["shape"],
+    strokeColor:        ["shape"],                  // connectors use top-level `stroke`
+    strokeWidth:        ["shape", "connector"],
+    strokeStyle:        ["shape", "connector"],
+    color:              ["shape", "text"],          // connectors use labelStyle.*
+    fontSize:           ["shape", "text"],
+    fontWeight:         ["shape", "text"],
+    stroke:             ["connector"],
+    mode:               ["connector"],
+    frontEndpointStyle: ["connector"],
+    rearEndpointStyle:  ["connector"],
   };
 
   const updateSurfaceElementHandler = async (params: UpdateSurfaceElementInput) => {
@@ -8305,39 +8311,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           if (params.targetPosition !== undefined) ignored.push("targetPosition");
         }
       }
-      if (params.mode !== undefined) {
-        if (elementType === "connector") {
-          el.set("mode", params.mode);
-          changed.push("mode");
-        } else {
-          ignored.push("mode");
-        }
-      }
-      if (params.frontEndpointStyle !== undefined) {
-        if (elementType === "connector") {
-          el.set("frontEndpointStyle", params.frontEndpointStyle);
-          changed.push("frontEndpointStyle");
-        } else {
-          ignored.push("frontEndpointStyle");
-        }
-      }
-      if (params.rearEndpointStyle !== undefined) {
-        if (elementType === "connector") {
-          el.set("rearEndpointStyle", params.rearEndpointStyle);
-          changed.push("rearEndpointStyle");
-        } else {
-          ignored.push("rearEndpointStyle");
-        }
-      }
-      if (params.stroke !== undefined) {
-        if (elementType === "connector") {
-          el.set("stroke", params.stroke);
-          changed.push("stroke");
-        } else {
-          ignored.push("stroke");
-        }
-      }
-
       if (params.children !== undefined) {
         if (elementType === "group") {
           const childMap = new Y.Map<boolean>();
@@ -8431,7 +8404,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      pruneFromFrameChildElementIds(blocks, [params.elementId]);
+      pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(
@@ -8714,7 +8687,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      pruneFromFrameChildElementIds(blocks, deletedIds);
+      pruneFromFrameChildElementIds(blocks, [...deletedIds, ...prunedConnectors]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(
