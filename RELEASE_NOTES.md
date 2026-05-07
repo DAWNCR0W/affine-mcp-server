@@ -1,5 +1,37 @@
 # Release Notes
 
+## Version 2.0.0 (2026-05-07)
+
+### Highlights
+- Added native edgeless canvas coverage for surface elements, edgeless blocks, frame ownership, connector auto-snap, and canvas inspection.
+- Added least-privilege tool profiles for `full`, `read_only`, `core`, and `authoring` deployments.
+- Reduced the public MCP surface to 84 canonical tools by removing redundant convenience tools that overlapped with canonical document, search, database, comment, and template flows.
+- Hardened tool-surface reporting so `tools/list`, `get_capabilities`, and `tool-manifest.json` stay aligned.
+
+### What Changed
+- `src/edgeless/layout.ts`, `src/tools/docs.ts`
+  - Added native BlockSuite edgeless layout helpers, surface element CRUD, edgeless block updates, frame child ownership updates, and full canvas inspection.
+  - Added markdown-seeded note creation and deterministic canvas ordering for reliable round trips.
+- `src/index.ts`, `src/toolSurface.ts`, `tool-manifest.json`
+  - Added profile-aware tool registration and fail-closed filtering for unknown tool references.
+  - Reduced the canonical public manifest to 84 tools.
+  - Removed `append_paragraph`, `batch_create_docs`, `cleanup_orphan_embeds`, `create_doc_from_template`, `duplicate_doc`, `find_and_replace`, `get_doc_by_title`, `get_docs_by_tag`, `list_backlinks`, `list_unresolved_threads`, and `update_database_cell` from the public MCP surface.
+- `docs/configuration-and-deployment.md`, `docs/tool-reference.md`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Documented tool profiles, updated the public tool count, and refreshed release metadata for the breaking release.
+- `tests/test-tool-filtering.mjs`, `scripts/verify-tool-manifest.mjs`, `tests/test-canvas-tool-map-demo.mjs`
+  - Added regression coverage for profile counts, removed public tools, manifest consistency, and edgeless canvas layout behavior.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `2.0.0`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Focused verification passed:
+  - `npm run test:tool-filtering`
+  - `npm run test:cli-version`
+- Focused live verification previously passed on the release candidate changes:
+  - `npm run test:comprehensive`
+
 ## Version 1.13.0 (2026-04-10)
 
 ### Highlights
