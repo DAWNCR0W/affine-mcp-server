@@ -178,6 +178,8 @@ Domains:
 - Notifications: list and mark notifications as read
 - Blob storage: upload, delete, and cleanup blobs
 
+Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the backward-compatible `full` default. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `convenience` for finer control.
+
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 
 ## Documentation Map

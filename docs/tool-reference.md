@@ -9,7 +9,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 - Canonical names only: legacy alias names are not part of the public tool surface
 - Document editing relies on AFFiNE WebSocket-backed operations where noted
 - Experimental organize tools are marked explicitly
-- Use tool filtering in production if you want a reduced or read-only surface
+- Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` in production if you want a reduced surface
+- Use `AFFINE_DISABLED_GROUPS=convenience` to hide wrapper tools while keeping the canonical lower-level tools available
 
 ## Workspace
 

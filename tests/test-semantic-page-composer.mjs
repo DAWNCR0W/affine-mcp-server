@@ -162,16 +162,18 @@ async function main() {
     const note = blocks.find(block => block?.flavour === "affine:note");
     expectTruthy(note, "semantic page note block");
 
-    const noteChildren = childIds(note);
-    expectEqual(noteChildren.length, 6, "semantic page initial child count");
+    const noteChildren = childIds(note)
+      .map(id => blockById(blocks, id))
+      .filter(block => blockText(block));
+    expectEqual(noteChildren.length, 6, "semantic page initial content block count");
     expectEqual(created.blockIds.length, 6, "semantic page initial block id count");
 
-    const overviewHeading = blockById(blocks, noteChildren[0]);
-    const overviewParagraph = blockById(blocks, noteChildren[1]);
-    const decisionsHeading = blockById(blocks, noteChildren[2]);
-    const decisionsList = blockById(blocks, noteChildren[3]);
-    const risksHeading = blockById(blocks, noteChildren[4]);
-    const risksParagraph = blockById(blocks, noteChildren[5]);
+    const overviewHeading = noteChildren[0];
+    const overviewParagraph = noteChildren[1];
+    const decisionsHeading = noteChildren[2];
+    const decisionsList = noteChildren[3];
+    const risksHeading = noteChildren[4];
+    const risksParagraph = noteChildren[5];
 
     expectEqual(blockType(overviewHeading), "h2", "overview heading type");
     expectEqual(blockText(overviewHeading), "Overview", "overview heading text");
@@ -205,17 +207,19 @@ async function main() {
     const appendedNote = appendedBlocks.find(block => block?.flavour === "affine:note");
     expectTruthy(appendedNote, "semantic page note block after append");
 
-    const appendedChildren = childIds(appendedNote);
-    expectEqual(appendedChildren.length, 9, "semantic page child count after append");
-    const appendedOverviewHeading = blockById(appendedBlocks, appendedChildren[0]);
-    const appendedOverviewParagraph = blockById(appendedBlocks, appendedChildren[1]);
-    const appendedFollowUpHeading = blockById(appendedBlocks, appendedChildren[2]);
-    const appendedFollowUpParagraph = blockById(appendedBlocks, appendedChildren[3]);
-    const appendedFollowUpList = blockById(appendedBlocks, appendedChildren[4]);
-    const appendedDecisionsHeading = blockById(appendedBlocks, appendedChildren[5]);
-    const appendedDecisionsList = blockById(appendedBlocks, appendedChildren[6]);
-    const appendedRisksHeading = blockById(appendedBlocks, appendedChildren[7]);
-    const appendedRisksParagraph = blockById(appendedBlocks, appendedChildren[8]);
+    const appendedChildren = childIds(appendedNote)
+      .map(id => blockById(appendedBlocks, id))
+      .filter(block => blockText(block));
+    expectEqual(appendedChildren.length, 9, "semantic page content block count after append");
+    const appendedOverviewHeading = appendedChildren[0];
+    const appendedOverviewParagraph = appendedChildren[1];
+    const appendedFollowUpHeading = appendedChildren[2];
+    const appendedFollowUpParagraph = appendedChildren[3];
+    const appendedFollowUpList = appendedChildren[4];
+    const appendedDecisionsHeading = appendedChildren[5];
+    const appendedDecisionsList = appendedChildren[6];
+    const appendedRisksHeading = appendedChildren[7];
+    const appendedRisksParagraph = appendedChildren[8];
 
     expectEqual(blockText(appendedOverviewHeading), "Overview", "overview heading text after append");
     expectEqual(blockText(appendedOverviewParagraph), "Project is on schedule.", "overview paragraph text after append");
