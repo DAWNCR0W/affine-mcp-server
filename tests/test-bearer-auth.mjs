@@ -181,18 +181,19 @@ async function main() {
     });
     assertParentIdsAreNull(readAfterCreate, 'after create_doc');
 
-    const appendedParagraph = await call(bearerClient, 'append_paragraph', {
+    const appendedParagraph = await call(bearerClient, 'append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
+      type: 'paragraph',
       text: 'ParentId null structure check',
     });
-    if (!appendedParagraph?.paragraphId) throw new Error('append_paragraph did not return paragraphId');
+    if (!appendedParagraph?.blockId) throw new Error('append_block did not return blockId');
 
     const readAfterAppendParagraph = await call(bearerClient, 'read_doc', {
       workspaceId: state.workspaceId,
       docId: state.docId,
     });
-    assertParentIdsAreNull(readAfterAppendParagraph, 'after append_paragraph');
+    assertParentIdsAreNull(readAfterAppendParagraph, 'after append_block paragraph');
 
     const markdownDoc = await call(bearerClient, 'create_doc_from_markdown', {
       workspaceId: state.workspaceId,

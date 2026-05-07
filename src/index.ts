@@ -19,6 +19,7 @@ import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { CONFIG_FILE } from "./config.js";
+import { createToolFilter, toolFilterRequiresRegisterTool } from "./toolSurface.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -48,27 +49,8 @@ const transportMode = (process.env.MCP_TRANSPORT || "stdio").toLowerCase();
 const useHttpTransport =
   transportMode === "sse" || transportMode === "http" || transportMode === "streamable";
 
-// ---------------------------------------------------------------------------
-// Tool filtering — parsed once at module load (not per-session in HTTP mode)
-// ---------------------------------------------------------------------------
-const KNOWN_GROUPS = new Set<string>([
-  "workspaces", "docs", "comments", "history", "organize",
-  "users", "access_tokens", "blobs", "notifications",
-]);
-
-const DISABLED_GROUPS = new Set<string>(
-  (process.env.AFFINE_DISABLED_GROUPS || "")
-    .split(",")
-    .map((s: string) => s.trim().toLowerCase())
-    .filter(Boolean),
-);
-
-const DISABLED_TOOLS = new Set<string>(
-  (process.env.AFFINE_DISABLED_TOOLS || "")
-    .split(",")
-    .map((s: string) => s.trim())
-    .filter(Boolean),
-);
+// Tool filtering is parsed once at module load (not per-session in HTTP mode).
+const toolFilter = createToolFilter(process.env);
 
 // Startup diagnostics (visible in Claude Code MCP server logs via stderr)
 console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
@@ -83,14 +65,8 @@ if (hasAuth && config.baseUrl.startsWith("http://")
 }
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
-// Warn about unknown group names (likely typos) before they silently do nothing
-for (const g of DISABLED_GROUPS) {
-  if (!KNOWN_GROUPS.has(g)) {
-    console.error(
-      `[affine-mcp] WARNING: Unknown group "${g}" in AFFINE_DISABLED_GROUPS — ` +
-      `valid groups: ${[...KNOWN_GROUPS].join(", ")}`
-    );
-  }
+for (const warning of toolFilter.warnings) {
+  console.error(`[affine-mcp] WARNING: ${warning}`);
 }
 
 if (config.authMode === "oauth" && !useHttpTransport) {
@@ -177,45 +153,42 @@ async function buildServer() {
     console.error("Set AFFINE_API_TOKEN or run: affine-mcp login");
   }
 
-  // ---------------------------------------------------------------------------
-  // Per-tool blacklist: patch registerTool on this server instance so individual
-  // tools in AFFINE_DISABLED_TOOLS are silently skipped during registration.
-  // All tool files use server.registerTool exclusively — no need to patch server.tool.
-  // ---------------------------------------------------------------------------
-  if (DISABLED_TOOLS.size > 0) {
-    const originalRegisterTool = (server as any).registerTool?.bind(server);
-    if (typeof originalRegisterTool !== "function") {
-      console.error(
-        "[affine-mcp] WARNING: server.registerTool not found — " +
-        "AFFINE_DISABLED_TOOLS will have no effect. " +
-        "The MCP SDK API may have changed."
+  const originalRegisterTool = (server as any).registerTool?.bind(server);
+  if (typeof originalRegisterTool !== "function") {
+    const message =
+      "[affine-mcp] server.registerTool not found - tool filtering cannot be enforced. " +
+      "The MCP SDK API may have changed.";
+    if (toolFilterRequiresRegisterTool(toolFilter)) {
+      throw new Error(
+        `${message} Refusing to start because AFFINE_TOOL_PROFILE is not "full" ` +
+        "or AFFINE_DISABLED_GROUPS/AFFINE_DISABLED_TOOLS is configured."
       );
-    } else {
-      (server as any).registerTool = (name: string, options: any, handler: any) => {
-        if (DISABLED_TOOLS.has(name)) return;
-        return originalRegisterTool(name, options, handler);
-      };
     }
+    console.error(`[affine-mcp] WARNING: ${message} Continuing with the full tool surface.`);
+  } else {
+    (server as any).registerTool = (name: string, options: any, handler: any) => {
+      if (!toolFilter.isEnabled(name)) return;
+      return originalRegisterTool(name, options, handler);
+    };
   }
-  // Log filters directly from environment variables
+  console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
   console.error(`[affine-mcp] Disabled groups: ${process.env.AFFINE_DISABLED_GROUPS || "(none)"}`);
   console.error(`[affine-mcp] Disabled tools: ${process.env.AFFINE_DISABLED_TOOLS || "(none)"}`);
+  console.error(`[affine-mcp] Enabled tools: ${toolFilter.enabledTools.length}/${toolFilter.totalToolCount}`);
 
-  if (!DISABLED_GROUPS.has("workspaces")) registerWorkspaceTools(server, gql);
-  if (!DISABLED_GROUPS.has("docs")) registerDocTools(server, gql, { workspaceId: config.defaultWorkspaceId });
-  if (!DISABLED_GROUPS.has("comments")) registerCommentTools(server, gql, { workspaceId: config.defaultWorkspaceId });
-  if (!DISABLED_GROUPS.has("history")) registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
-  if (!DISABLED_GROUPS.has("organize")) registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });
-  if (!DISABLED_GROUPS.has("users")) {
-    registerUserTools(server, gql);
-    registerUserCRUDTools(server, gql);
-    if (config.authMode !== "oauth") {
-      registerAuthTools(server, gql, config.baseUrl);
-    }
+  registerWorkspaceTools(server, gql);
+  registerDocTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerCommentTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerUserTools(server, gql);
+  registerUserCRUDTools(server, gql);
+  if (config.authMode !== "oauth") {
+    registerAuthTools(server, gql, config.baseUrl);
   }
-  if (!DISABLED_GROUPS.has("access_tokens")) registerAccessTokenTools(server, gql);
-  if (!DISABLED_GROUPS.has("blobs")) registerBlobTools(server, gql);
-  if (!DISABLED_GROUPS.has("notifications")) registerNotificationTools(server, gql);
+  registerAccessTokenTools(server, gql);
+  registerBlobTools(server, gql);
+  registerNotificationTools(server, gql);
   return server;
 }
 

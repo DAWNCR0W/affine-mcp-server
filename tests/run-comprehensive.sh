@@ -171,8 +171,48 @@ echo "=== Re-checking AFFiNE auth readiness ==="
 wait_for_auth_ready
 
 echo ""
+echo "=== Running tool filtering regression ==="
+npm run test:tool-filtering
+
+echo ""
+echo "=== Running capabilities and fidelity regression ==="
+node "$SCRIPT_DIR/test-capabilities-fidelity.mjs"
+
+echo ""
+echo "=== Running create-with-placement regression ==="
+node "$SCRIPT_DIR/test-create-placement.mjs"
+
+echo ""
+echo "=== Running document discovery regression ==="
+node "$SCRIPT_DIR/test-doc-discovery.mjs"
+
+echo ""
+echo "=== Running semantic page composer regression ==="
+node "$SCRIPT_DIR/test-semantic-page-composer.mjs"
+
+echo ""
+echo "=== Running database intent regression ==="
+node "$SCRIPT_DIR/test-database-intent.mjs"
+
+echo ""
+echo "=== Running database cells regression ==="
+node "$SCRIPT_DIR/test-database-cells.mjs"
+
+echo ""
+echo "=== Running native template regression ==="
+node "$SCRIPT_DIR/test-native-template-instantiation.mjs"
+
+echo ""
+echo "=== Running organize tools regression ==="
+node "$SCRIPT_DIR/test-organize-tools.mjs"
+
+echo ""
+echo "=== Running supporting tools regression ==="
+node "$SCRIPT_DIR/test-supporting-tools.mjs"
+
+echo ""
 echo "=== Running comprehensive MCP regression ==="
-node "$PROJECT_DIR/test-comprehensive.mjs"
+AFFINE_COMPREHENSIVE_ASSUME_FOCUSED_COVERAGE=true node "$PROJECT_DIR/test-comprehensive.mjs"
 
 echo ""
 echo "=== Comprehensive regression completed successfully ==="

@@ -100,8 +100,16 @@ async function main() {
     expectEqual(capabilities?.server?.name, 'affine-mcp', 'capabilities server name');
     expectArray(capabilities?.docs?.canonicalBlockTypes, 'canonical block types');
     expectTruthy(capabilities.docs.canonicalBlockTypes.includes('attachment'), 'attachment block advertised');
-    expectEqual(capabilities?.docs?.highLevelAuthoring?.semanticPageComposer, false, 'semantic page composer flag');
-    expectEqual(capabilities?.database?.intentDrivenComposition, false, 'intentDrivenComposition flag');
+    expectEqual(capabilities?.docs?.highLevelAuthoring?.semanticPageComposer, true, 'semantic page composer flag');
+    expectEqual(capabilities?.docs?.highLevelAuthoring?.nativeTemplateInstantiation, true, 'native template instantiation flag');
+    expectEqual(capabilities?.docs?.highLevelAuthoring?.createDocWithPlacement, true, 'create doc placement flag');
+    expectEqual(capabilities?.docs?.highLevelAuthoring?.semanticSectionEditing, true, 'semantic section editing flag');
+    expectEqual(capabilities?.docs?.edgelessCanvas?.surfaceElementMutation, true, 'surface element mutation flag');
+    expectEqual(capabilities?.docs?.edgelessCanvas?.canvasReadback, true, 'edgeless canvas readback flag');
+    expectEqual(capabilities?.database?.intentDrivenComposition, true, 'intentDrivenComposition flag');
+    expectEqual(capabilities?.database?.advancedViewMutation, true, 'advancedViewMutation flag');
+    expectEqual(capabilities?.workspace?.ruleBackedCollections, true, 'ruleBackedCollections flag');
+    expectEqual(capabilities?.workspace?.workspaceBlueprints, true, 'workspaceBlueprints flag');
     expectEqual(capabilities?.collaboration?.replyCreation, false, 'replyCreation flag');
 
     const workspace = await call('create_workspace', { name: `cap-fidelity-${Date.now()}` });

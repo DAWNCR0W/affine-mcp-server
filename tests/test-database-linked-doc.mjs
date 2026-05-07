@@ -6,7 +6,6 @@
  * - `add_database_row` with `linkedDocId` creates a linked-doc reference
  * - `add_database_row` without `linkedDocId` leaves linkedDocId null (backward compat)
  * - `read_database_cells` returns linkedDocId for linked rows
- * - `update_database_cell` can set linkedDocId on an existing row
  * - `update_database_row` can set linkedDocId on an existing row
  * - Overwriting the title with plain text clears the linked-doc reference
  */
@@ -185,14 +184,13 @@ async function main() {
     console.log('  PASS: plain row has null linkedDocId, title preserved\n');
 
     // ====================================================================
-    // TEST 3: update_database_cell to SET linkedDocId on a plain row
+    // TEST 3: update_database_row to SET linkedDocId on a plain row
     // ====================================================================
-    console.log('[Test 3] update_database_cell setting linkedDocId...');
-    await call('update_database_cell', {
+    console.log('[Test 3] update_database_row setting linkedDocId...');
+    await call('update_database_row', {
       workspaceId, docId: hostDocId, databaseBlockId: dbBlockId,
       rowBlockId: row2.rowBlockId,
-      column: 'Status',
-      value: 'Active',
+      cells: { Status: 'Active' },
       linkedDocId: targetDocId,
     });
     await settle();
@@ -201,8 +199,8 @@ async function main() {
       workspaceId, docId: hostDocId, databaseBlockId: dbBlockId,
     });
     const updatedRow = cells3.rows.find(r => r.rowBlockId === row2.rowBlockId);
-    expectEqual(updatedRow.linkedDocId, targetDocId, 'Row should now have linkedDocId after update_database_cell');
-    console.log('  PASS: update_database_cell set linkedDocId\n');
+    expectEqual(updatedRow.linkedDocId, targetDocId, 'Row should now have linkedDocId after update_database_row');
+    console.log('  PASS: update_database_row set linkedDocId\n');
 
     // ====================================================================
     // TEST 4: update_database_row with linkedDocId
@@ -234,11 +232,10 @@ async function main() {
     // TEST 5: Overwriting title with plain text clears linkedDocId
     // ====================================================================
     console.log('[Test 5] Clearing linkedDocId by setting plain title...');
-    await call('update_database_cell', {
+    await call('update_database_row', {
       workspaceId, docId: hostDocId, databaseBlockId: dbBlockId,
       rowBlockId: row3.rowBlockId,
-      column: 'title',
-      value: 'Now Plain',
+      cells: { title: 'Now Plain' },
     });
     await settle();
 

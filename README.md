@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-1.13.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -29,7 +29,6 @@ A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces a
 ## Overview
 
 AFFiNE MCP Server is designed for three common scenarios:
-
 - Run a local stdio MCP server for Claude Code, Codex CLI, Cursor, or Claude Desktop
 - Expose a remote HTTP MCP endpoint for hosted or browser-connected clients
 - Automate AFFiNE workspace, document, database, organization, and comment workflows through a stable MCP tool surface
@@ -39,7 +38,7 @@ Highlights:
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
 - Supports token, cookie, and email/password authentication
-- Exposes 87 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Exposes 84 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage
 
@@ -49,10 +48,9 @@ Scope boundaries:
 - Browser-local workspaces stored only in local storage are not available through AFFiNE server APIs
 - AFFiNE Cloud requires API-token-based access for MCP usage; programmatic email/password sign-in is blocked by Cloudflare
 
-> New in v1.13.0: Added high-level semantic page, native template, fidelity, and workspace blueprint workflows, plus structured receipts and productized setup docs.
+> New in v2.0.0: Added native edgeless canvas tools and shipped a slimmer 84-tool public surface with least-privilege profiles for read-only, core, and authoring deployments.
 
 ## Choose Your Path
-
 | Goal | Start here |
 | --- | --- |
 | Set up a local stdio server with the least friction | [docs/getting-started.md](docs/getting-started.md) |
@@ -172,13 +170,15 @@ Domains:
 
 - Workspace: create, inspect, update, delete, and traverse workspaces
 - Organization: collections, collection-rule sync, workspace blueprints, and experimental organize or folder helpers
-- Documents: search, read, create, publish, move, tag, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and text mutation
-- Databases: create columns, add rows, update cells, inspect schema, and compose database structures from intent
-- Comments: list, create, update, delete, resolve, and list unresolved threads
+- Documents: search, read, create, publish, move, tag, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and block-level mutation
+- Databases: create columns, add rows, update rows, inspect schema, and compose database structures from intent
+- Comments: list, create, update, delete, and resolve
 - History: version history listing
 - Users and tokens: current user, sign-in, profile/settings, personal access tokens
 - Notifications: list and mark notifications as read
 - Blob storage: upload, delete, and cleanup blobs
+
+Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 
@@ -191,6 +191,7 @@ For the grouped catalog, notes, and operational caveats, see [docs/tool-referenc
 | [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md) | Environment variables, auth modes, Docker, HTTP mode, and deployment guidance |
 | [docs/workflow-recipes.md](docs/workflow-recipes.md) | End-to-end workflows and example tool sequences |
 | [docs/tool-reference.md](docs/tool-reference.md) | Tool catalog grouped by domain |
+| [docs/edgeless-canvas-cookbook.md](docs/edgeless-canvas-cookbook.md) | Edgeless canvas layout helpers and surface elements, worked end-to-end |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow |
 | [SECURITY.md](SECURITY.md) | Security reporting |
 

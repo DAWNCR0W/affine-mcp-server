@@ -173,15 +173,16 @@ async function main() {
     expectEqual(initialRead.rows.length, 1, 'read_database_cells UI row count');
     expectEqual(initialRead.rows[0].title, 'UI row', 'UI-created row title');
 
-    const update = await call('update_database_cell', {
+    const update = await call('update_database_row', {
       workspaceId,
       docId,
       databaseBlockId,
       rowBlockId,
-      column: 'title',
-      value: 'UI row updated',
+      cells: {
+        title: 'UI row updated',
+      },
     });
-    expectEqual(update.updated, true, 'update_database_cell updated flag');
+    expectEqual(update.updated, true, 'update_database_row updated flag');
 
     const updatedRead = await call('read_database_cells', {
       workspaceId,
