@@ -40,6 +40,7 @@ Auth priority within the active configuration:
 
 | Variable | Purpose |
 | --- | --- |
+| `AFFINE_TOOL_PROFILE` | Select a predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
 | `AFFINE_DISABLED_GROUPS` | Disable entire tool groups by comma-separated group name |
 | `AFFINE_DISABLED_TOOLS` | Disable individual tools by exact canonical name |
 
@@ -152,6 +153,25 @@ OAuth mode behavior:
 
 ## Least-privilege tool exposure
 
+### Use a tool profile
+
+Profiles are the easiest way to reduce the MCP tool surface without listing every tool by name.
+
+Example:
+
+```json
+{
+  "AFFINE_TOOL_PROFILE": "core"
+}
+```
+
+Available profiles:
+
+- `full`: expose the complete public tool surface; this is the default
+- `read_only`: expose discovery, reading, export, fidelity, and inspection tools, plus `sign_in`
+- `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
+- `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
+
 ### Disable whole groups
 
 Example:
@@ -165,14 +185,51 @@ Example:
 Current group names:
 
 - `workspaces`
+- `workspaces.read`
+- `workspaces.write`
 - `docs`
+- `docs.read`
+- `docs.write`
+- `docs.markdown`
+- `docs.tags`
+- `docs.tree`
+- `docs.export`
+- `docs.semantic`
+- `docs.template`
+- `docs.database`
+- `docs.edgeless`
+- `docs.surface`
+- `docs.intent`
+- `docs.share`
 - `comments`
+- `comments.read`
+- `comments.write`
 - `history`
+- `history.read`
 - `organize`
+- `organize.read`
+- `organize.write`
+- `organize.collections`
+- `organize.folders`
 - `users`
+- `users.read`
+- `users.write`
+- `users.auth`
 - `access_tokens`
+- `access_tokens.read`
+- `access_tokens.write`
 - `blobs`
+- `blobs.write`
 - `notifications`
+- `notifications.read`
+- `notifications.write`
+- `admin`
+- `auth`
+- `cleanup`
+- `destructive`
+- `experimental`
+- `read`
+- `write`
 
 ### Disable specific tools
 
@@ -184,7 +241,7 @@ Example:
 }
 ```
 
-Use tool-level filtering when you want a mostly complete tool surface but need to remove destructive operations.
+Use tool-level filtering when you want a mostly complete tool surface but need to remove specific operations such as destructive actions or administrative access-token tools.
 
 ## Deployment checklist
 

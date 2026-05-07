@@ -14,6 +14,40 @@ const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || '/tmp/affine-mcp-comprehe
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 const MANIFEST_PATH = path.join(process.cwd(), 'tool-manifest.json');
 const EXPECTED_TOOLS = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).tools;
+const ASSUME_FOCUSED_COVERAGE = process.env.AFFINE_COMPREHENSIVE_ASSUME_FOCUSED_COVERAGE === 'true';
+const FOCUSED_TOOL_COVERAGE = new Map([
+  ['add_doc_to_collection', 'test-organize-tools.mjs'],
+  ['add_organize_link', 'test-organize-tools.mjs'],
+  ['analyze_doc_fidelity', 'test-capabilities-fidelity.mjs'],
+  ['append_semantic_section', 'test-semantic-page-composer.mjs'],
+  ['compose_database_from_intent', 'test-database-intent.mjs'],
+  ['create_collection', 'test-organize-tools.mjs'],
+  ['create_folder', 'test-organize-tools.mjs'],
+  ['create_semantic_page', 'test-semantic-page-composer.mjs'],
+  ['create_workspace_blueprint', 'test-organize-tools.mjs'],
+  ['delete_collection', 'test-organize-tools.mjs'],
+  ['delete_database_row', 'test-database-cells.mjs'],
+  ['delete_folder', 'test-organize-tools.mjs'],
+  ['delete_organize_link', 'test-organize-tools.mjs'],
+  ['export_with_fidelity_report', 'test-capabilities-fidelity.mjs'],
+  ['get_capabilities', 'test-capabilities-fidelity.mjs'],
+  ['get_collection', 'test-organize-tools.mjs'],
+  ['get_orphan_docs', 'test-create-placement.mjs'],
+  ['inspect_template_structure', 'test-native-template-instantiation.mjs'],
+  ['instantiate_template_native', 'test-native-template-instantiation.mjs'],
+  ['list_children', 'test-create-placement.mjs'],
+  ['list_collections', 'test-organize-tools.mjs'],
+  ['list_organize_nodes', 'test-organize-tools.mjs'],
+  ['list_workspace_tree', 'test-create-placement.mjs'],
+  ['move_doc', 'test-organize-tools.mjs'],
+  ['move_organize_node', 'test-organize-tools.mjs'],
+  ['remove_doc_from_collection', 'test-organize-tools.mjs'],
+  ['rename_folder', 'test-organize-tools.mjs'],
+  ['search_docs', 'test-doc-discovery.mjs'],
+  ['update_collection', 'test-organize-tools.mjs'],
+  ['update_collection_rules', 'test-organize-tools.mjs'],
+  ['update_doc_title', 'test-create-placement.mjs'],
+]);
 
 if (!PASSWORD) {
   throw new Error(
@@ -227,7 +261,7 @@ class ComprehensiveRunner {
     await this.callTool('get_doc', { workspaceId, docId });
     await this.callTool('publish_doc', { workspaceId, docId });
     await this.callTool('revoke_doc', { workspaceId, docId });
-    await this.callTool('append_paragraph', { workspaceId, docId, text: 'appended from test' });
+    await this.callTool('append_block', { workspaceId, docId, type: 'paragraph', text: 'appended from test' });
     await this.callTool('append_block', { workspaceId, docId, type: 'heading2', text: 'Heading from append_block' });
     await this.callTool('append_block', { workspaceId, docId, type: 'quote', text: 'Quote from append_block' });
     await this.callTool('append_block', { workspaceId, docId, type: 'bulleted_list', text: 'Bulleted item from append_block' });
@@ -293,13 +327,14 @@ class ComprehensiveRunner {
         throw new Error('read_database_cells did not expose the created row value');
       }
     });
-    await this.callTool('update_database_cell', {
+    await this.callTool('update_database_row', {
       workspaceId,
       docId,
       databaseBlockId,
       rowBlockId: databaseRowBlockId,
-      column: databaseColumnName,
-      value: 'Done',
+      cells: {
+        [databaseColumnName]: 'Done',
+      },
       createOption: false,
     });
     await this.callTool('update_database_row', {
@@ -460,6 +495,23 @@ class ComprehensiveRunner {
 
     const uncalledTools = this.serverTools.filter(name => !this.called.has(name));
     for (const name of uncalledTools) {
+      const focusedCoverage = FOCUSED_TOOL_COVERAGE.get(name);
+      if (ASSUME_FOCUSED_COVERAGE && focusedCoverage) {
+        this.results.push({
+          name,
+          args: {},
+          ok: true,
+          blocked: false,
+          durationMs: 0,
+          error: null,
+          result: {
+            coveredBy: focusedCoverage,
+            note: 'Covered by a focused regression in tests/run-comprehensive.sh',
+          },
+        });
+        continue;
+      }
+
       this.results.push({
         name,
         args: {},

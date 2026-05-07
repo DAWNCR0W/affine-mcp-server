@@ -90,11 +90,10 @@ try {
     background: { light: "#ffffff", dark: "#252525" },
     markdown: [
       "# Docs & Workspaces",
-      "- `create_workspace`, `create_doc`, `delete_doc`, `duplicate_doc`",
+      "- `create_workspace`, `create_doc`, `delete_doc`",
       "- `update_doc_title`, `move_doc`, `publish_doc`",
-      "- `batch_create_docs` for 20-at-a-time seeding",
-      "- `create_doc_from_template`, `create_semantic_page`",
-      "- `list_workspace_tree`, `list_children`, `get_doc_by_title`",
+      "- `create_doc_from_markdown`, `create_semantic_page`",
+      "- `list_workspace_tree`, `list_children`, `search_docs`",
     ].join("\n"),
   });
 
@@ -125,7 +124,7 @@ try {
       "# Databases & Data Views",
       "- `compose_database_from_intent` · high-level builder",
       "- `add_database_column`, `add_database_row`",
-      "- `update_database_cell`, `update_database_row`",
+      "- `update_database_row` · batch cell update",
       "- `read_database_columns`, `read_database_cells`",
       "- Kanban / Table views via `viewMode`",
     ].join("\n"),
@@ -202,10 +201,9 @@ try {
     markdown: [
       "# Finding content",
       "- `search_docs` · full-text",
-      "- `list_docs`, `list_docs_by_tag`, `get_docs_by_tag`",
+      "- `list_docs`, `list_docs_by_tag`",
       "- `get_doc` / `read_doc` · structured block tree",
       "- `export_doc_markdown` · round-trip to markdown",
-      "- `find_and_replace` · bulk edits across a doc",
     ].join("\n"),
   });
 
@@ -216,7 +214,6 @@ try {
     background: { light: "#ffffff", dark: "#252525" },
     markdown: [
       "# Relationships & graph",
-      "- `list_backlinks` · who links here?",
       "- `get_orphan_docs` · unreachable from any tree",
       "- `list_workspace_tree` · full hierarchy",
       "- `list_organize_nodes`, `add_organize_link` · sidebar organization",
