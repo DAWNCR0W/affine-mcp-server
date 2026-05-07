@@ -19,7 +19,7 @@ import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { CONFIG_FILE } from "./config.js";
-import { createToolFilter } from "./toolSurface.js";
+import { createToolFilter, toolFilterRequiresRegisterTool } from "./toolSurface.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -155,11 +155,16 @@ async function buildServer() {
 
   const originalRegisterTool = (server as any).registerTool?.bind(server);
   if (typeof originalRegisterTool !== "function") {
-    console.error(
-      "[affine-mcp] WARNING: server.registerTool not found — " +
-      "tool filtering will have no effect. " +
-      "The MCP SDK API may have changed."
-    );
+    const message =
+      "[affine-mcp] server.registerTool not found - tool filtering cannot be enforced. " +
+      "The MCP SDK API may have changed.";
+    if (toolFilterRequiresRegisterTool(toolFilter)) {
+      throw new Error(
+        `${message} Refusing to start because AFFINE_TOOL_PROFILE is not "full" ` +
+        "or AFFINE_DISABLED_GROUPS/AFFINE_DISABLED_TOOLS is configured."
+      );
+    }
+    console.error(`[affine-mcp] WARNING: ${message} Continuing with the full tool surface.`);
   } else {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;

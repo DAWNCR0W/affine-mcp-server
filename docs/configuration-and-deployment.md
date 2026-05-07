@@ -40,6 +40,7 @@ Auth priority within the active configuration:
 
 | Variable | Purpose |
 | --- | --- |
+| `AFFINE_TOOL_PROFILE` | Select a predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
 | `AFFINE_DISABLED_GROUPS` | Disable entire tool groups by comma-separated group name |
 | `AFFINE_DISABLED_TOOLS` | Disable individual tools by exact canonical name |
 

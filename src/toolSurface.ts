@@ -333,7 +333,7 @@ export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
   function isEnabled(name: string): boolean {
     const toolName = name as ToolName;
     if (!KNOWN_TOOLS.has(toolName)) {
-      return true;
+      return profileResult.profile === "full" && disabledGroups.size === 0 && disabledTools.size === 0;
     }
     if (disabledTools.has(toolName)) {
       return false;
@@ -356,6 +356,14 @@ export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
     totalToolCount: ALL_TOOLS.length,
     isEnabled,
   };
+}
+
+export function toolFilterRequiresRegisterTool(filter: {
+  profile: ToolProfile;
+  disabledGroups: ReadonlySet<string>;
+  disabledTools: ReadonlySet<string>;
+}): boolean {
+  return filter.profile !== "full" || filter.disabledGroups.size > 0 || filter.disabledTools.size > 0;
 }
 
 export function knownToolSurfaceGroups(): string[] {

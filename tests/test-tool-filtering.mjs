@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = path.resolve(__dirname, "..", "src", "index.ts");
+const REPO_ROOT = path.resolve(__dirname, "..");
+const execFileAsync = promisify(execFile);
 
 async function testFiltering(env = {}) {
   const client = new Client(
@@ -31,6 +35,30 @@ async function testFiltering(env = {}) {
   const toolNames = result.tools.map((t) => t.name);
   await transport.close();
   return toolNames;
+}
+
+async function inspectToolSurfacePolicy() {
+  const script = `
+    import { createToolFilter, toolFilterRequiresRegisterTool } from "./src/toolSurface.ts";
+
+    const full = createToolFilter({ AFFINE_TOOL_PROFILE: "full" });
+    const readOnly = createToolFilter({ AFFINE_TOOL_PROFILE: "read_only" });
+    const disabled = createToolFilter({ AFFINE_DISABLED_TOOLS: "create_doc" });
+
+    console.log(JSON.stringify({
+      fullUnknown: full.isEnabled("future_tool"),
+      readOnlyUnknown: readOnly.isEnabled("future_tool"),
+      disabledUnknown: disabled.isEnabled("future_tool"),
+      fullRequiresRegisterTool: toolFilterRequiresRegisterTool(full),
+      readOnlyRequiresRegisterTool: toolFilterRequiresRegisterTool(readOnly),
+      disabledRequiresRegisterTool: toolFilterRequiresRegisterTool(disabled)
+    }));
+  `;
+  const { stdout } = await execFileAsync("npx", ["tsx", "--eval", script], {
+    cwd: REPO_ROOT,
+    env: process.env,
+  });
+  return JSON.parse(stdout);
 }
 
 async function run() {
@@ -177,6 +205,24 @@ async function run() {
       console.log("✅ Success: Authoring profile keeps editing tools while hiding restricted tools.");
     } else {
       console.error(`❌ Failed: Authoring profile mismatch. visible=${visibleRestricted.join(", ")} missing=${missingAuthoring.join(", ")}`);
+      hasFailures = true;
+    }
+
+    // 9. Unknown tools fail closed whenever the configured surface is restricted.
+    console.log("\nCase 9: Unknown tool policy stays least-privilege for restricted surfaces");
+    const policy = await inspectToolSurfacePolicy();
+    if (
+      policy.fullUnknown === true &&
+      policy.readOnlyUnknown === false &&
+      policy.disabledUnknown === false &&
+      policy.fullRequiresRegisterTool === false &&
+      policy.readOnlyRequiresRegisterTool === true &&
+      policy.disabledRequiresRegisterTool === true
+    ) {
+      console.log("✅ Success: Unknown tools and missing registerTool handling stay least-privilege.");
+    } else {
+      console.error("❌ Failed: Tool surface policy mismatch.");
+      console.error(JSON.stringify(policy, null, 2));
       hasFailures = true;
     }
 
