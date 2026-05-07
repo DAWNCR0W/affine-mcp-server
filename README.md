@@ -170,15 +170,15 @@ Domains:
 
 - Workspace: create, inspect, update, delete, and traverse workspaces
 - Organization: collections, collection-rule sync, workspace blueprints, and experimental organize or folder helpers
-- Documents: search, read, create, publish, move, tag, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and text mutation
-- Databases: create columns, add rows, update cells, inspect schema, and compose database structures from intent
-- Comments: list, create, update, delete, resolve, and list unresolved threads
+- Documents: search, read, create, publish, move, tag, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and block-level mutation
+- Databases: create columns, add rows, update rows, inspect schema, and compose database structures from intent
+- Comments: list, create, update, delete, and resolve
 - History: version history listing
 - Users and tokens: current user, sign-in, profile/settings, personal access tokens
 - Notifications: list and mark notifications as read
 - Blob storage: upload, delete, and cleanup blobs
 
-Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the backward-compatible `full` default. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `convenience` for finer control.
+Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the backward-compatible `full` default. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 

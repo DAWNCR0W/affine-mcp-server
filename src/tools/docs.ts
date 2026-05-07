@@ -4885,39 +4885,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     appendSemanticSectionHandler as any
   );
 
-  // APPEND PARAGRAPH
-  const appendParagraphHandler = async (parsed: { workspaceId?: string; docId: string; text: string }) => {
-    const result = await appendBlockInternal({
-      workspaceId: parsed.workspaceId,
-      docId: parsed.docId,
-      type: "paragraph",
-      text: parsed.text,
-    });
-    return receipt("doc.append_paragraph", {
-      workspaceId: parsed.workspaceId || defaults.workspaceId || null,
-      docId: parsed.docId,
-      appended: result.appended,
-      blockId: result.blockId,
-      paragraphId: result.blockId,
-      blockType: result.blockType || null,
-      normalizedType: result.normalizedType,
-      legacyType: result.legacyType,
-    });
-  };
-  server.registerTool(
-    'append_paragraph',
-    {
-      title: 'Append Paragraph',
-      description: 'Append a text paragraph block to a document',
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        text: z.string(),
-      },
-    },
-    appendParagraphHandler as any
-  );
-
   const appendBlockHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
@@ -5246,7 +5213,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // Core logic for creating a doc from markdown — returns structured data, no MCP envelope.
-  // Used by both createDocFromMarkdownHandler and batchCreateDocsHandler.
+  // Used by createDocFromMarkdownHandler and internal markdown-based flows.
   const createDocFromMarkdownCore = async (parsed: {
     workspaceId?: string;
     title?: string;
@@ -5341,53 +5308,53 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     createDocFromMarkdownHandler as any
   );
 
-  // batch_create_docs: create up to 20 docs in one call
-  const batchCreateDocsHandler = async (parsed: {
+  const createDocFromTemplateCore = async (parsed: {
     workspaceId?: string;
-    docs: Array<{ title: string; markdown: string; parentDocId?: string }>;
+    templateDocId: string;
+    title: string;
+    variables?: Record<string, string>;
+    parentDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
-    if (!Array.isArray(parsed.docs) || parsed.docs.length === 0) throw new Error("docs array is required.");
-    if (parsed.docs.length > 20) throw new Error("Maximum 20 docs per batch.");
-
-    const results: Array<{ title: string; docId: string; parentDocId: string | null; linkedToParent: boolean; warnings: string[] }> = [];
-
-    for (const item of parsed.docs) {
-      try {
-        const d = await createDocFromMarkdownCore({ workspaceId, title: item.title, markdown: item.markdown, parentDocId: item.parentDocId });
-        results.push({
-          title: d.title,
-          docId: d.docId,
-          parentDocId: d.parentDocId,
-          linkedToParent: d.linkedToParent,
-          warnings: d.warnings ?? [],
-        });
-      } catch (err: any) {
-        results.push({ title: item.title, docId: "", parentDocId: item.parentDocId ?? null, linkedToParent: false, warnings: [`Failed: ${err?.message ?? String(err)}`] });
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snap = await loadDoc(socket, workspaceId, parsed.templateDocId);
+      if (!snap.missing) throw new Error(`Template doc ${parsed.templateDocId} not found.`);
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
+      const collected = collectDocForMarkdown(doc, new Map());
+      const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
+      let markdown = rendered.markdown;
+      const vars = parsed.variables ?? {};
+      for (const [key, value] of Object.entries(vars)) {
+        const pattern = new RegExp(`\\{\\{\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}}`, "g");
+        markdown = markdown.replace(pattern, value);
       }
+      const unfilled = [...markdown.matchAll(/\{\{\s*[\w.-]+\s*\}\}/g)].map(match => match[0]);
+      socket.disconnect();
+      const created = await createDocFromMarkdownCore({ workspaceId, title: parsed.title, markdown, parentDocId: parsed.parentDocId });
+      return {
+        workspaceId,
+        sourceTemplateDocId: parsed.templateDocId,
+        docId: created.docId,
+        title: created.title,
+        parentDocId: created.parentDocId,
+        linkedToParent: created.linkedToParent,
+        cloneMode: "markdown-roundtrip",
+        lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
+        warnings: created.warnings ?? [],
+        stats: created.stats ?? null,
+        unfilledVariables: unfilled,
+      };
+    } catch (err) {
+      try { socket.disconnect(); } catch { /* already disconnected */ }
+      throw err;
     }
-
-    const failed = results.filter(r => !r.docId).length;
-    return text({ created: results.length - failed, failed, results });
   };
-
-  server.registerTool(
-    "batch_create_docs",
-    {
-      title: "Batch Create Documents",
-      description: "Create multiple AFFiNE documents in a single call. Each doc can optionally be linked to a parent (parentDocId) to appear in the sidebar. Max 20 docs per batch.",
-      inputSchema: {
-        workspaceId: z.string().optional(),
-        docs: z.array(z.object({
-          title: z.string().describe("Document title."),
-          markdown: z.string().describe("Markdown content."),
-          parentDocId: z.string().optional().describe("Parent doc ID — if provided, the new doc is embedded under this parent in the sidebar."),
-        })).min(1).max(20).describe("Array of docs to create (max 20)."),
-      },
-    },
-    batchCreateDocsHandler as any
-  );
 
   const appendMarkdownHandler = async (parsed: {
     workspaceId?: string;
@@ -5554,172 +5521,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
     deleteDocHandler as any
   );
-
-  // ─── cleanup_orphan_embeds ──────────────────────────────────────────────────
-  const cleanupOrphanEmbedsHandler = async (parsed: { workspaceId?: string; docId: string; dryRun?: boolean }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const snap = await loadDoc(socket, workspaceId, parsed.docId);
-      if (!snap.missing) throw new Error(`Doc ${parsed.docId} not found.`);
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-      const blocks = doc.getMap("blocks") as Y.Map<any>;
-      const orphans: Array<{ blockId: string; targetDocId: string }> = [];
-      for (const [blockId, raw] of blocks) {
-        if (!(raw instanceof Y.Map)) continue;
-        if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
-        const targetId = raw.get("prop:pageId");
-        if (typeof targetId !== "string" || !targetId) { orphans.push({ blockId, targetDocId: targetId ?? "" }); continue; }
-        const targetSnap = await loadDoc(socket, workspaceId, targetId);
-        if (!targetSnap.missing) orphans.push({ blockId, targetDocId: targetId });
-      }
-      if (parsed.dryRun || orphans.length === 0) {
-        return text({ docId: parsed.docId, dryRun: parsed.dryRun ?? false, orphansFound: orphans.length, orphans });
-      }
-      const prevSV = Y.encodeStateVector(doc);
-      for (const { blockId } of orphans) {
-        for (const [, parentRaw] of blocks) {
-          if (!(parentRaw instanceof Y.Map)) continue;
-          const children = parentRaw.get("sys:children");
-          if (!(children instanceof Y.Array)) continue;
-          const ids = childIdsFrom(children);
-          const idx = ids.indexOf(blockId);
-          if (idx !== -1) { children.delete(idx, 1); break; }
-        }
-        blocks.delete(blockId);
-      }
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
-      return text({ docId: parsed.docId, dryRun: false, orphansRemoved: orphans.length, orphans });
-    } finally { socket.disconnect(); }
-  };
-  server.registerTool("cleanup_orphan_embeds", {
-    title: "Cleanup Orphan Embed Links",
-    description: "Remove embed_linked_doc blocks that point to deleted/non-existent docs. Use dryRun=true to preview without making changes.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      docId: z.string().describe("The doc to clean up orphan embeds from."),
-      dryRun: z.boolean().optional().describe("If true, only report orphans without deleting (default: false)."),
-    },
-  }, cleanupOrphanEmbedsHandler as any);
-
-  // ─── find_and_replace ───────────────────────────────────────────────────────
-  const findAndReplaceHandler = async (parsed: {
-    workspaceId?: string; docId: string; search: string; replace: string; matchAll?: boolean; dryRun?: boolean;
-  }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const snap = await loadDoc(socket, workspaceId, parsed.docId);
-      if (!snap.missing) throw new Error(`Doc ${parsed.docId} not found.`);
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-      const blocks = doc.getMap("blocks") as Y.Map<any>;
-      let totalMatches = 0;
-      const matchLog: Array<{ blockId: string; flavour: string; original: string; replaced: string }> = [];
-      const matchAll = parsed.matchAll !== false;
-      for (const [blockId, raw] of blocks) {
-        if (!(raw instanceof Y.Map)) continue;
-        const flavour = raw.get("sys:flavour") as string | undefined;
-        for (const [, val] of raw) {
-          if (!(val instanceof Y.Text)) continue;
-          const original = val.toString();
-          if (!original.includes(parsed.search)) continue;
-          const replaced = matchAll
-            ? original.split(parsed.search).join(parsed.replace)
-            : original.replace(parsed.search, parsed.replace);
-          const count = matchAll ? original.split(parsed.search).length - 1 : 1;
-          totalMatches += count;
-          matchLog.push({ blockId, flavour: flavour ?? "unknown", original, replaced });
-          if (!parsed.dryRun) {
-            const prevSV = Y.encodeStateVector(doc);
-            val.delete(0, val.length);
-            val.insert(0, replaced);
-            const delta = Y.encodeStateAsUpdate(doc, prevSV);
-            await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
-          }
-        }
-      }
-      return text({
-        docId: parsed.docId, search: parsed.search, replace: parsed.replace,
-        dryRun: parsed.dryRun ?? false, totalMatches, blocksAffected: matchLog.length, matches: matchLog,
-      });
-    } finally { socket.disconnect(); }
-  };
-  server.registerTool("find_and_replace", {
-    title: "Find and Replace in Document",
-    description: "Find and replace text across all Y.Text fields in a document (paragraphs, headings, titles). matchAll defaults to true. Use dryRun=true to preview before applying.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      docId: z.string().describe("The doc to search in."),
-      search: z.string().min(1).describe("Text to find (must not be empty)."),
-      replace: z.string().describe("Replacement text."),
-      matchAll: z.boolean().optional().describe("Replace all occurrences (default: true)."),
-      dryRun: z.boolean().optional().describe("If true, only report matches without replacing (default: false)."),
-    },
-  }, findAndReplaceHandler as any);
-
-  // ─── get_docs_by_tag ────────────────────────────────────────────────────────
-  const getDocsByTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ tag: parsed.tag, count: 0, docs: [] });
-      const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
-      const meta = wsDoc.getMap("meta");
-      const { byId, options } = getWorkspaceTagOptionMaps(meta);
-      const q = parsed.tag.toLowerCase();
-      const matchingTagIds = new Set(
-        options.filter(o => o.value.toLowerCase().includes(q)).map(o => o.id)
-      );
-      if (matchingTagIds.size === 0) {
-        return text({
-          tag: parsed.tag,
-          count: 0,
-          docs: [],
-          availableTags: options.map(o => o.value),
-        });
-      }
-      const pages = getWorkspacePageEntries(meta);
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
-      const matched = pages
-        .map(p => {
-          const rawTagIds = getStringArray(p.tagsArray);
-          return { p, rawTagIds };
-        })
-        .filter(({ rawTagIds }) => rawTagIds.some(tid => matchingTagIds.has(tid)))
-        .map(({ p, rawTagIds }) => ({
-          docId: p.id,
-          title: p.title ?? "Untitled",
-          tags: resolveTagLabels(rawTagIds, byId),
-          url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
-        }));
-      return text({ tag: parsed.tag, count: matched.length, docs: matched });
-    } finally { socket.disconnect(); }
-  };
-  server.registerTool("get_docs_by_tag", {
-    title: "Get Documents by Tag",
-    description: "Filter documents by tag name (case-insensitive substring match). Returns matching docs with their full tag list. If no match, also returns availableTags for discoverability.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      tag: z.string().describe("Tag name to filter by (substring match, case-insensitive)."),
-    },
-  }, getDocsByTagHandler as any);
 
   // ─── list_workspace_tree ────────────────────────────────────────────────────
   const listWorkspaceTreeHandler = async (parsed: { workspaceId?: string; depth?: number }) => {
@@ -5923,195 +5724,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     },
   }, updateDocTitleHandler as any);
 
-  // ─── get_doc_by_title ────────────────────────────────────────────────────────
-  const getDocByTitleHandler = async (parsed: { workspaceId?: string; query: string; limit?: number }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ query: parsed.query, found: false, results: [] });
-      const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
-      const q = parsed.query.toLowerCase();
-      const limit = parsed.limit ?? 1;
-      const matches = getWorkspacePageEntries(wsDoc.getMap("meta"))
-        .filter(p => p.title && p.title.toLowerCase().includes(q)).slice(0, limit);
-      if (matches.length === 0) return text({ query: parsed.query, found: false, results: [] });
-      const results = [];
-      for (const match of matches) {
-        const snap = await loadDoc(socket, workspaceId, match.id);
-        if (!snap.missing) { results.push({ docId: match.id, title: match.title, found: false }); continue; }
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-        const collected = collectDocForMarkdown(doc, new Map());
-        const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
-        results.push({ docId: match.id, title: match.title, found: true, markdown: rendered.markdown,
-          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${match.id}` });
-      }
-      return text({ query: parsed.query, found: results.some(r => (r as any).found), results });
-    } finally { socket.disconnect(); }
-  };
-  server.registerTool("get_doc_by_title", {
-    title: "Get Document by Title",
-    description: "Find a document by title and return its content as markdown in a single call. Combines search_docs + export_doc_markdown. Returns the first match by default; use limit for multiple.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      query: z.string().describe("Title search query (case-insensitive substring match)."),
-      limit: z.number().optional().describe("Max docs to return with content (default: 1)."),
-    },
-  }, getDocByTitleHandler as any);
-
-  // ─── list_backlinks ──────────────────────────────────────────────────────────
-  const listBacklinksHandler = async (parsed: { workspaceId?: string; docId: string }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ docId: parsed.docId, count: 0, backlinks: [] });
-      const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
-      const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
-      const titleById = new Map(pages.map(p => [p.id, p.title]));
-      const backlinks: Array<{ docId: string; title: string | null; url: string }> = [];
-      for (const page of pages) {
-        if (page.id === parsed.docId) continue;
-        const snap = await loadDoc(socket, workspaceId, page.id);
-        if (!snap.missing) continue;
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-        const blocks = doc.getMap("blocks") as Y.Map<any>;
-        for (const [, raw] of blocks) {
-          if (!(raw instanceof Y.Map)) continue;
-          if (raw.get("sys:flavour") === "affine:embed-linked-doc" && raw.get("prop:pageId") === parsed.docId) {
-            backlinks.push({ docId: page.id, title: titleById.get(page.id) ?? null,
-              url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${page.id}` });
-            break;
-          }
-        }
-      }
-      return text({ docId: parsed.docId, count: backlinks.length, backlinks });
-    } finally { socket.disconnect(); }
-  };
-  server.registerTool("list_backlinks", {
-    title: "List Document Backlinks",
-    description: "Find all documents that embed-link to a given doc (its parents/references in the sidebar). Scans all docs — may be slow on large workspaces.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      docId: z.string().describe("The doc to find backlinks for."),
-    },
-  }, listBacklinksHandler as any);
-
-  // ─── duplicate_doc ───────────────────────────────────────────────────────────
-  const duplicateDocHandler = async (parsed: { workspaceId?: string; docId: string; title?: string; parentDocId?: string }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const snap = await loadDoc(socket, workspaceId, parsed.docId);
-      if (!snap.missing) throw new Error(`Doc ${parsed.docId} not found.`);
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-      const collected = collectDocForMarkdown(doc, new Map());
-      const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
-      const newTitle = (parsed.title ?? `${collected.title || "Untitled"} (copy)`).trim();
-      socket.disconnect();
-      const created = await createDocFromMarkdownCore({ workspaceId, title: newTitle, markdown: rendered.markdown, parentDocId: parsed.parentDocId });
-      return receipt("doc.duplicate", {
-        workspaceId,
-        sourceDocId: parsed.docId,
-        docId: created.docId,
-        title: created.title,
-        parentDocId: created.parentDocId,
-        linkedToParent: created.linkedToParent,
-        cloneMode: "markdown-roundtrip",
-        lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
-        warnings: created.warnings ?? [],
-        stats: created.stats ?? null,
-      });
-    } catch (err) {
-      try { socket.disconnect(); } catch { /* already disconnected */ }
-      throw err;
-    }
-  };
-  server.registerTool("duplicate_doc", {
-    title: "Duplicate Document",
-    description: "Clone a document by copying its markdown content into a new doc. Optionally set a new title and/or parentDocId to place it in the sidebar.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      docId: z.string().describe("The source doc to duplicate."),
-      title: z.string().optional().describe("Title for the new doc. Defaults to '<original title> (copy)'."),
-      parentDocId: z.string().optional().describe("Parent doc to link the new doc under in the sidebar."),
-    },
-  }, duplicateDocHandler as any);
-
-  // ─── create_doc_from_template ───────────────────────────────────────────────
-  const createDocFromTemplateHandler = async (parsed: {
-    workspaceId?: string; templateDocId: string; title: string;
-    variables?: Record<string, string>; parentDocId?: string;
-  }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required.");
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const snap = await loadDoc(socket, workspaceId, parsed.templateDocId);
-      if (!snap.missing) throw new Error(`Template doc ${parsed.templateDocId} not found.`);
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-      const collected = collectDocForMarkdown(doc, new Map());
-      const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
-      let markdown = rendered.markdown;
-      const vars = parsed.variables ?? {};
-      for (const [key, value] of Object.entries(vars)) {
-        const pattern = new RegExp(`\\{\\{\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}}`, "g");
-        markdown = markdown.replace(pattern, value);
-      }
-      const unfilled = [...markdown.matchAll(/\{\{\s*[\w.-]+\s*\}\}/g)].map(match => match[0]);
-      socket.disconnect();
-      const created = await createDocFromMarkdownCore({ workspaceId, title: parsed.title, markdown, parentDocId: parsed.parentDocId });
-      return receipt("doc.create_from_template", {
-        workspaceId,
-        sourceTemplateDocId: parsed.templateDocId,
-        docId: created.docId,
-        title: created.title,
-        parentDocId: created.parentDocId,
-        linkedToParent: created.linkedToParent,
-        cloneMode: "markdown-roundtrip",
-        lossy: Boolean(created.lossy ?? (created.warnings?.length ?? 0) > 0),
-        warnings: created.warnings ?? [],
-        stats: created.stats ?? null,
-        unfilledVariables: unfilled,
-      });
-    } catch (err) {
-      try { socket.disconnect(); } catch { /* already disconnected */ }
-      throw err;
-    }
-  };
-  server.registerTool("create_doc_from_template", {
-    title: "Create Document from Template",
-    description: "Clone a template doc and substitute {{variable}} placeholders. Returns a warning for any unfilled variables. Optionally link to a parent doc in the sidebar.",
-    inputSchema: {
-      workspaceId: z.string().optional(),
-      templateDocId: z.string().describe("The template doc to clone from."),
-      title: z.string().describe("Title for the new doc."),
-      variables: z.record(z.string(), z.string()).optional().describe("Key-value map of {{variable}} substitutions."),
-      parentDocId: z.string().optional().describe("Parent doc to link the new doc under in the sidebar."),
-    },
-  }, createDocFromTemplateHandler as any);
-
   async function syncRawTagsToDoc(parsed: {
     workspaceId: string;
     docId: string;
@@ -6296,14 +5908,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           throw new Error(`Native template instantiation is not supported: ${nativeSummary.fallbackReasons.join(" | ")}`);
         }
 
-        const fallbackResult = await createDocFromTemplateHandler({
+        const created = await createDocFromTemplateCore({
           workspaceId,
           templateDocId: parsed.templateDocId,
           title: targetTitle,
           variables: parsed.variables,
           parentDocId: parsed.parentDocId,
         });
-        const created = JSON.parse((fallbackResult as any).content[0].text);
         return text({
           ...created,
           mode: "markdown_fallback",
@@ -7278,70 +6889,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     readDatabaseColumnsHandler as any
-  );
-
-  const updateDatabaseCellHandler = async (parsed: {
-    workspaceId?: string;
-    docId: string;
-    databaseBlockId: string;
-    rowBlockId: string;
-    column: string;
-    value: unknown;
-    createOption?: boolean;
-    linkedDocId?: string;
-  }) => {
-    const workspaceId = parsed.workspaceId || defaults.workspaceId;
-    if (!workspaceId) throw new Error("workspaceId is required");
-    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
-    try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
-      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
-      const col = findDatabaseColumn(parsed.column, ctx);
-
-      if (!col) {
-        if (!isTitleAliasKey(parsed.column)) {
-          throw new Error(`Column '${parsed.column}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
-        }
-      } else {
-        writeDatabaseCellValue(rowCells, col, parsed.value, parsed.createOption ?? true);
-      }
-
-      if (parsed.linkedDocId) {
-        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
-      } else if (isTitleAliasKey(parsed.column) || (col && (col.type === "title" || isTitleAliasKey(col.name)))) {
-        rowBlock.set("prop:text", makeText(String(parsed.value ?? "")));
-      }
-
-      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
-
-      return text({
-        updated: true,
-        rowBlockId: parsed.rowBlockId,
-        column: parsed.column,
-        value: parsed.value ?? null,
-      });
-    } finally {
-      ctx.socket.disconnect();
-    }
-  };
-  server.registerTool(
-    "update_database_cell",
-    {
-      title: "Update Database Cell",
-      description: "Update a single cell on an existing AFFiNE database row. Use `title` to update the row title shown in Kanban card headers.",
-      inputSchema: {
-        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
-        docId: DocId.describe("Document ID containing the database"),
-        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
-        rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
-        column: z.string().min(1).describe("Column name or ID. Use `title` for the built-in row title."),
-        value: z.unknown().describe("New cell value"),
-        createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
-        linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. Replaces any existing title with a linked doc reference."),
-      },
-    },
-    updateDatabaseCellHandler as any
   );
 
   const updateDatabaseRowHandler = async (parsed: {

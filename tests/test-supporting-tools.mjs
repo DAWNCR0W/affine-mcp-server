@@ -163,13 +163,6 @@ async function main() {
     });
     expectEqual(emptyComments?.totalCount, 0, 'list_comments totalCount before create');
 
-    const emptyThreads = await call('list_unresolved_threads', {
-      workspaceId,
-      docId,
-      first: 20,
-    });
-    expectEqual(emptyThreads?.unresolvedThreadCount, 0, 'list_unresolved_threads count before create');
-
     const createdComment = await call('create_comment', {
       workspaceId,
       docId,
@@ -189,16 +182,9 @@ async function main() {
     if (!commentsAfterCreate.edges.some(edge => edge?.node?.id === commentId)) {
       throw new Error('list_comments did not include created comment');
     }
-
-    const unresolvedThreadsAfterCreate = await call('list_unresolved_threads', {
-      workspaceId,
-      docId,
-      first: 20,
-    });
-    expectEqual(unresolvedThreadsAfterCreate?.unresolvedThreadCount, 1, 'list_unresolved_threads count after create');
-    expectArray(unresolvedThreadsAfterCreate?.threads, 'list_unresolved_threads threads');
-    if (!unresolvedThreadsAfterCreate.threads.some(thread => thread?.id === commentId)) {
-      throw new Error('list_unresolved_threads did not include the created comment');
+    const createdCommentNode = commentsAfterCreate.edges.find(edge => edge?.node?.id === commentId)?.node;
+    if (createdCommentNode?.resolved !== false) {
+      throw new Error('list_comments did not expose created comment as unresolved');
     }
 
     const updatedComment = await call('update_comment', {
@@ -213,12 +199,13 @@ async function main() {
     });
     expectEqual(resolvedComment?.success, true, 'resolve_comment success');
 
-    const unresolvedThreadsAfterResolve = await call('list_unresolved_threads', {
+    const commentsAfterResolve = await call('list_comments', {
       workspaceId,
       docId,
       first: 20,
     });
-    expectEqual(unresolvedThreadsAfterResolve?.unresolvedThreadCount, 0, 'list_unresolved_threads count after resolve');
+    const resolvedCommentNode = commentsAfterResolve?.edges?.find(edge => edge?.node?.id === commentId)?.node;
+    expectEqual(resolvedCommentNode?.resolved, true, 'list_comments resolved flag after resolve');
 
     const deletedComment = await call('delete_comment', { id: commentId });
     expectEqual(deletedComment?.success, true, 'delete_comment success');

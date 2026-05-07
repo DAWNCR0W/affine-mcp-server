@@ -30,7 +30,7 @@ Use when:
 
 Typical tool sequence:
 
-1. `search_docs` or `get_doc_by_title` to find the parent
+1. `search_docs` to find the parent
 2. `create_doc` or `create_doc_from_markdown`
 3. `move_doc` if you created the doc before deciding its final parent
 4. `list_children` to verify placement
@@ -49,7 +49,7 @@ Use when:
 Typical tool sequence:
 
 1. `list_tags`
-2. `get_docs_by_tag` or `list_docs_by_tag`
+2. `list_docs_by_tag` or `search_docs` with `tag`
 3. `update_doc_title`
 4. `add_tag_to_doc` or `remove_tag_from_doc`
 
@@ -67,7 +67,7 @@ Use when:
 Typical tool sequence:
 
 1. `read_doc`
-2. `append_paragraph`, `append_block`, or `append_markdown`
+2. `append_block` or `append_markdown`
 3. `replace_doc_with_markdown` only when you intend to overwrite the main note
 
 Prompt example:
@@ -87,7 +87,7 @@ Typical tool sequence:
 2. `read_database_columns` to inspect schema
 3. `add_database_column` if needed
 4. `add_database_row`
-5. `update_database_cell` or `update_database_row`
+5. `update_database_row`
 6. `read_database_cells` to verify
 
 Prompt example:
@@ -133,15 +133,15 @@ Prompt example:
 Use when:
 
 - you need a markdown backup
-- you want to clone a page
-- you need to remove stale linked-doc embeds
+- you want to recreate a page from Markdown
+- you need to inspect linked child pages
 
 Typical tool sequence:
 
-1. `export_doc_markdown` or `duplicate_doc`
-2. `list_backlinks` or `list_children` if you need structural context
-3. `cleanup_orphan_embeds` if linked-doc embeds reference deleted pages
+1. `export_doc_markdown`
+2. `create_doc_from_markdown` if you need a Markdown-based copy
+3. `list_children` if you need structural context
 
 Prompt example:
 
-> Duplicate the template page under the current parent, export the original as Markdown, and clean up any orphaned linked-doc embeds on the copy.
+> Export the template page as Markdown, create a copy under the current parent, and verify the copied page's child links.

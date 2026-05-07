@@ -66,8 +66,32 @@ async function run() {
 
   let hasFailures = false;
   try {
+    // 0. Removed convenience wrappers are not registered on the default surface.
+    console.log("Case 0: Removed convenience wrappers stay absent");
+    const allTools = await testFiltering();
+    const removedTools = [
+      "append_paragraph",
+      "batch_create_docs",
+      "cleanup_orphan_embeds",
+      "create_doc_from_template",
+      "duplicate_doc",
+      "find_and_replace",
+      "get_doc_by_title",
+      "get_docs_by_tag",
+      "list_backlinks",
+      "list_unresolved_threads",
+      "update_database_cell",
+    ];
+    const stillRegistered = removedTools.filter(t => allTools.includes(t));
+    if (allTools.length === 84 && stillRegistered.length === 0) {
+      console.log("✅ Success: Default tool surface is reduced to 84 tools.");
+    } else {
+      console.error(`❌ Failed: Default tool surface mismatch. count=${allTools.length} stillRegistered=${stillRegistered.join(", ")}`);
+      hasFailures = true;
+    }
+
     // 1. Test "users" group consolidation
-    console.log("Case 1: Disable group 'users'");
+    console.log("\nCase 1: Disable group 'users'");
     const tools1 = await testFiltering({ AFFINE_DISABLED_GROUPS: "users" });
     const userTools = ["current_user", "sign_in", "update_profile", "update_settings"];
     const found = userTools.filter(t => tools1.includes(t));
@@ -127,7 +151,6 @@ async function run() {
       "compose_database_from_intent",
       "read_database_cells",
       "read_database_columns",
-      "update_database_cell",
       "update_database_row",
     ];
     const visibleDatabaseTools = databaseTools.filter(t => tools5.includes(t));
@@ -161,20 +184,17 @@ async function run() {
       hasFailures = true;
     }
 
-    // 7. Core profile trims convenience and administrative tools
-    console.log("\nCase 7: Core profile trims convenience and administrative tools");
+    // 7. Core profile trims administrative, destructive, and experimental tools
+    console.log("\nCase 7: Core profile trims administrative, destructive, and experimental tools");
     const tools7 = await testFiltering({
       AFFINE_TOOL_PROFILE: "core",
     });
     const trimmed = [
-      "append_paragraph",
-      "get_doc_by_title",
-      "get_docs_by_tag",
-      "duplicate_doc",
-      "create_doc_from_template",
-      "update_database_cell",
       "delete_workspace",
       "generate_access_token",
+      "cleanup_blobs",
+      "create_workspace_blueprint",
+      "add_organize_link",
     ];
     const unexpectedlyVisible = trimmed.filter(t => tools7.includes(t));
     const coreExpected = ["create_doc", "append_block", "read_doc", "update_database_row"];

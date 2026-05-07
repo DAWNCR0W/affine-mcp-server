@@ -187,10 +187,6 @@ echo "=== Running document discovery regression ==="
 node "$SCRIPT_DIR/test-doc-discovery.mjs"
 
 echo ""
-echo "=== Running document convenience regression ==="
-node "$SCRIPT_DIR/test-document-convenience-tools.mjs"
-
-echo ""
 echo "=== Running semantic page composer regression ==="
 node "$SCRIPT_DIR/test-semantic-page-composer.mjs"
 

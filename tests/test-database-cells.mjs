@@ -6,7 +6,7 @@
  * - `Title`-based row creation writing the built-in Kanban title
  * - `read_database_cells` for all supported column types
  * - row and column filtering by name / ID
- * - `update_database_cell` across all supported column types
+ * - `update_database_row` across all supported column types
  * - `update_database_row` batch updates
  * - `delete_database_row` removes rows cleanly from the database block
  * - select / multi-select option auto-create behavior and strict failure mode
@@ -157,7 +157,7 @@ async function main() {
 
   try {
     const tools = await client.listTools();
-    const requiredTools = ['add_database_row', 'delete_database_row', 'read_database_cells', 'update_database_cell', 'update_database_row'];
+    const requiredTools = ['add_database_row', 'delete_database_row', 'read_database_cells', 'update_database_row'];
     for (const toolName of requiredTools) {
       if (!tools.tools.some(tool => tool.name === toolName)) {
         throw new Error(`Expected tool "${toolName}" to be registered`);
@@ -308,83 +308,21 @@ async function main() {
     expectEqual(rowFilteredRead.rows[0].rowBlockId, state.rowBlockIds[1], 'rowBlockIds filter target');
     expectArrayEqual(Object.keys(rowFilteredRead.rows[0].cells).sort(), ['Done', 'Owner'], 'row filter column keys');
 
-    await call('update_database_cell', {
+    await call('update_database_row', {
       workspaceId: state.workspaceId,
       docId: state.docId,
       databaseBlockId: state.databaseBlockId,
       rowBlockId: state.rowBlockIds[0],
-      column: 'Title',
-      value: 'Card Alpha Prime',
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: state.columnIds.Owner,
-      value: 'Carol',
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: 'Stage',
-      value: 'Blocked',
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: state.columnIds.Labels,
-      value: ['Backend', 'Urgent', 'Release'],
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: 'Estimate',
-      value: 8,
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: state.columnIds.Done,
-      value: true,
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: 'Due',
-      value: updatedDates.row1,
-    });
-    await settle(1200);
-
-    await call('update_database_cell', {
-      workspaceId: state.workspaceId,
-      docId: state.docId,
-      databaseBlockId: state.databaseBlockId,
-      rowBlockId: state.rowBlockIds[0],
-      column: state.columnIds.Link,
-      value: 'https://example.com/alpha-prime',
+      cells: {
+        Title: 'Card Alpha Prime',
+        [state.columnIds.Owner]: 'Carol',
+        Stage: 'Blocked',
+        [state.columnIds.Labels]: ['Backend', 'Urgent', 'Release'],
+        Estimate: 8,
+        [state.columnIds.Done]: true,
+        Due: updatedDates.row1,
+        [state.columnIds.Link]: 'https://example.com/alpha-prime',
+      },
     });
     await settle(1200);
 
@@ -396,32 +334,34 @@ async function main() {
     });
     const updatedRow1 = row1AfterSingleUpdates.rows[0];
     expectEqual(updatedRow1.title, 'Card Alpha Prime', 'row1 title after single-cell updates');
-    expectEqual(updatedRow1.cells.Title.value, 'Card Alpha Prime', 'row1 custom Title after update_database_cell');
-    expectEqual(updatedRow1.cells.Owner.value, 'Carol', 'row1 Owner after update_database_cell');
+    expectEqual(updatedRow1.cells.Title.value, 'Card Alpha Prime', 'row1 custom Title after update_database_row');
+    expectEqual(updatedRow1.cells.Owner.value, 'Carol', 'row1 Owner after update_database_row');
     expectEqual(updatedRow1.cells.Stage.value, 'Blocked', 'row1 Stage after auto-created option');
-    expectArrayEqual(updatedRow1.cells.Labels.value, ['Backend', 'Urgent', 'Release'], 'row1 Labels after update_database_cell');
-    expectEqual(updatedRow1.cells.Estimate.value, 8, 'row1 Estimate after update_database_cell');
-    expectEqual(updatedRow1.cells.Done.value, true, 'row1 Done after update_database_cell');
-    expectEqual(updatedRow1.cells.Due.value, updatedDates.row1, 'row1 Due after update_database_cell');
-    expectEqual(updatedRow1.cells.Link.value, 'https://example.com/alpha-prime', 'row1 Link after update_database_cell');
+    expectArrayEqual(updatedRow1.cells.Labels.value, ['Backend', 'Urgent', 'Release'], 'row1 Labels after update_database_row');
+    expectEqual(updatedRow1.cells.Estimate.value, 8, 'row1 Estimate after update_database_row');
+    expectEqual(updatedRow1.cells.Done.value, true, 'row1 Done after update_database_row');
+    expectEqual(updatedRow1.cells.Due.value, updatedDates.row1, 'row1 Due after update_database_row');
+    expectEqual(updatedRow1.cells.Link.value, 'https://example.com/alpha-prime', 'row1 Link after update_database_row');
 
-    await expectToolFailure('update_database_cell', {
+    await expectToolFailure('update_database_row', {
       workspaceId: state.workspaceId,
       docId: state.docId,
       databaseBlockId: state.databaseBlockId,
       rowBlockId: state.rowBlockIds[1],
-      column: 'Stage',
-      value: 'Should Fail',
+      cells: {
+        Stage: 'Should Fail',
+      },
       createOption: false,
     }, 'option "Should Fail" not found');
 
-    await expectToolFailure('update_database_cell', {
+    await expectToolFailure('update_database_row', {
       workspaceId: state.workspaceId,
       docId: state.docId,
       databaseBlockId: state.databaseBlockId,
       rowBlockId: state.rowBlockIds[1],
-      column: 'Labels',
-      value: ['Frontend', 'Nonexistent'],
+      cells: {
+        Labels: ['Frontend', 'Nonexistent'],
+      },
       createOption: false,
     }, 'option "Nonexistent" not found');
 

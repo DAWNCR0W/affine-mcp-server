@@ -167,9 +167,9 @@ Example:
 
 Available profiles:
 
-- `full`: expose the complete public tool surface; this is the default for backward compatibility
+- `full`: expose the complete public tool surface; this is the default
 - `read_only`: expose discovery, reading, export, fidelity, and inspection tools, plus `sign_in`
-- `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits convenience wrappers, admin tools, cleanup tools, experimental organize tools, and destructive tools
+- `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
 - `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
 
 ### Disable whole groups
@@ -200,9 +200,7 @@ Current group names:
 - `docs.edgeless`
 - `docs.surface`
 - `docs.intent`
-- `docs.cleanup`
 - `docs.share`
-- `docs.bulk`
 - `comments`
 - `comments.read`
 - `comments.write`
@@ -228,7 +226,6 @@ Current group names:
 - `admin`
 - `auth`
 - `cleanup`
-- `convenience`
 - `destructive`
 - `experimental`
 - `read`
@@ -244,7 +241,7 @@ Example:
 }
 ```
 
-Use tool-level filtering when you want a mostly complete tool surface but need to remove destructive operations. Use `AFFINE_DISABLED_GROUPS=convenience` to hide wrapper tools such as title-based document export or single-cell database update while keeping their canonical lower-level tools available.
+Use tool-level filtering when you want a mostly complete tool surface but need to remove specific operations such as destructive actions or administrative access-token tools.
 
 ## Deployment checklist
 
