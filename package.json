@@ -64,6 +64,7 @@
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",
     "test:markdown-roundtrip": "node tests/test-markdown-roundtrip.mjs",
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
+    "test:markdown-rich-text-export": "node tests/test-markdown-rich-text-export.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",

@@ -2551,6 +2551,58 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return tableData;
   }
 
+  function extractTableCellDeltas(block: Y.Map<any>): TextDelta[][][] | null {
+    const rowsValue = block.get("prop:rows");
+    const columnsValue = block.get("prop:columns");
+    const cellsValue = block.get("prop:cells");
+
+    let rowEntries = mapEntries(rowsValue)
+      .map(([rowId, payload]) => ({
+        rowId,
+        order: payload && typeof payload === "object" && typeof (payload as any).order === "string"
+          ? (payload as any).order : rowId,
+      }))
+      .sort((a, b) => a.order.localeCompare(b.order));
+
+    let columnEntries = mapEntries(columnsValue)
+      .map(([columnId, payload]) => ({
+        columnId,
+        order: payload && typeof payload === "object" && typeof (payload as any).order === "string"
+          ? (payload as any).order : columnId,
+      }))
+      .sort((a, b) => a.order.localeCompare(b.order));
+
+    let cellDeltas = new Map<string, TextDelta[]>();
+
+    if (rowEntries.length === 0 || columnEntries.length === 0) {
+      const flatRows = new Map<string, string>();
+      const flatColumns = new Map<string, string>();
+      block.forEach((value: unknown, key: string) => {
+        const rowMatch = key.match(/^prop:rows\.([^.]+)\.order$/);
+        if (rowMatch) { flatRows.set(rowMatch[1], typeof value === "string" ? value : rowMatch[1]); return; }
+        const colMatch = key.match(/^prop:columns\.([^.]+)\.order$/);
+        if (colMatch) { flatColumns.set(colMatch[1], typeof value === "string" ? value : colMatch[1]); return; }
+        const cellMatch = key.match(/^prop:cells\.([^.]+:[^.]+)\.text$/);
+        if (cellMatch) { cellDeltas.set(cellMatch[1], asDeltaArray(value) ?? []); }
+      });
+      if (flatRows.size > 0 && flatColumns.size > 0) {
+        rowEntries = Array.from(flatRows.entries()).map(([rowId, order]) => ({ rowId, order })).sort((a, b) => a.order.localeCompare(b.order));
+        columnEntries = Array.from(flatColumns.entries()).map(([columnId, order]) => ({ columnId, order })).sort((a, b) => a.order.localeCompare(b.order));
+      }
+    } else {
+      for (const [cellKey, payload] of mapEntries(cellsValue)) {
+        if (payload instanceof Y.Map) { cellDeltas.set(cellKey, asDeltaArray(payload.get("text")) ?? []); continue; }
+        if (payload && typeof payload === "object" && "text" in payload) { cellDeltas.set(cellKey, asDeltaArray((payload as any).text) ?? []); }
+      }
+    }
+
+    if (rowEntries.length === 0 || columnEntries.length === 0) return null;
+
+    return rowEntries.map(({ rowId }) =>
+      columnEntries.map(({ columnId }) => cellDeltas.get(`${rowId}:${columnId}`) ?? [])
+    );
+  }
+
   function collectDocForMarkdown(
     doc: Y.Doc,
     tagOptionsById: Map<string, WorkspaceTagOption> = new Map()
@@ -2612,6 +2664,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         sourceId: asStringOrNull(block.get("prop:sourceId")),
         caption: asStringOrNull(block.get("prop:caption")),
         tableData: block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null,
+        tableCellDeltas: block.get("sys:flavour") === "affine:table" ? extractTableCellDeltas(block) ?? undefined : undefined,
         deltas: asDeltaArray(block.get("prop:text")),
       };
       blocksById.set(blockId, entry);
