@@ -115,12 +115,120 @@ function testTableCellRichText() {
 }
 
 // ---------------------------------------------------------------------------
+// 4. Individual mark types — strike, link, code
+// ---------------------------------------------------------------------------
+function testStrike() {
+  const result = deltasToMarkdown([{ insert: 'text', attributes: { strike: true } }]);
+  assert.equal(result, '~~text~~', 'strike should wrap with ~~');
+}
+
+function testLink() {
+  const result = deltasToMarkdown([{ insert: 'click here', attributes: { link: 'https://example.com' } }]);
+  assert.equal(result, '[click here](https://example.com)', 'link should produce markdown link syntax');
+}
+
+function testCode() {
+  const result = deltasToMarkdown([{ insert: 'foo()', attributes: { code: true } }]);
+  assert.equal(result, '`foo()`', 'code should wrap with backticks');
+}
+
+// ---------------------------------------------------------------------------
+// 5. link + bold combination — bold applied first, then wrapped in link
+// ---------------------------------------------------------------------------
+function testLinkBold() {
+  const result = deltasToMarkdown([{ insert: 'text', attributes: { bold: true, link: 'https://example.com' } }]);
+  // bold wraps inner first, then link wraps the whole thing
+  assert.equal(result, '[**text**](https://example.com)', 'bold+link should produce [**text**](url)');
+}
+
+// ---------------------------------------------------------------------------
+// 6. code priority — bold/italic are silently dropped when code is set
+//    because the code branch does an early `continue`
+// ---------------------------------------------------------------------------
+function testCodeDropsOtherMarks() {
+  const result = deltasToMarkdown([{ insert: 'x', attributes: { code: true, bold: true, italic: true } }]);
+  assert.equal(result, '`x`', 'code takes priority; bold and italic are dropped when code is set');
+}
+
+// ---------------------------------------------------------------------------
+// 7. Paragraph block with deltas via renderBlocksToMarkdown
+//    Verifies the deltas wiring in renderBlock() for non-table flavours
+// ---------------------------------------------------------------------------
+function testParagraphBlockWithDeltas() {
+  const blocksById = new Map([
+    ['para-1', {
+      id: 'para-1',
+      parentId: null,
+      flavour: 'affine:paragraph',
+      type: 'text',
+      text: 'fallback plain text',
+      checked: null,
+      language: null,
+      childIds: [],
+      url: null,
+      sourceId: null,
+      caption: null,
+      tableData: null,
+      deltas: [
+        { insert: 'Hello ' },
+        { insert: 'world', attributes: { bold: true } },
+      ],
+    }],
+  ]);
+
+  const result = renderBlocksToMarkdown({ rootBlockIds: ['para-1'], blocksById });
+  // deltas must win over the plain text field
+  assert.equal(result.markdown, 'Hello **world**',
+    'paragraph with deltas should render deltas, not the plain text fallback');
+}
+
+// ---------------------------------------------------------------------------
+// 8. Table without tableCellDeltas — plain tableData is used as fallback
+// ---------------------------------------------------------------------------
+function testTableFallbackWithoutDeltas() {
+  const blocksById = new Map([
+    ['table-2', {
+      id: 'table-2',
+      parentId: null,
+      flavour: 'affine:table',
+      type: null,
+      text: null,
+      checked: null,
+      language: null,
+      childIds: [],
+      url: null,
+      sourceId: null,
+      caption: null,
+      tableData: [
+        ['Name', 'Value'],
+        ['Alice', '42'],
+      ],
+      // no tableCellDeltas — must fall back to tableData strings
+    }],
+  ]);
+
+  const result = renderBlocksToMarkdown({ rootBlockIds: ['table-2'], blocksById });
+  const md = result.markdown;
+
+  assert.ok(md.includes('| Name | Value |'), 'header row should come from tableData fallback');
+  assert.ok(md.includes('| Alice | 42 |'), 'data row should come from tableData fallback');
+  assert.ok(md.includes('| --- |'), 'separator row must be present');
+}
+
+// ---------------------------------------------------------------------------
 // Run all tests
 // ---------------------------------------------------------------------------
 const tests = [
   ['bold → bold+italic → italic (direction A)', testBoldThenBoldItalicThenItalic],
   ['italic → bold+italic → bold (direction B)', testItalicThenBoldItalicThenBold],
   ['table cell inline formatting via tableCellDeltas', testTableCellRichText],
+  ['strike mark', testStrike],
+  ['link mark', testLink],
+  ['code mark', testCode],
+  ['link + bold combination', testLinkBold],
+  ['code takes priority over bold/italic', testCodeDropsOtherMarks],
+  ['paragraph block with deltas via renderBlocksToMarkdown', testParagraphBlockWithDeltas],
+  ['table without tableCellDeltas uses plain tableData fallback', testTableFallbackWithoutDeltas],
 ];
 
 let passed = 0;
