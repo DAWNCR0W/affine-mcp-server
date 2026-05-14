@@ -7,6 +7,7 @@ import { generateKeyBetween } from "fractional-indexing";
 
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import { setExplorerIcon } from "../util/explorerIcon.js";
 import {
   connectWorkspaceSocket,
   joinWorkspace,
@@ -1279,6 +1280,59 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
       },
     },
     renameFolderHandler as any
+  );
+
+  const updateFolderIconHandler = async ({
+    workspaceId,
+    folderId,
+    icon,
+  }: {
+    workspaceId?: string;
+    folderId: string;
+    icon: string | { type: "emoji"; unicode: string } | { type: "icon"; name: string } | null;
+  }) => {
+    const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
+    const iconValue =
+      icon === null
+        ? null
+        : typeof icon === "string"
+          ? { type: "emoji" as const, unicode: icon }
+          : icon;
+    const { socket } = await getSocketContext();
+    try {
+      await joinWorkspace(socket, resolvedWorkspaceId);
+      // sanity-check the folder exists in the organize tree
+      const { doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
+      const nodeMap = organizeNodeMap(readOrganizeNodes(doc));
+      ensureNodeIsFolder(nodeMap, folderId);
+      await setExplorerIcon(socket, resolvedWorkspaceId, `folder:${folderId}`, iconValue);
+      return text({ id: folderId, icon: iconValue });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "update_folder_icon",
+    {
+      title: "Update Folder Icon",
+      description:
+        "Experimental: set or clear the sidebar icon for an AFFiNE organize folder. " +
+        "Pass an emoji string ('🟧') for shorthand, a full object ({type:'emoji',unicode:'🟧'} | {type:'icon',name:'folder'}), or null to remove.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        folderId: FolderId,
+        icon: z
+          .union([
+            z.string().min(1).describe("Emoji unicode shorthand."),
+            z.object({ type: z.literal("emoji"), unicode: z.string().min(1) }),
+            z.object({ type: z.literal("icon"), name: z.string().min(1) }),
+            z.null(),
+          ])
+          .describe("Icon value. String → emoji. Object → typed icon. null → remove."),
+      },
+    },
+    updateFolderIconHandler as any
   );
 
   const deleteFolderHandler = async ({

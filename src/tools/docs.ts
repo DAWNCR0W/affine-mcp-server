@@ -4,6 +4,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
+import { setExplorerIcon } from "../util/explorerIcon.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
@@ -5723,6 +5724,54 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       title: z.string().describe("New title."),
     },
   }, updateDocTitleHandler as any);
+
+  // ─── update_doc_icon ────────────────────────────────────────────────────────
+  const updateDocIconHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    icon: string | { type: "emoji"; unicode: string } | { type: "icon"; name: string } | null;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const iconValue =
+      parsed.icon === null
+        ? null
+        : typeof parsed.icon === "string"
+          ? { type: "emoji" as const, unicode: parsed.icon }
+          : parsed.icon;
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      await setExplorerIcon(socket, workspaceId, `doc:${parsed.docId}`, iconValue);
+      return receipt("doc.update_icon", {
+        workspaceId,
+        docId: parsed.docId,
+        icon: iconValue,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool("update_doc_icon", {
+    title: "Update Document Icon",
+    description:
+      "Set or clear the sidebar icon (Notion-style emoji slot) for a doc. " +
+      "Pass an emoji string ('🧪') for shorthand, a full object ({type:'emoji',unicode:'🧪'} | {type:'icon',name:'check'}), or null to remove.",
+    inputSchema: {
+      workspaceId: z.string().optional(),
+      docId: z.string().describe("The doc to update."),
+      icon: z
+        .union([
+          z.string().min(1).describe("Emoji unicode shorthand."),
+          z.object({ type: z.literal("emoji"), unicode: z.string().min(1) }),
+          z.object({ type: z.literal("icon"), name: z.string().min(1) }),
+          z.null(),
+        ])
+        .describe("Icon value. String → emoji. Object → typed icon. null → remove."),
+    },
+  }, updateDocIconHandler as any);
 
   async function syncRawTagsToDoc(parsed: {
     workspaceId: string;

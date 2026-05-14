@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `update_doc_icon` — set or clear the Notion-style sidebar icon (emoji slot) on a document. Accepts an emoji shorthand (`"🧪"`), a full object (`{type:"emoji",unicode:"🧪"}` or `{type:"icon",name:"check"}`), or `null` to remove.
+- `update_folder_icon` — same surface for AFFiNE organize folder nodes. Marked experimental, mirroring the rest of the organize-folder tool family.
+- `src/util/explorerIcon.ts` — shared helper that targets the workspace's `db$<workspaceId>$explorerIcon` sub-doc and per-entity Y.Map (`doc:<id>` / `folder:<id>`) where AFFiNE 0.26+ stores per-doc/per-folder sidebar icons.
+- `scripts/probe-doc-meta.mjs` — dev script that dumps workspace/doc YJS state via socket.io for debugging similar field-shape questions in the future.
+
 ## [2.0.0] - 2026-05-07
 
 ### Added
