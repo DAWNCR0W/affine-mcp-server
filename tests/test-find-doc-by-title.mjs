@@ -159,8 +159,8 @@ async function main() {
     expectEqual(rNone.matches.length, 0, "no match returns empty");
     console.log("✓ no match");
 
-    // Scenario 5: limit + truncated flag
-    console.log("\n--- Scenario 5: limit ---");
+    // Scenario 5: limit + truncated flag (limit < actual matches)
+    console.log("\n--- Scenario 5: limit < matches ---");
     const rLimited = await call("find_doc_by_title", {
       workspaceId: workspace.id,
       title: dupTitle,
@@ -168,7 +168,20 @@ async function main() {
     });
     expectEqual(rLimited.matches.length, 1, "limit=1 returns only 1");
     expectEqual(rLimited.truncated, true, "truncated=true when capped");
-    console.log("✓ limit");
+    console.log("✓ limit < matches → truncated true");
+
+    // Scenario 6: limit equals exact match count → truncated must stay false
+    // Guard against the "truncated set on equality" UX trap where callers
+    // would chase non-existent additional matches.
+    console.log("\n--- Scenario 6: limit === matches ---");
+    const rExact = await call("find_doc_by_title", {
+      workspaceId: workspace.id,
+      title: dupTitle,
+      limit: 2,
+    });
+    expectEqual(rExact.matches.length, 2, "limit=2 returns both matches");
+    expectEqual(rExact.truncated, false, "truncated=false when limit equals exact match count");
+    console.log("✓ limit === matches → truncated false");
 
     console.log("\n=== ALL find_doc_by_title scenarios PASSED ===");
   } finally {

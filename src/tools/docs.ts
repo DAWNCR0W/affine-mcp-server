@@ -4073,16 +4073,18 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const pageTitle = page.title ?? "";
         const candidate = caseInsensitive ? pageTitle.toLocaleLowerCase() : pageTitle;
         if (candidate !== target) continue;
+        if (matches.length >= limit) {
+          // We hit `limit` on a previous iteration and now found another match —
+          // there are genuinely more matches than the cap.
+          truncated = true;
+          break;
+        }
         matches.push({
           id: page.id,
           title: pageTitle,
           createdAt: page.createDate ? new Date(page.createDate).toISOString() : null,
           updatedAt: page.updatedDate ? new Date(page.updatedDate).toISOString() : null,
         });
-        if (matches.length >= limit) {
-          truncated = true;
-          break;
-        }
       }
 
       return text({
