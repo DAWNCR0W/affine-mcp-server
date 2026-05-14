@@ -4028,6 +4028,96 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     searchDocsHandler as any
   );
 
+  const findDocByTitleHandler = async (parsed: {
+    workspaceId?: string;
+    title: string;
+    caseInsensitive?: boolean;
+    limit?: number;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const title = parsed.title;
+    if (!title || title.length === 0) {
+      throw new Error("title is required and must be non-empty.");
+    }
+    const limit = parsed.limit ?? 50;
+    const caseInsensitive = parsed.caseInsensitive ?? false;
+    const target = caseInsensitive ? title.toLocaleLowerCase() : title;
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!snapshot.missing) {
+        return text({
+          query: title,
+          caseInsensitive,
+          matches: [],
+          workspaceDocCount: 0,
+          truncated: false,
+        });
+      }
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const pages = getWorkspacePageEntries(meta);
+
+      type Match = { id: string; title: string; createdAt: string | null; updatedAt: string | null };
+      const matches: Match[] = [];
+      let truncated = false;
+      for (const page of pages) {
+        const pageTitle = page.title ?? "";
+        const candidate = caseInsensitive ? pageTitle.toLocaleLowerCase() : pageTitle;
+        if (candidate !== target) continue;
+        matches.push({
+          id: page.id,
+          title: pageTitle,
+          createdAt: page.createDate ? new Date(page.createDate).toISOString() : null,
+          updatedAt: page.updatedDate ? new Date(page.updatedDate).toISOString() : null,
+        });
+        if (matches.length >= limit) {
+          truncated = true;
+          break;
+        }
+      }
+
+      return text({
+        query: title,
+        caseInsensitive,
+        matches,
+        workspaceDocCount: pages.length,
+        truncated,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "find_doc_by_title",
+    {
+      title: "Find Doc by Title",
+      description:
+        "Resolve docs by exact title. Returns ALL matches up to `limit` (callers handle ambiguity). " +
+        "Case-sensitive by default; pass `caseInsensitive: true` to fold case. " +
+        "Reads workspace metadata — fast, no per-doc fetch. " +
+        "Unlike `search_docs` (which is always case-insensitive and capped at limit 20), this tool defaults to case-sensitive matching and returns up to `limit` matches (default 50, max 200). " +
+        "Prefer this over `search_docs` when you know the exact title and want every match. " +
+        "Returns: { query, caseInsensitive, matches: [{ id, title, createdAt, updatedAt }], workspaceDocCount, truncated }.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if AFFINE_WORKSPACE_ID is set)."),
+        title: z.string().min(1).describe("The exact title to match."),
+        caseInsensitive: z.boolean().optional().describe("If true, fold case for comparison (default: false)."),
+        limit: z.number().int().positive().max(200).optional().describe("Max matches to return (default: 50)."),
+      },
+    },
+    findDocByTitleHandler as any
+  );
+
   server.registerTool(
     "list_tags",
     {
