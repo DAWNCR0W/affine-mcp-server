@@ -8,7 +8,7 @@ import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
-import { specialWorkspaceDbDocId, readOrganizeNodes, organizeNodeMap, ensureNodeIsFolder, nextOrganizeIndex, ensureRecord } from "./organize.js";
+import { addOrganizeLinkToFolder } from "./organize.js";
 import {
   type Bound,
   DEFAULT_NOTE_XYWH,
@@ -4779,6 +4779,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       context: "create_doc",
     });
     const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
+    let linkedFolderId: string | null = null;
     let folderNodeId: string | null = null;
     if (parsed.folderId) {
       const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
@@ -4786,26 +4787,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
       try {
         await joinWorkspace(socket, created.workspaceId);
-        const foldersDocId = specialWorkspaceDbDocId(created.workspaceId, "folders");
-        const snapshot = await loadDoc(socket, created.workspaceId, foldersDocId);
-        const foldersDoc = new Y.Doc();
-        if (snapshot.missing) {
-          Y.applyUpdate(foldersDoc, Buffer.from(snapshot.missing, "base64"));
-        }
-        const nodes = readOrganizeNodes(foldersDoc);
-        const nodeMap = organizeNodeMap(nodes);
-        ensureNodeIsFolder(nodeMap, parsed.folderId);
-        const linkId = generateId();
-        const record = ensureRecord(foldersDoc, linkId);
-        record.set("id", linkId);
-        record.set("type", "doc");
-        record.set("data", created.docId);
-        record.set("parentId", parsed.folderId);
-        record.set("index", nextOrganizeIndex(nodes, parsed.folderId));
-        record.delete("$$DELETED");
-        const update = Y.encodeStateAsUpdate(foldersDoc);
-        await pushDocUpdate(socket, created.workspaceId, foldersDocId, Buffer.from(update).toString("base64"));
-        folderNodeId = linkId;
+        const link = await addOrganizeLinkToFolder(socket, created.workspaceId, {
+          folderId: parsed.folderId,
+          type: "doc",
+          targetId: created.docId,
+        });
+        linkedFolderId = link.parentId;
+        folderNodeId = link.id;
       } catch (err: any) {
         warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
       } finally {
@@ -4818,7 +4806,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       title: created.title,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
-      folderId: folderNodeId !== null ? (parsed.folderId ?? null) : null,
+      folderId: linkedFolderId,
       folderLinked: folderNodeId !== null,
       folderNodeId,
       warnings,

@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * Integration test: create folder "bar", create doc "baz" placed inside it via
- * folderId, create folder "foo", then move "bar" into "foo".
+ * Integration test for create_doc folder placement.
  *
  * Steps:
  *   1. Create workspace
  *   2. Create folder "bar"
- *   3. Create doc "baz" placed in "bar" (folderId parameter)
- *   4. Create folder "foo"
- *   5. Move "bar" into "foo"
- *   6. Verify final tree: foo → bar → baz
- *   7. Clean up workspace
+ *   3. Create doc "baz" placed in "bar" with folderId
+ *   4. Create doc with a missing folderId and verify the failure contract
+ *   5. Create folder "foo"
+ *   6. Move "bar" into "foo"
+ *   7. Verify final tree
+ *   8. Clean up workspace
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,7 @@ const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
 const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
 const EMAIL = process.env.AFFINE_ADMIN_EMAIL || process.env.AFFINE_EMAIL || 'test@affine.local';
 const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWORD;
-if (!PASSWORD) throw new Error('AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh');
+if (!PASSWORD) throw new Error('AFFINE_ADMIN_PASSWORD env var required - run: . tests/generate-test-env.sh');
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 const NO_CLEANUP = process.env.NO_CLEANUP === '1' || process.argv.includes('--no-cleanup');
 
@@ -44,13 +44,26 @@ function expectEqual(actual, expected, message) {
   }
 }
 
+function expectArray(value, message) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${message}: expected array, got ${JSON.stringify(value)}`);
+  }
+}
+
+function expectWarningIncludes(warnings, expected, message) {
+  expectArray(warnings, `${message} warnings`);
+  if (!warnings.some(warning => typeof warning === 'string' && warning.includes(expected))) {
+    throw new Error(`${message}: expected warning containing ${JSON.stringify(expected)}, got ${JSON.stringify(warnings)}`);
+  }
+}
+
 async function main() {
-  console.log('=== foo / bar / baz folder placement test ===');
+  console.log('=== Create Doc Folder Placement Test ===');
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Server:   ${MCP_SERVER_PATH}`);
   console.log();
 
-  const client = new Client({ name: 'affine-mcp-foo-bar-baz-test', version: '1.0.0' });
+  const client = new Client({ name: 'affine-mcp-create-doc-folder-placement', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: 'node',
     args: [MCP_SERVER_PATH],
@@ -60,7 +73,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-foo-bar-baz-noconfig',
+      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-create-doc-folder-placement-noconfig',
     },
     stderr: 'pipe',
   });
@@ -68,7 +81,7 @@ async function main() {
   transport.stderr?.on('data', chunk => process.stderr.write(`[mcp-server] ${chunk}`));
 
   async function call(toolName, args = {}) {
-    console.log(`  → ${toolName}(${JSON.stringify(args)})`);
+    console.log(`  -> ${toolName}(${JSON.stringify(args)})`);
     const result = await client.callTool(
       { name: toolName, arguments: args },
       undefined,
@@ -78,7 +91,7 @@ async function main() {
     const parsed = parseContent(result);
     if (parsed && typeof parsed === 'object' && parsed.error) throw new Error(`${toolName} failed: ${parsed.error}`);
     if (typeof parsed === 'string' && /^(GraphQL error:|Error:|MCP error)/i.test(parsed)) throw new Error(`${toolName} failed: ${parsed}`);
-    console.log('    ✓ OK');
+    console.log('    OK');
     return parsed;
   }
 
@@ -86,34 +99,57 @@ async function main() {
 
   let workspaceId;
   try {
-    // ── 1. Workspace ──────────────────────────────────────────────────────────
     console.log('\n[1] Create workspace');
-    const workspace = await call('create_workspace', { name: `foo-bar-baz-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: `folder-placement-${Date.now()}` });
     workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'workspace id');
 
-    // ── 2. Create folder "bar" ────────────────────────────────────────────────
     console.log('\n[2] Create folder "bar"');
     const bar = await call('create_folder', { workspaceId, name: 'bar' });
     const barFolderId = bar?.id;
     expectTruthy(barFolderId, 'bar folder id');
     expectEqual(bar?.data, 'bar', 'bar folder name');
 
-    // ── 3. Create doc "baz" inside folder "bar" via folderId ──────────────────
     console.log('\n[3] Create doc "baz" in folder "bar"');
     const baz = await call('create_doc', { workspaceId, title: 'baz', folderId: barFolderId });
     const bazDocId = baz?.docId;
     expectTruthy(bazDocId, 'baz docId');
+    expectEqual(baz?.folderId, barFolderId, 'create_doc folderId');
+    expectEqual(baz?.folderLinked, true, 'create_doc folderLinked');
+    expectTruthy(baz?.folderNodeId, 'create_doc folderNodeId');
+    expectArray(baz?.warnings, 'create_doc warnings');
+    expectEqual(baz.warnings.length, 0, 'create_doc warning count');
 
-    // ── 4. Create folder "foo" ────────────────────────────────────────────────
-    console.log('\n[4] Create folder "foo"');
+    console.log('\n[4] Create doc with missing folderId');
+    const missingFolderId = `missing-folder-${Date.now()}`;
+    const unplaced = await call('create_doc', {
+      workspaceId,
+      title: 'not placed',
+      folderId: missingFolderId,
+    });
+    const unplacedDocId = unplaced?.docId;
+    expectTruthy(unplacedDocId, 'unplaced docId');
+    expectEqual(unplaced?.folderId, null, 'unplaced folderId');
+    expectEqual(unplaced?.folderLinked, false, 'unplaced folderLinked');
+    expectEqual(unplaced?.folderNodeId, null, 'unplaced folderNodeId');
+    expectWarningIncludes(
+      unplaced?.warnings,
+      `Doc created but could not be placed in folder "${missingFolderId}"`,
+      'unplaced warning message'
+    );
+    expectWarningIncludes(
+      unplaced?.warnings,
+      `Folder '${missingFolderId}' was not found.`,
+      'unplaced missing folder warning'
+    );
+
+    console.log('\n[5] Create folder "foo"');
     const foo = await call('create_folder', { workspaceId, name: 'foo' });
     const fooFolderId = foo?.id;
     expectTruthy(fooFolderId, 'foo folder id');
     expectEqual(foo?.data, 'foo', 'foo folder name');
 
-    // ── 5. Move "bar" into "foo" ──────────────────────────────────────────────
-    console.log('\n[5] Move "bar" into "foo"');
+    console.log('\n[6] Move "bar" into "foo"');
     const movedBar = await call('move_organize_node', {
       workspaceId,
       nodeId: barFolderId,
@@ -122,8 +158,7 @@ async function main() {
     expectEqual(movedBar?.id, barFolderId, 'moved bar id');
     expectEqual(movedBar?.parentId, fooFolderId, 'bar is now inside foo');
 
-    // ── 6. Verify final tree: foo → bar → baz ────────────────────────────────
-    console.log('\n[6] Verify organize tree');
+    console.log('\n[7] Verify organize tree');
     const { nodes = [] } = await call('list_organize_nodes', { workspaceId });
 
     const fooNode = nodes.find(n => n?.id === fooFolderId);
@@ -137,11 +172,13 @@ async function main() {
     const bazNode = nodes.find(n => n?.type === 'doc' && n?.data === bazDocId);
     expectTruthy(bazNode, 'baz doc node present in organize tree');
     expectEqual(bazNode?.parentId, barFolderId, 'baz is inside bar');
+    if (nodes.some(n => n?.type === 'doc' && n?.data === unplacedDocId)) {
+      throw new Error('unplaced doc should not have an organize link');
+    }
 
-    console.log('\n✓ Tree confirmed: foo → bar → baz');
+    console.log('\nTree confirmed: foo -> bar -> baz');
 
-    // ── 7. Move "baz" directly under "foo" ───────────────────────────────────
-    console.log('\n[7] Move "baz" to under "foo"');
+    console.log('\n[8] Move "baz" to under "foo"');
     const movedBaz = await call('move_organize_node', {
       workspaceId,
       nodeId: bazNode.id,
@@ -150,8 +187,7 @@ async function main() {
     expectEqual(movedBaz?.id, bazNode.id, 'moved baz id');
     expectEqual(movedBaz?.parentId, fooFolderId, 'baz is now inside foo');
 
-    // ── 8. Verify final tree: foo → bar (empty), foo → baz ───────────────────
-    console.log('\n[8] Verify final tree');
+    console.log('\n[9] Verify final tree');
     const { nodes: finalNodes = [] } = await call('list_organize_nodes', { workspaceId });
 
     const finalBarNode = finalNodes.find(n => n?.id === barFolderId);
@@ -167,7 +203,7 @@ async function main() {
       throw new Error(`bar should be empty after moving baz, found ${barChildren.length} child(ren)`);
     }
 
-    console.log('\n✓ Tree confirmed: foo → bar (empty), foo → baz');
+    console.log('\nTree confirmed: foo -> bar (empty), foo -> baz');
 
   } finally {
     if (workspaceId && !NO_CLEANUP) {
@@ -183,6 +219,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('\n✗', err.message);
+  console.error('\nFAILED:', err.message);
   process.exit(1);
 });
