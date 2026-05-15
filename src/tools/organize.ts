@@ -181,7 +181,7 @@ function normalizeOrganizeNode(value: unknown): OrganizeNodeRecord | null {
   };
 }
 
-export function specialWorkspaceDbDocId(workspaceId: string, tableName: string): string {
+function specialWorkspaceDbDocId(workspaceId: string, tableName: string): string {
   return `db$${workspaceId}$${tableName}`;
 }
 
@@ -189,7 +189,7 @@ function isDeletedRecord(record: Y.Map<any>): boolean {
   return record.get("$$DELETED") === true || record.size === 0;
 }
 
-export function ensureRecord(doc: Y.Doc, id: string): Y.Map<any> {
+function ensureRecord(doc: Y.Doc, id: string): Y.Map<any> {
   return doc.getMap(id);
 }
 
@@ -225,7 +225,7 @@ function findCollectionIndex(array: Y.Array<any>, id: string): number {
   return -1;
 }
 
-export function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
+function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
   const nodes: OrganizeNodeRecord[] = [];
   for (const key of doc.share.keys()) {
     if (!doc.share.has(key)) {
@@ -243,7 +243,7 @@ export function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
   return nodes;
 }
 
-export function organizeNodeMap(nodes: OrganizeNodeRecord[]): Map<string, OrganizeNodeRecord> {
+function organizeNodeMap(nodes: OrganizeNodeRecord[]): Map<string, OrganizeNodeRecord> {
   return new Map(nodes.map(node => [node.id, node] as const));
 }
 
@@ -525,7 +525,7 @@ function ensureFolderParent(
   }
 }
 
-export function ensureNodeIsFolder(nodes: Map<string, OrganizeNodeRecord>, nodeId: string): OrganizeNodeRecord {
+function ensureNodeIsFolder(nodes: Map<string, OrganizeNodeRecord>, nodeId: string): OrganizeNodeRecord {
   const node = nodes.get(nodeId);
   if (!node || node.type !== "folder") {
     throw new Error(`Folder '${nodeId}' was not found.`);
@@ -559,7 +559,7 @@ function isAncestor(
   }
 }
 
-export function nextOrganizeIndex(
+function nextOrganizeIndex(
   nodes: OrganizeNodeRecord[],
   parentId: string | null
 ): string {
@@ -568,6 +568,71 @@ export function nextOrganizeIndex(
     .sort((left, right) => left.index.localeCompare(right.index));
   const last = siblings.at(-1);
   return generateFractionalIndexingKeyBetween(last?.index ?? null, null);
+}
+
+type OrganizeLinkType = "doc" | "tag" | "collection";
+
+type OrganizeLinkResult = {
+  id: string;
+  parentId: string;
+  type: OrganizeLinkType;
+  data: string;
+  index: string;
+  storageDocId: string;
+};
+
+async function loadFoldersDoc(socket: any, workspaceId: string) {
+  const docId = specialWorkspaceDbDocId(workspaceId, "folders");
+  const snapshot = await loadDoc(socket, workspaceId, docId);
+  const doc = new Y.Doc();
+  if (snapshot.missing) {
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+  }
+  return { docId, doc, snapshot };
+}
+
+async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
+  const update = Y.encodeStateAsUpdate(doc);
+  await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
+}
+
+export async function addOrganizeLinkToFolder(
+  socket: any,
+  workspaceId: string,
+  {
+    folderId,
+    type,
+    targetId,
+    index,
+  }: {
+    folderId: string;
+    type: OrganizeLinkType;
+    targetId: string;
+    index?: string;
+  }
+): Promise<OrganizeLinkResult> {
+  const { docId, doc } = await loadFoldersDoc(socket, workspaceId);
+  const nodes = readOrganizeNodes(doc);
+  const nodeMap = organizeNodeMap(nodes);
+  ensureNodeIsFolder(nodeMap, folderId);
+  const linkId = generateId();
+  const nextIndex = index ?? nextOrganizeIndex(nodes, folderId);
+  const record = ensureRecord(doc, linkId);
+  record.set("id", linkId);
+  record.set("type", type);
+  record.set("data", targetId);
+  record.set("parentId", folderId);
+  record.set("index", nextIndex);
+  record.delete("$$DELETED");
+  await saveFoldersDoc(socket, workspaceId, docId, doc);
+  return {
+    id: linkId,
+    parentId: folderId,
+    type,
+    data: targetId,
+    index: nextIndex,
+    storageDocId: docId,
+  };
 }
 
 export function registerOrganizeTools(
@@ -597,21 +662,6 @@ export function registerOrganizeTools(
     const update = Y.encodeStateAsUpdate(doc);
     await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(update).toString("base64"));
   }
-
-  async function loadFoldersDoc(socket: any, workspaceId: string) {
-    const docId = specialWorkspaceDbDocId(workspaceId, "folders");
-    const snapshot = await loadDoc(socket, workspaceId, docId);
-    const doc = new Y.Doc();
-    if (snapshot.missing) {
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-    }
-    return { docId, doc, snapshot };
-  }
-
-async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
-  const update = Y.encodeStateAsUpdate(doc);
-  await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1408,28 +1458,13 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
-      const nodes = readOrganizeNodes(doc);
-      const nodeMap = organizeNodeMap(nodes);
-      ensureNodeIsFolder(nodeMap, folderId);
-      const linkId = generateId();
-      const nextIndex = index ?? nextOrganizeIndex(nodes, folderId);
-      const record = ensureRecord(doc, linkId);
-      record.set("id", linkId);
-      record.set("type", type);
-      record.set("data", targetId);
-      record.set("parentId", folderId);
-      record.set("index", nextIndex);
-      record.delete("$$DELETED");
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
-      return text({
-        id: linkId,
-        parentId: folderId,
+      const link = await addOrganizeLinkToFolder(socket, resolvedWorkspaceId, {
+        folderId,
         type,
-        data: targetId,
-        index: nextIndex,
-        storageDocId: docId,
+        targetId,
+        index,
       });
+      return text(link);
     } finally {
       socket.disconnect();
     }
