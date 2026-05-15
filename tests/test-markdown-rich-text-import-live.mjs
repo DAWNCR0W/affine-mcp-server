@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { parseMarkdownToOperations } from "../dist/markdown/parse.js";
 
 const SERVER_URL = process.env.AFFINE_MCP_HTTP_URL;
 const TOKEN = process.env.AFFINE_MCP_HTTP_TOKEN;
@@ -45,11 +46,31 @@ try {
   console.log(exp.markdown);
   console.log();
 
+  // Parse the exported markdown once and walk every run so we can assert on
+  // the actual delta attributes rather than chasing fragile string patterns.
+  const allDeltas = parseMarkdownToOperations(exp.markdown)
+    .operations
+    .flatMap(op => op.deltas ?? []);
+  const findRun = (text) => allDeltas.find(d => d.insert === text);
+  const findRunContaining = (substr) => allDeltas.find(d => typeof d.insert === "string" && d.insert.includes(substr));
+
   const checks = [
-    ["**Bold text** preserved",          () => assert.ok(exp.markdown.includes("**Bold text**"))],
-    ["~~Strikethrough~~ preserved",       () => assert.ok(exp.markdown.includes("~~Strikethrough~~"))],
-    ["`Inline code` preserved",           () => assert.ok(exp.markdown.includes("`Inline code`"))],
-    ["bold+italic combination preserved", () => assert.ok(/\*{2,3}Bold and [\*_]italic[\*_]\*{2,3}/.test(exp.markdown))],
+    ["bold text run carries bold attribute",          () => assert.ok(findRun("Bold text")?.attributes?.bold)],
+    ["italic text run carries italic attribute",      () => assert.ok(findRun("Italic text")?.attributes?.italic)],
+    ["strikethrough run carries strike attribute",    () => assert.ok(findRun("Strikethrough")?.attributes?.strike)],
+    ["inline code run carries code attribute",        () => assert.ok(findRun("Inline code")?.attributes?.code)],
+    ["bold+italic 'italic' run carries both marks",   () => {
+      const r = findRun("italic");
+      assert.ok(r?.attributes?.bold && r?.attributes?.italic, "expected bold+italic on the 'italic' run");
+    }],
+    ["bold+italic 'Bold and' segment stays bold",     () => {
+      const r = findRunContaining("Bold and");
+      assert.ok(r?.attributes?.bold, "expected 'Bold and' segment to stay bold");
+    }],
+    ["bold+italic 'combined' segment stays bold",     () => {
+      const r = findRunContaining("combined");
+      assert.ok(r?.attributes?.bold, "expected 'combined' segment to stay bold");
+    }],
   ];
 
   for (const [name, fn] of checks) {

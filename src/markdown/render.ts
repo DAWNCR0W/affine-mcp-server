@@ -73,21 +73,88 @@ function renderTable(tableData: string[][], tableCellDeltas?: TextDelta[][][]): 
   ];
 }
 
-export function deltasToMarkdown(deltas: TextDelta[]): string {
-  // Each run is wrapped in its own self-contained markers so that partially
-  // overlapping bold/italic sequences (e.g. bold→bold+italic→italic) always
-  // produce valid, unambiguous markdown. `_` is used for italic and `**` for
-  // bold so the two delimiter characters never collide at run boundaries.
-  let result = "";
+function attrsEqual(a: TextDelta["attributes"], b: TextDelta["attributes"]): boolean {
+  const aA = a ?? {};
+  const bA = b ?? {};
+  return (
+    !!aA.bold === !!bA.bold &&
+    !!aA.italic === !!bA.italic &&
+    !!aA.strike === !!bA.strike &&
+    !!aA.code === !!bA.code &&
+    (aA.link ?? null) === (bA.link ?? null)
+  );
+}
+
+// Coalesce adjacent runs with identical attributes and drop empty inserts.
+// Adjacent same-attribute runs would otherwise produce delimiter doublings
+// (e.g. `**A****B**`), which CommonMark parses as literal asterisks inside
+// the span.  An empty-insert run with marks would emit floating delimiters
+// for nothing — easiest to skip outright.
+function coalesceDeltas(deltas: TextDelta[]): TextDelta[] {
+  const result: TextDelta[] = [];
   for (const d of deltas) {
+    if (d.insert === "") continue;
+    const last = result[result.length - 1];
+    if (last && attrsEqual(last.attributes, d.attributes)) {
+      result[result.length - 1] = { ...last, insert: last.insert + d.insert };
+    } else {
+      result.push(d);
+    }
+  }
+  return result;
+}
+
+// Build a code span with a backtick fence longer than any run of backticks in
+// the content, padding with spaces if the content starts or ends with a
+// backtick (CommonMark strips one leading/trailing space when both are present).
+function emitCodeFence(content: string): string {
+  let max = 0;
+  let cur = 0;
+  for (let i = 0; i < content.length; i += 1) {
+    if (content[i] === "`") {
+      cur += 1;
+      if (cur > max) max = cur;
+    } else {
+      cur = 0;
+    }
+  }
+  const fence = "`".repeat(max + 1);
+  const pad = content.startsWith("`") || content.endsWith("`") ? " " : "";
+  return `${fence}${pad}${content}${pad}${fence}`;
+}
+
+export function deltasToMarkdown(deltas: TextDelta[]): string {
+  // Each run is wrapped in standard CommonMark delimiters: `**bold**`,
+  // `_italic_`, and `***bold+italic***`.  Concatenating per-run keeps boundary
+  // parsing unambiguous — e.g. `**A*****B***_C_` parses as
+  // <strong>A</strong><em><strong>B</strong></em><em>C</em>, which round-trips
+  // back through parseMarkdownToOperations to the original delta structure.
+  // Underscore is used for standalone italic so it never sits next to a `**`
+  // bold delimiter; `***` for bold+italic avoids any `_` inside a `**...**`
+  // span (which CommonMark's intra-word-underscore rule would treat as literal).
+  let result = "";
+  for (const d of coalesceDeltas(deltas)) {
     const attrs = d.attributes ?? {};
     let inner = d.insert;
-    if (attrs.code) { result += `\`${inner}\``; continue; }
-    if (attrs.bold && attrs.italic) { inner = `**_${inner}_**`; }
-    else if (attrs.bold) { inner = `**${inner}**`; }
-    else if (attrs.italic) { inner = `_${inner}_`; }
-    if (attrs.link) { inner = `[${inner.replace(/]/g, "\\]")}](${attrs.link})`; }
-    if (attrs.strike) { inner = `~~${inner}~~`; }
+    if (attrs.code) {
+      inner = emitCodeFence(inner);
+    } else {
+      if (attrs.bold && attrs.italic) inner = `***${inner}***`;
+      else if (attrs.bold) inner = `**${inner}**`;
+      else if (attrs.italic) inner = `_${inner}_`;
+    }
+    if (attrs.link) {
+      const label = inner.replace(/]/g, "\\]");
+      // URLs with whitespace or angle brackets aren't valid in the
+      // non-angle-bracket destination form; switch to <…> and percent-encode
+      // any inner < or > so the destination remains parseable.
+      const needsAngle = /[\s<>]/.test(attrs.link);
+      const href = needsAngle
+        ? `<${attrs.link.replace(/</g, "%3C").replace(/>/g, "%3E")}>`
+        : attrs.link;
+      inner = `[${label}](${href})`;
+    }
+    if (attrs.strike) inner = `~~${inner}~~`;
     result += inner;
   }
   return result;

@@ -11,6 +11,29 @@
  */
 import assert from 'node:assert/strict';
 import { deltasToMarkdown, renderBlocksToMarkdown } from '../dist/markdown/render.js';
+import { parseMarkdownToOperations } from '../dist/markdown/parse.js';
+
+// Normalise a delta to only the truthy attributes so deepEqual comparisons
+// aren't sensitive to {bold: false} vs missing key.
+function normalizeDelta(d) {
+  const attrs = {};
+  if (d.attributes?.bold === true) attrs.bold = true;
+  if (d.attributes?.italic === true) attrs.italic = true;
+  if (d.attributes?.strike === true) attrs.strike = true;
+  if (d.attributes?.code === true) attrs.code = true;
+  if (d.attributes?.link) attrs.link = d.attributes.link;
+  return Object.keys(attrs).length > 0 ? { insert: d.insert, attributes: attrs } : { insert: d.insert };
+}
+
+// Parse the markdown string and return the deltas from the first operation.
+// Empty-insert deltas (which markdown-it emits between adjacent emphasis
+// spans) are dropped — they carry no content and aren't part of the original.
+function parsedDeltas(markdown) {
+  const result = parseMarkdownToOperations(markdown);
+  return (result.operations[0]?.deltas ?? [])
+    .filter(d => d.insert !== '')
+    .map(normalizeDelta);
+}
 
 // ---------------------------------------------------------------------------
 // 1. Bold / italic partial overlap — direction A: bold → bold+italic → italic
@@ -24,15 +47,14 @@ function testBoldThenBoldItalicThenItalic() {
 
   const result = deltasToMarkdown(deltas);
 
-  // Each run is wrapped with self-contained markers; `_` is used for italic so
-  // that `**` (bold) and `_` (italic) delimiters never form ambiguous sequences.
-  assert.equal(result, '**A****_B_**_C_',
-    'bold → bold+italic → italic: self-contained per-run markers expected');
+  // Standard per-run delimiters: **A** + ***B*** + _C_.  The concatenated
+  // `**A*****B***_C_` parses unambiguously through markdown-it.
+  assert.equal(result, '**A*****B***_C_',
+    'bold → bold+italic → italic: standard markdown delimiters expected');
 
-  // Structural checks: bold marker wraps A and B, italic marker wraps B and C.
-  assert.ok(result.includes('**A**'), 'A should be wrapped in bold markers');
-  assert.ok(result.includes('**_B_**'), 'B should be wrapped in bold+italic markers');
-  assert.ok(result.includes('_C_'), 'C should be wrapped in italic markers');
+  // Round-trip: markdown-it must parse back to the original delta structure.
+  assert.deepEqual(parsedDeltas(result), deltas.map(normalizeDelta),
+    'bold → bold+italic → italic: round-trip must preserve mark structure');
 }
 
 // ---------------------------------------------------------------------------
@@ -47,12 +69,14 @@ function testItalicThenBoldItalicThenBold() {
 
   const result = deltasToMarkdown(deltas);
 
-  assert.equal(result, '_A_**_B_****C**',
-    'italic → bold+italic → bold: self-contained per-run markers expected');
+  // Standard per-run delimiters: _A_ + ***B*** + **C**.  The concatenated
+  // `_A_***B*****C**` parses unambiguously through markdown-it.
+  assert.equal(result, '_A_***B*****C**',
+    'italic → bold+italic → bold: standard markdown delimiters expected');
 
-  assert.ok(result.includes('_A_'), 'A should be wrapped in italic markers');
-  assert.ok(result.includes('**_B_**'), 'B should be wrapped in bold+italic markers');
-  assert.ok(result.includes('**C**'), 'C should be wrapped in bold markers');
+  // Round-trip: markdown-it must parse back to the original delta structure.
+  assert.deepEqual(parsedDeltas(result), deltas.map(normalizeDelta),
+    'italic → bold+italic → bold: round-trip must preserve mark structure');
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +161,7 @@ function testCode() {
 // ---------------------------------------------------------------------------
 function testLinkBold() {
   const result = deltasToMarkdown([{ insert: 'text', attributes: { bold: true, link: 'https://example.com' } }]);
-  // bold wraps inner first, then link wraps the whole thing
+  // bold wraps the run text first, then link wraps the bold span.
   assert.equal(result, '[**text**](https://example.com)', 'bold+link should produce [**text**](url)');
 }
 
@@ -216,6 +240,110 @@ function testTableFallbackWithoutDeltas() {
 }
 
 // ---------------------------------------------------------------------------
+// 11. Corner cases — empty inputs, escape edges, mark combinations
+// ---------------------------------------------------------------------------
+function testEmptyDeltas() {
+  assert.equal(deltasToMarkdown([]), '', 'empty deltas array should produce empty markdown');
+}
+
+function testEmptyInsertSkipped() {
+  // An empty-insert run with marks would emit floating delimiters; it should
+  // be dropped, and surrounding runs coalesce naturally.
+  const deltas = [
+    { insert: 'A', attributes: { bold: true } },
+    { insert: '', attributes: { bold: true, italic: true } },
+    { insert: 'B', attributes: { italic: true } },
+  ];
+  const result = deltasToMarkdown(deltas);
+  assert.equal(result, '**A**_B_', 'empty insert should be skipped');
+  assert.deepEqual(parsedDeltas(result), [
+    { insert: 'A', attributes: { bold: true } },
+    { insert: 'B', attributes: { italic: true } },
+  ], 'empty-insert skip should round-trip cleanly');
+}
+
+function testAdjacentSameAttribute() {
+  // Adjacent runs sharing attributes coalesce so the output doesn't have
+  // back-to-back delimiter pairs that CommonMark would parse as literal.
+  const deltas = [
+    { insert: 'A', attributes: { bold: true } },
+    { insert: 'B', attributes: { bold: true } },
+  ];
+  assert.equal(deltasToMarkdown(deltas), '**AB**',
+    'adjacent same-attribute runs should coalesce');
+}
+
+function testUrlWithWhitespace() {
+  const result = deltasToMarkdown([{ insert: 'click', attributes: { link: 'https://example.com/with space' } }]);
+  assert.equal(result, '[click](<https://example.com/with space>)',
+    'URLs with whitespace should use angle-bracket form');
+}
+
+function testUrlWithAngles() {
+  const result = deltasToMarkdown([{ insert: 'click', attributes: { link: 'https://example.com/<x>' } }]);
+  assert.equal(result, '[click](<https://example.com/%3Cx%3E>)',
+    'URLs with < or > should use angle-bracket form with inner brackets percent-encoded');
+}
+
+function testLinkLabelWithBracket() {
+  const result = deltasToMarkdown([{ insert: 'foo]bar', attributes: { link: 'https://example.com' } }]);
+  assert.equal(result, '[foo\\]bar](https://example.com)',
+    'closing brackets in link label should be backslash-escaped');
+}
+
+function testNewlinePreserved() {
+  assert.equal(deltasToMarkdown([{ insert: 'foo\nbar' }]), 'foo\nbar',
+    'newlines inside insert should pass through');
+}
+
+function testCodeWithBacktick() {
+  // Content with a single backtick needs a double-backtick fence.
+  assert.equal(deltasToMarkdown([{ insert: 'a`b', attributes: { code: true } }]), '``a`b``',
+    'code containing a backtick should use a longer fence');
+}
+
+function testCodeLeadingBacktick() {
+  // Content starting/ending with backtick needs a space pad so the fence is
+  // distinguishable from the content (CommonMark strips one space if both ends have one).
+  assert.equal(deltasToMarkdown([{ insert: '`x', attributes: { code: true } }]), '`` `x ``',
+    'code starting with backtick should be space-padded inside fence');
+}
+
+function testStrikeCode() {
+  assert.equal(deltasToMarkdown([{ insert: 'x', attributes: { code: true, strike: true } }]), '~~`x`~~',
+    'strike should wrap a code span when both are set');
+}
+
+function testLinkCode() {
+  assert.equal(deltasToMarkdown([{ insert: 'x', attributes: { code: true, link: 'https://example.com' } }]),
+    '[`x`](https://example.com)',
+    'link should wrap a code span when both are set');
+}
+
+function testBoldWithLinkMid() {
+  // Round-trip a bold span containing a link mid-stream — the per-run
+  // **A**[**B**](url)**C** layout must survive parsing back into the same shape.
+  const deltas = [
+    { insert: 'A', attributes: { bold: true } },
+    { insert: 'B', attributes: { bold: true, link: 'https://example.com' } },
+    { insert: 'C', attributes: { bold: true } },
+  ];
+  const result = deltasToMarkdown(deltas);
+  assert.equal(result, '**A**[**B**](https://example.com)**C**',
+    'bold span with link mid-run should emit cleanly');
+  assert.deepEqual(parsedDeltas(result), deltas.map(normalizeDelta),
+    'bold + link + bold should round-trip preserving each run');
+}
+
+function testAllMarksCombined() {
+  // Order of wrapping: emphasis innermost, then link, then strike outermost.
+  assert.equal(
+    deltasToMarkdown([{ insert: 'x', attributes: { bold: true, italic: true, strike: true, link: 'https://example.com' } }]),
+    '~~[***x***](https://example.com)~~',
+    'all marks: strike wraps link wraps bold+italic');
+}
+
+// ---------------------------------------------------------------------------
 // Run all tests
 // ---------------------------------------------------------------------------
 const tests = [
@@ -229,6 +357,19 @@ const tests = [
   ['code takes priority over bold/italic', testCodeDropsOtherMarks],
   ['paragraph block with deltas via renderBlocksToMarkdown', testParagraphBlockWithDeltas],
   ['table without tableCellDeltas uses plain tableData fallback', testTableFallbackWithoutDeltas],
+  ['empty deltas array', testEmptyDeltas],
+  ['empty insert is skipped', testEmptyInsertSkipped],
+  ['adjacent same-attribute runs coalesce', testAdjacentSameAttribute],
+  ['URL with whitespace uses angle-bracket form', testUrlWithWhitespace],
+  ['URL with angle brackets percent-encoded inside <…>', testUrlWithAngles],
+  ['closing bracket in link label is escaped', testLinkLabelWithBracket],
+  ['newline inside insert is preserved', testNewlinePreserved],
+  ['code containing a backtick uses a longer fence', testCodeWithBacktick],
+  ['code starting with backtick is space-padded', testCodeLeadingBacktick],
+  ['strike + code combine', testStrikeCode],
+  ['link + code combine', testLinkCode],
+  ['bold span with link mid-run round-trips', testBoldWithLinkMid],
+  ['all marks combined (strike+link+bold+italic)', testAllMarksCombined],
 ];
 
 let passed = 0;
