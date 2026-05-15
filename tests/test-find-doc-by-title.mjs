@@ -109,6 +109,13 @@ async function main() {
     expectEqual(r1.matches[0].id, created1.docId, "single match id");
     expectEqual(r1.matches[0].title, singleTitle, "single match title");
     expectEqual(r1.caseInsensitive, false, "default caseInsensitive=false");
+    expectEqual(r1.query, singleTitle, "response echoes query");
+    expectTruthy(
+      typeof r1.workspaceDocCount === "number" && r1.workspaceDocCount >= 1,
+      "workspaceDocCount is a positive number",
+    );
+    expectTruthy(r1.matches[0].createdAt, "match object has createdAt");
+    expectTruthy(r1.matches[0].updatedAt, "match object has updatedAt");
     console.log("✓ single exact match");
 
     // Scenario 2: multiple exact matches

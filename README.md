@@ -38,7 +38,7 @@ Highlights:
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
 - Supports token, cookie, and email/password authentication
-- Exposes 84 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Exposes 85 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage
 
@@ -48,7 +48,7 @@ Scope boundaries:
 - Browser-local workspaces stored only in local storage are not available through AFFiNE server APIs
 - AFFiNE Cloud requires API-token-based access for MCP usage; programmatic email/password sign-in is blocked by Cloudflare
 
-> New in v2.0.0: Added native edgeless canvas tools and shipped a slimmer 84-tool public surface with least-privilege profiles for read-only, core, and authoring deployments.
+> New in v2.0.0: Added native edgeless canvas tools and shipped a slimmer public surface with least-privilege profiles for read-only, core, and authoring deployments.
 
 ## Choose Your Path
 | Goal | Start here |

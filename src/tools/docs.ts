@@ -4079,11 +4079,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           truncated = true;
           break;
         }
+        // A doc that has never been edited after creation has no
+        // `updatedDate` in workspace meta — fall back to `createDate` so
+        // `updatedAt` is always populated, consistent with `search_docs`.
+        const updatedTimestamp = page.updatedDate ?? page.createDate;
         matches.push({
           id: page.id,
           title: pageTitle,
           createdAt: page.createDate ? new Date(page.createDate).toISOString() : null,
-          updatedAt: page.updatedDate ? new Date(page.updatedDate).toISOString() : null,
+          updatedAt: updatedTimestamp ? new Date(updatedTimestamp).toISOString() : null,
         });
       }
 
