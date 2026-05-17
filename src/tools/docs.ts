@@ -780,6 +780,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     block.set("sys:id", blockId);
     block.set("sys:flavour", flavour);
     block.set("sys:version", blockVersion(flavour));
+    block.set("prop:mcp-authored", "1");
   }
 
   function findBlockIdByFlavour(blocks: Y.Map<any>, flavour: string): string | null {
@@ -4026,6 +4027,113 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     searchDocsHandler as any
+  );
+
+  // search_content: full-text content search backed by the Manticore Search indexer.
+  // Requires AFFINE_INDEXER_ENABLED=true on the AFFiNE server (see infra/affine/docker-compose.indexer.yml).
+  // Returns matching docs (searchDocs) or individual matching blocks (search) with highlighted snippets.
+  const searchContentHandler = async (parsed: {
+    workspaceId?: string;
+    keyword: string;
+    mode?: "docs" | "blocks";
+    limit?: number;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const keyword = (parsed.keyword ?? "").trim();
+    if (!keyword) throw new Error("keyword is required.");
+    const mode = parsed.mode ?? "docs";
+    const limit = parsed.limit ?? 20;
+
+    if (mode === "docs") {
+      // searchDocs: returns matching docs ranked by relevance. Fast, doc-level.
+      const query = `query SearchDocs($workspaceId: String!, $keyword: String!) {
+        workspace(id: $workspaceId) {
+          searchDocs(input: { keyword: $keyword }) {
+            docId
+            title
+          }
+        }
+      }`;
+      const data = await gql.request<{ workspace: { searchDocs: { docId: string; title: string }[] } }>(
+        query,
+        { workspaceId, keyword }
+      );
+      const results = (data.workspace.searchDocs ?? []).slice(0, limit);
+      const baseUrl = (process.env.AFFINE_BASE_URL ?? "").replace(/\/$/, "");
+      return text({
+        keyword,
+        mode,
+        totalCount: results.length,
+        results: results.map((d) => ({
+          docId: d.docId,
+          title: d.title,
+          url: baseUrl ? `${baseUrl}/workspace/${workspaceId}/${d.docId}` : undefined,
+        })),
+      });
+    } else {
+      // blocks mode: returns individual matching paragraphs with highlighted snippets.
+      // Uses the richer `search` endpoint backed by Manticore full-text index.
+      const query = `query SearchBlocks($workspaceId: String!, $keyword: String!, $limit: Int!) {
+        workspace(id: $workspaceId) {
+          search(input: {
+            table: block,
+            query: { type: match, field: "content", match: $keyword },
+            options: {
+              fields: ["docId", "blockId", "content"],
+              highlights: [{ field: "content", before: ">>>", end: "<<<" }],
+              pagination: { limit: $limit }
+            }
+          }) {
+            nodes { fields highlights }
+            pagination { count }
+          }
+        }
+      }`;
+      const data = await gql.request<{ workspace: { search: { nodes: { fields: Record<string, unknown>; highlights: Record<string, string> | null }[]; pagination: { count: number } } } }>(
+        query,
+        { workspaceId, keyword, limit }
+      );
+      const { nodes, pagination } = data.workspace.search;
+      const baseUrl = (process.env.AFFINE_BASE_URL ?? "").replace(/\/$/, "");
+      return text({
+        keyword,
+        mode,
+        totalCount: pagination.count,
+        results: nodes.map((n) => {
+          const docId = String(Array.isArray(n.fields.docId) ? n.fields.docId[0] : (n.fields.docId ?? ""));
+          const blockId = String(Array.isArray(n.fields.blockId) ? n.fields.blockId[0] : (n.fields.blockId ?? ""));
+          const content = String(Array.isArray(n.fields.content) ? n.fields.content[0] : (n.fields.content ?? ""));
+          const highlight = n.highlights ? Object.values(n.highlights)[0] : null;
+          return {
+            docId,
+            blockId,
+            snippet: highlight ?? content.slice(0, 200),
+            url: baseUrl ? `${baseUrl}/workspace/${workspaceId}/${docId}` : undefined,
+          };
+        }),
+      });
+    }
+  };
+
+  server.registerTool(
+    "search_content",
+    {
+      title: "Full-Text Content Search",
+      description:
+        "Search document *content* (not just titles) using the AFFiNE Manticore Search indexer. " +
+        "Requires the indexer to be enabled on the server (AFFINE_INDEXER_ENABLED=true). " +
+        "Two modes: 'docs' returns matching documents ranked by relevance (fast); " +
+        "'blocks' returns individual matching paragraphs with highlighted snippets showing exactly where the keyword appears (more precise). " +
+        "Use this instead of search_docs when you need to find content inside documents.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
+        keyword: z.string().describe("Search keyword or phrase to find in document content."),
+        mode: z.enum(["docs", "blocks"]).optional().describe("'docs' returns matching documents (default). 'blocks' returns individual matching paragraphs with highlights."),
+        limit: z.number().optional().describe("Max results to return (default: 20)."),
+      },
+    },
+    searchContentHandler as any
   );
 
   server.registerTool(
