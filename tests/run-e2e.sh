@@ -329,6 +329,11 @@ echo ""
 echo "=== Running MCP doc discovery regression test ==="
 node "$SCRIPT_DIR/test-doc-discovery.mjs"
 
+# --- Step 12b: Run MCP find_doc_by_title regression test ---
+echo ""
+echo "=== Running MCP find_doc_by_title regression test ==="
+node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
+
 # --- Step 13: Run MCP surface-element CRUD + edgeless canvas test ---
 echo ""
 echo "=== Running MCP surface-element CRUD + edgeless canvas test ==="

@@ -35,6 +35,7 @@
     "delete_workspace",
     "export_doc_markdown",
     "export_with_fidelity_report",
+    "find_doc_by_title",
     "generate_access_token",
     "get_capabilities",
     "get_collection",
