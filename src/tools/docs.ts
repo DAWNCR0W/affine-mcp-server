@@ -8,6 +8,7 @@ import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
+import { addOrganizeLinkToFolder } from "./organize.js";
 import {
   type Bound,
   DEFAULT_NOTE_XYWH,
@@ -4028,6 +4029,102 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     searchDocsHandler as any
   );
 
+  const findDocByTitleHandler = async (parsed: {
+    workspaceId?: string;
+    title: string;
+    caseInsensitive?: boolean;
+    limit?: number;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const title = parsed.title;
+    if (!title || title.length === 0) {
+      throw new Error("title is required and must be non-empty.");
+    }
+    const limit = parsed.limit ?? 50;
+    const caseInsensitive = parsed.caseInsensitive ?? false;
+    const target = caseInsensitive ? title.toLocaleLowerCase() : title;
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!snapshot.missing) {
+        return text({
+          query: title,
+          caseInsensitive,
+          matches: [],
+          workspaceDocCount: 0,
+          truncated: false,
+        });
+      }
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const meta = wsDoc.getMap("meta");
+      const pages = getWorkspacePageEntries(meta);
+
+      type Match = { id: string; title: string; createdAt: string | null; updatedAt: string | null };
+      const matches: Match[] = [];
+      let truncated = false;
+      for (const page of pages) {
+        const pageTitle = page.title ?? "";
+        const candidate = caseInsensitive ? pageTitle.toLocaleLowerCase() : pageTitle;
+        if (candidate !== target) continue;
+        if (matches.length >= limit) {
+          // We hit `limit` on a previous iteration and now found another match —
+          // there are genuinely more matches than the cap.
+          truncated = true;
+          break;
+        }
+        // A doc that has never been edited after creation has no
+        // `updatedDate` in workspace meta — fall back to `createDate` so
+        // `updatedAt` is always populated, consistent with `search_docs`.
+        const updatedTimestamp = page.updatedDate ?? page.createDate;
+        matches.push({
+          id: page.id,
+          title: pageTitle,
+          createdAt: page.createDate ? new Date(page.createDate).toISOString() : null,
+          updatedAt: updatedTimestamp ? new Date(updatedTimestamp).toISOString() : null,
+        });
+      }
+
+      return text({
+        query: title,
+        caseInsensitive,
+        matches,
+        workspaceDocCount: pages.length,
+        truncated,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "find_doc_by_title",
+    {
+      title: "Find Doc by Title",
+      description:
+        "Resolve docs by exact title. Returns ALL matches up to `limit` (callers handle ambiguity). " +
+        "Case-sensitive by default; pass `caseInsensitive: true` to fold case. " +
+        "Reads workspace metadata — fast, no per-doc fetch. " +
+        "Unlike `search_docs` (which is always case-insensitive and capped at limit 20), this tool defaults to case-sensitive matching and returns up to `limit` matches (default 50, max 200). " +
+        "Prefer this over `search_docs` when you know the exact title and want every match. " +
+        "Returns: { query, caseInsensitive, matches: [{ id, title, createdAt, updatedAt }], workspaceDocCount, truncated }.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if AFFINE_WORKSPACE_ID is set)."),
+        title: z.string().min(1).describe("The exact title to match."),
+        caseInsensitive: z.boolean().optional().describe("If true, fold case for comparison (default: false)."),
+        limit: z.number().int().positive().max(200).optional().describe("Max matches to return (default: 50)."),
+      },
+    },
+    findDocByTitleHandler as any
+  );
+
   server.registerTool(
     "list_tags",
     {
@@ -4769,7 +4866,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // CREATE DOC (high-level)
-  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string }) => {
+  const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
     const created = await createDocInternal(parsed);
     const placement = await finalizeDocPlacement({
       workspaceId: created.workspaceId,
@@ -4777,25 +4874,51 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: parsed.parentDocId,
       context: "create_doc",
     });
+    const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
+    let linkedFolderId: string | null = null;
+    let folderNodeId: string | null = null;
+    if (parsed.folderId) {
+      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+      const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+      const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+      try {
+        await joinWorkspace(socket, created.workspaceId);
+        const link = await addOrganizeLinkToFolder(socket, created.workspaceId, {
+          folderId: parsed.folderId,
+          type: "doc",
+          targetId: created.docId,
+        });
+        linkedFolderId = link.parentId;
+        folderNodeId = link.id;
+      } catch (err: any) {
+        warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
+      } finally {
+        socket.disconnect();
+      }
+    }
     return receipt("doc.create", {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
-      warnings: mergeWarnings(created.warnings ?? [], placement.warnings),
+      folderId: linkedFolderId,
+      folderLinked: folderNodeId !== null,
+      folderNodeId,
+      warnings,
     });
   };
   server.registerTool(
     'create_doc',
     {
       title: 'Create Document',
-      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately.',
+      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately. If folderId is provided, the doc is placed inside that folder in the sidebar.',
       inputSchema: {
         workspaceId: z.string().optional(),
         title: z.string().optional(),
         content: z.string().optional(),
         parentDocId: z.string().optional().describe("Optional parent doc to link the new doc under in the sidebar."),
+        folderId: z.string().optional().describe("Optional folder ID to place the doc in. Use list_organize_nodes to find folder IDs."),
       },
     },
     createDocHandler as any

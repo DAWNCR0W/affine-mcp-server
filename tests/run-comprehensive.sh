@@ -187,6 +187,10 @@ echo "=== Running document discovery regression ==="
 node "$SCRIPT_DIR/test-doc-discovery.mjs"
 
 echo ""
+echo "=== Running find_doc_by_title regression ==="
+node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
+
+echo ""
 echo "=== Running semantic page composer regression ==="
 node "$SCRIPT_DIR/test-semantic-page-composer.mjs"
 

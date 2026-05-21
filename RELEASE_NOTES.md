@@ -1,5 +1,40 @@
 # Release Notes
 
+## Version 2.1.0 (2026-05-21)
+
+### Highlights
+- Added `find_doc_by_title` for fast exact-title lookup from AFFiNE workspace metadata, including duplicate-title results, timestamps, result limits, optional case-insensitive matching, and truncation reporting.
+- Added `folderId` support to `create_doc` so new documents can be placed directly inside AFFiNE organize folders.
+- Migrated npm publishing to GitHub Actions trusted publishing with OIDC on Node.js 24.
+- Cleared npm audit findings by refreshing locked transitive dependencies.
+
+### What Changed
+- `src/tools/docs.ts`, `src/tools/organize.ts`, `tool-manifest.json`
+  - Added the `find_doc_by_title` MCP tool and included it in the canonical 85-tool manifest.
+  - Added folder placement support to `create_doc` through organize-tree links.
+  - Added folder placement receipt fields: `folderId`, `folderLinked`, and `folderNodeId`.
+  - Preserved warnings when document creation succeeds but folder placement fails.
+- `.github/workflows/npm-publish.yml`
+  - Switched release publishing from `NPM_TOKEN` to trusted publishing with `id-token: write`.
+  - Updated the publish runner to Node.js 24 and disabled package-manager cache for the release job.
+- `.github/workflows/docker.yml`, `.coderabbit.yaml`
+  - Limited Docker image publication to release tags and manual dispatch.
+  - Enabled CodeRabbit auto-review coverage for `develop` and `release/*`.
+- `package-lock.json`
+  - Refreshed vulnerable transitive dependencies including `hono`, `@hono/node-server`, `express-rate-limit`, `path-to-regexp`, `socket.io-parser`, `ws`, `ajv`, `fast-uri`, and `ip-address`.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `2.1.0`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Security audit passed:
+  - `npm audit --audit-level=high`
+- Package dry-run passed:
+  - `npm publish --dry-run --access public`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+
 ## Version 2.0.0 (2026-05-07)
 
 ### Highlights

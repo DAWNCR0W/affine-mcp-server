@@ -570,6 +570,71 @@ function nextOrganizeIndex(
   return generateFractionalIndexingKeyBetween(last?.index ?? null, null);
 }
 
+type OrganizeLinkType = "doc" | "tag" | "collection";
+
+type OrganizeLinkResult = {
+  id: string;
+  parentId: string;
+  type: OrganizeLinkType;
+  data: string;
+  index: string;
+  storageDocId: string;
+};
+
+async function loadFoldersDoc(socket: any, workspaceId: string) {
+  const docId = specialWorkspaceDbDocId(workspaceId, "folders");
+  const snapshot = await loadDoc(socket, workspaceId, docId);
+  const doc = new Y.Doc();
+  if (snapshot.missing) {
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+  }
+  return { docId, doc, snapshot };
+}
+
+async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
+  const update = Y.encodeStateAsUpdate(doc);
+  await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
+}
+
+export async function addOrganizeLinkToFolder(
+  socket: any,
+  workspaceId: string,
+  {
+    folderId,
+    type,
+    targetId,
+    index,
+  }: {
+    folderId: string;
+    type: OrganizeLinkType;
+    targetId: string;
+    index?: string;
+  }
+): Promise<OrganizeLinkResult> {
+  const { docId, doc } = await loadFoldersDoc(socket, workspaceId);
+  const nodes = readOrganizeNodes(doc);
+  const nodeMap = organizeNodeMap(nodes);
+  ensureNodeIsFolder(nodeMap, folderId);
+  const linkId = generateId();
+  const nextIndex = index ?? nextOrganizeIndex(nodes, folderId);
+  const record = ensureRecord(doc, linkId);
+  record.set("id", linkId);
+  record.set("type", type);
+  record.set("data", targetId);
+  record.set("parentId", folderId);
+  record.set("index", nextIndex);
+  record.delete("$$DELETED");
+  await saveFoldersDoc(socket, workspaceId, docId, doc);
+  return {
+    id: linkId,
+    parentId: folderId,
+    type,
+    data: targetId,
+    index: nextIndex,
+    storageDocId: docId,
+  };
+}
+
 export function registerOrganizeTools(
   server: McpServer,
   gql: GraphQLClient,
@@ -597,21 +662,6 @@ export function registerOrganizeTools(
     const update = Y.encodeStateAsUpdate(doc);
     await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(update).toString("base64"));
   }
-
-  async function loadFoldersDoc(socket: any, workspaceId: string) {
-    const docId = specialWorkspaceDbDocId(workspaceId, "folders");
-    const snapshot = await loadDoc(socket, workspaceId, docId);
-    const doc = new Y.Doc();
-    if (snapshot.missing) {
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-    }
-    return { docId, doc, snapshot };
-  }
-
-async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
-  const update = Y.encodeStateAsUpdate(doc);
-  await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1408,28 +1458,13 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
-      const nodes = readOrganizeNodes(doc);
-      const nodeMap = organizeNodeMap(nodes);
-      ensureNodeIsFolder(nodeMap, folderId);
-      const linkId = generateId();
-      const nextIndex = index ?? nextOrganizeIndex(nodes, folderId);
-      const record = ensureRecord(doc, linkId);
-      record.set("id", linkId);
-      record.set("type", type);
-      record.set("data", targetId);
-      record.set("parentId", folderId);
-      record.set("index", nextIndex);
-      record.delete("$$DELETED");
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
-      return text({
-        id: linkId,
-        parentId: folderId,
+      const link = await addOrganizeLinkToFolder(socket, resolvedWorkspaceId, {
+        folderId,
         type,
-        data: targetId,
-        index: nextIndex,
-        storageDocId: docId,
+        targetId,
+        index,
       });
+      return text(link);
     } finally {
       socket.disconnect();
     }
