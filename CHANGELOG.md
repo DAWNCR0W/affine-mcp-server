@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-05-21
+
+### Added
+- `find_doc_by_title` resolves exact document-title matches from workspace metadata, supports optional case-insensitive matching, returns every match up to a configurable limit, and reports whether results were truncated.
+- `create_doc` now accepts `folderId` so newly created docs can be placed directly inside an existing AFFiNE sidebar folder.
+- CodeRabbit auto-review configuration now covers `develop` and `release/*` branches.
+
+### Changed
+- npm publishing now uses GitHub Actions trusted publishing with OIDC on Node.js 24 instead of an `NPM_TOKEN` secret.
+- Docker image publishing now runs on release tags or manual dispatch only, keeping develop PR checks focused on code validation.
+
+### Fixed
+- `create_doc` now links folder placement through the organize tree and returns explicit folder placement receipt fields, with warnings when folder placement fails after document creation.
+- `find_doc_by_title` now only marks responses as truncated when matches exceed the requested limit and falls back to creation time when workspace metadata has no updated time.
+
+### Security
+- Refreshed locked transitive dependencies to clear npm audit findings, including `hono`, `@hono/node-server`, `express-rate-limit`, `path-to-regexp`, `socket.io-parser`, `ws`, `ajv`, `fast-uri`, and `ip-address`.
+
+### Tests
+- Added coverage for `find_doc_by_title` and `create_doc` folder placement, and wired both flows into comprehensive and E2E validation.
+
 ## [2.0.0] - 2026-05-07
 
 ### Added
@@ -437,6 +458,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[2.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.1.0
 [2.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.0.0
 [1.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.13.0
 [1.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.12.0
@@ -459,4 +481,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.1.0...HEAD
