@@ -4499,6 +4499,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         checked: boolean | null;
         language: string | null;
         childIds: string[];
+        sourceId?: string;
+        blobUri?: string;
+        caption?: string | null;
+        name?: string;
+        mimeType?: string;
+        size?: number;
+        width?: number;
+        height?: number;
+        embed?: boolean;
       }> = [];
       const plainTextLines: string[] = [];
       let title = "";
@@ -4517,6 +4526,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const language = raw.get("prop:language");
         const checked = raw.get("prop:checked");
         const childIds = childIdsFrom(raw.get("sys:children"));
+        const sourceId = asStringOrNull(raw.get("prop:sourceId")) ?? undefined;
+        const caption = asStringOrNull(raw.get("prop:caption"));
+        const blobUri = sourceId ? `affine://blob/${sourceId}` : undefined;
+        const name = flavour === "affine:attachment" ? (asStringOrNull(raw.get("prop:name")) ?? undefined) : undefined;
+        const mimeType = flavour === "affine:attachment" ? (asStringOrNull(raw.get("prop:type")) ?? undefined) : undefined;
+        const size =
+          flavour === "affine:image" || flavour === "affine:attachment"
+            ? (asNumberOrNull(raw.get("prop:size")) ?? undefined)
+            : undefined;
+        const width = flavour === "affine:image" ? (asNumberOrNull(raw.get("prop:width")) ?? undefined) : undefined;
+        const height = flavour === "affine:image" ? (asNumberOrNull(raw.get("prop:height")) ?? undefined) : undefined;
+        const embed =
+          flavour === "affine:attachment" && typeof raw.get("prop:embed") === "boolean"
+            ? Boolean(raw.get("prop:embed"))
+            : undefined;
 
         if (flavour === "affine:page") {
           title = asText(raw.get("prop:title")) || title;
@@ -4534,6 +4558,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           checked: typeof checked === "boolean" ? checked : null,
           language: typeof language === "string" ? language : null,
           childIds,
+          ...(sourceId !== undefined ? { sourceId, blobUri } : {}),
+          ...(caption !== null ? { caption } : {}),
+          ...(name !== undefined ? { name } : {}),
+          ...(mimeType !== undefined ? { mimeType } : {}),
+          ...(size !== undefined ? { size } : {}),
+          ...(width !== undefined ? { width } : {}),
+          ...(height !== undefined ? { height } : {}),
+          ...(embed !== undefined ? { embed } : {}),
         });
 
         for (const childId of childIds) {
@@ -4582,7 +4614,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "read_doc",
     {
       title: "Read Document Content",
-      description: "Read document block content via WebSocket snapshot (blocks + plain text). Set includeMarkdown: true to also get the rendered markdown — useful when you need to read content without a separate export_doc_markdown call.",
+      description: "Read document block content via WebSocket snapshot (blocks + plain text). Blob-backed image and attachment blocks include `sourceId` plus canonical `affine://blob/<id>` URIs for follow-up `get_blob` calls. Set includeMarkdown: true to also get the rendered markdown — useful when you need to read content without a separate export_doc_markdown call.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,

@@ -55,7 +55,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; blob-backed image/attachment rows include `sourceId` and canonical `blobUri` handles |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
