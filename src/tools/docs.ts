@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { generateKeyBetween } from "fractional-indexing";
+import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
@@ -1682,16 +1682,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const columnIds: string[] = [];
         const tableData = normalized.tableData ?? [];
 
+        // Row/column `order` must be valid fractional-indexing keys. AFFiNE's
+        // editor computes the next order with generateKeyBetween(prevOrder, ...)
+        // when inserting a row/column; plain strings like "r0000" render but make
+        // that call throw "invalid order key", so rows/columns cannot be added in
+        // the UI. Use real keys (a0, a1, ...) so insertion works.
+        const rowOrders = generateNKeysBetween(null, null, normalized.rows);
+        const columnOrders = generateNKeysBetween(null, null, normalized.columns);
+
         for (let i = 0; i < normalized.rows; i++) {
           const rowId = generateId();
           block.set(`prop:rows.${rowId}.rowId`, rowId);
-          block.set(`prop:rows.${rowId}.order`, `r${String(i).padStart(4, "0")}`);
+          block.set(`prop:rows.${rowId}.order`, rowOrders[i]);
           rowIds.push(rowId);
         }
         for (let i = 0; i < normalized.columns; i++) {
           const columnId = generateId();
           block.set(`prop:columns.${columnId}.columnId`, columnId);
-          block.set(`prop:columns.${columnId}.order`, `c${String(i).padStart(4, "0")}`);
+          block.set(`prop:columns.${columnId}.order`, columnOrders[i]);
           columnIds.push(columnId);
         }
         for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex += 1) {
