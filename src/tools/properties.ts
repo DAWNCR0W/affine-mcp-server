@@ -53,6 +53,7 @@ const DocId = z.string().min(1, "docId required");
 const NANOID_ALPHABET =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
 
+/** Generate a 21-char nanoid-style id, matching AFFiNE's property id format. */
 function generatePropertyId(): string {
   let id = "";
   for (let i = 0; i < 21; i++) {
@@ -70,6 +71,10 @@ type PropertyDefinition = {
   show: string | null;
 };
 
+/**
+ * Read all live custom-property definitions from the `db$docCustomPropertyInfo`
+ * sub-doc, skipping soft-deleted and empty records.
+ */
 function readPropertyDefinitions(doc: Y.Doc): PropertyDefinition[] {
   const defs: PropertyDefinition[] = [];
   // Records are top-level (root) Yjs types keyed by id. After applyUpdate, root
@@ -94,6 +99,10 @@ function readPropertyDefinitions(doc: Y.Doc): PropertyDefinition[] {
   return defs;
 }
 
+/**
+ * Resolve a definition by exact id, then by unique case-insensitive name.
+ * Throws if a name matches more than one definition.
+ */
 function resolveDefinition(
   defs: PropertyDefinition[],
   property: string
@@ -111,6 +120,7 @@ function resolveDefinition(
   return null;
 }
 
+/** Compute the next fractional index, appending after the current last definition. */
 function nextIndex(defs: PropertyDefinition[]): string {
   const indexes = defs
     .map((d) => d.index)
@@ -120,6 +130,7 @@ function nextIndex(defs: PropertyDefinition[]): string {
   return generateKeyBetween(last, null);
 }
 
+/** Encode a JS value into AFFiNE's per-type string representation; throws on invalid input. */
 function encodeValue(type: SupportedType, value: unknown): string {
   switch (type) {
     case "checkbox": {
@@ -149,6 +160,7 @@ function encodeValue(type: SupportedType, value: unknown): string {
   }
 }
 
+/** Decode a stored string back into a typed JS value for output. */
 function decodeValue(type: string, raw: unknown): unknown {
   if (raw === undefined || raw === null) return null;
   switch (type) {
@@ -163,15 +175,18 @@ function decodeValue(type: string, raw: unknown): unknown {
   }
 }
 
+/** Register the five document custom-property tools on the MCP server. */
 export function registerPropertyTools(
   server: McpServer,
   gql: GraphQLClient,
   defaults: { workspaceId?: string }
 ) {
+  /** Snapshot the current GraphQL endpoint and auth material for WebSocket use. */
   function getCookieAndEndpoint() {
     return { endpoint: gql.endpoint, cookie: gql.cookie, bearer: gql.bearer };
   }
 
+  /** Resolve the workspace id from the argument or the configured default; throws if absent. */
   function requireWorkspaceId(workspaceId?: string): string {
     const id = workspaceId || defaults.workspaceId;
     if (!id) {
@@ -182,6 +197,7 @@ export function registerPropertyTools(
     return id;
   }
 
+  /** Load a WorkspaceDB sub-doc by guid and return it with its pre-mutation state vector. */
   async function loadSubdoc(
     socket: any,
     workspaceId: string,
@@ -197,6 +213,7 @@ export function registerPropertyTools(
     return { doc, prevSV: Y.encodeStateVector(doc), existed };
   }
 
+  /** Push only the delta accumulated since `prevSV` back to the sync gateway. */
   async function pushSubdoc(
     socket: any,
     workspaceId: string,
@@ -228,6 +245,7 @@ export function registerPropertyTools(
   // ---------------------------------------------------------------------------
   // list_doc_properties
   // ---------------------------------------------------------------------------
+  /** Handle `list_doc_properties`: definitions, decoded per-doc values, and orphan values. */
   const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
     const { endpoint, cookie, bearer } = getCookieAndEndpoint();
@@ -290,6 +308,7 @@ export function registerPropertyTools(
   // ---------------------------------------------------------------------------
   // create_custom_property
   // ---------------------------------------------------------------------------
+  /** Handle `create_custom_property`: append a new workspace-wide definition. */
   const createCustomPropertyHandler = async (parsed: {
     workspaceId?: string;
     name: string;
@@ -350,6 +369,7 @@ export function registerPropertyTools(
   // ---------------------------------------------------------------------------
   // delete_custom_property
   // ---------------------------------------------------------------------------
+  /** Handle `delete_custom_property`: soft-delete a definition by id or name. */
   const deleteCustomPropertyHandler = async (parsed: {
     workspaceId?: string;
     property: string;
@@ -393,6 +413,7 @@ export function registerPropertyTools(
   // ---------------------------------------------------------------------------
   // set_doc_property
   // ---------------------------------------------------------------------------
+  /** Handle `set_doc_property`: validate, encode, and upsert a doc's property value. */
   const setDocPropertyHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
@@ -463,6 +484,7 @@ export function registerPropertyTools(
   // ---------------------------------------------------------------------------
   // clear_doc_property
   // ---------------------------------------------------------------------------
+  /** Handle `clear_doc_property`: remove a doc's value for a property (by id or name). */
   const clearDocPropertyHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
