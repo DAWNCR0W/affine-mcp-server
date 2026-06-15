@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-15
+
 ### Added
 - Document custom-property tools backed by the AFFiNE WorkspaceDB Yjs sub-docs (`db$docProperties`, `db$docCustomPropertyInfo`): `list_doc_properties`, `create_custom_property`, `delete_custom_property`, `set_doc_property`, and `clear_doc_property`. Supports `text`, `number`, `checkbox`, and `date` property types, with values resolvable by property id or name. Adds the `docs.properties` tool group.
 
 ### Fixed
 - `read_doc` block rows now expose inline LinkedPage reference IDs through `linkedDocIds`, preserving `@`-mention targets stored in Y.Text delta attributes.
+- Table row and column ordering now uses valid fractional-indexing keys when rows or columns are appended through MCP tools.
+- Table extraction now preserves fractional-index key order without locale collation.
+- Date custom-property values now reject semantically invalid calendar dates.
+
+### Tests
+- Added Docker-backed regression coverage for document custom properties, database linked-doc rows, and `read_doc` inline LinkedPage references, and wired those flows into comprehensive and E2E validation.
+- Document custom-property regression cleanup now removes the test-created doc and workspace.
+
+### Dependencies
+- Refreshed locked dependency entries for `esbuild`, `qs`, `markdown-it`, `yjs`, `tsx`, and `@types/node`, clearing current high-severity audit findings.
 
 ## [2.1.0] - 2026-05-21
 
@@ -464,6 +476,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[2.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.2.0
 [2.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.1.0
 [2.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.0.0
 [1.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.13.0
@@ -487,4 +500,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.2.0...HEAD

@@ -127,15 +127,18 @@ async function main() {
 
   await client.connect(transport);
 
+  let workspaceId;
+  let docId;
+
   try {
     const timestamp = Date.now();
     const workspace = await call("create_workspace", { name: `doc-properties-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
-    const workspaceId = workspace.id;
+    workspaceId = workspace.id;
 
     const doc = await call("create_doc", { workspaceId, title: `Props Doc ${timestamp}`, content: "body" });
     expectTruthy(doc?.docId, "create_doc docId");
-    const docId = doc.docId;
+    docId = doc.docId;
 
     // --- create definitions ---------------------------------------------------
     const textProp = await call("create_custom_property", { workspaceId, name: "Status Text", type: "text" });
@@ -198,6 +201,14 @@ async function main() {
     }
     expectTruthy(dateRejected, "malformed date should be rejected");
 
+    let semanticDateRejected = false;
+    try {
+      await call("set_doc_property", { workspaceId, docId, property: dateProp.propertyId, value: "2026-02-30" });
+    } catch {
+      semanticDateRejected = true;
+    }
+    expectTruthy(semanticDateRejected, "semantically invalid date should be rejected");
+
     // --- definitions present in listing --------------------------------------
     const listedDefs = await call("list_doc_properties", { workspaceId, docId });
     const defIds = (listedDefs?.definitions || []).map(d => d.id);
@@ -226,6 +237,16 @@ async function main() {
     console.log();
     console.log("=== Document custom-property integration test passed ===");
   } finally {
+    if (workspaceId && docId) {
+      await call("delete_doc", { workspaceId, docId }).catch(err => {
+        console.warn(`  cleanup delete_doc failed: ${err?.message ?? err}`);
+      });
+    }
+    if (workspaceId) {
+      await call("delete_workspace", { id: workspaceId }).catch(err => {
+        console.warn(`  cleanup delete_workspace failed: ${err?.message ?? err}`);
+      });
+    }
     await transport.close();
   }
 }

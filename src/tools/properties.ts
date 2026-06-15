@@ -152,6 +152,10 @@ function encodeValue(type: SupportedType, value: unknown): string {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
         throw new Error(`date property requires "YYYY-MM-DD", got ${JSON.stringify(value)}`);
       }
+      const parsed = new Date(`${s}T00:00:00.000Z`);
+      if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== s) {
+        throw new Error(`date property requires a valid "YYYY-MM-DD" date, got ${JSON.stringify(value)}`);
+      }
       return s;
     }
     case "text":

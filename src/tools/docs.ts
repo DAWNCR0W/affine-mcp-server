@@ -2457,6 +2457,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }
 
   function extractTableData(block: Y.Map<any>): string[][] | null {
+    const compareOrder = (left: string, right: string) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    };
     const rowsValue = block.get("prop:rows");
     const columnsValue = block.get("prop:columns");
     const cellsValue = block.get("prop:cells");
@@ -2469,7 +2474,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             ? (payload as any).order
             : rowId,
       }))
-      .sort((a, b) => a.order.localeCompare(b.order));
+      .sort((a, b) => compareOrder(a.order, b.order));
 
     let columnEntries = mapEntries(columnsValue)
       .map(([columnId, payload]) => ({
@@ -2479,7 +2484,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             ? (payload as any).order
             : columnId,
       }))
-      .sort((a, b) => a.order.localeCompare(b.order));
+      .sort((a, b) => compareOrder(a.order, b.order));
 
     let cells = new Map<string, string>();
 
@@ -2513,10 +2518,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (flatRows.size > 0 && flatColumns.size > 0) {
         rowEntries = Array.from(flatRows.entries())
           .map(([rowId, order]) => ({ rowId, order }))
-          .sort((a, b) => a.order.localeCompare(b.order));
+          .sort((a, b) => compareOrder(a.order, b.order));
         columnEntries = Array.from(flatColumns.entries())
           .map(([columnId, order]) => ({ columnId, order }))
-          .sort((a, b) => a.order.localeCompare(b.order));
+          .sort((a, b) => compareOrder(a.order, b.order));
         cells = flatCells;
       }
     } else {
