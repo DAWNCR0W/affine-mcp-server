@@ -4583,24 +4583,34 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       // Step 3: mirror the cleanup in each affected document's own metadata.
       let docMetaSynced = 0;
       const warnings: string[] = [];
+      // The workspace registry is the source of truth and has already been
+      // updated; per-document metadata is a secondary sync. Treat each doc as
+      // best-effort so one failing push degrades to a warning instead of
+      // throwing and leaving a non-retriable partial state.
       for (const docId of affectedDocIds) {
-        const docSnapshot = await loadDoc(socket, workspaceId, docId);
-        if (!docSnapshot.missing) {
-          warnings.push(`Document ${docId} snapshot not found; workspace tag map was updated only.`);
-          continue;
-        }
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
-        const docPrevSV = Y.encodeStateVector(doc);
-        const docTags = getTagArray(doc.getMap("meta"));
-        if (docTags) {
-          const docIndexes = collectMatchingTagIndexes(docTags, option.id, null, false);
-          if (deleteArrayIndexes(docTags, docIndexes)) {
-            const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
-            await pushDocUpdate(socket, workspaceId, docId, Buffer.from(docDelta).toString("base64"));
+        try {
+          const docSnapshot = await loadDoc(socket, workspaceId, docId);
+          if (!docSnapshot.missing) {
+            warnings.push(`Document ${docId} snapshot not found; workspace tag map was updated only.`);
+            continue;
           }
+          const doc = new Y.Doc();
+          Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
+          const docPrevSV = Y.encodeStateVector(doc);
+          const docTags = getTagArray(doc.getMap("meta"));
+          if (docTags) {
+            const docIndexes = collectMatchingTagIndexes(docTags, option.id, null, false);
+            if (deleteArrayIndexes(docTags, docIndexes)) {
+              const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
+              await pushDocUpdate(socket, workspaceId, docId, Buffer.from(docDelta).toString("base64"));
+            }
+          }
+          docMetaSynced += 1;
+        } catch (err) {
+          warnings.push(
+            `Document ${docId} metadata sync failed: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
-        docMetaSynced += 1;
       }
 
       return text({
