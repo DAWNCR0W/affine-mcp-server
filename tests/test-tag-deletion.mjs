@@ -24,12 +24,14 @@ const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWOR
 if (!PASSWORD) throw new Error('AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh');
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 
+/** Extract and JSON-parse an MCP tool result's first text content block. */
 function parseContent(result) {
   const text = result?.content?.[0]?.text;
   if (!text) return null;
   try { return JSON.parse(text); } catch { return text; }
 }
 
+/** Drive the full create→tag→delete→verify regression flow over a stdio MCP client. */
 async function main() {
   console.log('=== MCP Tag Deletion Regression Test ===');
   console.log(`Base URL: ${BASE_URL}`);
@@ -46,7 +48,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-tag-deletion-noconfig',
+      XDG_CONFIG_HOME: `/tmp/affine-mcp-e2e-tag-deletion-noconfig-${process.pid}-${Date.now()}`,
     },
     stderr: 'pipe',
   });
@@ -58,6 +60,7 @@ async function main() {
   await client.connect(transport);
   console.log('Connected to MCP server');
 
+  /** Call an MCP tool, fail on MCP/error responses, and return the parsed payload. */
   async function call(toolName, args = {}) {
     console.log(`  → ${toolName}(${JSON.stringify(args)})`);
     const result = await client.callTool(
@@ -82,7 +85,7 @@ async function main() {
     return parsed;
   }
 
-  // Expect an MCP error/rejection from a tool call (used for the missing-tag case).
+  /** Assert a tool call is rejected and its error matches `matcher` (missing-tag case). */
   async function expectError(toolName, args, matcher) {
     console.log(`  → (expect error) ${toolName}(${JSON.stringify(args)})`);
     let parsed;

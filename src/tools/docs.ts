@@ -4511,6 +4511,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     removeTagFromDocHandler as any
   );
 
+  /**
+   * Delete a workspace-level tag and detach it from every document that
+   * references it, mirroring AFFiNE's TagStore.removeTagOption. Resolves the
+   * tag by id or name (ambiguous names are rejected), removes the option from
+   * meta.properties.tags.options, strips the tag id from each page's tag array,
+   * then syncs each affected document's own metadata. All workspace-root edits
+   * are applied to an in-memory Y.Doc and pushed as a single delta, so a failed
+   * push leaves the server unchanged and the operation safely retriable.
+   */
   const deleteTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -4551,13 +4560,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
 
       // Step 2: strip the tag id from every page entry that still references it.
+      // Match by id only (case-sensitive), mirroring AFFiNE's removeTagOption
+      // (`t !== id`): doc tags are stored as canonical ids, and matching by
+      // value could clobber a same-name sibling tag's references.
       const affectedDocIds: string[] = [];
       for (const page of getWorkspacePageEntries(wsMeta)) {
         const pageTags = page.tagsArray;
         if (!pageTags) {
           continue;
         }
-        const indexes = collectMatchingTagIndexes(pageTags, option.id, option, true);
+        const indexes = collectMatchingTagIndexes(pageTags, option.id, null, false);
         if (deleteArrayIndexes(pageTags, indexes)) {
           affectedDocIds.push(page.id);
         }
@@ -4582,7 +4594,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const docPrevSV = Y.encodeStateVector(doc);
         const docTags = getTagArray(doc.getMap("meta"));
         if (docTags) {
-          const docIndexes = collectMatchingTagIndexes(docTags, option.id, option, true);
+          const docIndexes = collectMatchingTagIndexes(docTags, option.id, null, false);
           if (deleteArrayIndexes(docTags, docIndexes)) {
             const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
             await pushDocUpdate(socket, workspaceId, docId, Buffer.from(docDelta).toString("base64"));
