@@ -39,6 +39,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_folder` | Create a root or nested folder | Experimental |
 | `create_workspace_blueprint` | Create a simple workspace folder blueprint | Good for structured onboarding setups |
 | `rename_folder` | Rename a folder | Experimental |
+| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji or named icon) | Experimental |
+| `get_folder_icon` | Read a folder's current sidebar icon | Experimental |
 | `delete_folder` | Delete a folder recursively | Experimental and destructive |
 | `move_organize_node` | Move a folder or link node | Experimental |
 | `add_organize_link` | Add a doc, tag, or collection link under a folder | Experimental |
@@ -83,6 +85,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
+| `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
+| `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph so it renders on the edgeless canvas. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |

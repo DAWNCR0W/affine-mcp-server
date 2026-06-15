@@ -36,6 +36,8 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['find_doc_by_title', 'test-find-doc-by-title.mjs'],
   ['get_capabilities', 'test-capabilities-fidelity.mjs'],
   ['get_collection', 'test-organize-tools.mjs'],
+  ['get_doc_icon', 'test-icons.mjs'],
+  ['get_folder_icon', 'test-icons.mjs'],
   ['get_orphan_docs', 'test-create-placement.mjs'],
   ['inspect_template_structure', 'test-native-template-instantiation.mjs'],
   ['instantiate_template_native', 'test-native-template-instantiation.mjs'],
@@ -52,7 +54,9 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['set_doc_property', 'test-doc-properties.mjs'],
   ['update_collection', 'test-organize-tools.mjs'],
   ['update_collection_rules', 'test-organize-tools.mjs'],
+  ['update_doc_icon', 'test-icons.mjs'],
   ['update_doc_title', 'test-create-placement.mjs'],
+  ['update_folder_icon', 'test-icons.mjs'],
 ]);
 
 if (!PASSWORD) {
