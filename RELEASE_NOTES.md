@@ -6,6 +6,8 @@
 - Added document custom-property tools for workspace-wide property definitions and per-document values.
 - Added `linkedDocIds` to `read_doc` block rows so inline LinkedPage references remain visible to MCP consumers.
 - Fixed MCP table row and column ordering by using valid fractional-indexing keys.
+- Preserved fractional-index ordering when table data is extracted from AFFiNE docs.
+- Tightened date custom-property validation to reject invalid calendar dates.
 - Expanded Docker-backed regression coverage for the new document-property and linked-reference flows.
 
 ### What Changed
@@ -17,8 +19,10 @@
   - Returns those references on `read_doc` block rows through `linkedDocIds`.
   - Reuses the same extraction path for database row `linkedDocId` compatibility.
   - Uses valid fractional-indexing keys when appending table rows or columns.
+  - Sorts table row and column order keys with raw code-unit comparison to preserve fractional-index ordering.
 - `tests/test-doc-properties.mjs`, `tests/test-database-linked-doc.mjs`, `tests/test-read-doc-linked-refs.mjs`, `tests/run-e2e.sh`, `tests/run-comprehensive.sh`
   - Added and wired Docker-backed regressions for document custom properties, database linked-doc rows, and inline LinkedPage references in regular document blocks.
+  - Added semantic invalid-date coverage and deterministic cleanup for the document custom-property regression.
 - `package-lock.json`
   - Refreshed locked entries for `esbuild`, `qs`, `markdown-it`, `yjs`, `tsx`, and `@types/node`.
   - Cleared current high-severity npm audit findings.

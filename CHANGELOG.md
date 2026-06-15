@@ -15,9 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `read_doc` block rows now expose inline LinkedPage reference IDs through `linkedDocIds`, preserving `@`-mention targets stored in Y.Text delta attributes.
 - Table row and column ordering now uses valid fractional-indexing keys when rows or columns are appended through MCP tools.
+- Table extraction now preserves fractional-index key order without locale collation.
+- Date custom-property values now reject semantically invalid calendar dates.
 
 ### Tests
 - Added Docker-backed regression coverage for document custom properties, database linked-doc rows, and `read_doc` inline LinkedPage references, and wired those flows into comprehensive and E2E validation.
+- Document custom-property regression cleanup now removes the test-created doc and workspace.
 
 ### Dependencies
 - Refreshed locked dependency entries for `esbuild`, `qs`, `markdown-it`, `yjs`, `tsx`, and `@types/node`, clearing current high-severity audit findings.
