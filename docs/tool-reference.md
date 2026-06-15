@@ -97,6 +97,16 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `add_tag_to_doc` | Attach a tag to a document | |
 | `remove_tag_from_doc` | Detach a tag from a document | |
 
+### Custom properties
+
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$docProperties` / `db$docCustomPropertyInfo` sub-docs |
+| `create_custom_property` | Create a workspace-wide custom property definition | Types: `text`, `number`, `checkbox`, `date`. Returns the `propertyId` |
+| `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
+| `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
+| `clear_doc_property` | Remove a custom property value from a document | |
+
 ### Markdown export
 
 | Tool | Purpose | Notes |

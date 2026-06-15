@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Document custom-property tools backed by the AFFiNE WorkspaceDB Yjs sub-docs (`db$docProperties`, `db$docCustomPropertyInfo`): `list_doc_properties`, `create_custom_property`, `delete_custom_property`, `set_doc_property`, and `clear_doc_property`. Supports `text`, `number`, `checkbox`, and `date` property types, with values resolvable by property id or name. Adds the `docs.properties` tool group.
+
 ## [2.1.0] - 2026-05-21
 
 ### Added
