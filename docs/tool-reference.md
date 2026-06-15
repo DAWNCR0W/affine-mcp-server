@@ -55,7 +55,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
@@ -96,6 +96,16 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_tag` | Create a reusable workspace-level tag | |
 | `add_tag_to_doc` | Attach a tag to a document | |
 | `remove_tag_from_doc` | Detach a tag from a document | |
+
+### Custom properties
+
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$docProperties` / `db$docCustomPropertyInfo` sub-docs |
+| `create_custom_property` | Create a workspace-wide custom property definition | Types: `text`, `number`, `checkbox`, `date`. Returns the `propertyId` |
+| `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
+| `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
+| `clear_doc_property` | Remove a custom property value from a document | |
 
 ### Markdown export
 

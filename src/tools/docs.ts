@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { generateKeyBetween } from "fractional-indexing";
+import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
@@ -370,20 +370,29 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }
 
   /**
-   * Extract a linked-doc page ID from a database row block's prop:text,
-   * if it contains a LinkedPage reference delta.  Returns null otherwise.
+   * Extract inline LinkedPage reference IDs from a Y.Text value. AFFiNE stores
+   * @-mentions as zero-width text deltas whose page id lives in attributes.
    */
-  function readLinkedDocId(rowBlock: Y.Map<any>): string | null {
-    const propText = rowBlock.get("prop:text");
-    if (!(propText instanceof Y.Text)) return null;
+  function extractLinkedPageRefs(propText: unknown): string[] {
+    if (!(propText instanceof Y.Text)) return [];
     const delta = propText.toDelta();
-    if (!Array.isArray(delta)) return null;
+    if (!Array.isArray(delta)) return [];
+    const refs: string[] = [];
     for (const d of delta) {
-      if (d.attributes?.reference?.type === "LinkedPage" && d.attributes.reference.pageId) {
-        return d.attributes.reference.pageId;
+      const reference = d.attributes?.reference;
+      if (reference?.type === "LinkedPage" && typeof reference.pageId === "string" && reference.pageId.length > 0) {
+        refs.push(reference.pageId);
       }
     }
-    return null;
+    return refs;
+  }
+
+  /**
+   * Extract a linked-doc page ID from a database row block's prop:text,
+   * if it contains a LinkedPage reference delta. Returns null otherwise.
+   */
+  function readLinkedDocId(rowBlock: Y.Map<any>): string | null {
+    return extractLinkedPageRefs(rowBlock.get("prop:text"))[0] ?? null;
   }
 
   function asText(value: unknown): string {
@@ -1682,16 +1691,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const columnIds: string[] = [];
         const tableData = normalized.tableData ?? [];
 
+        // Row/column `order` must be valid fractional-indexing keys. AFFiNE's
+        // editor computes the next order with generateKeyBetween(prevOrder, ...)
+        // when inserting a row/column; plain strings like "r0000" render but make
+        // that call throw "invalid order key", so rows/columns cannot be added in
+        // the UI. Use real keys (a0, a1, ...) so insertion works.
+        const rowOrders = generateNKeysBetween(null, null, normalized.rows);
+        const columnOrders = generateNKeysBetween(null, null, normalized.columns);
+
         for (let i = 0; i < normalized.rows; i++) {
           const rowId = generateId();
           block.set(`prop:rows.${rowId}.rowId`, rowId);
-          block.set(`prop:rows.${rowId}.order`, `r${String(i).padStart(4, "0")}`);
+          block.set(`prop:rows.${rowId}.order`, rowOrders[i]);
           rowIds.push(rowId);
         }
         for (let i = 0; i < normalized.columns; i++) {
           const columnId = generateId();
           block.set(`prop:columns.${columnId}.columnId`, columnId);
-          block.set(`prop:columns.${columnId}.order`, `c${String(i).padStart(4, "0")}`);
+          block.set(`prop:columns.${columnId}.order`, columnOrders[i]);
           columnIds.push(columnId);
         }
         for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex += 1) {
@@ -2440,6 +2457,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }
 
   function extractTableData(block: Y.Map<any>): string[][] | null {
+    const compareOrder = (left: string, right: string) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    };
     const rowsValue = block.get("prop:rows");
     const columnsValue = block.get("prop:columns");
     const cellsValue = block.get("prop:cells");
@@ -2452,7 +2474,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             ? (payload as any).order
             : rowId,
       }))
-      .sort((a, b) => a.order.localeCompare(b.order));
+      .sort((a, b) => compareOrder(a.order, b.order));
 
     let columnEntries = mapEntries(columnsValue)
       .map(([columnId, payload]) => ({
@@ -2462,7 +2484,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             ? (payload as any).order
             : columnId,
       }))
-      .sort((a, b) => a.order.localeCompare(b.order));
+      .sort((a, b) => compareOrder(a.order, b.order));
 
     let cells = new Map<string, string>();
 
@@ -2496,10 +2518,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (flatRows.size > 0 && flatColumns.size > 0) {
         rowEntries = Array.from(flatRows.entries())
           .map(([rowId, order]) => ({ rowId, order }))
-          .sort((a, b) => a.order.localeCompare(b.order));
+          .sort((a, b) => compareOrder(a.order, b.order));
         columnEntries = Array.from(flatColumns.entries())
           .map(([columnId, order]) => ({ columnId, order }))
-          .sort((a, b) => a.order.localeCompare(b.order));
+          .sort((a, b) => compareOrder(a.order, b.order));
         cells = flatCells;
       }
     } else {
@@ -4485,6 +4507,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         flavour: string | null;
         type: string | null;
         text: string | null;
+        linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
         childIds: string[];
@@ -4502,7 +4525,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const flavour = raw.get("sys:flavour");
         const parentId = raw.get("sys:parent");
         const type = raw.get("prop:type");
-        const textValue = asText(raw.get("prop:text"));
+        const propText = raw.get("prop:text");
+        const textValue = asText(propText);
+        const linkedDocIds = extractLinkedPageRefs(propText);
         const language = raw.get("prop:language");
         const checked = raw.get("prop:checked");
         const childIds = childIdsFrom(raw.get("sys:children"));
@@ -4520,6 +4545,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           flavour: typeof flavour === "string" ? flavour : null,
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
+          linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
           language: typeof language === "string" ? language : null,
           childIds,

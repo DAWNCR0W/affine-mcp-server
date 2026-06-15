@@ -289,6 +289,11 @@ echo ""
 echo "=== Running MCP database creation test ==="
 node "$SCRIPT_DIR/test-database-creation.mjs"
 
+# --- Step 4b: Run MCP database linked-doc regression test ---
+echo ""
+echo "=== Running MCP database linked-doc regression test ==="
+node "$SCRIPT_DIR/test-database-linked-doc.mjs"
+
 # --- Step 5: Run MCP bearer token auth test ---
 echo ""
 echo "=== Running MCP bearer token auth test ==="
@@ -333,6 +338,16 @@ node "$SCRIPT_DIR/test-doc-discovery.mjs"
 echo ""
 echo "=== Running MCP find_doc_by_title regression test ==="
 node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
+
+# --- Step 12c: Run MCP document custom-property regression test ---
+echo ""
+echo "=== Running MCP document custom-property regression test ==="
+node "$SCRIPT_DIR/test-doc-properties.mjs"
+
+# --- Step 12d: Run MCP read_doc LinkedPage reference regression test ---
+echo ""
+echo "=== Running MCP read_doc LinkedPage reference regression test ==="
+node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
 
 # --- Step 13: Run MCP surface-element CRUD + edgeless canvas test ---
 echo ""

@@ -1,5 +1,44 @@
 # Release Notes
 
+## Version 2.2.0 (2026-06-15)
+
+### Highlights
+- Added document custom-property tools for workspace-wide property definitions and per-document values.
+- Added `linkedDocIds` to `read_doc` block rows so inline LinkedPage references remain visible to MCP consumers.
+- Fixed MCP table row and column ordering by using valid fractional-indexing keys.
+- Preserved fractional-index ordering when table data is extracted from AFFiNE docs.
+- Tightened date custom-property validation to reject invalid calendar dates.
+- Expanded Docker-backed regression coverage for the new document-property and linked-reference flows.
+
+### What Changed
+- `src/tools/properties.ts`, `src/index.ts`, `src/toolSurface.ts`, `tool-manifest.json`
+  - Added the `list_doc_properties`, `create_custom_property`, `delete_custom_property`, `set_doc_property`, and `clear_doc_property` tools.
+  - Added the `docs.properties` tool group to profile-aware registration and the canonical 90-tool manifest.
+- `src/tools/docs.ts`
+  - Extracts inline `LinkedPage` references from `Y.Text` delta attributes.
+  - Returns those references on `read_doc` block rows through `linkedDocIds`.
+  - Reuses the same extraction path for database row `linkedDocId` compatibility.
+  - Uses valid fractional-indexing keys when appending table rows or columns.
+  - Sorts table row and column order keys with raw code-unit comparison to preserve fractional-index ordering.
+- `tests/test-doc-properties.mjs`, `tests/test-database-linked-doc.mjs`, `tests/test-read-doc-linked-refs.mjs`, `tests/run-e2e.sh`, `tests/run-comprehensive.sh`
+  - Added and wired Docker-backed regressions for document custom properties, database linked-doc rows, and inline LinkedPage references in regular document blocks.
+  - Added semantic invalid-date coverage and deterministic cleanup for the document custom-property regression.
+- `package-lock.json`
+  - Refreshed locked entries for `esbuild`, `qs`, `markdown-it`, `yjs`, `tsx`, and `@types/node`.
+  - Cleared current high-severity npm audit findings.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `2.2.0`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Security audit passed:
+  - `npm audit --audit-level=high`
+- Package dry-run passed:
+  - `npm publish --dry-run --access public`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+
 ## Version 2.1.0 (2026-05-21)
 
 ### Highlights
