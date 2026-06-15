@@ -319,6 +319,11 @@ echo ""
 echo "=== Running MCP tag visibility setup test ==="
 node "$SCRIPT_DIR/test-tag-visibility.mjs"
 
+# --- Step 9b: Run MCP tag deletion regression test ---
+echo ""
+echo "=== Running MCP tag deletion regression test ==="
+node "$SCRIPT_DIR/test-tag-deletion.mjs"
+
 # --- Step 10: Run MCP data-view setup test ---
 echo ""
 echo "=== Running MCP data-view setup test ==="

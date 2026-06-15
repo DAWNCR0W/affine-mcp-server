@@ -100,6 +100,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_tag` | Create a reusable workspace-level tag | |
 | `add_tag_to_doc` | Attach a tag to a document | |
 | `remove_tag_from_doc` | Detach a tag from a document | |
+| `delete_tag` | Delete a workspace tag and detach it from every document | Destructive; accepts a tag id or name, rejects an ambiguous name |
 
 ### Custom properties
 
