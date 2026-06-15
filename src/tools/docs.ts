@@ -370,20 +370,29 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }
 
   /**
-   * Extract a linked-doc page ID from a database row block's prop:text,
-   * if it contains a LinkedPage reference delta.  Returns null otherwise.
+   * Extract inline LinkedPage reference IDs from a Y.Text value. AFFiNE stores
+   * @-mentions as zero-width text deltas whose page id lives in attributes.
    */
-  function readLinkedDocId(rowBlock: Y.Map<any>): string | null {
-    const propText = rowBlock.get("prop:text");
-    if (!(propText instanceof Y.Text)) return null;
+  function extractLinkedPageRefs(propText: unknown): string[] {
+    if (!(propText instanceof Y.Text)) return [];
     const delta = propText.toDelta();
-    if (!Array.isArray(delta)) return null;
+    if (!Array.isArray(delta)) return [];
+    const refs: string[] = [];
     for (const d of delta) {
-      if (d.attributes?.reference?.type === "LinkedPage" && d.attributes.reference.pageId) {
-        return d.attributes.reference.pageId;
+      const reference = d.attributes?.reference;
+      if (reference?.type === "LinkedPage" && typeof reference.pageId === "string" && reference.pageId.length > 0) {
+        refs.push(reference.pageId);
       }
     }
-    return null;
+    return refs;
+  }
+
+  /**
+   * Extract a linked-doc page ID from a database row block's prop:text,
+   * if it contains a LinkedPage reference delta. Returns null otherwise.
+   */
+  function readLinkedDocId(rowBlock: Y.Map<any>): string | null {
+    return extractLinkedPageRefs(rowBlock.get("prop:text"))[0] ?? null;
   }
 
   function asText(value: unknown): string {
@@ -4493,6 +4502,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         flavour: string | null;
         type: string | null;
         text: string | null;
+        linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
         childIds: string[];
@@ -4510,7 +4520,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const flavour = raw.get("sys:flavour");
         const parentId = raw.get("sys:parent");
         const type = raw.get("prop:type");
-        const textValue = asText(raw.get("prop:text"));
+        const propText = raw.get("prop:text");
+        const textValue = asText(propText);
+        const linkedDocIds = extractLinkedPageRefs(propText);
         const language = raw.get("prop:language");
         const checked = raw.get("prop:checked");
         const childIds = childIdsFrom(raw.get("sys:children"));
@@ -4528,6 +4540,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           flavour: typeof flavour === "string" ? flavour : null,
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
+          linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
           language: typeof language === "string" ? language : null,
           childIds,

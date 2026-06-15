@@ -195,6 +195,14 @@ echo "=== Running document custom-property regression ==="
 node "$SCRIPT_DIR/test-doc-properties.mjs"
 
 echo ""
+echo "=== Running database linked-doc regression ==="
+node "$SCRIPT_DIR/test-database-linked-doc.mjs"
+
+echo ""
+echo "=== Running read_doc LinkedPage reference regression ==="
+node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
+
+echo ""
 echo "=== Running semantic page composer regression ==="
 node "$SCRIPT_DIR/test-semantic-page-composer.mjs"
 
