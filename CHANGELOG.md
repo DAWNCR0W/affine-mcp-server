@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Document custom-property tools backed by the AFFiNE WorkspaceDB Yjs sub-docs (`db$docProperties`, `db$docCustomPropertyInfo`): `list_doc_properties`, `create_custom_property`, `delete_custom_property`, `set_doc_property`, and `clear_doc_property`. Supports `text`, `number`, `checkbox`, and `date` property types, with values resolvable by property id or name. Adds the `docs.properties` tool group.
 
+### Fixed
+- `read_doc` block rows now expose inline LinkedPage reference IDs through `linkedDocIds`, preserving `@`-mention targets stored in Y.Text delta attributes.
+
 ## [2.1.0] - 2026-05-21
 
 ### Added
