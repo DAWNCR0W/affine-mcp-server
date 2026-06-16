@@ -26,6 +26,31 @@ import {
   stackRelativeTo,
 } from "../edgeless/layout.js";
 
+function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
+  const ids: string[] = [];
+  for (const [, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    const flavour = raw.get("sys:flavour");
+    if (flavour === "affine:embed-linked-doc" || flavour === "affine:embed-synced-doc") {
+      const pid = raw.get("prop:pageId");
+      if (typeof pid === "string" && pid) ids.push(pid);
+    }
+    const propText = raw.get("prop:text");
+    if (propText instanceof Y.Text) {
+      const delta = propText.toDelta();
+      if (Array.isArray(delta)) {
+        for (const d of delta) {
+          const reference = (d as any).attributes?.reference;
+          if (reference?.type === "LinkedPage" && typeof reference.pageId === "string" && reference.pageId) {
+            ids.push(reference.pageId);
+          }
+        }
+      }
+    }
+  }
+  return ids;
+}
+
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
 const MarkdownContent = z.string().min(1, "markdown required");
@@ -5696,11 +5721,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
         const blocks = doc.getMap("blocks") as Y.Map<any>;
         const kids: string[] = [];
-        for (const [, raw] of blocks) {
-          if (!(raw instanceof Y.Map)) continue;
-          if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
-          const pid = raw.get("prop:pageId");
-          if (typeof pid === "string" && pid && titleById.has(pid)) {
+        for (const pid of collectLinkedChildIds(blocks)) {
+          if (titleById.has(pid) && !kids.includes(pid)) {
             kids.push(pid);
             allChildren.add(pid);
           }
@@ -5748,11 +5770,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const doc = new Y.Doc();
         Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
         const blocks = doc.getMap("blocks") as Y.Map<any>;
-        for (const [, raw] of blocks) {
-          if (!(raw instanceof Y.Map)) continue;
-          if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
-          const pageId = raw.get("prop:pageId");
-          if (typeof pageId === "string" && pageId) allChildren.add(pageId);
+        for (const pageId of collectLinkedChildIds(blocks)) {
+          allChildren.add(pageId);
         }
       }
       const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, "")).replace(/\/$/, "");
@@ -5768,7 +5787,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   };
   server.registerTool("get_orphan_docs", {
     title: "Get Orphan Documents",
-    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc). Useful for workspace hygiene. Note: scans all docs — O(n).",
+    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc / embed_synced_doc blocks or inline LinkedPage references). Useful for workspace hygiene. Note: scans all docs — O(n).",
     inputSchema: { workspaceId: z.string().optional() },
   }, getOrphanDocsHandler as any);
 
@@ -5795,21 +5814,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const children: Array<{ docId: string; title: string | null; url: string }> = [];
-      for (const [, raw] of blocks) {
-        if (!(raw instanceof Y.Map)) continue;
-        if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
-        const pageId = raw.get("prop:pageId");
-        if (typeof pageId === "string" && pageId) {
-          children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
-            url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}` });
-        }
+      const seen = new Set<string>();
+      for (const pageId of collectLinkedChildIds(blocks)) {
+        if (seen.has(pageId)) continue;
+        seen.add(pageId);
+        children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
+          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}` });
       }
       return text({ docId: parsed.docId, count: children.length, children });
     } finally { socket.disconnect(); }
   };
   server.registerTool("list_children", {
     title: "List Document Children",
-    description: "List the direct children of a document in the sidebar (embed_linked_doc blocks). Returns docId, title, and URL for each child.",
+    description: "List the direct children of a document in the sidebar (embed_linked_doc / embed_synced_doc blocks and inline LinkedPage references). Returns docId, title, and URL for each child.",
     inputSchema: {
       workspaceId: z.string().optional(),
       docId: z.string().describe("The parent doc whose children to list."),
