@@ -1,5 +1,44 @@
 # Release Notes
 
+## Version 2.3.0 (2026-06-17)
+
+### Highlights
+- Added sidebar icon tools for AFFiNE documents and organize folders.
+- Added explorer-icon storage support for the AFFiNE 0.26+ `db$<workspaceId>$explorerIcon` workspace sub-doc.
+- Improved document hierarchy tools so inline `LinkedPage` references and synced-doc embeds are treated as child relationships.
+- Avoided false hierarchy children from database-row title references and stale external inline references.
+- Expanded Docker-backed E2E coverage for the new sidebar icon flows.
+
+### What Changed
+- `src/tools/icons.ts`, `src/util/explorerIcon.ts`, `src/index.ts`, `src/toolSurface.ts`, `tool-manifest.json`
+  - Added `update_doc_icon`, `get_doc_icon`, `update_folder_icon`, and `get_folder_icon`.
+  - Added icon tools to the profile-aware tool surface and canonical 94-tool manifest.
+  - Reads and writes AFFiNE sidebar icons through the explorer-icon workspace sub-doc.
+- `src/tools/docs.ts`
+  - Reuses a shared linked-child collector for `list_children`, `list_workspace_tree`, and `get_orphan_docs`.
+  - Includes inline `LinkedPage` references and `embed_synced_doc` blocks in hierarchy calculations.
+  - Skips database-row text references and filters unknown page IDs when workspace metadata is available.
+- `tests/test-icons.mjs`, `tests/run-e2e.sh`, `test-comprehensive.mjs`, `tests/test-tool-filtering.mjs`
+  - Added icon read/write regression coverage and wired it into E2E validation.
+  - Updated tool-surface assertions for the 94-tool public manifest.
+- `README.md`, `docs/tool-reference.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Documented the new icon tools and v2.3.0 release highlights.
+- `package.json`, `package-lock.json`, `tool-manifest.json`
+  - Bumped release metadata to `2.3.0`.
+- `package-lock.json`
+  - Refreshed locked entries for `form-data`, `hono`, `engine.io-client`, `ws`, and `hasown`.
+  - Cleared current high-severity npm audit findings.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Security audit passed:
+  - `npm audit --audit-level=high`
+- Package dry-run passed:
+  - `npm publish --dry-run --access public`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+
 ## Version 2.2.0 (2026-06-15)
 
 ### Highlights
