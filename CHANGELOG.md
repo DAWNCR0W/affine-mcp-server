@@ -7,10 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-06-17
+
 ### Added
 - `update_doc_icon` / `update_folder_icon` — set or clear the Notion-style sidebar icon on a document or organize folder. Accepts an emoji shorthand (`"🧪"`), a full object (`{type:"emoji",unicode:"🧪"}` or `{type:"icon",name:"check"}`), or `null` to remove the icon while keeping the entry referenceable. `update_folder_icon` is experimental, mirroring the rest of the organize-folder family.
 - `get_doc_icon` / `get_folder_icon` — read the current sidebar icon of a document or folder (returns `null` when none is set).
 - `src/util/explorerIcon.ts` — shared helper targeting the `db$<workspaceId>$explorerIcon` workspace sub-doc and per-entity Y.Map (`doc:<id>` / `folder:<id>`) where AFFiNE 0.26+ stores per-doc/per-folder sidebar icons.
+
+### Fixed
+- `list_children`, `list_workspace_tree`, and `get_orphan_docs` now recognize inline `LinkedPage` references and synced-doc embeds in addition to `embed_linked_doc` blocks, so inline-nested docs no longer appear flat or orphaned.
+- Hierarchy tools now skip database-row title references and filter stale or external inline references when workspace metadata is available.
+
+### Tests
+- Added Docker-backed E2E coverage for sidebar icon read/write flows and wired it into the E2E validation pipeline.
+
+### Dependencies
+- Refreshed locked dependency entries for `form-data`, `hono`, `engine.io-client`, `ws`, and `hasown`, clearing current high-severity audit findings.
 
 ## [2.2.0] - 2026-06-15
 
@@ -481,6 +493,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[2.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.3.0
 [2.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.2.0
 [2.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.1.0
 [2.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.0.0
@@ -505,4 +518,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.3.0...HEAD
