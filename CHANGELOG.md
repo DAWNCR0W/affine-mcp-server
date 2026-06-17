@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `update_doc_icon` / `update_folder_icon` — set or clear the Notion-style sidebar icon on a document or organize folder. Accepts an emoji shorthand (`"🧪"`), a full object (`{type:"emoji",unicode:"🧪"}` or `{type:"icon",name:"check"}`), or `null` to remove the icon while keeping the entry referenceable. `update_folder_icon` is experimental, mirroring the rest of the organize-folder family.
+- `get_doc_icon` / `get_folder_icon` — read the current sidebar icon of a document or folder (returns `null` when none is set).
+- `src/util/explorerIcon.ts` — shared helper targeting the `db$<workspaceId>$explorerIcon` workspace sub-doc and per-entity Y.Map (`doc:<id>` / `folder:<id>`) where AFFiNE 0.26+ stores per-doc/per-folder sidebar icons.
+
 ## [2.2.0] - 2026-06-15
 
 ### Added

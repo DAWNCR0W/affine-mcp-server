@@ -349,6 +349,11 @@ echo ""
 echo "=== Running MCP read_doc LinkedPage reference regression test ==="
 node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
 
+# --- Step 12e: Run MCP explorer-icon regression test ---
+echo ""
+echo "=== Running MCP explorer-icon regression test ==="
+node "$SCRIPT_DIR/test-icons.mjs"
+
 # --- Step 13: Run MCP surface-element CRUD + edgeless canvas test ---
 echo ""
 echo "=== Running MCP surface-element CRUD + edgeless canvas test ==="

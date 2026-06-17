@@ -49,6 +49,7 @@
     "test:data-view": "node tests/test-data-view.mjs",
     "test:doc-discovery": "node tests/test-doc-discovery.mjs",
     "test:doc-properties": "node tests/test-doc-properties.mjs",
+    "test:icons": "node tests/test-icons.mjs",
     "test:read-doc-linked-refs": "node tests/test-read-doc-linked-refs.mjs",
     "test:find-doc-by-title": "node tests/test-find-doc-by-title.mjs",
     "test:create-placement": "node tests/test-create-placement.mjs",
