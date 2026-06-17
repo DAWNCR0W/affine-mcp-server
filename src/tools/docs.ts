@@ -792,6 +792,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     title: string | null;
     createDate: number | null;
     updatedDate: number | null;
+    inTrash: boolean;
     entry: Y.Map<any>;
     tagsArray: Y.Array<string> | null;
   };
@@ -814,12 +815,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const title = value.get("title");
       const createDate = value.get("createDate");
       const updatedDate = value.get("updatedDate");
+      const inTrashRaw = value.get("inTrash");
+      const trashRaw = value.get("trash");
+      const trashDate = value.get("trashDate");
+      const inTrash =
+        typeof inTrashRaw === "boolean" ? inTrashRaw
+        : typeof trashRaw === "boolean" ? trashRaw
+        : (typeof trashDate === "number" && trashDate > 0);
       entries.push({
         index,
         id,
         title: typeof title === "string" ? title : null,
         createDate: typeof createDate === "number" ? createDate : null,
         updatedDate: typeof updatedDate === "number" ? updatedDate : null,
+        inTrash,
         entry: value,
         tagsArray: getTagArray(value),
       });
@@ -5728,6 +5737,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
+      const trashById = new Map(pages.map(p => [p.id, p.inTrash]));
       const childrenOf = new Map<string, string[]>();
       const allChildren = new Set<string>();
       for (const page of pages) {
@@ -5750,6 +5760,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const buildNode = (id: string, depth: number): any => ({
         docId: id, title: titleById.get(id) ?? "Untitled",
         url: `${baseUrl}/workspace/${workspaceId}/${id}`,
+        inTrash: trashById.get(id) ?? false,
         children: depth < maxDepth ? (childrenOf.get(id) ?? []).map(cid => buildNode(cid, depth + 1)) : [],
       });
       return text({ workspaceId, totalDocs: pages.length, rootCount: roots.length, tree: roots.map(id => buildNode(id, 0)) });
@@ -5757,7 +5768,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   };
   server.registerTool("list_workspace_tree", {
     title: "List Workspace Tree",
-    description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces.",
+    description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces. Each node includes an inTrash flag.",
     inputSchema: {
       workspaceId: z.string().optional(),
       depth: z.number().optional().describe("Max nesting depth to return (default: 3)."),
@@ -5779,6 +5790,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
+      const trashById = new Map(pages.map(p => [p.id, p.inTrash]));
       const allChildren = new Set<string>();
       for (const page of pages) {
         const snap = await loadDoc(socket, workspaceId, page.id);
@@ -5797,13 +5809,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           docId: p.id,
           title: titleById.get(p.id) ?? "Untitled",
           url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
+          inTrash: p.inTrash,
         }));
       return text({ count: orphans.length, orphans });
     } finally { socket.disconnect(); }
   };
   server.registerTool("get_orphan_docs", {
     title: "Get Orphan Documents",
-    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc / embed_synced_doc blocks or inline LinkedPage references). Useful for workspace hygiene. Note: scans all docs — O(n).",
+    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc / embed_synced_doc blocks or inline LinkedPage references). Useful for workspace hygiene. Note: scans all docs — O(n). Each doc includes an inTrash flag.",
     inputSchema: { workspaceId: z.string().optional() },
   }, getOrphanDocsHandler as any);
 
@@ -5816,6 +5829,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     try {
       await joinWorkspace(socket, workspaceId);
       const titleById = new Map<string, string>();
+      const trashById = new Map<string, boolean>();
       const workspacePageIds = new Set<string>();
       let hasWorkspaceMetadata = false;
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
@@ -5825,6 +5839,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
         for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
           workspacePageIds.add(page.id);
+          trashById.set(page.id, page.inTrash);
           if (page.title) titleById.set(page.id, page.title);
         }
       }
@@ -5833,21 +5848,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
       const blocks = doc.getMap("blocks") as Y.Map<any>;
-      const children: Array<{ docId: string; title: string | null; url: string }> = [];
+      const children: Array<{ docId: string; title: string | null; url: string; inTrash: boolean }> = [];
       const seen = new Set<string>();
       for (const pageId of collectLinkedChildIds(blocks)) {
         if (hasWorkspaceMetadata && !workspacePageIds.has(pageId)) continue;
         if (seen.has(pageId)) continue;
         seen.add(pageId);
         children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
-          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}` });
+          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}`,
+          inTrash: trashById.get(pageId) ?? false });
       }
       return text({ docId: parsed.docId, count: children.length, children });
     } finally { socket.disconnect(); }
   };
   server.registerTool("list_children", {
     title: "List Document Children",
-    description: "List the direct children of a document in the sidebar (embed_linked_doc / embed_synced_doc blocks and inline LinkedPage references). Returns docId, title, and URL for each child.",
+    description: "List the direct children of a document in the sidebar (embed_linked_doc / embed_synced_doc blocks and inline LinkedPage references). Returns docId, title, URL, and inTrash for each child.",
     inputSchema: {
       workspaceId: z.string().optional(),
       docId: z.string().describe("The parent doc whose children to list."),
