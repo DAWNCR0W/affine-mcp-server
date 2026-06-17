@@ -4039,6 +4039,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             updatedAt: updatedTimestamp > 0 ? new Date(updatedTimestamp).toISOString() : null,
             updatedTimestamp,
             url: `${baseUrl}/workspace/${workspaceId}/${page.id}`,
+            inTrash: page.inTrash,
             rank,
           };
         })
@@ -4067,6 +4068,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           tags: entry.tags,
           updatedAt: entry.updatedAt,
           url: entry.url,
+          inTrash: entry.inTrash,
         }));
 
       return text({
@@ -4087,7 +4089,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "search_docs",
     {
       title: "Search Documents by Title",
-      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, and direct URL for each match.",
+      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, direct URL, and inTrash for each match.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
@@ -4139,7 +4141,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
 
-      type Match = { id: string; title: string; createdAt: string | null; updatedAt: string | null };
+      type Match = { id: string; title: string; createdAt: string | null; updatedAt: string | null; inTrash: boolean };
       const matches: Match[] = [];
       let truncated = false;
       for (const page of pages) {
@@ -4161,6 +4163,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           title: pageTitle,
           createdAt: page.createDate ? new Date(page.createDate).toISOString() : null,
           updatedAt: updatedTimestamp ? new Date(updatedTimestamp).toISOString() : null,
+          inTrash: page.inTrash,
         });
       }
 
@@ -4186,7 +4189,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         "Reads workspace metadata — fast, no per-doc fetch. " +
         "Unlike `search_docs` (which is always case-insensitive and capped at limit 20), this tool defaults to case-sensitive matching and returns up to `limit` matches (default 50, max 200). " +
         "Prefer this over `search_docs` when you know the exact title and want every match. " +
-        "Returns: { query, caseInsensitive, matches: [{ id, title, createdAt, updatedAt }], workspaceDocCount, truncated }.",
+        "Returns: { query, caseInsensitive, matches: [{ id, title, createdAt, updatedAt, inTrash }], workspaceDocCount, truncated }.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if AFFINE_WORKSPACE_ID is set)."),
         title: z.string().min(1).describe("The exact title to match."),
@@ -4243,6 +4246,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             updatedDate: page.updatedDate,
             tags,
             rawTags,
+            inTrash: page.inTrash,
           };
         })
         .filter((page) => hasTag(page.tags, tag, ignoreCase) || hasTag(page.rawTags, tag, ignoreCase))
@@ -4263,7 +4267,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs_by_tag",
     {
       title: "List Documents By Tag",
-      description: "List documents that contain the requested tag.",
+      description: "List documents that contain the requested tag. Each doc includes an inTrash flag.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         tag: z.string().min(1).describe("Tag name"),
