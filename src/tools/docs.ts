@@ -27,14 +27,30 @@ import {
 } from "../edgeless/layout.js";
 
 function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
-  const ids: string[] = [];
+  const databaseRowIds = new Set<string>();
   for (const [, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    if (raw.get("sys:flavour") !== "affine:database") continue;
+    const rows = raw.get("sys:children");
+    if (rows instanceof Y.Array) {
+      rows.forEach((entry: unknown) => {
+        if (typeof entry === "string") databaseRowIds.add(entry);
+        else if (Array.isArray(entry)) {
+          for (const child of entry) if (typeof child === "string") databaseRowIds.add(child);
+        }
+      });
+    }
+  }
+
+  const ids: string[] = [];
+  for (const [blockId, raw] of blocks) {
     if (!(raw instanceof Y.Map)) continue;
     const flavour = raw.get("sys:flavour");
     if (flavour === "affine:embed-linked-doc" || flavour === "affine:embed-synced-doc") {
       const pid = raw.get("prop:pageId");
       if (typeof pid === "string" && pid) ids.push(pid);
     }
+    if (databaseRowIds.has(String(blockId))) continue;
     const propText = raw.get("prop:text");
     if (propText instanceof Y.Text) {
       const delta = propText.toDelta();
@@ -5800,11 +5816,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     try {
       await joinWorkspace(socket, workspaceId);
       const titleById = new Map<string, string>();
+      const workspacePageIds = new Set<string>();
+      let hasWorkspaceMetadata = false;
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
       if (wsSnap.missing) {
+        hasWorkspaceMetadata = true;
         const wsDoc = new Y.Doc();
         Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
         for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
+          workspacePageIds.add(page.id);
           if (page.title) titleById.set(page.id, page.title);
         }
       }
@@ -5816,6 +5836,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const children: Array<{ docId: string; title: string | null; url: string }> = [];
       const seen = new Set<string>();
       for (const pageId of collectLinkedChildIds(blocks)) {
+        if (hasWorkspaceMetadata && !workspacePageIds.has(pageId)) continue;
         if (seen.has(pageId)) continue;
         seen.add(pageId);
         children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
