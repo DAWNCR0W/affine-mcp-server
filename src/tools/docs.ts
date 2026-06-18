@@ -694,6 +694,39 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return { option, created: true };
   }
 
+  /**
+   * Resolve the single tag option targeted for deletion. Matches a tag id
+   * first (ids are unique), then falls back to a case-insensitive name match.
+   * Throws when no tag matches, or when a name is shared by several tags so the
+   * caller can re-run with a specific id rather than deleting the wrong one.
+   */
+  function findTagOptionForDeletion(meta: Y.Map<any>, tag: string): {
+    option: WorkspaceTagOption;
+    matchedBy: "id" | "value";
+  } {
+    const normalized = normalizeTag(tag);
+    const { options, byId } = getWorkspaceTagOptionMaps(meta);
+
+    const byIdMatch = byId.get(normalized);
+    if (byIdMatch) {
+      return { option: byIdMatch, matchedBy: "id" };
+    }
+
+    const lower = normalized.toLocaleLowerCase();
+    const valueMatches = options.filter((option) => option.value.toLocaleLowerCase() === lower);
+    if (valueMatches.length === 0) {
+      throw new Error(`Tag "${normalized}" was not found in workspace tag options.`);
+    }
+    if (valueMatches.length > 1) {
+      const candidates = valueMatches.map((option) => `${option.id} ("${option.value}")`).join(", ");
+      throw new Error(
+        `Tag name "${normalized}" is ambiguous; ${valueMatches.length} tags share this name. ` +
+          `Re-run delete_tag with a specific tag id: ${candidates}`
+      );
+    }
+    return { option: valueMatches[0], matchedBy: "value" };
+  }
+
   function collectMatchingTagIndexes(
     tags: Y.Array<string>,
     requestedTag: string,
@@ -4476,6 +4509,136 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     removeTagFromDocHandler as any
+  );
+
+  /**
+   * Delete a workspace-level tag and detach it from every document that
+   * references it, mirroring AFFiNE's TagStore.removeTagOption. Resolves the
+   * tag by id or name (ambiguous names are rejected), removes the option from
+   * meta.properties.tags.options, strips the tag id from each page's tag array,
+   * then syncs each affected document's own metadata. All workspace-root edits
+   * are applied to an in-memory Y.Doc and pushed as a single delta, so a failed
+   * push leaves the server unchanged and the operation safely retriable.
+   */
+  const deleteTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const tag = normalizeTag(parsed.tag);
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const wsSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
+      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+
+      const { option } = findTagOptionForDeletion(wsMeta, tag);
+
+      // Step 1: drop the tag option itself from the workspace tag registry.
+      const optionsArray = getWorkspaceTagOptionsArray(wsMeta);
+      let optionRemoved = false;
+      if (optionsArray) {
+        const optionIndexes: number[] = [];
+        optionsArray.forEach((raw: unknown, index: number) => {
+          const parsedOption = parseWorkspaceTagOption(raw);
+          if (parsedOption && parsedOption.id === option.id) {
+            optionIndexes.push(index);
+          }
+        });
+        optionRemoved = deleteArrayIndexes(optionsArray, optionIndexes);
+      }
+
+      // Step 2: strip the tag id from every page entry that still references it.
+      // Match by id only (case-sensitive), mirroring AFFiNE's removeTagOption
+      // (`t !== id`): doc tags are stored as canonical ids, and matching by
+      // value could clobber a same-name sibling tag's references.
+      const affectedDocIds: string[] = [];
+      for (const page of getWorkspacePageEntries(wsMeta)) {
+        const pageTags = page.tagsArray;
+        if (!pageTags) {
+          continue;
+        }
+        const indexes = collectMatchingTagIndexes(pageTags, option.id, null, false);
+        if (deleteArrayIndexes(pageTags, indexes)) {
+          affectedDocIds.push(page.id);
+        }
+      }
+
+      if (optionRemoved || affectedDocIds.length > 0) {
+        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+      }
+
+      // Step 3: mirror the cleanup in each affected document's own metadata.
+      let docMetaSynced = 0;
+      const warnings: string[] = [];
+      // The workspace registry is the source of truth and has already been
+      // updated; per-document metadata is a secondary sync. Treat each doc as
+      // best-effort so one failing push degrades to a warning instead of
+      // throwing and leaving a non-retriable partial state.
+      for (const docId of affectedDocIds) {
+        try {
+          const docSnapshot = await loadDoc(socket, workspaceId, docId);
+          if (!docSnapshot.missing) {
+            warnings.push(`Document ${docId} snapshot not found; workspace tag map was updated only.`);
+            continue;
+          }
+          const doc = new Y.Doc();
+          Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
+          const docPrevSV = Y.encodeStateVector(doc);
+          const docTags = getTagArray(doc.getMap("meta"));
+          if (docTags) {
+            const docIndexes = collectMatchingTagIndexes(docTags, option.id, null, false);
+            if (deleteArrayIndexes(docTags, docIndexes)) {
+              const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
+              await pushDocUpdate(socket, workspaceId, docId, Buffer.from(docDelta).toString("base64"));
+            }
+          }
+          docMetaSynced += 1;
+        } catch (err) {
+          warnings.push(
+            `Document ${docId} metadata sync failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+
+      return text({
+        workspaceId,
+        tag,
+        tagId: option.id,
+        value: option.value,
+        deleted: optionRemoved,
+        affectedDocs: affectedDocIds.length,
+        docMetaSynced,
+        warnings,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "delete_tag",
+    {
+      title: "Delete Tag",
+      description:
+        "Delete a workspace-level tag and remove it from every document that references it. Accepts a tag id or name; an ambiguous name is rejected with the candidate ids.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        tag: z.string().min(1).describe("Tag id or name to delete"),
+      },
+    },
+    deleteTagHandler as any
   );
 
   const getDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {

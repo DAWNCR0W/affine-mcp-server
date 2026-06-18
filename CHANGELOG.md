@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `delete_tag` removes a workspace-level tag and detaches it from every document that references it, mirroring AFFiNE's own tag deletion (drops the option from `meta.properties.tags.options` and strips the tag id from each `pages[*].tags`, then syncs affected document metadata). Accepts a tag id or name; an ambiguous name is rejected with the candidate ids. Belongs to the `docs.tags` and `destructive` tool groups.
+
+### Tests
+- Added Docker-backed regression coverage for `delete_tag` (`tests/test-tag-deletion.mjs`) and wired it into the E2E pipeline.
+
 ## [2.3.0] - 2026-06-17
 
 ### Added

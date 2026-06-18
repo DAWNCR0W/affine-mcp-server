@@ -35,6 +35,7 @@
     "delete_folder",
     "delete_organize_link",
     "delete_surface_element",
+    "delete_tag",
     "delete_workspace",
     "export_doc_markdown",
     "export_with_fidelity_report",
