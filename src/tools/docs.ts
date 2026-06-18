@@ -3787,6 +3787,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const tagsByDocId = new Map<string, string[]>();
       const titlesByDocId = new Map<string, string>();
+      const inTrashByDocId = new Map<string, boolean>();
       let workspacePageCount: number | null = null;
       let workspacePageIds: Set<string> | null = null;
       const deletedDocIds = new Set<string>();
@@ -3811,6 +3812,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               }
               const tagEntries = getStringArray(page.tagsArray);
               tagsByDocId.set(page.id, resolveTagLabels(tagEntries, byId));
+              inTrashByDocId.set(page.id, page.inTrash);
             }
           }
           const graphEdges = Array.isArray(docs?.edges) ? docs.edges : [];
@@ -3848,6 +3850,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
                 ...node,
                 title: titlesByDocId.get(node.id) || node.title,
                 tags: tagsByDocId.get(node.id) || [],
+                inTrash: inTrashByDocId.get(node.id) ?? false,
               },
             };
           })
@@ -3892,7 +3895,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs",
     {
       title: "List Documents",
-      description: "List documents in a workspace (GraphQL).",
+      description: "List documents in a workspace (GraphQL). Each doc includes an inTrash flag.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID (optional if default set).").optional(),
         first: z.number().optional(),
@@ -5794,7 +5797,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
-      const trashById = new Map(pages.map(p => [p.id, p.inTrash]));
       const allChildren = new Set<string>();
       for (const page of pages) {
         const snap = await loadDoc(socket, workspaceId, page.id);
