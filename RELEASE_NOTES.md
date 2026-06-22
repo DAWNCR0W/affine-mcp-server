@@ -1,5 +1,43 @@
 # Release Notes
 
+## Version 2.4.0 (2026-06-22)
+
+### Highlights
+- Added `delete_tag` so MCP clients can remove a workspace tag and detach it from every tagged document in one operation.
+- Surfaced `inTrash` across document listing, search, tag listing, hierarchy, child, and orphan workflows.
+- Expanded the canonical public tool manifest to 95 tools.
+- Refreshed GitHub Actions checkout usage and Playwright lockfile entries.
+- Refreshed the locked `undici` dependency to clear the current high-severity audit finding.
+- Added Docker-backed E2E coverage for workspace tag deletion.
+
+### What Changed
+- `src/tools/docs.ts`, `src/toolSurface.ts`, `tool-manifest.json`, `docs/tool-reference.md`
+  - Added `delete_tag` to the public tool surface and `docs.tags` / `destructive` groups.
+  - Deletes a tag by id or unambiguous name, removes the workspace tag option, strips the tag id from each page entry, and syncs affected document metadata.
+  - Rejects ambiguous tag names so callers can retry with a specific tag id.
+- `src/tools/docs.ts`
+  - Adds `inTrash` to `list_docs`, `search_docs`, `find_doc_by_title`, `list_docs_by_tag`, `list_workspace_tree`, `get_orphan_docs`, and `list_children` responses.
+  - Resolves trash state from workspace metadata using `inTrash`, `trash`, or `trashDate` fields.
+- `tests/test-tag-deletion.mjs`, `tests/run-e2e.sh`, `tests/test-tool-filtering.mjs`, `package.json`
+  - Added tag-deletion regression coverage and wired it into E2E validation.
+  - Updated tool-surface assertions for the 95-tool public manifest.
+- `.github/workflows/*.yml`, `package-lock.json`
+  - Updated `actions/checkout` from `v6` to `v7`.
+  - Updated Playwright lockfile entries from `1.60.0` to `1.61.0`.
+  - Updated the locked `undici` package from `8.0.2` to `8.5.0`.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
+  - Bumped release metadata to `2.4.0`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Security audit passed:
+  - `npm audit --audit-level=high`
+- Package dry-run passed:
+  - `npm publish --dry-run --access public`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+
 ## Version 2.3.0 (2026-06-17)
 
 ### Highlights
