@@ -694,6 +694,39 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return { option, created: true };
   }
 
+  /**
+   * Resolve the single tag option targeted for deletion. Matches a tag id
+   * first (ids are unique), then falls back to a case-insensitive name match.
+   * Throws when no tag matches, or when a name is shared by several tags so the
+   * caller can re-run with a specific id rather than deleting the wrong one.
+   */
+  function findTagOptionForDeletion(meta: Y.Map<any>, tag: string): {
+    option: WorkspaceTagOption;
+    matchedBy: "id" | "value";
+  } {
+    const normalized = normalizeTag(tag);
+    const { options, byId } = getWorkspaceTagOptionMaps(meta);
+
+    const byIdMatch = byId.get(normalized);
+    if (byIdMatch) {
+      return { option: byIdMatch, matchedBy: "id" };
+    }
+
+    const lower = normalized.toLocaleLowerCase();
+    const valueMatches = options.filter((option) => option.value.toLocaleLowerCase() === lower);
+    if (valueMatches.length === 0) {
+      throw new Error(`Tag "${normalized}" was not found in workspace tag options.`);
+    }
+    if (valueMatches.length > 1) {
+      const candidates = valueMatches.map((option) => `${option.id} ("${option.value}")`).join(", ");
+      throw new Error(
+        `Tag name "${normalized}" is ambiguous; ${valueMatches.length} tags share this name. ` +
+          `Re-run delete_tag with a specific tag id: ${candidates}`
+      );
+    }
+    return { option: valueMatches[0], matchedBy: "value" };
+  }
+
   function collectMatchingTagIndexes(
     tags: Y.Array<string>,
     requestedTag: string,
@@ -792,6 +825,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     title: string | null;
     createDate: number | null;
     updatedDate: number | null;
+    inTrash: boolean;
     entry: Y.Map<any>;
     tagsArray: Y.Array<string> | null;
   };
@@ -814,12 +848,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const title = value.get("title");
       const createDate = value.get("createDate");
       const updatedDate = value.get("updatedDate");
+      const inTrashRaw = value.get("inTrash");
+      const trashRaw = value.get("trash");
+      const trashDate = value.get("trashDate");
+      const inTrash =
+        typeof inTrashRaw === "boolean" ? inTrashRaw
+        : typeof trashRaw === "boolean" ? trashRaw
+        : (typeof trashDate === "number" && trashDate > 0);
       entries.push({
         index,
         id,
         title: typeof title === "string" ? title : null,
         createDate: typeof createDate === "number" ? createDate : null,
         updatedDate: typeof updatedDate === "number" ? updatedDate : null,
+        inTrash,
         entry: value,
         tagsArray: getTagArray(value),
       });
@@ -3778,6 +3820,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const tagsByDocId = new Map<string, string[]>();
       const titlesByDocId = new Map<string, string>();
+      const inTrashByDocId = new Map<string, boolean>();
       let workspacePageCount: number | null = null;
       let workspacePageIds: Set<string> | null = null;
       const deletedDocIds = new Set<string>();
@@ -3802,6 +3845,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               }
               const tagEntries = getStringArray(page.tagsArray);
               tagsByDocId.set(page.id, resolveTagLabels(tagEntries, byId));
+              inTrashByDocId.set(page.id, page.inTrash);
             }
           }
           const graphEdges = Array.isArray(docs?.edges) ? docs.edges : [];
@@ -3839,6 +3883,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
                 ...node,
                 title: titlesByDocId.get(node.id) || node.title,
                 tags: tagsByDocId.get(node.id) || [],
+                inTrash: inTrashByDocId.get(node.id) ?? false,
               },
             };
           })
@@ -3883,7 +3928,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs",
     {
       title: "List Documents",
-      description: "List documents in a workspace (GraphQL).",
+      description: "List documents in a workspace (GraphQL). Each doc includes an inTrash flag.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID (optional if default set).").optional(),
         first: z.number().optional(),
@@ -4030,6 +4075,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             updatedAt: updatedTimestamp > 0 ? new Date(updatedTimestamp).toISOString() : null,
             updatedTimestamp,
             url: `${baseUrl}/workspace/${workspaceId}/${page.id}`,
+            inTrash: page.inTrash,
             rank,
           };
         })
@@ -4058,6 +4104,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           tags: entry.tags,
           updatedAt: entry.updatedAt,
           url: entry.url,
+          inTrash: entry.inTrash,
         }));
 
       return text({
@@ -4078,7 +4125,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "search_docs",
     {
       title: "Search Documents by Title",
-      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, and direct URL for each match.",
+      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, direct URL, and inTrash for each match.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
@@ -4130,7 +4177,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
 
-      type Match = { id: string; title: string; createdAt: string | null; updatedAt: string | null };
+      type Match = { id: string; title: string; createdAt: string | null; updatedAt: string | null; inTrash: boolean };
       const matches: Match[] = [];
       let truncated = false;
       for (const page of pages) {
@@ -4152,6 +4199,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           title: pageTitle,
           createdAt: page.createDate ? new Date(page.createDate).toISOString() : null,
           updatedAt: updatedTimestamp ? new Date(updatedTimestamp).toISOString() : null,
+          inTrash: page.inTrash,
         });
       }
 
@@ -4177,7 +4225,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         "Reads workspace metadata — fast, no per-doc fetch. " +
         "Unlike `search_docs` (which is always case-insensitive and capped at limit 20), this tool defaults to case-sensitive matching and returns up to `limit` matches (default 50, max 200). " +
         "Prefer this over `search_docs` when you know the exact title and want every match. " +
-        "Returns: { query, caseInsensitive, matches: [{ id, title, createdAt, updatedAt }], workspaceDocCount, truncated }.",
+        "Returns: { query, caseInsensitive, matches: [{ id, title, createdAt, updatedAt, inTrash }], workspaceDocCount, truncated }.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if AFFINE_WORKSPACE_ID is set)."),
         title: z.string().min(1).describe("The exact title to match."),
@@ -4234,6 +4282,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             updatedDate: page.updatedDate,
             tags,
             rawTags,
+            inTrash: page.inTrash,
           };
         })
         .filter((page) => hasTag(page.tags, tag, ignoreCase) || hasTag(page.rawTags, tag, ignoreCase))
@@ -4254,7 +4303,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs_by_tag",
     {
       title: "List Documents By Tag",
-      description: "List documents that contain the requested tag.",
+      description: "List documents that contain the requested tag. Each doc includes an inTrash flag.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         tag: z.string().min(1).describe("Tag name"),
@@ -4476,6 +4525,136 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     removeTagFromDocHandler as any
+  );
+
+  /**
+   * Delete a workspace-level tag and detach it from every document that
+   * references it, mirroring AFFiNE's TagStore.removeTagOption. Resolves the
+   * tag by id or name (ambiguous names are rejected), removes the option from
+   * meta.properties.tags.options, strips the tag id from each page's tag array,
+   * then syncs each affected document's own metadata. All workspace-root edits
+   * are applied to an in-memory Y.Doc and pushed as a single delta, so a failed
+   * push leaves the server unchanged and the operation safely retriable.
+   */
+  const deleteTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const tag = normalizeTag(parsed.tag);
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const wsSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (!wsSnapshot.missing) {
+        throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
+      }
+
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
+      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+
+      const { option } = findTagOptionForDeletion(wsMeta, tag);
+
+      // Step 1: drop the tag option itself from the workspace tag registry.
+      const optionsArray = getWorkspaceTagOptionsArray(wsMeta);
+      let optionRemoved = false;
+      if (optionsArray) {
+        const optionIndexes: number[] = [];
+        optionsArray.forEach((raw: unknown, index: number) => {
+          const parsedOption = parseWorkspaceTagOption(raw);
+          if (parsedOption && parsedOption.id === option.id) {
+            optionIndexes.push(index);
+          }
+        });
+        optionRemoved = deleteArrayIndexes(optionsArray, optionIndexes);
+      }
+
+      // Step 2: strip the tag id from every page entry that still references it.
+      // Match by id only (case-sensitive), mirroring AFFiNE's removeTagOption
+      // (`t !== id`): doc tags are stored as canonical ids, and matching by
+      // value could clobber a same-name sibling tag's references.
+      const affectedDocIds: string[] = [];
+      for (const page of getWorkspacePageEntries(wsMeta)) {
+        const pageTags = page.tagsArray;
+        if (!pageTags) {
+          continue;
+        }
+        const indexes = collectMatchingTagIndexes(pageTags, option.id, null, false);
+        if (deleteArrayIndexes(pageTags, indexes)) {
+          affectedDocIds.push(page.id);
+        }
+      }
+
+      if (optionRemoved || affectedDocIds.length > 0) {
+        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+      }
+
+      // Step 3: mirror the cleanup in each affected document's own metadata.
+      let docMetaSynced = 0;
+      const warnings: string[] = [];
+      // The workspace registry is the source of truth and has already been
+      // updated; per-document metadata is a secondary sync. Treat each doc as
+      // best-effort so one failing push degrades to a warning instead of
+      // throwing and leaving a non-retriable partial state.
+      for (const docId of affectedDocIds) {
+        try {
+          const docSnapshot = await loadDoc(socket, workspaceId, docId);
+          if (!docSnapshot.missing) {
+            warnings.push(`Document ${docId} snapshot not found; workspace tag map was updated only.`);
+            continue;
+          }
+          const doc = new Y.Doc();
+          Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
+          const docPrevSV = Y.encodeStateVector(doc);
+          const docTags = getTagArray(doc.getMap("meta"));
+          if (docTags) {
+            const docIndexes = collectMatchingTagIndexes(docTags, option.id, null, false);
+            if (deleteArrayIndexes(docTags, docIndexes)) {
+              const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
+              await pushDocUpdate(socket, workspaceId, docId, Buffer.from(docDelta).toString("base64"));
+            }
+          }
+          docMetaSynced += 1;
+        } catch (err) {
+          warnings.push(
+            `Document ${docId} metadata sync failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+
+      return text({
+        workspaceId,
+        tag,
+        tagId: option.id,
+        value: option.value,
+        deleted: optionRemoved,
+        affectedDocs: affectedDocIds.length,
+        docMetaSynced,
+        warnings,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "delete_tag",
+    {
+      title: "Delete Tag",
+      description:
+        "Delete a workspace-level tag and remove it from every document that references it. Accepts a tag id or name; an ambiguous name is rejected with the candidate ids.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        tag: z.string().min(1).describe("Tag id or name to delete"),
+      },
+    },
+    deleteTagHandler as any
   );
 
   const getDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
@@ -5728,6 +5907,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
+      const trashById = new Map(pages.map(p => [p.id, p.inTrash]));
       const childrenOf = new Map<string, string[]>();
       const allChildren = new Set<string>();
       for (const page of pages) {
@@ -5750,6 +5930,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const buildNode = (id: string, depth: number): any => ({
         docId: id, title: titleById.get(id) ?? "Untitled",
         url: `${baseUrl}/workspace/${workspaceId}/${id}`,
+        inTrash: trashById.get(id) ?? false,
         children: depth < maxDepth ? (childrenOf.get(id) ?? []).map(cid => buildNode(cid, depth + 1)) : [],
       });
       return text({ workspaceId, totalDocs: pages.length, rootCount: roots.length, tree: roots.map(id => buildNode(id, 0)) });
@@ -5757,7 +5938,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   };
   server.registerTool("list_workspace_tree", {
     title: "List Workspace Tree",
-    description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces.",
+    description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces. Each node includes an inTrash flag.",
     inputSchema: {
       workspaceId: z.string().optional(),
       depth: z.number().optional().describe("Max nesting depth to return (default: 3)."),
@@ -5797,13 +5978,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           docId: p.id,
           title: titleById.get(p.id) ?? "Untitled",
           url: `${baseUrl}/workspace/${workspaceId}/${p.id}`,
+          inTrash: p.inTrash,
         }));
       return text({ count: orphans.length, orphans });
     } finally { socket.disconnect(); }
   };
   server.registerTool("get_orphan_docs", {
     title: "Get Orphan Documents",
-    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc / embed_synced_doc blocks or inline LinkedPage references). Useful for workspace hygiene. Note: scans all docs — O(n).",
+    description: "Find all documents that have no parent (not linked from any other doc via embed_linked_doc / embed_synced_doc blocks or inline LinkedPage references). Useful for workspace hygiene. Note: scans all docs — O(n). Each doc includes an inTrash flag.",
     inputSchema: { workspaceId: z.string().optional() },
   }, getOrphanDocsHandler as any);
 
@@ -5816,6 +5998,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     try {
       await joinWorkspace(socket, workspaceId);
       const titleById = new Map<string, string>();
+      const trashById = new Map<string, boolean>();
       const workspacePageIds = new Set<string>();
       let hasWorkspaceMetadata = false;
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
@@ -5825,6 +6008,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
         for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
           workspacePageIds.add(page.id);
+          trashById.set(page.id, page.inTrash);
           if (page.title) titleById.set(page.id, page.title);
         }
       }
@@ -5833,21 +6017,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
       const blocks = doc.getMap("blocks") as Y.Map<any>;
-      const children: Array<{ docId: string; title: string | null; url: string }> = [];
+      const children: Array<{ docId: string; title: string | null; url: string; inTrash: boolean }> = [];
       const seen = new Set<string>();
       for (const pageId of collectLinkedChildIds(blocks)) {
         if (hasWorkspaceMetadata && !workspacePageIds.has(pageId)) continue;
         if (seen.has(pageId)) continue;
         seen.add(pageId);
         children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
-          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}` });
+          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}`,
+          inTrash: trashById.get(pageId) ?? false });
       }
       return text({ docId: parsed.docId, count: children.length, children });
     } finally { socket.disconnect(); }
   };
   server.registerTool("list_children", {
     title: "List Document Children",
-    description: "List the direct children of a document in the sidebar (embed_linked_doc / embed_synced_doc blocks and inline LinkedPage references). Returns docId, title, and URL for each child.",
+    description: "List the direct children of a document in the sidebar (embed_linked_doc / embed_synced_doc blocks and inline LinkedPage references). Returns docId, title, URL, and inTrash for each child.",
     inputSchema: {
       workspaceId: z.string().optional(),
       docId: z.string().describe("The parent doc whose children to list."),

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-06-22
+
+### Added
+- `delete_tag` removes a workspace-level tag and detaches it from every document that references it, mirroring AFFiNE's own tag deletion (drops the option from `meta.properties.tags.options` and strips the tag id from each `pages[*].tags`, then syncs affected document metadata). Accepts a tag id or name; an ambiguous name is rejected with the candidate ids. Belongs to the `docs.tags` and `destructive` tool groups.
+
+### Changed
+- Document listing, search, tag listing, hierarchy, child, and orphan flows now surface `inTrash` so MCP clients can distinguish active and trashed documents without extra lookups.
+
+### Tests
+- Added Docker-backed regression coverage for `delete_tag` (`tests/test-tag-deletion.mjs`) and wired it into the E2E pipeline.
+
+### Dependencies
+- Refreshed `actions/checkout` to `v7` across CI, E2E, Docker, and npm publish workflows.
+- Refreshed Playwright lockfile entries from `1.60.0` to `1.61.0`.
+- Refreshed `undici` from `^8.0.2` to `^6.27.0`, clearing the current high-severity audit finding while preserving Node 18/20 compatibility.
+
 ## [2.3.0] - 2026-06-17
 
 ### Added
@@ -493,6 +509,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[2.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.4.0
 [2.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.3.0
 [2.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.2.0
 [2.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.1.0
@@ -518,4 +535,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.4.0...HEAD
