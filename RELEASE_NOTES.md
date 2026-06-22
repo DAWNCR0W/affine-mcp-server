@@ -7,7 +7,7 @@
 - Surfaced `inTrash` across document listing, search, tag listing, hierarchy, child, and orphan workflows.
 - Expanded the canonical public tool manifest to 95 tools.
 - Refreshed GitHub Actions checkout usage and Playwright lockfile entries.
-- Refreshed the locked `undici` dependency to clear the current high-severity audit finding.
+- Refreshed `undici` to clear the current high-severity audit finding while preserving Node 18/20 compatibility.
 - Added Docker-backed E2E coverage for workspace tag deletion.
 
 ### What Changed
@@ -24,7 +24,7 @@
 - `.github/workflows/*.yml`, `package-lock.json`
   - Updated `actions/checkout` from `v6` to `v7`.
   - Updated Playwright lockfile entries from `1.60.0` to `1.61.0`.
-  - Updated the locked `undici` package from `8.0.2` to `8.5.0`.
+  - Updated `undici` from `^8.0.2` to `^6.27.0`.
 - `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, `RELEASE_NOTES.md`
   - Bumped release metadata to `2.4.0`.
 

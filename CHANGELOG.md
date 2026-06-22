@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 - Refreshed `actions/checkout` to `v7` across CI, E2E, Docker, and npm publish workflows.
 - Refreshed Playwright lockfile entries from `1.60.0` to `1.61.0`.
-- Refreshed locked `undici` from `8.0.2` to `8.5.0`, clearing the current high-severity audit finding.
+- Refreshed `undici` from `^8.0.2` to `^6.27.0`, clearing the current high-severity audit finding while preserving Node 18/20 compatibility.
 
 ## [2.3.0] - 2026-06-17
 
