@@ -164,7 +164,7 @@ If you want to expose the server remotely over HTTP instead of stdio, start with
 
 ## Tool Surface
 
-`tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`, with MCP annotations that mark read-only, destructive, idempotent, and external-world behavior for client-side tool selection.
+`tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`; tool definitions returned by `tools/list` include MCP annotations that mark read-only, destructive, idempotent, and external-world behavior for client-side tool selection.
 
 Domains:
 

@@ -71,7 +71,8 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
 
   const updateCommentHandler = async (parsed: { id: string; content: any }) => {
     const mutation = `mutation UpdateComment($input: CommentUpdateInput!){ updateComment(input:$input) }`;
-    const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: parsed.content } });
+    const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
+    const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: normalizedContent } });
     return receipt("comment.update", {
       commentId: parsed.id,
       id: parsed.id,
