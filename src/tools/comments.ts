@@ -3,6 +3,14 @@ import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
 
+const CommentContent = z.union([
+  z.string(),
+  z.record(z.unknown()),
+  z.array(z.unknown()),
+]).describe("Comment content accepted by AFFiNE. Plain strings are normalized to { text }, and rich AFFiNE payload objects are passed through.");
+const CommentPageSize = z.number().int().positive().describe("Maximum number of comments to return from the AFFiNE pagination connection.");
+const CommentOffset = z.number().int().nonnegative().describe("Zero-based offset used by AFFiNE pagination. Do not combine with after unless the AFFiNE API requires it.");
+
 export function registerCommentTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
   const listCommentsHandler = async (parsed: { workspaceId?: string; docId: string; first?: number; offset?: number; after?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId || parsed.workspaceId;
@@ -15,13 +23,13 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     "list_comments",
     {
       title: "List Comments",
-      description: "List comments of a doc (with replies).",
+      description: "List paginated comments for a document, including nested replies and resolution state. Use this before update_comment, delete_comment, or resolve_comment when you need the existing comment ids.",
       inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        first: z.number().optional(),
-        offset: z.number().optional(),
-        after: z.string().optional()
+        workspaceId: z.string().optional().describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured."),
+        docId: z.string().describe("Document id whose comments should be listed."),
+        first: CommentPageSize.optional(),
+        offset: CommentOffset.optional(),
+        after: z.string().optional().describe("Cursor from pageInfo.endCursor for fetching the next page.")
       }
     },
     listCommentsHandler as any
@@ -48,14 +56,14 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     "create_comment",
     {
       title: "Create Comment",
-      description: "Create a comment on a doc.",
+      description: "Create a new comment on an existing document. This writes collaboration state; use update_comment when editing an existing comment instead.",
       inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        docTitle: z.string().optional(),
-        docMode: z.enum(["Page","Edgeless","page","edgeless"]).optional(),
-        content: z.any(),
-        mentions: z.array(z.string()).optional()
+        workspaceId: z.string().optional().describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured."),
+        docId: z.string().describe("Document id that will receive the new comment."),
+        docTitle: z.string().optional().describe("Optional document title stored with the comment metadata."),
+        docMode: z.enum(["Page","Edgeless","page","edgeless"]).optional().describe("Document surface for the comment. Defaults to page."),
+        content: CommentContent,
+        mentions: z.array(z.string()).optional().describe("Optional AFFiNE user ids to mention in the comment.")
       }
     },
     createCommentHandler as any
@@ -74,10 +82,10 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     "update_comment",
     {
       title: "Update Comment",
-      description: "Update a comment content.",
+      description: "Replace the content of an existing comment. This preserves the comment thread; use create_comment for a new thread.",
       inputSchema: {
-        id: z.string(),
-        content: z.any()
+        id: z.string().describe("Comment id returned by list_comments or create_comment."),
+        content: CommentContent.describe("Replacement comment content accepted by AFFiNE.")
       }
     },
     updateCommentHandler as any
@@ -96,9 +104,9 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     "delete_comment",
     {
       title: "Delete Comment",
-      description: "Delete a comment by id.",
+      description: "Delete an existing comment by id. This is destructive for that comment; use resolve_comment when you only want to mark a thread resolved.",
       inputSchema: {
-        id: z.string()
+        id: z.string().describe("Comment id returned by list_comments or create_comment.")
       }
     },
     deleteCommentHandler as any
@@ -118,10 +126,10 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     "resolve_comment",
     {
       title: "Resolve Comment",
-      description: "Resolve or unresolve a comment.",
+      description: "Set a comment thread's resolved state without changing its content. Use delete_comment only when the comment should be removed.",
       inputSchema: {
-        id: z.string(),
-        resolved: z.boolean()
+        id: z.string().describe("Comment id returned by list_comments or create_comment."),
+        resolved: z.boolean().describe("true marks the comment resolved; false reopens it.")
       }
     },
     resolveCommentHandler as any

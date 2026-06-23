@@ -11,7 +11,7 @@ const SRC_PATH = path.resolve(__dirname, "..", "src", "index.ts");
 const REPO_ROOT = path.resolve(__dirname, "..");
 const execFileAsync = promisify(execFile);
 
-async function testFiltering(env = {}) {
+async function listToolEntries(env = {}) {
   const client = new Client(
     { name: "test-client", version: "1.0.0" },
     { capabilities: {} }
@@ -32,9 +32,13 @@ async function testFiltering(env = {}) {
 
   await client.connect(transport);
   const result = await client.listTools();
-  const toolNames = result.tools.map((t) => t.name);
   await transport.close();
-  return toolNames;
+  return result.tools;
+}
+
+async function testFiltering(env = {}) {
+  const tools = await listToolEntries(env);
+  return tools.map((t) => t.name);
 }
 
 async function inspectToolSurfacePolicy() {
@@ -68,7 +72,8 @@ async function run() {
   try {
     // 0. Removed convenience wrappers are not registered on the default surface.
     console.log("Case 0: Removed convenience wrappers stay absent");
-    const allTools = await testFiltering();
+    const defaultToolEntries = await listToolEntries();
+    const allTools = defaultToolEntries.map((t) => t.name);
     const removedTools = [
       "append_paragraph",
       "batch_create_docs",
@@ -87,6 +92,29 @@ async function run() {
       console.log("✅ Success: Default tool surface exposes 95 tools.");
     } else {
       console.error(`❌ Failed: Default tool surface mismatch. count=${allTools.length} stillRegistered=${stillRegistered.join(", ")}`);
+      hasFailures = true;
+    }
+
+    // 0a. Tool annotations are present for client-side selection safety.
+    console.log("\nCase 0a: Default tools expose MCP annotations");
+    const missingAnnotations = defaultToolEntries.filter(tool =>
+      !tool.annotations ||
+      typeof tool.annotations.readOnlyHint !== "boolean" ||
+      typeof tool.annotations.destructiveHint !== "boolean" ||
+      typeof tool.annotations.idempotentHint !== "boolean" ||
+      typeof tool.annotations.openWorldHint !== "boolean"
+    );
+    const toolsByName = Object.fromEntries(defaultToolEntries.map(tool => [tool.name, tool]));
+    const annotationExpectations =
+      toolsByName.list_docs?.annotations?.readOnlyHint === true &&
+      toolsByName.list_docs?.annotations?.idempotentHint === true &&
+      toolsByName.delete_doc?.annotations?.destructiveHint === true &&
+      toolsByName.create_doc?.annotations?.readOnlyHint === false &&
+      toolsByName.create_doc?.annotations?.destructiveHint === false;
+    if (missingAnnotations.length === 0 && annotationExpectations) {
+      console.log("✅ Success: Tool annotations are populated and match representative read/write/destructive tools.");
+    } else {
+      console.error(`❌ Failed: Tool annotations missing or mismatched. missing=${missingAnnotations.map(t => t.name).join(", ")}`);
       hasFailures = true;
     }
 

@@ -81,6 +81,8 @@
     "dist",
     "docs",
     "README.md",
+    "SECURITY.md",
+    "glama.json",
     "tool-manifest.json",
     "LICENSE"
   ],

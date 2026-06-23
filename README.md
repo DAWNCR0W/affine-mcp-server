@@ -3,7 +3,7 @@
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
 [![Version](https://img.shields.io/badge/version-2.4.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
-[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.17.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
+[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.29.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
@@ -164,7 +164,7 @@ If you want to expose the server remotely over HTTP instead of stdio, start with
 
 ## Tool Surface
 
-`tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`.
+`tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`, with MCP annotations that mark read-only, destructive, idempotent, and external-world behavior for client-side tool selection.
 
 Domains:
 
@@ -178,7 +178,7 @@ Domains:
 - Notifications: list and mark notifications as read
 - Blob storage: upload, delete, and cleanup blobs
 
-Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
+Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 

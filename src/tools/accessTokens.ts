@@ -18,7 +18,7 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
     "list_access_tokens",
     {
       title: "List Access Tokens",
-      description: "List personal access tokens (metadata).",
+      description: "List metadata for the current user's personal access tokens. Token secrets are not returned; use generate_access_token only when a new secret is needed.",
       inputSchema: {}
     },
     listAccessTokensHandler as any
@@ -33,10 +33,10 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
     "generate_access_token",
     {
       title: "Generate Access Token",
-      description: "Generate a personal access token (returns token).",
+      description: "Generate a new personal access token and return its one-time secret. This creates a credential; store the returned token securely because it may not be shown again.",
       inputSchema: {
-        name: z.string(),
-        expiresAt: z.string().optional()
+        name: z.string().describe("Human-readable token name shown in AFFiNE token settings."),
+        expiresAt: z.string().optional().describe("Optional expiration timestamp accepted by AFFiNE, typically an ISO 8601 string.")
       }
     },
     generateAccessTokenHandler as any
@@ -51,9 +51,9 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
     "revoke_access_token",
     {
       title: "Revoke Access Token",
-      description: "Revoke a personal access token by id.",
+      description: "Revoke an existing personal access token by id. This is destructive for API clients using that token; list tokens first if the id is unknown.",
       inputSchema: {
-        id: z.string()
+        id: z.string().describe("Access token id returned by list_access_tokens or generate_access_token.")
       }
     },
     revokeAccessTokenHandler as any
