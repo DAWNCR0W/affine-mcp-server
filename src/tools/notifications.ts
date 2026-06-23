@@ -55,7 +55,7 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
     "list_notifications",
     {
       title: "List Notifications",
-      description: "Get user notifications.",
+      description: "List the current user's AFFiNE notifications with optional unread filtering. This is read-only and returns notification ids, read state, level, and timestamps.",
       inputSchema: {
         first: z.number().optional().describe("Number of notifications to fetch"),
         offset: z.number().optional().describe("Offset for pagination"),
@@ -86,7 +86,7 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
     "read_all_notifications",
     {
       title: "Mark All Notifications Read",
-      description: "Mark all notifications as read.",
+      description: "Mark every current-user notification as read. This mutates notification state; use list_notifications first when you need to inspect unread items.",
       inputSchema: {}
     },
     readAllNotificationsHandler as any

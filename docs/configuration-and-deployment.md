@@ -77,7 +77,7 @@ Important note for AFFiNE Cloud:
 Prebuilt images are published to GHCR:
 
 - `ghcr.io/dawncr0w/affine-mcp-server:latest`
-- `ghcr.io/dawncr0w/affine-mcp-server:1.12.0`
+- `ghcr.io/dawncr0w/affine-mcp-server:2.4.0`
 
 Example:
 
@@ -101,11 +101,11 @@ Health endpoints:
 
 HTTP mode exposes:
 
-- `/mcp` - Streamable HTTP MCP endpoint
-- `/sse` - SSE endpoint for older-compatible clients
-- `/messages` - message endpoint for older-compatible clients
-- `/healthz` - liveness probe
-- `/readyz` - readiness probe
+- `/mcp` - Streamable HTTP MCP endpoint protected by the configured MCP auth mode
+- `/sse` - SSE endpoint for older-compatible clients protected by the configured MCP auth mode
+- `/messages` - message endpoint for older-compatible clients protected by the configured MCP auth mode
+- `/healthz` - unauthenticated liveness probe for trusted platform checks
+- `/readyz` - unauthenticated readiness probe for trusted platform checks
 
 ### Bearer mode
 
@@ -252,7 +252,10 @@ Before exposing the server remotely, confirm:
 - `MCP_TRANSPORT=http` is set
 - `AFFINE_MCP_AUTH_MODE` is correct for your client model
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0` is set in containerized deployments
+- HTTPS or TLS termination is in front of any non-local HTTP deployment
+- bearer mode uses a long random `AFFINE_MCP_HTTP_TOKEN`, or OAuth is configured for multi-user access
 - `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` is set for browser-based clients
+- `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS` is not enabled outside local testing
 - `/healthz` and `/readyz` are wired into your platform checks
 - destructive tools are filtered if your deployment should be read-only or constrained
 

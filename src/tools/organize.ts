@@ -15,23 +15,23 @@ import {
   wsUrlFromGraphQLEndpoint,
 } from "../ws.js";
 
-const WorkspaceId = z.string().min(1, "workspaceId required");
-const DocId = z.string().min(1, "docId required");
-const CollectionId = z.string().min(1, "collectionId required");
-const FolderId = z.string().min(1, "folderId required");
-const OrganizeNodeId = z.string().min(1, "nodeId required");
-const FolderName = z.string().trim().min(1, "name required");
-const CollectionRuleFieldSchema = z.enum(["title", "tag", "docId"]);
-const CollectionRuleOperatorSchema = z.enum(["contains", "equals", "startsWith", "in"]);
+const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
+const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
+const CollectionId = z.string().min(1, "collectionId required").describe("AFFiNE collection id from list_collections or create_collection.");
+const FolderId = z.string().min(1, "folderId required").describe("AFFiNE organize folder node id.");
+const OrganizeNodeId = z.string().min(1, "nodeId required").describe("AFFiNE organize node id from list_organize_nodes.");
+const FolderName = z.string().trim().min(1, "name required").describe("Non-empty sidebar folder or collection name.");
+const CollectionRuleFieldSchema = z.enum(["title", "tag", "docId"]).describe("Document field evaluated by the collection rule.");
+const CollectionRuleOperatorSchema = z.enum(["contains", "equals", "startsWith", "in"]).describe("Comparison operator for the collection rule.");
 const CollectionRuleSchema = z.object({
   field: CollectionRuleFieldSchema,
   operator: CollectionRuleOperatorSchema,
-  value: z.union([z.string(), z.array(z.string())]),
-});
+  value: z.union([z.string(), z.array(z.string())]).describe("String value or list of values used by the selected operator."),
+}).describe("Single AFFiNE collection filter rule.");
 const CollectionRulesSchema = z.object({
-  match: z.enum(["all", "any"]).optional(),
-  filters: z.array(CollectionRuleSchema),
-});
+  match: z.enum(["all", "any"]).optional().describe("Whether all filters or any filter must match. Defaults to all."),
+  filters: z.array(CollectionRuleSchema).describe("Collection filter rules used to build the allow-list."),
+}).describe("AFFiNE collection rule set.");
 
 type CollectionInfo = {
   id: string;
@@ -833,7 +833,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "list_collections",
     {
       title: "List Collections",
-      description: "List AFFiNE collections stored in the workspace sidebar.",
+      description: "List AFFiNE sidebar collections and their rules. Use this read-only tool before updating, deleting, or adding documents to a collection.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
       },
@@ -864,7 +864,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "get_collection",
     {
       title: "Get Collection",
-      description: "Get an AFFiNE collection by id.",
+      description: "Read one AFFiNE sidebar collection by id, including rules and allow-list. Use list_collections first when the id is unknown.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
@@ -913,7 +913,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "create_collection",
     {
       title: "Create Collection",
-      description: "Create a new AFFiNE collection in the workspace sidebar.",
+      description: "Create a new AFFiNE sidebar collection with optional rules. This writes workspace sidebar metadata but does not create documents.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         name: FolderName.describe("Collection name"),
@@ -953,7 +953,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "update_collection_rules",
     {
       title: "Update Collection Rules",
-      description: "Replace a collection's rules and rebuild its allow-list from workspace docs.",
+      description: "Replace an AFFiNE collection's rules and rebuild its allow-list from current workspace documents. This can change which docs appear in the collection.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
@@ -1012,7 +1012,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "update_collection",
     {
       title: "Update Collection",
-      description: "Rename an AFFiNE collection.",
+      description: "Rename an existing AFFiNE sidebar collection without changing its rules or allow-list.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
@@ -1055,7 +1055,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "delete_collection",
     {
       title: "Delete Collection",
-      description: "Delete an AFFiNE collection from the workspace sidebar.",
+      description: "Delete an AFFiNE sidebar collection. This removes the collection metadata but does not delete the documents it referenced.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
@@ -1110,7 +1110,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "add_doc_to_collection",
     {
       title: "Add Doc To Collection",
-      description: "Add a document id to an AFFiNE collection allow-list.",
+      description: "Add an existing document id to an AFFiNE collection allow-list. Use update_collection_rules instead when membership should be rule-driven.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
@@ -1166,7 +1166,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "remove_doc_from_collection",
     {
       title: "Remove Doc From Collection",
-      description: "Remove a document id from an AFFiNE collection allow-list.",
+      description: "Remove a document id from an AFFiNE collection allow-list. This does not delete the document or change collection rules.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
@@ -1197,7 +1197,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "list_organize_nodes",
     {
       title: "List Organize Nodes",
-      description: "Experimental: list AFFiNE sidebar organize nodes from the folders workspace DB.",
+      description: "Experimental: list AFFiNE sidebar organize folder and link nodes from the folders workspace DB. Use this before moving or deleting organize nodes.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
       },
@@ -1229,7 +1229,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "create_folder",
     {
       title: "Create Folder",
-      description: "Experimental: create an AFFiNE organize folder node.",
+      description: "Experimental: create an AFFiNE organize folder node in the sidebar tree. This only changes sidebar organization, not document content.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         name: FolderName.describe("Folder name"),
@@ -1282,7 +1282,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "create_workspace_blueprint",
     {
       title: "Create Workspace Blueprint",
-      description: "Create a simple workspace folder blueprint under the organize tree.",
+      description: "Create a simple AFFiNE organize folder blueprint with one root folder and optional child folders. This is a convenience wrapper around create_folder.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         rootFolderName: FolderName.describe("Root folder name"),
@@ -1321,7 +1321,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "rename_folder",
     {
       title: "Rename Folder",
-      description: "Experimental: rename an AFFiNE organize folder node.",
+      description: "Experimental: rename an AFFiNE organize folder node. This changes sidebar metadata only and does not rename documents inside the folder.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         folderId: FolderId,
@@ -1376,7 +1376,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "delete_folder",
     {
       title: "Delete Folder",
-      description: "Experimental: delete an AFFiNE organize folder and all nested nodes.",
+      description: "Experimental: delete an AFFiNE organize folder and every nested folder or link node. This is destructive for sidebar organization but does not delete target documents, tags, or collections.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         folderId: FolderId,
@@ -1430,7 +1430,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "move_organize_node",
     {
       title: "Move Organize Node",
-      description: "Experimental: move an AFFiNE organize folder or link node.",
+      description: "Experimental: move an AFFiNE organize folder or link node to another folder or root. This preserves the target document, tag, or collection and changes only sidebar placement.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         nodeId: OrganizeNodeId,
@@ -1474,11 +1474,11 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "add_organize_link",
     {
       title: "Add Organize Link",
-      description: "Experimental: add a doc/tag/collection link under an AFFiNE organize folder.",
+      description: "Experimental: add a doc, tag, or collection link under an AFFiNE organize folder. Use move_organize_node for an existing link node instead of creating a duplicate link.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         folderId: FolderId,
-        type: z.enum(["doc", "tag", "collection"]),
+        type: z.enum(["doc", "tag", "collection"]).describe("Type of target represented by the organize link."),
         targetId: z.string().min(1).describe("Target doc/tag/collection id"),
         index: z.string().optional().describe("Optional fractional index. Defaults to append-after-last."),
       },
@@ -1515,7 +1515,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     "delete_organize_link",
     {
       title: "Delete Organize Link",
-      description: "Experimental: delete an AFFiNE organize doc/tag/collection link.",
+      description: "Experimental: delete an AFFiNE organize doc, tag, or collection link node. This removes only the sidebar link, not the target resource.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         nodeId: OrganizeNodeId,

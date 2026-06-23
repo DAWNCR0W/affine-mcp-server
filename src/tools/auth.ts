@@ -16,8 +16,8 @@ export function registerAuthTools(server: McpServer, gql: GraphQLClient, baseUrl
       title: "Sign In",
       description: "Sign in to AFFiNE using email and password; sets session cookies for subsequent calls.",
       inputSchema: {
-        email: z.string().email(),
-        password: z.string().min(1)
+        email: z.string().email().describe("AFFiNE account email address."),
+        password: z.string().min(1).describe("AFFiNE account password. Prefer API tokens for production deployments.")
       }
     },
     signInHandler as any

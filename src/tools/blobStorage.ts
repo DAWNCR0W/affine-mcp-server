@@ -80,12 +80,12 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
     "upload_blob",
     {
       title: "Upload Blob",
-      description: "Upload a file or blob to workspace storage.",
+      description: "Upload a file or blob into AFFiNE workspace storage and return its blob key. This creates stored content but does not attach it to a document by itself.",
       inputSchema: {
-        workspaceId: z.string().describe("Workspace ID"),
-        content: z.string().describe("Base64 encoded content or text"),
-        filename: z.string().optional().describe("Filename"),
-        contentType: z.string().optional().describe("MIME type")
+        workspaceId: z.string().describe("AFFiNE workspace id that owns the blob."),
+        content: z.string().describe("Base64-encoded file content or plain UTF-8 text to upload."),
+        filename: z.string().optional().describe("Optional filename stored with the upload. Defaults to a generated .bin name."),
+        contentType: z.string().optional().describe("Optional MIME type. Defaults to application/octet-stream.")
       }
     },
     uploadBlobHandler as any
@@ -115,11 +115,11 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
     "delete_blob",
     {
       title: "Delete Blob",
-      description: "Delete a blob/file from workspace storage.",
+      description: "Delete a blob from AFFiNE workspace storage. Set permanently only when the blob should bypass recoverable deletion.",
       inputSchema: {
-        workspaceId: z.string().describe("Workspace ID"),
-        key: z.string().describe("Blob key/ID to delete"),
-        permanently: z.boolean().optional().describe("Delete permanently")
+        workspaceId: z.string().describe("AFFiNE workspace id that owns the blob."),
+        key: z.string().describe("Blob key returned by upload_blob or AFFiNE document metadata."),
+        permanently: z.boolean().optional().describe("If true, permanently delete the blob instead of marking it deleted.")
       }
     },
     deleteBlobHandler as any
@@ -147,9 +147,9 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
     "cleanup_blobs",
     {
       title: "Cleanup Deleted Blobs",
-      description: "Permanently remove deleted blobs to free up storage.",
+      description: "Permanently release blobs that were already marked deleted in a workspace. This is destructive cleanup and should be used only after confirming deleted blobs are no longer needed.",
       inputSchema: {
-        workspaceId: z.string().describe("Workspace ID")
+        workspaceId: z.string().describe("AFFiNE workspace id whose deleted blobs should be released.")
       }
     },
     cleanupBlobsHandler as any

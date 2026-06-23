@@ -98,6 +98,12 @@ const ALL_TOOLS = [
 
 type ToolName = typeof ALL_TOOLS[number];
 type ToolProfile = "full" | "read_only" | "core" | "authoring";
+type ToolAnnotations = {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+};
 
 const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   add_database_column: ["docs", "docs.database", "docs.write", "write"],
@@ -367,6 +373,29 @@ export function toolFilterRequiresRegisterTool(filter: {
   disabledTools: ReadonlySet<string>;
 }): boolean {
   return filter.profile !== "full" || filter.disabledGroups.size > 0 || filter.disabledTools.size > 0;
+}
+
+export function toolAnnotationsFor(name: string): ToolAnnotations {
+  const toolName = name as ToolName;
+  if (!KNOWN_TOOLS.has(toolName)) {
+    return {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    };
+  }
+
+  const groups = TOOL_GROUPS[toolName];
+  const isReadOnly = groups.includes("read") && !groups.includes("write") && !groups.includes("destructive");
+  const isDestructive = groups.includes("destructive");
+
+  return {
+    readOnlyHint: isReadOnly,
+    destructiveHint: isDestructive,
+    idempotentHint: isReadOnly,
+    openWorldHint: true,
+  };
 }
 
 export function knownToolSurfaceGroups(): string[] {
