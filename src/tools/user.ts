@@ -13,7 +13,7 @@ export function registerUserTools(server: McpServer, gql: GraphQLClient) {
     "current_user",
     {
       title: "Current User",
-      description: "Get current signed-in user.",
+      description: "Return the currently authenticated AFFiNE user profile. Use this read-only check to verify credentials before workspace or document operations.",
       inputSchema: {}
     },
     currentUserHandler as any

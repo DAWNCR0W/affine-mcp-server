@@ -67,9 +67,13 @@ function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
   return ids;
 }
 
-const WorkspaceId = z.string().min(1, "workspaceId required");
-const DocId = z.string().min(1, "docId required");
-const MarkdownContent = z.string().min(1, "markdown required");
+const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
+const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
+const MarkdownContent = z.string().min(1, "markdown required").describe("Markdown content to import, append, replace, or export-roundtrip.");
+const TagName = z.string().trim().min(1, "tag required").describe("Workspace tag name.");
+const TagIdOrName = z.string().trim().min(1, "tag required").describe("Workspace tag id or tag name.");
+const PageSize = z.number().int().positive().describe("Maximum number of items to return from the AFFiNE pagination connection.");
+const PageOffset = z.number().int().nonnegative().describe("Zero-based offset used by AFFiNE pagination. Do not combine with after unless the AFFiNE API requires it.");
 const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "paragraph",
   "heading",
@@ -3930,10 +3934,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       title: "List Documents",
       description: "List documents in a workspace (GraphQL). Each doc includes an inTrash flag.",
       inputSchema: {
-        workspaceId: z.string().describe("Workspace ID (optional if default set).").optional(),
-        first: z.number().optional(),
-        offset: z.number().optional(),
-        after: z.string().optional()
+        workspaceId: WorkspaceId.optional(),
+        first: PageSize.optional(),
+        offset: PageOffset.optional(),
+        after: z.string().optional().describe("Cursor from pageInfo.endCursor for fetching the next page.")
       }
     },
     listDocsHandler as any
@@ -4240,7 +4244,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_tags",
     {
       title: "List Tags",
-      description: "List all tags in a workspace and the number of docs attached to each tag.",
+      description: "List all workspace-level tags and the number of documents attached to each tag. Use this before tag mutation when the exact tag name or id is unknown.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
       },
@@ -4303,10 +4307,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs_by_tag",
     {
       title: "List Documents By Tag",
-      description: "List documents that contain the requested tag. Each doc includes an inTrash flag.",
+      description: "List documents that contain the requested tag. This is read-only and each result includes title metadata and an inTrash flag.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
-        tag: z.string().min(1).describe("Tag name"),
+        tag: TagName.describe("Tag name to match against workspace tag labels."),
         ignoreCase: z.boolean().optional().describe("Case-insensitive tag matching (default: true)."),
       },
     },
@@ -4350,10 +4354,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "create_tag",
     {
       title: "Create Tag",
-      description: "Create a workspace-level tag entry for future reuse.",
+      description: "Create a workspace-level tag entry for future reuse. This does not attach the tag to a document; use add_tag_to_doc for that.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
-        tag: z.string().min(1).describe("Tag name"),
+        tag: TagName.describe("Tag name to create in the workspace tag registry."),
       },
     },
     createTagHandler as any
@@ -4433,11 +4437,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "add_tag_to_doc",
     {
       title: "Add Tag To Document",
-      description: "Add a tag to a document.",
+      description: "Attach a workspace tag to a document, creating the workspace tag option if needed. This updates workspace metadata and attempts to sync the document's own metadata.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        tag: z.string().min(1).describe("Tag name"),
+        tag: TagName.describe("Tag name to attach to the document."),
       },
     },
     addTagToDocHandler as any
@@ -4517,11 +4521,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "remove_tag_from_doc",
     {
       title: "Remove Tag From Document",
-      description: "Remove a tag from a document.",
+      description: "Detach a tag from one document without deleting the workspace-level tag. Use delete_tag only when the tag should be removed from every document.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        tag: z.string().min(1).describe("Tag name"),
+        tag: TagName.describe("Tag name to detach from the document."),
       },
     },
     removeTagFromDocHandler as any
@@ -4651,7 +4655,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         "Delete a workspace-level tag and remove it from every document that references it. Accepts a tag id or name; an ambiguous name is rejected with the candidate ids.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
-        tag: z.string().min(1).describe("Tag id or name to delete"),
+        tag: TagIdOrName.describe("Tag id or name to delete. Ambiguous tag names are rejected with candidate ids."),
       },
     },
     deleteTagHandler as any
@@ -4670,9 +4674,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "get_doc",
     {
       title: "Get Document",
-      description: "Get a document by ID (GraphQL metadata).",
+      description: "Read GraphQL metadata for one document, such as title, summary, public state, roles, and timestamps. Use read_doc when you need block content.",
       inputSchema: {
-        workspaceId: z.string().optional(),
+        workspaceId: WorkspaceId.optional(),
         docId: DocId
       }
     },
@@ -5075,11 +5079,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "publish_doc",
     {
       title: "Publish Document",
-      description: "Publish a doc (make public).",
+      description: "Make a document publicly accessible through AFFiNE public sharing. This changes sharing state; use revoke_doc to disable public access later.",
       inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string(),
-        mode: z.enum(["Page","Edgeless"]).optional()
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        mode: z.enum(["Page","Edgeless"]).optional().describe("Public document mode to publish. Omit to let AFFiNE use its default.")
       }
     },
     publishDocHandler as any
@@ -5102,10 +5106,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "revoke_doc",
     {
       title: "Revoke Document",
-      description: "Revoke a doc's public access.",
+      description: "Disable public sharing for a document without deleting the document. Use delete_doc only when the document itself should be removed.",
       inputSchema: {
-        workspaceId: z.string().optional(),
-        docId: z.string()
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId
       }
     },
     revokeDocHandler as any
@@ -5160,9 +5164,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       title: 'Create Document',
       description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately. If folderId is provided, the doc is placed inside that folder in the sidebar.',
       inputSchema: {
-        workspaceId: z.string().optional(),
-        title: z.string().optional(),
-        content: z.string().optional(),
+        workspaceId: WorkspaceId.optional(),
+        title: z.string().optional().describe("Optional initial document title."),
+        content: z.string().optional().describe("Optional initial plain text or markdown-like content."),
         parentDocId: z.string().optional().describe("Optional parent doc to link the new doc under in the sidebar."),
         folderId: z.string().optional().describe("Optional folder ID to place the doc in. Use list_organize_nodes to find folder IDs."),
       },
@@ -5885,8 +5889,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     'delete_doc',
     {
       title: 'Delete Document',
-      description: 'Delete a document and remove from workspace list',
-      inputSchema: { workspaceId: z.string().optional(), docId: z.string() },
+      description: 'Delete a document by removing its workspace metadata entry and sending the AFFiNE WebSocket delete request for its content. This is destructive; use revoke_doc when you only need to remove public access.',
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
     },
     deleteDocHandler as any
   );

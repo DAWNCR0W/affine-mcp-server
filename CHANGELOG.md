@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-07-06
+
+### Added
+- Added Glama server metadata and included it in the published npm package.
+- Added MCP tool behavior annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`) to registered tools so clients can classify read, write, and destructive operations more safely.
+- Included `SECURITY.md` in the published npm package.
+
+### Changed
+- Improved descriptions and parameter schemas for auth, access token, blob, comment, document, notification, organize, tag, and user tools.
+- Refreshed README and HTTP deployment guidance for auth-protected probes, CORS, TLS, and stricter production settings.
+
+### Tests
+- Strengthened tool filtering coverage to assert MCP annotations are exposed through `tools/list`.
+
+### Dependencies
+- Refreshed `fractional-indexing` from `^3.2.0` to `^4.0.0`.
+- Refreshed locked `markdown-it` entries from `14.2.0` to `14.3.0`.
+- Refreshed `@types/node` from `^25.2.3` to `^26.0.1`.
+- Refreshed Playwright lockfile entries from `1.61.0` to `1.61.1`.
+- Refreshed `tsx` lockfile entries from `4.22.4` to `4.22.5`.
+
 ## [2.4.0] - 2026-06-22
 
 ### Added
@@ -509,6 +530,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[2.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.5.0
 [2.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.4.0
 [2.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.3.0
 [2.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.2.0
@@ -535,4 +557,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.5.0...HEAD

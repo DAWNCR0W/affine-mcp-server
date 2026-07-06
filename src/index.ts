@@ -21,7 +21,7 @@ import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { CONFIG_FILE } from "./config.js";
-import { createToolFilter, toolFilterRequiresRegisterTool } from "./toolSurface.js";
+import { createToolFilter, toolAnnotationsFor, toolFilterRequiresRegisterTool } from "./toolSurface.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -170,7 +170,13 @@ async function buildServer() {
   } else {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
-      return originalRegisterTool(name, options, handler);
+      return originalRegisterTool(name, {
+        ...options,
+        annotations: {
+          ...toolAnnotationsFor(name),
+          ...(options?.annotations || {}),
+        },
+      }, handler);
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
