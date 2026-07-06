@@ -1,5 +1,47 @@
 # Release Notes
 
+## Version 2.5.0 (2026-07-06)
+
+### Highlights
+- Added Glama server metadata so MCP directories can discover the server with explicit maintainer metadata.
+- Added MCP tool behavior annotations for read-only, destructive, idempotent, and external-world behavior.
+- Improved tool descriptions and parameter schemas for safer client-side tool selection.
+- Included `SECURITY.md` and `glama.json` in the published npm package.
+- Refreshed runtime and development dependencies.
+
+### What Changed
+- `glama.json`, `package.json`
+  - Added Glama server metadata and shipped it in the npm package.
+  - Included `SECURITY.md` in the published package files.
+- `src/index.ts`, `src/toolSurface.ts`
+  - Added default MCP annotations to registered tools.
+  - Classifies read-only tools, destructive tools, idempotent reads, and tools that interact with the external AFFiNE workspace.
+- `src/tools/accessTokens.ts`, `src/tools/auth.ts`, `src/tools/blobStorage.ts`, `src/tools/comments.ts`, `src/tools/docs.ts`, `src/tools/notifications.ts`, `src/tools/organize.ts`, `src/tools/user.ts`
+  - Improved tool descriptions and parameter schemas for auth, access token, blob, comment, document, notification, organize, tag, and user workflows.
+- `README.md`, `docs/configuration-and-deployment.md`
+  - Refreshed MCP SDK badge and HTTP deployment hardening guidance.
+  - Clarified auth-protected probes, unauthenticated health probes, CORS, TLS, and production settings.
+- `tests/test-tool-filtering.mjs`
+  - Added coverage that verifies MCP annotations are exposed through `tools/list`.
+- `package.json`, `package-lock.json`, `tool-manifest.json`, `CHANGELOG.md`, `RELEASE_NOTES.md`, `README.md`, `docs/configuration-and-deployment.md`
+  - Bumped release metadata to `2.5.0`.
+- `package.json`, `package-lock.json`
+  - Updated `fractional-indexing` from `^3.2.0` to `^4.0.0`.
+  - Updated locked `markdown-it` entries from `14.2.0` to `14.3.0`.
+  - Updated `@types/node` from `^25.2.3` to `^26.0.1`.
+  - Updated Playwright lockfile entries from `1.61.0` to `1.61.1`.
+  - Updated locked `tsx` entries from `4.22.4` to `4.22.5`.
+
+### Validation Evidence
+- Release sanity gate passed:
+  - `npm run ci`
+- Security audit passed:
+  - `npm audit --audit-level=high`
+- Package dry-run passed:
+  - `npm publish --dry-run --access public`
+- Docker-backed end-to-end validation passed:
+  - `npm run test:e2e`
+
 ## Version 2.4.0 (2026-06-22)
 
 ### Highlights
