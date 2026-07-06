@@ -77,7 +77,7 @@ Important note for AFFiNE Cloud:
 Prebuilt images are published to GHCR:
 
 - `ghcr.io/dawncr0w/affine-mcp-server:latest`
-- `ghcr.io/dawncr0w/affine-mcp-server:2.4.0`
+- `ghcr.io/dawncr0w/affine-mcp-server:2.5.0`
 
 Example:
 
