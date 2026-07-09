@@ -1202,8 +1202,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (!Number.isInteger(normalized.height) || normalized.height < 1 || normalized.height > 10000) {
         throw new Error(`${normalized.type} height must be an integer between 1 and 10000.`);
       }
+    } else if (normalized.type === "image") {
+      // image blocks support width/height for canvas placement (prop:xywh)
     } else if ((raw.width !== undefined || raw.height !== undefined) && normalized.strict) {
-      throw new Error("The 'width'/'height' fields are only valid for frame/edgeless_text/note.");
+      throw new Error("The 'width'/'height' fields are only valid for frame/edgeless_text/note/image.");
     }
 
     if (normalized.type !== "frame" && normalized.type !== "note" && raw.background !== undefined && normalized.strict) {
@@ -1453,7 +1455,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (
         parentFlavour === "affine:surface" &&
         normalized.type !== "frame" &&
-        normalized.type !== "edgeless_text"
+        normalized.type !== "edgeless_text" &&
+        normalized.type !== "image"
       ) {
         throw new Error(`Cannot append '${normalized.type}' directly under 'affine:surface'.`);
       }
@@ -1856,10 +1859,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:caption", normalized.caption ?? "");
         block.set("prop:sourceId", normalized.sourceId);
-        block.set("prop:width", 0);
-        block.set("prop:height", 0);
+        block.set("prop:width", normalized.width || 0);
+        block.set("prop:height", normalized.height || 0);
         block.set("prop:size", normalized.size || -1);
-        block.set("prop:xywh", "[0,0,0,0]");
+        // When placed on the edgeless canvas (under affine:surface), x/y/width/height
+        // define the canvas bounding box via prop:xywh. Without this, images land at [0,0,0,0].
+        const imgX = normalized.x ?? 0;
+        const imgY = normalized.y ?? 0;
+        const imgW = normalized.width || 0;
+        const imgH = normalized.height || 0;
+        block.set("prop:xywh", `[${imgX},${imgY},${imgW},${imgH}]`);
         block.set("prop:index", "a0");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -8667,6 +8676,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         "affine:frame",
         "affine:edgeless-text",
         "affine:note",
+        "affine:image",
       ]);
 
       const collectNoteText = (rootId: string): string[] => {
@@ -8764,6 +8774,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           entry.displayMode = raw.get("prop:displayMode") ?? null;
           const bg = raw.get("prop:background");
           entry.background = bg instanceof Y.Map ? bg.toJSON() : bg ?? null;
+        } else if (flavour === "affine:image") {
+          const sid = raw.get("prop:sourceId");
+          if (typeof sid === "string") entry.sourceId = sid;
+          const pw = raw.get("prop:width");
+          const ph = raw.get("prop:height");
+          if (typeof pw === "number") entry.imgWidth = pw;
+          if (typeof ph === "number") entry.imgHeight = ph;
         }
         edgelessBlocks.push(entry);
       }
