@@ -18,29 +18,61 @@ jobs:
   enforce-branch-route:
     runs-on: ubuntu-latest
     steps:
-      # pull_request_target has a write-capable token. Check out only the trusted
-      # base revision, never the pull request head, and do not persist credentials.
-      - name: Checkout trusted base revision
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-
-      - name: Verify branch route policy
-        run: node tests/test-pr-route-policy.mjs
-
       - name: Enforce branch route
         uses: actions/github-script@v9
         with:
           script: |
-            const path = require("node:path");
-            const policyPath = path.join(
-              process.env.GITHUB_WORKSPACE,
-              ".github",
-              "scripts",
-              "pr-route-policy.cjs",
-            );
-            const { evaluatePrRoute } = require(policyPath);
+            // pull_request_target has a write-capable token. Keep the policy in
+            // this trusted workflow and never execute code from an event ref.
+            const protectedHeads = new Set(["main", "develop", "dev", "master"]);
+            const evaluatePrRoute = ({ baseRef, headRef }) => {
+              if (typeof baseRef !== "string" || baseRef.length === 0) {
+                return {
+                  allowed: false,
+                  code: "invalid-base",
+                  reason: "The pull request base branch is missing or invalid.",
+                };
+              }
+              if (typeof headRef !== "string" || headRef.length === 0) {
+                return {
+                  allowed: false,
+                  code: "invalid-head",
+                  reason: "The pull request head branch is missing or invalid.",
+                };
+              }
+
+              if (protectedHeads.has(headRef.toLowerCase())) {
+                return {
+                  allowed: false,
+                  code: "protected-head",
+                  reason:
+                    `Protected branch \`${headRef}\` cannot be used as a pull request head. ` +
+                    "Create a dedicated working or synchronization branch instead.",
+                };
+              }
+              if (baseRef === "develop") {
+                return {
+                  allowed: true,
+                  code: "develop-target",
+                  reason: "A non-protected branch may target develop.",
+                };
+              }
+              if (baseRef === "main" && headRef.startsWith("release/")) {
+                return {
+                  allowed: true,
+                  code: "release-target",
+                  reason: "A release branch may target main.",
+                };
+              }
+              return {
+                allowed: false,
+                code: "invalid-route",
+                reason:
+                  "Pull requests must target develop from a non-protected branch, " +
+                  "or target main from a release/* branch.",
+              };
+            };
+
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
             const baseRef = context.payload.pull_request.base.ref;

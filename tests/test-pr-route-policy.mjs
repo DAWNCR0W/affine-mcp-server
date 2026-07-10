@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -38,6 +39,7 @@ const invalidRoutes = [
   { baseRef: "main", headRef: "release-candidate/2.6.0" },
   { baseRef: "production", headRef: "release/2.6.0" },
   { baseRef: "feature-target", headRef: "fix/http-auth" },
+  { baseRef: "attacker-controlled", headRef: "release/2.6.0" },
 ];
 
 for (const route of invalidRoutes) {
@@ -48,5 +50,25 @@ for (const route of invalidRoutes) {
 
 assert.equal(evaluatePrRoute({ baseRef: "", headRef: "feat/test" }).code, "invalid-base");
 assert.equal(evaluatePrRoute({ baseRef: "develop", headRef: "" }).code, "invalid-head");
+
+const enforcementWorkflow = fs.readFileSync(
+  new URL("../.github/workflows/enforce-pr-base.yml", import.meta.url),
+  "utf8",
+);
+assert.doesNotMatch(
+  enforcementWorkflow,
+  /actions\/checkout|github\.event\.pull_request\.(?:base|head)\.sha/,
+  "pull_request_target enforcement must not check out an event-controlled ref",
+);
+assert.doesNotMatch(
+  enforcementWorkflow,
+  /GITHUB_WORKSPACE|require\s*\(/,
+  "pull_request_target enforcement must not load repository code",
+);
+assert.match(
+  enforcementWorkflow,
+  /Keep the policy in\s+\/\/ this trusted workflow and never execute code from an event ref\./,
+  "the trusted inline policy guard must remain explicit",
+);
 
 console.log("PR route policy tests passed");
