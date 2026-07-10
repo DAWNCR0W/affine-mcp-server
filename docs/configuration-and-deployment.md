@@ -72,6 +72,7 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_OAUTH_ISSUER_URL` | Required in OAuth mode | none | OAuth issuer discovery URL |
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
 | `AFFINE_OAUTH_CLOCK_SKEW_SECONDS` | No | `60` | Positive integer tolerance for OAuth token timestamps |
+| `AFFINE_OAUTH_ALLOW_SERVICE_WRITES` | No | `false` | Explicitly acknowledge write-capable tools using the shared AFFiNE service identity |
 
 ## Auth strategy matrix
 
@@ -166,6 +167,18 @@ OAuth mode behavior:
 - disables `AFFINE_MCP_HTTP_TOKEN` and `?token=`
 - does not register `sign_in`
 - still requires `AFFINE_API_TOKEN` so the server can call AFFiNE
+- authenticates callers at the MCP boundary but does not delegate their identity to AFFiNE; every request uses the same `AFFINE_API_TOKEN` service identity
+- defaults `AFFINE_TOOL_PROFILE` to `read_only` when no profile is configured
+- refuses any write-capable tool surface unless `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true` is also set
+
+To allow service-account writes, configure both controls explicitly:
+
+```bash
+export AFFINE_TOOL_PROFILE="authoring"
+export AFFINE_OAUTH_ALLOW_SERVICE_WRITES="true"
+```
+
+This grants every OAuth caller accepted by the configured issuer the same AFFiNE mutation permissions. Use separate deployments or backend credentials when callers require different AFFiNE authorization boundaries.
 
 ## Least-privilege tool exposure
 
@@ -183,7 +196,7 @@ Example:
 
 Available profiles:
 
-- `full`: expose the complete public tool surface; this is the default
+- `full`: expose the complete public tool surface; this is the default outside OAuth mode
 - `read_only`: expose discovery, reading, export, fidelity, and inspection tools, plus `sign_in`
 - `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
 - `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
