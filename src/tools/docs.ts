@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
+import { secureRandomInt31, secureRandomString } from "../util/random.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
@@ -365,9 +366,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   // helpers
   function generateId(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-    let id = '';
-    for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
-    return id;
+    return secureRandomString(10, chars);
   }
 
   async function getCookieAndEndpoint() {
@@ -7933,7 +7932,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     input: SurfaceElementFields
   ): { elementId: string; data: Record<string, any> } {
     const elementId = generateId();
-    const seed = Math.floor(Math.random() * 2 ** 31);
+    const seed = secureRandomInt31();
     switch (type) {
       case "shape":
         return { elementId, data: buildShapeElementData(elementId, seed, index, input) };

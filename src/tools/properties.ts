@@ -4,6 +4,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import * as Y from "yjs";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import { secureRandomString } from "../util/random.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -55,11 +56,7 @@ const NANOID_ALPHABET =
 
 /** Generate a 21-char nanoid-style id, matching AFFiNE's property id format. */
 function generatePropertyId(): string {
-  let id = "";
-  for (let i = 0; i < 21; i++) {
-    id += NANOID_ALPHABET.charAt(Math.floor(Math.random() * NANOID_ALPHABET.length));
-  }
-  return id;
+  return secureRandomString(21, NANOID_ALPHABET);
 }
 
 type PropertyDefinition = {
