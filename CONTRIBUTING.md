@@ -4,7 +4,7 @@ Thanks for contributing to `affine-mcp-server`.
 
 ## Before You Start
 
-- Node.js `18+` is required (Node `20` recommended).
+- Node.js `20+` is required. Use the version in `.nvmrc` for local development.
 - You need one AFFiNE instance to run end-to-end checks.
 - Read the project docs first:
   - `README.md`
@@ -46,6 +46,28 @@ AFFINE_EMAIL=dev@affine.pro \
 AFFINE_PASSWORD=dev \
 npm run test:comprehensive
 ```
+
+## Destructive Live-Test Safety
+
+Live integration tests create, update, and delete AFFiNE resources. They are
+allowed against loopback targets by default and fail closed for every other
+host. The Docker-backed runners use a unique Compose project, private random
+credentials, and collision-resistant resource names for each run.
+
+Use `npm run test:live-safety` to verify the guard without contacting AFFiNE.
+Never point a live test at production. If a non-loopback disposable test
+instance is intentionally required, both values below must match the exact
+normalized target:
+
+```bash
+export AFFINE_BASE_URL="https://disposable-affine.example.test"
+export AFFINE_ALLOW_REMOTE_DESTRUCTIVE_TESTS=1
+export AFFINE_REMOTE_DESTRUCTIVE_TEST_CONFIRM="DESTROY https://disposable-affine.example.test"
+node tests/test-database-creation.mjs
+```
+
+Unset both opt-in variables immediately after the run. Do not store them in a
+shell profile, CI environment, or repository file.
 
 ## Tool Design Rules
 

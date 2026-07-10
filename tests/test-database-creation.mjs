@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * E2E test: EMAIL/PASSWORD auth mode.
  *
@@ -54,7 +56,7 @@ async function main() {
       AFFINE_LOGIN_AT_START: 'sync',
       // Isolate from local config file (~/.config/affine-mcp/config) which may
       // contain an API token — we want pure email/password auth for this test.
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
+      XDG_CONFIG_HOME: testTempPath('database-creation-config'),
     },
     stderr: 'pipe',
   });
@@ -130,7 +132,7 @@ async function main() {
     // auto-login path, not the sign_in MCP tool.
 
     // 1. Create workspace
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     state.workspaceName = `mcp-db-test-${timestamp}`;
     const ws = await call('create_workspace', { name: state.workspaceName });
     state.workspaceId = ws?.id;

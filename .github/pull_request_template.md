@@ -17,6 +17,7 @@ Commands executed:
 npm run build
 npm run test:tool-manifest
 npm run test:docs
+npm run test:pr-route-policy
 ```
 
 If applicable, also include:

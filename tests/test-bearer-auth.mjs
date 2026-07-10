@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * E2E test: bearer-token authentication mode.
  *
@@ -104,7 +106,7 @@ async function main() {
     AFFINE_PASSWORD: PASSWORD,
     AFFINE_LOGIN_AT_START: 'sync',
     // Isolate from local config file — pure email/password for token generation.
-    XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
+    XDG_CONFIG_HOME: testTempPath('bearer-token-generation-config'),
   }, 'pw-session');
 
   let bearerToken;
@@ -113,27 +115,41 @@ async function main() {
     // Authentication already happened at startup via AFFINE_LOGIN_AT_START=sync.
     // No explicit sign_in needed — go straight to token generation.
     const tokenResult = await call(pwClient, 'generate_access_token', {
-      name: `e2e-bearer-test-${Date.now()}`,
+      name: testResourceName('e2e-bearer-token'),
     });
     bearerToken = tokenResult?.token;
     tokenId = tokenResult?.id;
     if (!bearerToken) throw new Error('generate_access_token did not return a token');
+    if (!tokenId) throw new Error('generate_access_token did not return an id');
     console.log(`  Token ID: ${tokenId}`);
-    console.log(`  Token prefix: ${bearerToken.slice(0, 12)}...`);
-  } finally {
+  } catch (error) {
     await pwTransport.close();
+    throw error;
   }
 
   // ─── Phase 2: Use ONLY the bearer token — no email/password ───
   console.log();
   console.log('--- Phase 2: Bearer-token-only MCP session ---');
-  const { client: bearerClient, transport: bearerTransport } = await launchMCP({
-    AFFINE_BASE_URL: BASE_URL,
-    AFFINE_API_TOKEN: bearerToken,
-    // Intentionally NO AFFINE_EMAIL, NO AFFINE_PASSWORD, NO AFFINE_LOGIN_AT_START.
-    // Isolate from local config file — pure bearer token auth.
-    XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
-  }, 'bearer-session');
+  let bearerClient;
+  let bearerTransport;
+  try {
+    const launched = await launchMCP({
+      AFFINE_BASE_URL: BASE_URL,
+      AFFINE_API_TOKEN: bearerToken,
+      // Intentionally NO AFFINE_EMAIL, NO AFFINE_PASSWORD, NO AFFINE_LOGIN_AT_START.
+      // Isolate from local config file — pure bearer token auth.
+      XDG_CONFIG_HOME: testTempPath('bearer-session-config'),
+    }, 'bearer-session');
+    bearerClient = launched.client;
+    bearerTransport = launched.transport;
+  } catch (error) {
+    try {
+      await call(pwClient, 'revoke_access_token', { id: tokenId });
+    } finally {
+      await pwTransport.close();
+    }
+    throw error;
+  }
 
   const state = {
     baseUrl: BASE_URL,
@@ -156,7 +172,7 @@ async function main() {
     console.log(`  Authenticated as: ${user.email}`);
 
     // Create workspace
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     state.workspaceName = `bearer-db-test-${timestamp}`;
     const ws = await call(bearerClient, 'create_workspace', { name: state.workspaceName });
     state.workspaceId = ws?.id;
@@ -265,9 +281,17 @@ async function main() {
     console.error();
     console.error(`FAILED: ${err.message}`);
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify({ ...state, error: err.message }, null, 2));
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
-    await bearerTransport.close();
+    try {
+      await bearerTransport.close();
+    } finally {
+      try {
+        await call(pwClient, 'revoke_access_token', { id: tokenId });
+      } finally {
+        await pwTransport.close();
+      }
+    }
   }
 }
 

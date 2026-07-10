@@ -19,6 +19,7 @@ rmSync(tempRoot, { recursive: true, force: true });
 mkdirSync(configDir, { recursive: true });
 writeFileSync(expectedConfigPath, [
   "AFFINE_BASE_URL=https://example.affine.test",
+  "AFFINE_GRAPHQL_PATH=/api/graphql",
   "AFFINE_API_TOKEN=ut_test_token_12345678",
   "AFFINE_WORKSPACE_ID=workspace-123",
 ].join("\n"));
@@ -65,6 +66,7 @@ const showConfig = run("show-config --json", [DIST_ENTRY, "show-config", "--json
 expectSuccess(showConfig);
 const showConfigJson = JSON.parse(showConfig.stdout);
 expect(showConfigJson.baseUrl === "https://example.affine.test", "show-config baseUrl mismatch");
+expect(showConfigJson.graphqlEndpoint === "https://example.affine.test/api/graphql", "show-config GraphQL endpoint mismatch");
 expect(showConfigJson.workspaceId === "workspace-123", "show-config workspace mismatch");
 expect(showConfigJson.apiToken.includes("…"), "show-config should redact token");
 
@@ -73,6 +75,7 @@ expectSuccess(claudeSnippet);
 const claudeJson = JSON.parse(claudeSnippet.stdout);
 expect(claudeJson.mcpServers.affine.command === "affine-mcp", "claude snippet command mismatch");
 expect(claudeJson.mcpServers.affine.env.AFFINE_BASE_URL === "https://example.affine.test", "claude snippet env missing base URL");
+expect(claudeJson.mcpServers.affine.env.AFFINE_GRAPHQL_PATH === "/api/graphql", "claude snippet env missing GraphQL path");
 
 const codexSnippet = run("snippet codex --env", [DIST_ENTRY, "snippet", "codex", "--env"]);
 expectSuccess(codexSnippet);
