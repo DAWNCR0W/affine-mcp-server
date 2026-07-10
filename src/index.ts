@@ -20,7 +20,7 @@ import { registerIconTools } from "./tools/icons.js";
 import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
-import { createToolFilter, toolAnnotationsFor, toolFilterRequiresRegisterTool } from "./toolSurface.js";
+import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);

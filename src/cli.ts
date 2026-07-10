@@ -173,6 +173,16 @@ function ensureNoUnexpectedArgs(args: string[], command: string): void {
   }
 }
 
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
+
+function buildCodexEnvironmentArguments(environment: Record<string, string>): string {
+  return Object.entries(environment)
+    .map(([key, value]) => `--env ${quotePosixShellArgument(`${key}=${value}`)}`)
+    .join(" ");
+}
+
 function redactSecret(value: string | undefined): string | null {
   if (!value) return null;
   if (value.length <= 8) return "*".repeat(value.length);
@@ -569,8 +579,31 @@ function logout(args: string[]) {
 
   const stored = loadConfigFile();
   const credentialKeys = ["AFFINE_API_TOKEN", "AFFINE_COOKIE", "AFFINE_EMAIL", "AFFINE_PASSWORD"];
-  const removed = credentialKeys.some((key) => Boolean(stored[key]));
+  let removed = credentialKeys.some((key) => Boolean(stored[key]));
   for (const key of credentialKeys) delete stored[key];
+
+  const rawHeaders = stored.AFFINE_HEADERS_JSON;
+  if (rawHeaders) {
+    try {
+      const parsedHeaders = JSON.parse(rawHeaders);
+      if (parsedHeaders && typeof parsedHeaders === "object" && !Array.isArray(parsedHeaders)) {
+        const headerEntries = Object.entries(parsedHeaders as Record<string, unknown>);
+        const retainedHeaders = headerEntries.filter(
+          ([name]) => !/^(authorization|cookie)$/i.test(name),
+        );
+        if (retainedHeaders.length !== headerEntries.length) {
+          removed = true;
+          if (retainedHeaders.length > 0) {
+            stored.AFFINE_HEADERS_JSON = JSON.stringify(Object.fromEntries(retainedHeaders));
+          } else {
+            delete stored.AFFINE_HEADERS_JSON;
+          }
+        }
+      }
+    } catch {
+      // Invalid header JSON is ignored by runtime config and is not an active credential source.
+    }
+  }
 
   if (!removed) {
     console.error("No saved credentials found.");
@@ -855,7 +888,7 @@ function snippet(args: string[]) {
         },
       },
       codex: env && Object.keys(env).length > 0
-        ? `codex mcp add affine ${Object.entries(env).map(([key, value]) => `--env ${key}=${JSON.stringify(value)}`).join(" ")} -- affine-mcp`
+        ? `codex mcp add affine ${buildCodexEnvironmentArguments(env)} -- affine-mcp`
         : "codex mcp add affine -- affine-mcp",
     };
     console.log(JSON.stringify(payload, null, 2));
@@ -880,9 +913,7 @@ function snippet(args: string[]) {
       console.log("codex mcp add affine -- affine-mcp");
       return;
     }
-    const envArgs = Object.entries(env)
-      .map(([key, value]) => `--env ${key}=${JSON.stringify(value)}`)
-      .join(" ");
+    const envArgs = buildCodexEnvironmentArguments(env);
     console.log(`codex mcp add affine ${envArgs} -- affine-mcp`);
     return;
   }

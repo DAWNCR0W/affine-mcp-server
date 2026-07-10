@@ -52,6 +52,31 @@ function runNode(args, env, timeoutMs = 10_000) {
   });
 }
 
+function parseCodexShellArguments(command) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "/bin/sh",
+      ["-c", `codex() { printf '%s\\0' "$@"; }\n${command}`],
+      { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const stdout = [];
+    let stderr = "";
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`Generated Codex command failed POSIX shell parsing: ${stderr}`));
+        return;
+      }
+      const serialized = Buffer.concat(stdout).toString("utf8");
+      const args = serialized.split("\0");
+      if (args.at(-1) === "") args.pop();
+      resolve(args);
+    });
+  });
+}
+
 async function findFreePort() {
   return await new Promise((resolve, reject) => {
     const server = createServer();
@@ -237,6 +262,42 @@ try {
     "snippet omitted the custom GraphQL path",
   );
 
+  const unsafeShellCharacters = "session=$(printf SUBSTITUTED); tick=`printf BACKTICK`; quote='; line\nbreak\rreturn";
+  const shellSnippetEnv = cleanEnvironment({
+    XDG_CONFIG_HOME: noConfigHome,
+    AFFINE_BASE_URL: baseUrl,
+    AFFINE_COOKIE: unsafeShellCharacters,
+  });
+  const codexSnippet = await runNode([DIST_ENTRY, "snippet", "codex", "--env"], shellSnippetEnv);
+  expect(codexSnippet.code === 0, `Codex snippet failed: ${codexSnippet.stderr}`);
+  const codexCommand = codexSnippet.stdout.endsWith("\n")
+    ? codexSnippet.stdout.slice(0, -1)
+    : codexSnippet.stdout;
+  const codexArgs = await parseCodexShellArguments(codexCommand);
+  const expectedCodexArgs = [
+    "mcp",
+    "add",
+    "affine",
+    "--env",
+    `AFFINE_BASE_URL=${baseUrl}`,
+    "--env",
+    `AFFINE_COOKIE=${unsafeShellCharacters}`,
+    "--",
+    "affine-mcp",
+  ];
+  expect(
+    JSON.stringify(codexArgs) === JSON.stringify(expectedCodexArgs),
+    `Codex snippet did not preserve shell-sensitive values: ${JSON.stringify(codexArgs)}`,
+  );
+
+  const allSnippets = await runNode([DIST_ENTRY, "snippet", "all", "--env"], shellSnippetEnv);
+  expect(allSnippets.code === 0, `all snippets failed: ${allSnippets.stderr}`);
+  const allCodexArgs = await parseCodexShellArguments(JSON.parse(allSnippets.stdout).codex);
+  expect(
+    JSON.stringify(allCodexArgs) === JSON.stringify(expectedCodexArgs),
+    "snippet all did not apply the POSIX-safe Codex quoting contract",
+  );
+
   const savedOnlyEnv = cleanEnvironment({ XDG_CONFIG_HOME: savedConfigHome });
   const login = await runNode([
     DIST_ENTRY,
@@ -262,6 +323,45 @@ try {
   const configAfterLogout = readFileSync(path.join(savedConfigHome, "affine-mcp", "config"), "utf8");
   expect(!configAfterLogout.includes("AFFINE_API_TOKEN="), "logout left the saved API token behind");
   expect(configAfterLogout.includes("MCP_TRANSPORT=stdio"), "logout erased a saved runtime setting");
+
+  const headerOnlyConfigHome = path.join(TEMP_ROOT, "header-only-auth");
+  writeConfig(headerOnlyConfigHome, {
+    AFFINE_BASE_URL: baseUrl,
+    AFFINE_HEADERS_JSON: JSON.stringify({
+      authorization: "Bearer header-only-token",
+      COOKIE: "affine_session=header-only-cookie",
+      "X-Tenant": "preserved-tenant",
+      "X-Trace": "preserved-trace",
+    }),
+    MCP_TRANSPORT: "http",
+    PORT: "3456",
+  });
+  const headerOnlyLogout = await runNode(
+    [DIST_ENTRY, "logout"],
+    cleanEnvironment({ XDG_CONFIG_HOME: headerOnlyConfigHome }),
+  );
+  expect(headerOnlyLogout.code === 0, `header-only logout failed: ${headerOnlyLogout.stderr}`);
+  expect(
+    headerOnlyLogout.stderr.includes("Removed saved credentials"),
+    "logout did not recognize header-only credentials",
+  );
+  const headerOnlyConfig = readFileSync(
+    path.join(headerOnlyConfigHome, "affine-mcp", "config"),
+    "utf8",
+  );
+  const retainedHeadersLine = headerOnlyConfig
+    .split("\n")
+    .find((line) => line.startsWith("AFFINE_HEADERS_JSON="));
+  expect(retainedHeadersLine, "logout removed non-authentication headers");
+  const retainedHeaders = JSON.parse(retainedHeadersLine.slice("AFFINE_HEADERS_JSON=".length));
+  expect(
+    !Object.keys(retainedHeaders).some((name) => /^(authorization|cookie)$/i.test(name)),
+    "logout left an Authorization or Cookie header in saved config",
+  );
+  expect(retainedHeaders["X-Tenant"] === "preserved-tenant", "logout removed the saved tenant header");
+  expect(retainedHeaders["X-Trace"] === "preserved-trace", "logout removed the saved trace header");
+  expect(headerOnlyConfig.includes("MCP_TRANSPORT=http"), "logout erased the saved transport setting");
+  expect(headerOnlyConfig.includes("PORT=3456"), "logout erased the saved port setting");
 
   const invalidTransport = await runNode(
     [DIST_ENTRY, "show-config", "--json"],
@@ -333,7 +433,9 @@ try {
       "environment-only doctor",
       "HTTP exposure diagnostics",
       "snippet propagation",
+      "POSIX-safe Codex snippet quoting",
       "login and logout setting preservation",
+      "header-only credential logout",
       "strict transport validation",
       "saved HTTP runtime flags",
       "upstream-aware readiness",
