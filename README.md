@@ -151,6 +151,8 @@ If you want to expose the server remotely over HTTP instead of stdio, start with
 
 ## Compatibility Matrix
 
+Node.js 20 is the minimum supported runtime. CI validates the minimum runtime and the current Node.js release used by the npm publish workflow.
+
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |
 | Claude Code | stdio | Saved config or API token | [docs/client-setup.md#claude-code](docs/client-setup.md#claude-code) |

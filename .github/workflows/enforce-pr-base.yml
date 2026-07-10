@@ -1,4 +1,4 @@
-name: Enforce PR Base Branch
+name: Enforce PR Branch Route
 
 on:
   pull_request_target:
@@ -15,33 +15,89 @@ permissions:
   pull-requests: write
 
 jobs:
-  enforce-base-branch:
+  enforce-branch-route:
     runs-on: ubuntu-latest
     steps:
-      - name: Allow PRs targeting develop
-        if: ${{ github.event.pull_request.base.ref == 'develop' }}
-        run: echo "PR base branch is develop."
-
-      - name: Allow release PRs targeting main
-        if: ${{ github.event.pull_request.base.ref == 'main' && startsWith(github.event.pull_request.head.ref, 'release/') }}
-        run: echo "Release PR targeting main is allowed."
-
-      - name: Close PRs targeting non-develop branches
-        if: ${{ github.event.pull_request.base.ref != 'develop' && !(github.event.pull_request.base.ref == 'main' && startsWith(github.event.pull_request.head.ref, 'release/')) }}
+      - name: Enforce branch route
         uses: actions/github-script@v9
         with:
           script: |
+            // pull_request_target has a write-capable token. Keep the policy in
+            // this trusted workflow and never execute code from an event ref.
+            const protectedHeads = new Set(["main", "develop", "dev", "master"]);
+            const evaluatePrRoute = ({ baseRef, headRef }) => {
+              if (typeof baseRef !== "string" || baseRef.length === 0) {
+                return {
+                  allowed: false,
+                  code: "invalid-base",
+                  reason: "The pull request base branch is missing or invalid.",
+                };
+              }
+              if (typeof headRef !== "string" || headRef.length === 0) {
+                return {
+                  allowed: false,
+                  code: "invalid-head",
+                  reason: "The pull request head branch is missing or invalid.",
+                };
+              }
+
+              if (protectedHeads.has(headRef.toLowerCase())) {
+                return {
+                  allowed: false,
+                  code: "protected-head",
+                  reason:
+                    `Protected branch \`${headRef}\` cannot be used as a pull request head. ` +
+                    "Create a dedicated working or synchronization branch instead.",
+                };
+              }
+              if (baseRef === "develop") {
+                return {
+                  allowed: true,
+                  code: "develop-target",
+                  reason: "A non-protected branch may target develop.",
+                };
+              }
+              if (baseRef === "main" && headRef.startsWith("release/")) {
+                return {
+                  allowed: true,
+                  code: "release-target",
+                  reason: "A release branch may target main.",
+                };
+              }
+              return {
+                allowed: false,
+                code: "invalid-route",
+                reason:
+                  "Pull requests must target develop from a non-protected branch, " +
+                  "or target main from a release/* branch.",
+              };
+            };
+
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
             const baseRef = context.payload.pull_request.base.ref;
             const headRef = context.payload.pull_request.head.ref;
+            const result = evaluatePrRoute({ baseRef, headRef });
+
+            if (result.allowed) {
+              core.info(`Allowed pull request route: ${headRef} -> ${baseRef} (${result.code})`);
+              return;
+            }
+
             const message = [
-              "This repository only accepts pull requests targeting `develop`, plus `release/*` pull requests targeting `main`.",
+              "This pull request uses a branch route that is not allowed.",
               "",
               `Current base branch: \`${baseRef}\``,
               `Current head branch: \`${headRef}\``,
               "",
-              "Please change the base branch to `develop`, or use a `release/*` branch when targeting `main`, and reopen this pull request.",
+              `Reason: ${result.reason}`,
+              "",
+              "Allowed routes:",
+              "- a dedicated non-protected branch targeting `develop`",
+              "- a `release/*` branch targeting `main`",
+              "",
+              "The protected branches `main`, `develop`, `dev`, and `master` may never be used as pull request heads.",
+              "Please create or select an allowed head branch, update the target if needed, and reopen the pull request.",
             ].join("\n");
 
             await github.rest.issues.createComment({
@@ -58,4 +114,4 @@ jobs:
               state: "closed",
             });
 
-            core.setFailed("Pull requests must target develop, or use release/* when targeting main.");
+            core.setFailed(`Blocked pull request route: ${headRef} -> ${baseRef} (${result.code})`);
