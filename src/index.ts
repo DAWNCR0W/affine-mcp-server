@@ -145,9 +145,6 @@ console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
 
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
-if (config.authMode === "oauth" && !useHttpTransport) {
-  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
-}
 assertOAuthServiceWritePolicy({
   authMode: config.authMode,
   allowServiceWrites: config.oauthAllowServiceWrites,
