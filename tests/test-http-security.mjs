@@ -148,6 +148,27 @@ async function expectStartupFailure(overrides, expectedMessage) {
   assert(spawned.logs().stderr.includes(expectedMessage), `missing startup error: ${spawned.logs().stderr}`);
 }
 
+async function expectStatusFailure(overrides, expectedMessage) {
+  const child = spawn("node", [SERVER_PATH, "status", "--json"], {
+    cwd: PROJECT_DIR,
+    env: serverEnvironment(0, overrides),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", chunk => { stderr += chunk.toString(); });
+  const result = await Promise.race([
+    new Promise(resolve => child.once("exit", code => resolve({ exited: true, code }))),
+    delay(5_000).then(() => ({ exited: false, code: null })),
+  ]);
+  if (!result.exited) {
+    child.kill("SIGKILL");
+    await new Promise(resolve => child.once("exit", resolve));
+    throw new Error(`Expected status failure but command stayed running: ${stderr}`);
+  }
+  assertEqual(result.code, 1, "status failure exit code");
+  assert(stderr.includes(expectedMessage), `missing status error: ${stderr}`);
+}
+
 async function readJson(response) {
   const body = await response.text();
   try {
@@ -187,6 +208,11 @@ async function testNetworkPolicyHelpers() {
   assertEqual(parseBooleanFlag("FLAG", "true"), true, "true boolean flag");
   assertEqual(parseBooleanFlag("FLAG", "FALSE"), false, "false boolean flag");
   assertThrows(() => parseBooleanFlag("FLAG", "yes"), "must be either", "ambiguous boolean flag");
+
+  await expectStatusFailure(
+    { AFFINE_BASE_URL: "http://192.0.2.10" },
+    "must use HTTPS",
+  );
 }
 
 async function testRemoteBindPolicy() {
