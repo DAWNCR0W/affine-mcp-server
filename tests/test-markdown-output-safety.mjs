@@ -76,7 +76,7 @@ function testYamlFrontmatterEscaping() {
 
 function testCodeFenceSelectionAndRoundTrip() {
   assert.deepEqual(renderFencedCodeBlock('const ok = true;', 'ts'), [
-    '```ts',
+    '``` ts',
     'const ok = true;',
     '```',
   ]);
@@ -103,6 +103,16 @@ function testCodeFenceSelectionAndRoundTrip() {
   assert.equal(parsed.operations.length, 1, 'fence info line breaks must not create injected blocks');
   assert.equal(parsed.operations[0]?.type, 'code');
   assert.equal(parsed.operations[0]?.text, 'body');
+
+  const prefixCollisionLanguage = '~~~`lang';
+  const prefixCollision = renderFencedCodeBlock('body\n# injected', prefixCollisionLanguage);
+  assert.equal(prefixCollision[0], '~~~ ~~~`lang');
+  assert.equal(prefixCollision[2], '~~~');
+  const prefixCollisionParsed = parseMarkdownToOperations(prefixCollision.join('\n'));
+  assert.equal(prefixCollisionParsed.operations.length, 1);
+  assert.equal(prefixCollisionParsed.operations[0]?.type, 'code');
+  assert.equal(prefixCollisionParsed.operations[0]?.language, prefixCollisionLanguage);
+  assert.equal(prefixCollisionParsed.operations[0]?.text, 'body\n# injected');
 }
 
 function testLinkEscapingAndUnsafeSchemes() {

@@ -59,7 +59,7 @@ export function renderFencedCodeBlock(text: string, language: string | null | un
   const canUseBackticks = !info.includes("`");
   const useBackticks = canUseBackticks && backtickLength <= tildeLength;
   const fence = (useBackticks ? "`" : "~").repeat(useBackticks ? backtickLength : tildeLength);
-  return [`${fence}${info}`, text, fence];
+  return [`${fence}${info ? ` ${info}` : ""}`, text, fence];
 }
 
 function decodeSchemeCharacterReferences(value: string): string {
