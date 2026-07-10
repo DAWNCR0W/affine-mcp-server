@@ -372,6 +372,7 @@ export async function startHttpMcpServer(
               `[affine-mcp] StreamableHTTP session initialized: ${sid}`,
             );
             registerSession(sid, transport, "streamable");
+            endSessionRequest = beginSessionRequest(sid, req.method);
           },
         });
         newTransport = transport;

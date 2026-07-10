@@ -340,6 +340,61 @@ async function testForcedConnectionDeadline() {
   assert(server.logs().stderr.includes("forcing remaining HTTP connections closed"), "forced close should be logged");
 }
 
+async function testInitializeRequestSurvivesIdleSweep() {
+  const previousIdleTimeout = process.env.AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS;
+  process.env.AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS = "100";
+  let releaseRequest;
+  const requestGate = new Promise((resolve) => {
+    releaseRequest = resolve;
+  });
+  let handle;
+  try {
+    handle = await startHttpMcpServer(
+      async () => {
+        const server = new McpServer({ name: "runtime-idle-test", version: "1.0.0" });
+        const connect = server.connect.bind(server);
+        server.connect = async (transport) => {
+          await connect(transport);
+          const handleRequest = transport.handleRequest.bind(transport);
+          transport.handleRequest = async (...args) => {
+            await handleRequest(...args);
+            await requestGate;
+          };
+        };
+        return server;
+      },
+      {
+        baseUrl: "http://127.0.0.1:3010",
+        graphqlEndpoint: "http://127.0.0.1:3010/graphql",
+        graphqlPath: "/graphql",
+        authMode: "bearer",
+        oauthScopes: ["mcp"],
+        oauthClockSkewSeconds: 60,
+        transportMode: "http",
+        loginAtStart: "async",
+        http: {
+          host: "127.0.0.1",
+          port: 0,
+          allowedOrigins: [],
+          allowAllOrigins: false,
+        },
+        oauthAllowServiceWrites: false,
+      },
+    );
+
+    const response = await postMcp(`http://127.0.0.1:${handle.port}`, initializeBody(20));
+    assertEqual(response.status, 200, "delayed initialize response status");
+    await response.body?.cancel();
+    await delay(150);
+    assertEqual(handle.sessionCount(), 1, "initialize request remains active during idle sweep");
+  } finally {
+    releaseRequest?.();
+    await handle?.close("Idle sweep test shutdown");
+    if (previousIdleTimeout === undefined) delete process.env.AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS;
+    else process.env.AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS = previousIdleTimeout;
+  }
+}
+
 async function testIdempotentProgrammaticClose() {
   const previousHost = process.env.AFFINE_MCP_HTTP_HOST;
   process.env.AFFINE_MCP_HTTP_HOST = "127.0.0.1";
@@ -382,6 +437,7 @@ async function main() {
   await testSessionCapacityActivityAndIdleCleanup();
   await testShutdownWithActiveSession();
   await testForcedConnectionDeadline();
+  await testInitializeRequestSurvivesIdleSweep();
   await testIdempotentProgrammaticClose();
   console.log("HTTP runtime safety regression tests passed.");
 }
