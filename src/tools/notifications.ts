@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 import { BoundedOffset, BoundedPageSize } from "../util/inputSchemas.js";
 
 export function registerNotificationTools(server: McpServer, gql: GraphQLClient) {
@@ -49,7 +49,10 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
       
       return text(notifications);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "notification_list_failed",
+        data: { kind: "notification.list", status: "failed" },
+      });
     }
   };
   server.registerTool(
@@ -78,9 +81,22 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
       
       const data = await gql.request<{ readAllNotifications: boolean }>(mutation);
       
-      return text({ success: data.readAllNotifications, message: "All notifications marked as read" });
+      if (!data.readAllNotifications) {
+        return toolError("AFFiNE did not confirm that notifications were marked as read.", {
+          code: "notification_read_all_failed",
+          data: { kind: "notification.read_all", status: "not_applied" },
+        });
+      }
+
+      return receipt("notification.read_all", {
+        status: "completed",
+        success: true,
+      });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "notification_read_all_failed",
+        data: { kind: "notification.read_all", status: "failed" },
+      });
     }
   };
   server.registerTool(

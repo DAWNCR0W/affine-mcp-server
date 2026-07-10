@@ -286,11 +286,12 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         });
         
       } catch (error: any) {
-        return text({
-          kind: "workspace.create",
-          ok: false,
-          status: "failed",
-          error: error.message,
+        return toolError(error, {
+          code: "workspace_create_failed",
+          data: {
+            kind: "workspace.create",
+            status: "failed",
+          },
         });
       }
     };
@@ -327,13 +328,24 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         
         const data = await gql.request<{ updateWorkspace: any }>(mutation, { input });
         
+        if (!data.updateWorkspace || typeof data.updateWorkspace !== "object") {
+          return toolError("AFFiNE did not confirm the workspace update.", {
+            code: "workspace_update_failed",
+            data: { kind: "workspace.update", status: "not_applied", workspaceId: id, id },
+          });
+        }
+
         return receipt("workspace.update", {
+          status: "updated",
           workspaceId: id,
           id,
           ...data.updateWorkspace,
         });
       } catch (error: any) {
-        return text({ error: error.message });
+        return toolError(error, {
+          code: "workspace_update_failed",
+          data: { kind: "workspace.update", status: "failed", workspaceId: id, id },
+        });
       }
     };
   server.registerTool(

@@ -4,8 +4,11 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 
 import { deleteDoc } from "../dist/ws.js";
+import { registerAccessTokenTools } from "../dist/tools/accessTokens.js";
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
+import { registerCommentTools } from "../dist/tools/comments.js";
 import { deleteDocFromWorkspace } from "../dist/tools/docs.js";
+import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
 
 function parseToolResult(result) {
@@ -379,8 +382,95 @@ async function testBlobReceipts() {
   assert.equal(cleaned.success, true);
 }
 
+async function testAdditionalMutationReceipts() {
+  const commentRegistry = new ToolRegistry();
+  let commentBehavior = "false";
+  registerCommentTools(commentRegistry, {
+    async request(query) {
+      if (commentBehavior === "throw") throw new Error("comment service unavailable");
+      if (query.includes("UpdateComment")) return { updateComment: commentBehavior === "true" };
+      if (query.includes("DeleteComment")) return { deleteComment: commentBehavior === "true" };
+      if (query.includes("ResolveComment")) return { resolveComment: commentBehavior === "true" };
+      throw new Error("Unexpected comment mutation");
+    },
+  }, {});
+
+  const updateComment = commentRegistry.tools.get("update_comment");
+  const deleteComment = commentRegistry.tools.get("delete_comment");
+  const resolveComment = commentRegistry.tools.get("resolve_comment");
+  assertStableFailure(await updateComment({ id: "comment-1", content: "updated" }), "comment_update_failed", "not_applied");
+  assertStableFailure(await deleteComment({ id: "comment-1" }), "comment_delete_failed", "not_applied");
+  assertStableFailure(await resolveComment({ id: "comment-1", resolved: true }), "comment_resolve_failed", "not_applied");
+
+  commentBehavior = "throw";
+  assertStableFailure(await deleteComment({ id: "comment-1" }), "comment_delete_failed");
+
+  commentBehavior = "true";
+  assert.equal(parseToolResult(await updateComment({ id: "comment-1", content: "updated" })).ok, true);
+  assert.equal(parseToolResult(await deleteComment({ id: "comment-1" })).ok, true);
+  assert.equal(parseToolResult(await resolveComment({ id: "comment-1", resolved: true })).ok, true);
+
+  const tokenRegistry = new ToolRegistry();
+  let tokenBehavior = "false";
+  registerAccessTokenTools(tokenRegistry, {
+    async request() {
+      if (tokenBehavior === "throw") throw new Error("token service unavailable");
+      return { revokeUserAccessToken: tokenBehavior === "true" };
+    },
+  });
+  const revokeAccessToken = tokenRegistry.tools.get("revoke_access_token");
+  assertStableFailure(await revokeAccessToken({ id: "token-1" }), "access_token_revoke_failed", "not_applied");
+  tokenBehavior = "throw";
+  assertStableFailure(await revokeAccessToken({ id: "token-1" }), "access_token_revoke_failed");
+  tokenBehavior = "true";
+  assert.equal(parseToolResult(await revokeAccessToken({ id: "token-1" })).ok, true);
+
+  const notificationRegistry = new ToolRegistry();
+  let notificationBehavior = "false";
+  registerNotificationTools(notificationRegistry, {
+    async request(query) {
+      if (notificationBehavior === "throw") throw new Error("notification service unavailable");
+      if (query.includes("ReadAllNotifications")) {
+        return { readAllNotifications: notificationBehavior === "true" };
+      }
+      return { currentUser: { notifications: { edges: [] } } };
+    },
+  });
+  const listNotifications = notificationRegistry.tools.get("list_notifications");
+  const readAllNotifications = notificationRegistry.tools.get("read_all_notifications");
+  assertStableFailure(await readAllNotifications({}), "notification_read_all_failed", "not_applied");
+  notificationBehavior = "throw";
+  assertStableFailure(await listNotifications({}), "notification_list_failed");
+  assertStableFailure(await readAllNotifications({}), "notification_read_all_failed");
+  notificationBehavior = "true";
+  assert.equal(parseToolResult(await readAllNotifications({})).ok, true);
+
+  const workspaceRegistry = new ToolRegistry();
+  let workspaceBehavior = "false";
+  registerWorkspaceTools(workspaceRegistry, {
+    async request(query) {
+      if (workspaceBehavior === "throw") throw new Error("workspace update unavailable");
+      if (query.includes("UpdateWorkspace")) {
+        return {
+          updateWorkspace: workspaceBehavior === "true"
+            ? { id: "workspace-1", public: true, enableAi: false }
+            : null,
+        };
+      }
+      throw new Error("Unexpected workspace mutation");
+    },
+  });
+  const updateWorkspace = workspaceRegistry.tools.get("update_workspace");
+  assertStableFailure(await updateWorkspace({ id: "workspace-1", public: true }), "workspace_update_failed", "not_applied");
+  workspaceBehavior = "throw";
+  assertStableFailure(await updateWorkspace({ id: "workspace-1", public: true }), "workspace_update_failed");
+  workspaceBehavior = "true";
+  assert.equal(parseToolResult(await updateWorkspace({ id: "workspace-1", public: true })).ok, true);
+}
+
 await testDeleteDocProtocol();
 await testDocumentReceipts();
 await testWorkspaceReceipts();
 await testBlobReceipts();
+await testAdditionalMutationReceipts();
 console.log("Destructive mutation acknowledgement tests passed");

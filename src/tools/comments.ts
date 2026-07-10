@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 import { BoundedOffset, BoundedPageSize } from "../util/inputSchemas.js";
 
 const CommentContent = z.union([
@@ -71,14 +71,28 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   );
 
   const updateCommentHandler = async (parsed: { id: string; content: any }) => {
-    const mutation = `mutation UpdateComment($input: CommentUpdateInput!){ updateComment(input:$input) }`;
-    const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
-    const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: normalizedContent } });
-    return receipt("comment.update", {
-      commentId: parsed.id,
-      id: parsed.id,
-      success: data.updateComment,
-    });
+    try {
+      const mutation = `mutation UpdateComment($input: CommentUpdateInput!){ updateComment(input:$input) }`;
+      const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
+      const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: normalizedContent } });
+      if (!data.updateComment) {
+        return toolError("AFFiNE did not confirm the comment update.", {
+          code: "comment_update_failed",
+          data: { kind: "comment.update", status: "not_applied", commentId: parsed.id, id: parsed.id },
+        });
+      }
+      return receipt("comment.update", {
+        status: "updated",
+        commentId: parsed.id,
+        id: parsed.id,
+        success: true,
+      });
+    } catch (error) {
+      return toolError(error, {
+        code: "comment_update_failed",
+        data: { kind: "comment.update", status: "failed", commentId: parsed.id, id: parsed.id },
+      });
+    }
   };
   server.registerTool(
     "update_comment",
@@ -94,13 +108,27 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   );
 
   const deleteCommentHandler = async (parsed: { id: string }) => {
-    const mutation = `mutation DeleteComment($id:String!){ deleteComment(id:$id) }`;
-    const data = await gql.request<{ deleteComment: boolean }>(mutation, { id: parsed.id });
-    return receipt("comment.delete", {
-      commentId: parsed.id,
-      id: parsed.id,
-      success: data.deleteComment,
-    });
+    try {
+      const mutation = `mutation DeleteComment($id:String!){ deleteComment(id:$id) }`;
+      const data = await gql.request<{ deleteComment: boolean }>(mutation, { id: parsed.id });
+      if (!data.deleteComment) {
+        return toolError("AFFiNE did not confirm comment deletion.", {
+          code: "comment_delete_failed",
+          data: { kind: "comment.delete", status: "not_applied", commentId: parsed.id, id: parsed.id },
+        });
+      }
+      return receipt("comment.delete", {
+        status: "deleted",
+        commentId: parsed.id,
+        id: parsed.id,
+        success: true,
+      });
+    } catch (error) {
+      return toolError(error, {
+        code: "comment_delete_failed",
+        data: { kind: "comment.delete", status: "failed", commentId: parsed.id, id: parsed.id },
+      });
+    }
   };
   server.registerTool(
     "delete_comment",
@@ -115,14 +143,28 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   );
 
   const resolveCommentHandler = async (parsed: { id: string; resolved: boolean }) => {
-    const mutation = `mutation ResolveComment($input: CommentResolveInput!){ resolveComment(input:$input) }`;
-    const data = await gql.request<{ resolveComment: boolean }>(mutation, { input: parsed });
-    return receipt("comment.resolve", {
-      commentId: parsed.id,
-      id: parsed.id,
-      resolved: parsed.resolved,
-      success: data.resolveComment,
-    });
+    try {
+      const mutation = `mutation ResolveComment($input: CommentResolveInput!){ resolveComment(input:$input) }`;
+      const data = await gql.request<{ resolveComment: boolean }>(mutation, { input: parsed });
+      if (!data.resolveComment) {
+        return toolError("AFFiNE did not confirm the comment resolution change.", {
+          code: "comment_resolve_failed",
+          data: { kind: "comment.resolve", status: "not_applied", commentId: parsed.id, id: parsed.id, resolved: parsed.resolved },
+        });
+      }
+      return receipt("comment.resolve", {
+        status: parsed.resolved ? "resolved" : "reopened",
+        commentId: parsed.id,
+        id: parsed.id,
+        resolved: parsed.resolved,
+        success: true,
+      });
+    } catch (error) {
+      return toolError(error, {
+        code: "comment_resolve_failed",
+        data: { kind: "comment.resolve", status: "failed", commentId: parsed.id, id: parsed.id, resolved: parsed.resolved },
+      });
+    }
   };
   server.registerTool(
     "resolve_comment",
