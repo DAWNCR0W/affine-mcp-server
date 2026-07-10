@@ -165,6 +165,10 @@ Typical bearer-mode client config:
 }
 ```
 
+Always send the MCP bearer token in the `Authorization` header. The server
+rejects `?token=` by default because URL credentials can leak through logs and
+browser history.
+
 ## Setup tips
 
 - Prefer `affine-mcp login` for local development

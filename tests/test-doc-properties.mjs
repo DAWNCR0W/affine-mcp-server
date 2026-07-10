@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for document custom-property tools.
  *
@@ -66,7 +68,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-doc-properties-noconfig",
+      XDG_CONFIG_HOME: testTempPath('doc-properties-config'),
     },
     stderr: "pipe",
   });
@@ -131,7 +133,7 @@ async function main() {
   let docId;
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `doc-properties-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
     workspaceId = workspace.id;

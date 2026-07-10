@@ -54,10 +54,17 @@ function emitWithAck<T>(
 }
 
 export function wsUrlFromGraphQLEndpoint(endpoint: string): string {
-  return endpoint
-    .replace('https://', 'wss://')
-    .replace('http://', 'ws://')
-    .replace(/\/graphql\/?$/, '');
+  const url = new URL(endpoint);
+  if (url.protocol === 'https:') {
+    url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
+  } else {
+    throw new Error(`Unsupported GraphQL endpoint scheme for workspace socket: ${url.protocol}`);
+  }
+  // Socket.IO uses a fixed /socket.io/ transport path. Keeping the GraphQL
+  // pathname here would turn a custom GraphQL route into a Socket.IO namespace.
+  return url.origin;
 }
 
 export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bearer?: string): Promise<WorkspaceSocket> {

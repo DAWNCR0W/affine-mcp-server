@@ -10,6 +10,7 @@ import {
   BoundedTreeDepth,
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
+import { secureRandomInt31, secureRandomString } from "../util/random.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -505,16 +506,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   // helpers
   function generateId(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-    let id = '';
-    for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
-    return id;
+    return secureRandomString(10, chars);
   }
 
   async function getCookieAndEndpoint() {
-    const endpoint = gql.endpoint;
-    const cookie = gql.cookie;
-    const bearer = gql.bearer;
-    return { endpoint, cookie, bearer };
+    return await gql.getConnectionAuth();
   }
 
   const SELECT_COLORS = [
@@ -8051,7 +8047,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     input: SurfaceElementFields
   ): { elementId: string; data: Record<string, any> } {
     const elementId = generateId();
-    const seed = Math.floor(Math.random() * 2 ** 31);
+    const seed = secureRandomInt31();
     switch (type) {
       case "shape":
         return { elementId, data: buildShapeElementData(elementId, seed, index, input) };

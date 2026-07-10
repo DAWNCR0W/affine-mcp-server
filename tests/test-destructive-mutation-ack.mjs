@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import "./require-destructive-test-safety.mjs";
+
 import assert from "node:assert/strict";
 
 import * as Y from "yjs";
@@ -19,13 +21,13 @@ function parseToolResult(result) {
   return raw ? JSON.parse(raw) : null;
 }
 
-function assertStableFailure(result, code, status = "failed") {
+function assertStableFailure(result, code, status = "failed", retryable = false) {
   const payload = parseToolResult(result);
   assert.equal(result.isError, true);
   assert.equal(payload.ok, false);
   assert.equal(payload.status, status);
   assert.equal(payload.code, code);
-  assert.equal(payload.retryable, false);
+  assert.equal(payload.retryable, retryable);
   assert.equal("message" in payload, false);
   assert.equal("success" in payload, false);
   return payload;
@@ -343,6 +345,7 @@ async function testBlobReceipts() {
   const unconfirmedDelete = assertStableFailure(
     await deleteBlob({ workspaceId: "workspace-1", key: "blob-1" }),
     "blob_delete_failed",
+    "not_applied",
   );
   assert.equal(unconfirmedDelete.deleted, false);
   assert.match(unconfirmedDelete.error, /did not confirm blob deletion/);
@@ -350,6 +353,7 @@ async function testBlobReceipts() {
   const unconfirmedCleanup = assertStableFailure(
     await cleanupBlobs({ workspaceId: "workspace-1", confirmWorkspaceId: "workspace-1" }),
     "blob_cleanup_failed",
+    "not_applied",
   );
   assert.equal(unconfirmedCleanup.blobsReleased, false);
   assert.match(unconfirmedCleanup.error, /did not confirm deleted blob cleanup/);
@@ -438,12 +442,16 @@ async function testAdditionalMutationReceipts() {
   });
   const listNotifications = notificationRegistry.tools.get("list_notifications");
   const readAllNotifications = notificationRegistry.tools.get("read_all_notifications");
-  assertStableFailure(await readAllNotifications({}), "notification_read_all_failed", "not_applied");
+  assertStableFailure(await readAllNotifications({}), "notification_update_failed", "not_applied");
   notificationBehavior = "throw";
-  assertStableFailure(await listNotifications({}), "notification_list_failed");
-  assertStableFailure(await readAllNotifications({}), "notification_read_all_failed");
+  assertStableFailure(await listNotifications({}), "notification_list_failed", "failed", true);
+  assertStableFailure(await readAllNotifications({}), "notification_update_failed", "failed", true);
   notificationBehavior = "true";
-  assert.equal(parseToolResult(await readAllNotifications({})).ok, true);
+  const readAllResult = parseToolResult(await readAllNotifications({}));
+  assert.equal(readAllResult.success, true);
+  assert.equal(readAllResult.applied, true);
+  assert.equal(readAllResult.status, "applied");
+  assert.equal(readAllResult.serverResult, true);
 
   const workspaceRegistry = new ToolRegistry();
   let workspaceBehavior = "false";

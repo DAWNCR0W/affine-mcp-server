@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for database row linked-doc support.
  *
@@ -65,7 +67,7 @@ async function main() {
       AFFINE_LOGIN_AT_START: 'sync',
       // Isolate from local config file (~/.config/affine-mcp/config) which may
       // contain an API token — we want pure email/password auth for this test.
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
+      XDG_CONFIG_HOME: testTempPath('database-linked-doc-config'),
     },
     stderr: 'pipe',
   });
@@ -97,15 +99,11 @@ async function main() {
     await client.connect(transport);
     console.log('MCP client connected.\n');
 
-    // --- Setup: get workspace ---
-    console.log('[Setup] Finding workspace...');
-    const workspaces = await call('list_workspaces');
-    workspaceId = workspaces[0]?.id;
-    if (!workspaceId) {
-      const workspace = await call('create_workspace', { name: `linked-doc-test-${Date.now()}` });
-      workspaceId = workspace?.id;
-    }
-    if (!workspaceId) throw new Error('No workspace available');
+    // --- Setup: create a dedicated disposable workspace ---
+    console.log('[Setup] Creating workspace...');
+    const workspace = await call('create_workspace', { name: testResourceName('linked-doc-test') });
+    workspaceId = workspace?.id;
+    if (!workspaceId) throw new Error('create_workspace did not return an id');
     console.log(`  Workspace: ${workspaceId}\n`);
 
     // --- Setup: create host doc with a database ---
@@ -258,6 +256,7 @@ async function main() {
     try {
       if (hostDocId) await call('delete_doc', { workspaceId, docId: hostDocId, confirmDocId: hostDocId }).catch(() => {});
       if (targetDocId) await call('delete_doc', { workspaceId, docId: targetDocId, confirmDocId: targetDocId }).catch(() => {});
+      if (workspaceId) await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId }).catch(() => {});
     } catch { /* best effort */ }
     await client.close();
   }

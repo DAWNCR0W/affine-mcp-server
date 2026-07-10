@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import "./require-destructive-test-safety.mjs";
+
 import assert from "node:assert/strict";
 import { z } from "zod";
 

@@ -5,17 +5,14 @@ import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
+import { secureRandomString } from "../util/random.js";
 import { connectWorkspaceSocket, joinWorkspace, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
 import { requireMatchingConfirmation } from "../util/inputSchemas.js";
 
 // Generate AFFiNE-style document ID
 function generateDocId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-  let id = '';
-  for (let i = 0; i < 10; i++) {
-    id += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return id;
+  return secureRandomString(10, chars);
 }
 
 // Create initial workspace data with a document
@@ -190,11 +187,8 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
   // CREATE WORKSPACE
   const createWorkspaceHandler = async ({ name, avatar }: { name: string; avatar?: string }) => {
       try {
-        // Get endpoint and headers from GraphQL client
-        const endpoint = gql.endpoint;
-        const headers = gql.headers;
-        const cookie = gql.cookie;
-        const bearer = gql.bearer;
+        // Wait for the shared auth session before multipart or WebSocket operations.
+        const { endpoint, headers, cookie, bearer } = await gql.getConnectionAuth();
         
         // Create initial workspace data
         const { workspaceUpdate, firstDocId, docUpdate } = createInitialWorkspaceData(name, avatar || '');
@@ -233,7 +227,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           method: 'POST',
           headers: {
             ...headers,
-            'Cookie': cookie,
             ...form.getHeaders()
           },
           body: form as any

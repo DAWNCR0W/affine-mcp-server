@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Comprehensive live integration test for issue #50.
  *
@@ -90,7 +92,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
+      XDG_CONFIG_HOME: testTempPath('database-cells-config'),
     },
     stderr: 'pipe',
   });
@@ -164,7 +166,7 @@ async function main() {
       }
     }
 
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     state.workspaceName = `db-cells-test-${timestamp}`;
     state.docTitle = 'Database Cell Test';
 

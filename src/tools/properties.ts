@@ -4,6 +4,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import * as Y from "yjs";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import { secureRandomString } from "../util/random.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -55,11 +56,7 @@ const NANOID_ALPHABET =
 
 /** Generate a 21-char nanoid-style id, matching AFFiNE's property id format. */
 function generatePropertyId(): string {
-  let id = "";
-  for (let i = 0; i < 21; i++) {
-    id += NANOID_ALPHABET.charAt(Math.floor(Math.random() * NANOID_ALPHABET.length));
-  }
-  return id;
+  return secureRandomString(21, NANOID_ALPHABET);
 }
 
 type PropertyDefinition = {
@@ -186,8 +183,8 @@ export function registerPropertyTools(
   defaults: { workspaceId?: string }
 ) {
   /** Snapshot the current GraphQL endpoint and auth material for WebSocket use. */
-  function getCookieAndEndpoint() {
-    return { endpoint: gql.endpoint, cookie: gql.cookie, bearer: gql.bearer };
+  async function getCookieAndEndpoint() {
+    return await gql.getConnectionAuth();
   }
 
   /** Resolve the workspace id from the argument or the configured default; throws if absent. */
@@ -252,7 +249,7 @@ export function registerPropertyTools(
   /** Handle `list_doc_properties`: definitions, decoded per-doc values, and orphan values. */
   const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -323,7 +320,7 @@ export function registerPropertyTools(
     const name = parsed.name.trim();
     if (!name) throw new Error("name is required");
 
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -379,7 +376,7 @@ export function registerPropertyTools(
     property: string;
   }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -425,7 +422,7 @@ export function registerPropertyTools(
     value: string | number | boolean;
   }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -495,7 +492,7 @@ export function registerPropertyTools(
     property: string;
   }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);

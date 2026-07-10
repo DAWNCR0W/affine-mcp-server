@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for create_doc folder placement.
  *
@@ -73,7 +75,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-create-doc-folder-placement-noconfig',
+      XDG_CONFIG_HOME: testTempPath('create-doc-folder-placement-config'),
     },
     stderr: 'pipe',
   });
@@ -100,7 +102,7 @@ async function main() {
   let workspaceId;
   try {
     console.log('\n[1] Create workspace');
-    const workspace = await call('create_workspace', { name: `folder-placement-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('folder-placement') });
     workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'workspace id');
 
@@ -121,7 +123,7 @@ async function main() {
     expectEqual(baz.warnings.length, 0, 'create_doc warning count');
 
     console.log('\n[4] Create doc with missing folderId');
-    const missingFolderId = `missing-folder-${Date.now()}`;
+    const missingFolderId = testResourceName('missing-folder');
     const unplaced = await call('create_doc', {
       workspaceId,
       title: 'not placed',

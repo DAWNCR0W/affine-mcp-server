@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for tool groups that previously relied mostly on the
  * comprehensive runner:
@@ -68,7 +70,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-supporting-tools-noconfig',
+      XDG_CONFIG_HOME: testTempPath('supporting-tools-config'),
     },
     stderr: 'pipe',
   });
@@ -111,7 +113,7 @@ async function main() {
     originalName = currentUser?.name || null;
     expectTruthy(currentUser?.email, 'current_user email');
 
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspaceName = `supporting-tools-${timestamp}`;
 
     const listedWorkspacesBefore = await call('list_workspaces');
@@ -224,9 +226,12 @@ async function main() {
       filename: 'supporting-tools.txt',
       contentType: 'text/plain',
       content: 'supporting tools blob payload',
+      encoding: 'utf8',
     });
     blobKey = uploadedBlob?.key;
     expectTruthy(blobKey, 'upload_blob key');
+    expectEqual(uploadedBlob?.encoding, 'utf8', 'upload_blob encoding');
+    expectEqual(uploadedBlob?.size, 29, 'upload_blob decoded size');
 
     const deletedBlob = await call('delete_blob', {
       workspaceId,
@@ -240,10 +245,35 @@ async function main() {
     expectEqual(cleanupBlobs?.success, true, 'cleanup_blobs success');
 
     const notifications = await call('list_notifications', { first: 20 });
-    expectArray(notifications, 'list_notifications result');
+    expectEqual(notifications?.kind, 'notification.list', 'list_notifications kind');
+    expectArray(notifications?.notifications, 'list_notifications notifications');
+    expectEqual(
+      notifications?.counts?.returnedCount,
+      notifications.notifications.length,
+      'list_notifications returnedCount',
+    );
+    expectEqual(
+      notifications?.filter?.scope,
+      'none',
+      'list_notifications default filter scope',
+    );
+    expectTruthy(notifications?.pagination?.pageInfo, 'list_notifications pageInfo');
 
     const readAllNotifications = await call('read_all_notifications');
-    expectEqual(readAllNotifications?.success, true, 'read_all_notifications success');
+    expectTruthy(
+      typeof readAllNotifications?.applied === 'boolean',
+      'read_all_notifications applied boolean',
+    );
+    expectEqual(
+      readAllNotifications?.success,
+      readAllNotifications?.applied,
+      'read_all_notifications success mirrors applied',
+    );
+    expectEqual(
+      readAllNotifications?.status,
+      readAllNotifications?.applied ? 'applied' : 'not_applied',
+      'read_all_notifications status',
+    );
 
     const profileName = `Supporting Tools ${timestamp}`;
     const updatedProfile = await call('update_profile', { name: profileName });

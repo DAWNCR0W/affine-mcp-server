@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Live CLI integration test against a running AFFiNE instance.
  *
@@ -55,23 +57,69 @@ async function generateAccessToken() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-cli-live-token",
+      XDG_CONFIG_HOME: testTempPath('cli-live-token-config'),
     },
   });
 
   await client.connect(transport);
+  let workspaceId;
+  let tokenId;
+  const cleanupTool = async (name, args) => {
+    const result = await client.callTool({ name, arguments: args });
+    if (result?.isError) throw new Error(`${name} failed: ${result.content?.[0]?.text || 'unknown error'}`);
+    const parsed = JSON.parse(result.content?.[0]?.text || '{}');
+    if (parsed?.error || parsed?.success !== true) {
+      throw new Error(`${name} cleanup failed: ${parsed?.error || 'success was not true'}`);
+    }
+  };
   try {
-    const workspace = JSON.parse((await client.callTool({
+    const workspaceResult = await client.callTool({
       name: "create_workspace",
-      arguments: { name: `cli-live-${Date.now()}` },
-    })).content[0].text);
-    const token = JSON.parse((await client.callTool({
+      arguments: { name: testResourceName('cli-live') },
+    });
+    if (workspaceResult?.isError) throw new Error(workspaceResult.content?.[0]?.text || 'create_workspace failed');
+    const workspace = JSON.parse(workspaceResult.content[0].text);
+    workspaceId = workspace.id;
+    expect(workspaceId, 'create_workspace did not return an id');
+
+    const tokenResult = await client.callTool({
       name: "generate_access_token",
-      arguments: { name: `cli-live-token-${Date.now()}` },
-    })).content[0].text).token;
-    return { token, workspaceId: workspace.id };
-  } finally {
-    await transport.close();
+      arguments: { name: testResourceName('cli-live-token') },
+    });
+    if (tokenResult?.isError) throw new Error(tokenResult.content?.[0]?.text || 'generate_access_token failed');
+    const tokenPayload = JSON.parse(tokenResult.content[0].text);
+    tokenId = tokenPayload.id;
+    expect(tokenPayload.token, 'generate_access_token did not return a token');
+    expect(tokenId, 'generate_access_token did not return an id');
+
+    return {
+      token: tokenPayload.token,
+      workspaceId,
+      async cleanup() {
+        try {
+          await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
+        } finally {
+          try {
+            await cleanupTool('revoke_access_token', { id: tokenId });
+          } finally {
+            await transport.close();
+          }
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      if (workspaceId) {
+        await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
+      }
+    } finally {
+      try {
+        if (tokenId) await cleanupTool('revoke_access_token', { id: tokenId });
+      } finally {
+        await transport.close();
+      }
+    }
+    throw error;
   }
 }
 
@@ -79,8 +127,10 @@ const tempDir = mkdtempSync(path.join(os.tmpdir(), "affine-mcp-cli-live-"));
 const xdgConfigHome = path.join(tempDir, "config-home");
 mkdirSync(xdgConfigHome, { recursive: true });
 
+let remoteArtifacts;
 try {
-  const { token, workspaceId } = await generateAccessToken();
+  remoteArtifacts = await generateAccessToken();
+  const { token, workspaceId } = remoteArtifacts;
 
   const login = runCli("login", [
     "login",
@@ -123,5 +173,9 @@ try {
     ],
   }, null, 2));
 } finally {
-  rmSync(tempDir, { recursive: true, force: true });
+  try {
+    if (remoteArtifacts) await remoteArtifacts.cleanup();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
