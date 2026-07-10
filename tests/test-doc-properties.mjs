@@ -238,12 +238,12 @@ async function main() {
     console.log("=== Document custom-property integration test passed ===");
   } finally {
     if (workspaceId && docId) {
-      await call("delete_doc", { workspaceId, docId }).catch(err => {
+      await call("delete_doc", { workspaceId, docId, confirmDocId: docId }).catch(err => {
         console.warn(`  cleanup delete_doc failed: ${err?.message ?? err}`);
       });
     }
     if (workspaceId) {
-      await call("delete_workspace", { id: workspaceId }).catch(err => {
+      await call("delete_workspace", { id: workspaceId, confirmWorkspaceId: workspaceId }).catch(err => {
         console.warn(`  cleanup delete_workspace failed: ${err?.message ?? err}`);
       });
     }

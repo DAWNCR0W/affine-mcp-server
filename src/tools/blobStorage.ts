@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 import FormData from "form-data";
 import fetch from "node-fetch";
+import { requireMatchingConfirmation } from "../util/inputSchemas.js";
 
 function decodeBlobContent(content: string): Buffer {
   const normalized = content.trim().replace(/\s+/g, "");
@@ -92,8 +93,11 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
   );
 
   // DELETE BLOB
-  const deleteBlobHandler = async ({ workspaceId, key, permanently = false }: { workspaceId: string; key: string; permanently?: boolean }) => {
+  const deleteBlobHandler = async ({ workspaceId, key, permanently = false, confirmKey }: { workspaceId: string; key: string; permanently?: boolean; confirmKey?: string }) => {
     try {
+      if (permanently) {
+        requireMatchingConfirmation("permanent delete_blob", key, confirmKey);
+      }
       const mutation = `
         mutation DeleteBlob($workspaceId: String!, $key: String!, $permanently: Boolean) {
           deleteBlob(workspaceId: $workspaceId, key: $key, permanently: $permanently)
@@ -105,10 +109,41 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
         key,
         permanently
       });
-      
-      return text({ success: data.deleteBlob, key, workspaceId, permanently });
+
+      if (!data.deleteBlob) {
+        return toolError("AFFiNE did not confirm blob deletion.", {
+          code: "blob_delete_failed",
+          data: {
+            kind: "blob.delete",
+            status: "failed",
+            key,
+            workspaceId,
+            permanently,
+            deleted: false,
+          },
+        });
+      }
+
+      return receipt("blob.delete", {
+        status: "deleted",
+        key,
+        workspaceId,
+        permanently,
+        deleted: true,
+        success: true,
+      });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "blob_delete_failed",
+        data: {
+          kind: "blob.delete",
+          status: "failed",
+          key,
+          workspaceId,
+          permanently,
+          deleted: false,
+        },
+      });
     }
   };
   server.registerTool(
@@ -119,15 +154,17 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
       inputSchema: {
         workspaceId: z.string().describe("AFFiNE workspace id that owns the blob."),
         key: z.string().describe("Blob key returned by upload_blob or AFFiNE document metadata."),
-        permanently: z.boolean().optional().describe("If true, permanently delete the blob instead of marking it deleted.")
+        permanently: z.boolean().optional().describe("If true, permanently delete the blob instead of marking it deleted."),
+        confirmKey: z.string().optional().describe("Required when permanently=true and must exactly match key.")
       }
     },
     deleteBlobHandler as any
   );
 
   // RELEASE DELETED BLOBS
-  const cleanupBlobsHandler = async ({ workspaceId }: { workspaceId: string }) => {
+  const cleanupBlobsHandler = async ({ workspaceId, confirmWorkspaceId }: { workspaceId: string; confirmWorkspaceId?: string }) => {
     try {
+      requireMatchingConfirmation("cleanup_blobs", workspaceId, confirmWorkspaceId);
       const mutation = `
         mutation ReleaseDeletedBlobs($workspaceId: String!) {
           releaseDeletedBlobs(workspaceId: $workspaceId)
@@ -137,10 +174,35 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ releaseDeletedBlobs: boolean }>(mutation, {
         workspaceId
       });
-      
-      return text({ success: true, workspaceId, blobsReleased: data.releaseDeletedBlobs });
+
+      if (!data.releaseDeletedBlobs) {
+        return toolError("AFFiNE did not confirm deleted blob cleanup.", {
+          code: "blob_cleanup_failed",
+          data: {
+            kind: "blob.cleanup",
+            status: "failed",
+            workspaceId,
+            blobsReleased: false,
+          },
+        });
+      }
+
+      return receipt("blob.cleanup", {
+        status: "completed",
+        workspaceId,
+        blobsReleased: true,
+        success: true,
+      });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "blob_cleanup_failed",
+        data: {
+          kind: "blob.cleanup",
+          status: "failed",
+          workspaceId,
+          blobsReleased: false,
+        },
+      });
     }
   };
   server.registerTool(
@@ -149,7 +211,8 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
       title: "Cleanup Deleted Blobs",
       description: "Permanently release blobs that were already marked deleted in a workspace. This is destructive cleanup and should be used only after confirming deleted blobs are no longer needed.",
       inputSchema: {
-        workspaceId: z.string().describe("AFFiNE workspace id whose deleted blobs should be released.")
+        workspaceId: z.string().describe("AFFiNE workspace id whose deleted blobs should be released."),
+        confirmWorkspaceId: z.string().describe("Must exactly match workspaceId to confirm permanent blob cleanup.")
       }
     },
     cleanupBlobsHandler as any

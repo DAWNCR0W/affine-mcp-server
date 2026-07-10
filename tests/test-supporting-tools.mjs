@@ -232,10 +232,11 @@ async function main() {
       workspaceId,
       key: blobKey,
       permanently: true,
+      confirmKey: blobKey,
     });
     expectEqual(deletedBlob?.success, true, 'delete_blob success');
 
-    const cleanupBlobs = await call('cleanup_blobs', { workspaceId });
+    const cleanupBlobs = await call('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId });
     expectEqual(cleanupBlobs?.success, true, 'cleanup_blobs success');
 
     const notifications = await call('list_notifications', { first: 20 });
@@ -258,7 +259,7 @@ async function main() {
       expectEqual(restoredProfile?.name, originalName, 'restore original profile name');
     }
 
-    const deletedWorkspace = await call('delete_workspace', { id: workspaceId });
+    const deletedWorkspace = await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
     expectEqual(deletedWorkspace?.success, true, 'delete_workspace success');
     workspaceId = null;
 
@@ -274,11 +275,11 @@ async function main() {
       await call('delete_comment', { id: commentId }).catch(() => {});
     }
     if (blobKey && workspaceId) {
-      await call('delete_blob', { workspaceId, key: blobKey, permanently: true }).catch(() => {});
-      await call('cleanup_blobs', { workspaceId }).catch(() => {});
+      await call('delete_blob', { workspaceId, key: blobKey, permanently: true, confirmKey: blobKey }).catch(() => {});
+      await call('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId }).catch(() => {});
     }
     if (workspaceId) {
-      await call('delete_workspace', { id: workspaceId }).catch(() => {});
+      await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId }).catch(() => {});
     }
     await transport.close();
   }

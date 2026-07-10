@@ -35,5 +35,11 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify input and destructive confirmation contracts
+        run: npm run test:input-contracts
+
+      - name: Verify destructive mutation outcomes
+        run: npm run test:mutation-ack
+
       - name: Check package contents
         run: npm run pack:check

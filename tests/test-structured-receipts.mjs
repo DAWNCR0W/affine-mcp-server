@@ -195,12 +195,32 @@ async function main() {
       public: true,
       enableAi: false,
     });
+
+    const deletedDoc = await call('delete_doc', {
+      workspaceId,
+      docId,
+    });
+    const deletedDocReceipt = assertReceipt(deletedDoc, 'doc.delete', {
+      workspaceId,
+      docId,
+      status: 'deleted',
+      deleted: true,
+      metadataExisted: true,
+      metadataRemoved: true,
+      contentExisted: true,
+      contentDeleted: true,
+    });
+    if (!deletedDocReceipt.structured.contentDeleteAcknowledged && !deletedDocReceipt.structured.contentAbsenceVerified) {
+      throw new Error('doc.delete did not include acknowledgement or absence-verification evidence');
+    }
+    docId = null;
   } finally {
     if (workspaceId) {
       try {
-        const deletedWorkspace = await call('delete_workspace', { id: workspaceId });
+        const deletedWorkspace = await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
         assertReceipt(deletedWorkspace, 'workspace.delete', {
           workspaceId,
+          status: 'deleted',
           deleted: true,
           success: true,
         });

@@ -256,8 +256,8 @@ async function main() {
   } finally {
     // Cleanup
     try {
-      if (hostDocId) await call('delete_doc', { workspaceId, docId: hostDocId }).catch(() => {});
-      if (targetDocId) await call('delete_doc', { workspaceId, docId: targetDocId }).catch(() => {});
+      if (hostDocId) await call('delete_doc', { workspaceId, docId: hostDocId, confirmDocId: hostDocId }).catch(() => {});
+      if (targetDocId) await call('delete_doc', { workspaceId, docId: targetDocId, confirmDocId: targetDocId }).catch(() => {});
     } catch { /* best effort */ }
     await client.close();
   }

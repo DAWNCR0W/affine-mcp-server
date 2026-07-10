@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Added bounded integer schemas for pagination, search limits, history size, and tree depth.
+- Permanent document, workspace, and blob cleanup operations now require an exact identifier confirmation before any AFFiNE request is sent.
+
+### Fixed
+- Document deletion now waits for an AFFiNE WebSocket error or success acknowledgement and falls back to a `DOC_NOT_FOUND` read-after-delete check for AFFiNE versions whose successful delete handler returns no acknowledgement.
+- `delete_doc` now reports workspace metadata and document-content outcomes separately, including partial and already-absent states.
+- Destructive document, workspace, and blob mutations now return stable MCP failure envelopes when AFFiNE rejects, does not confirm, or only partially completes an operation.
+- `delete_workspace`, `delete_blob`, and `cleanup_blobs` no longer report success when AFFiNE returns `false` or the mutation fails.
+
+### Tests
+- Added self-contained input-boundary, destructive-confirmation, WebSocket positive/empty/negative acknowledgement, timeout, read-after-delete, partial-failure receipt, and false-mutation regression coverage.
+- Wired the focused input-contract and destructive-mutation suites into both the package `ci` script and GitHub Actions.
+- Updated live cleanup callers to use the new confirmation contract.
+
 ## [2.5.0] - 2026-07-06
 
 ### Added

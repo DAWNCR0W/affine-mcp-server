@@ -195,7 +195,7 @@ async function main() {
     try {
       if (workspace?.id) {
         await client.callTool(
-          { name: "delete_workspace", arguments: { id: workspace.id } },
+          { name: "delete_workspace", arguments: { id: workspace.id, confirmWorkspaceId: workspace.id } },
           undefined,
           { timeout: TOOL_TIMEOUT_MS },
         );

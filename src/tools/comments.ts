@@ -2,14 +2,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
+import { BoundedOffset, BoundedPageSize } from "../util/inputSchemas.js";
 
 const CommentContent = z.union([
   z.string(),
   z.record(z.unknown()),
   z.array(z.unknown()),
 ]).describe("Comment content accepted by AFFiNE. Plain strings are normalized to { text }, and rich AFFiNE payload objects are passed through.");
-const CommentPageSize = z.number().int().positive().describe("Maximum number of comments to return from the AFFiNE pagination connection.");
-const CommentOffset = z.number().int().nonnegative().describe("Zero-based offset used by AFFiNE pagination. Do not combine with after unless the AFFiNE API requires it.");
+const CommentPageSize = BoundedPageSize.describe("Maximum number of comments to return from the AFFiNE pagination connection (1-200).");
+const CommentOffset = BoundedOffset.describe("Zero-based offset used by AFFiNE pagination (maximum 1,000,000). Do not combine with after unless the AFFiNE API requires it.");
 
 export function registerCommentTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
   const listCommentsHandler = async (parsed: { workspaceId?: string; docId: string; first?: number; offset?: number; after?: string }) => {

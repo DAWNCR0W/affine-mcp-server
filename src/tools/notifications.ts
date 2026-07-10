@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import { BoundedOffset, BoundedPageSize } from "../util/inputSchemas.js";
 
 export function registerNotificationTools(server: McpServer, gql: GraphQLClient) {
   // LIST NOTIFICATIONS
@@ -57,8 +58,8 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
       title: "List Notifications",
       description: "List the current user's AFFiNE notifications with optional unread filtering. This is read-only and returns notification ids, read state, level, and timestamps.",
       inputSchema: {
-        first: z.number().optional().describe("Number of notifications to fetch"),
-        offset: z.number().optional().describe("Offset for pagination"),
+        first: BoundedPageSize.optional().describe("Number of notifications to fetch (1-200)"),
+        offset: BoundedOffset.optional().describe("Offset for pagination (maximum 1,000,000)"),
         after: z.string().optional().describe("Cursor for pagination"),
         unreadOnly: z.boolean().optional().describe("Show only unread notifications")
       }

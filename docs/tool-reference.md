@@ -19,8 +19,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `get_workspace` | Read workspace details | Includes settings and metadata |
 | `create_workspace` | Create a workspace with an initial document | Destructive in the sense that it creates new server state |
 | `update_workspace` | Update workspace settings | Use carefully in shared workspaces |
-| `delete_workspace` | Permanently delete a workspace | Destructive |
-| `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs |
+| `delete_workspace` | Permanently delete a workspace | Destructive; `confirmWorkspaceId` must exactly match `id`; unconfirmed outcomes return an MCP error instead of a success receipt |
+| `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs; depth is limited to 0-20 |
 | `get_orphan_docs` | Find documents that are not linked from a parent doc | Useful for cleanup and audits |
 
 ## Organization
@@ -54,7 +54,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | --- | --- | --- |
 | `list_docs` | List documents with pagination | Includes `node.tags` |
 | `list_tags` | List all tags in a workspace | |
-| `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting |
+| `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting; limit is 1-200 |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
 | `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
@@ -78,7 +78,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | |
-| `delete_doc` | Delete a document | WebSocket-backed and destructive |
+| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
 
 ### Content editing
 
@@ -197,5 +197,5 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `upload_blob` | Upload a file or blob to workspace storage | |
-| `delete_blob` | Delete a blob from workspace storage | Destructive |
-| `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented |
+| `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; unconfirmed deletion returns an MCP error |
+| `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; unconfirmed cleanup returns an MCP error |

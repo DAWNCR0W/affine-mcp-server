@@ -2,8 +2,23 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text } from "../util/mcp.js";
-import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
+import { receipt, text, toolError } from "../util/mcp.js";
+import {
+  BoundedOffset,
+  BoundedPageSize,
+  BoundedSearchLimit,
+  BoundedTreeDepth,
+  requireMatchingConfirmation,
+} from "../util/inputSchemas.js";
+import {
+  wsUrlFromGraphQLEndpoint,
+  connectWorkspaceSocket,
+  joinWorkspace,
+  loadDoc,
+  pushDocUpdate,
+  deleteDoc as wsDeleteDoc,
+  type WorkspaceSocket,
+} from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
@@ -72,8 +87,8 @@ const DocId = z.string().min(1, "docId required").describe("AFFiNE document id."
 const MarkdownContent = z.string().min(1, "markdown required").describe("Markdown content to import, append, replace, or export-roundtrip.");
 const TagName = z.string().trim().min(1, "tag required").describe("Workspace tag name.");
 const TagIdOrName = z.string().trim().min(1, "tag required").describe("Workspace tag id or tag name.");
-const PageSize = z.number().int().positive().describe("Maximum number of items to return from the AFFiNE pagination connection.");
-const PageOffset = z.number().int().nonnegative().describe("Zero-based offset used by AFFiNE pagination. Do not combine with after unless the AFFiNE API requires it.");
+const PageSize = BoundedPageSize.describe("Maximum number of items to return from the AFFiNE pagination connection (1-200).");
+const PageOffset = BoundedOffset.describe("Zero-based offset used by AFFiNE pagination (maximum 1,000,000). Do not combine with after unless the AFFiNE API requires it.");
 const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "paragraph",
   "heading",
@@ -358,6 +373,131 @@ function blockVersion(flavour: string): number {
       return 5;
     default:
       return 1;
+  }
+}
+
+export async function deleteDocFromWorkspace(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+) {
+  if (docId === workspaceId) {
+    throw new Error("delete_doc cannot delete the workspace metadata document; use delete_workspace instead.");
+  }
+
+  const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+  if (typeof workspaceSnapshot.missing !== "string") {
+    throw new Error(`Workspace metadata document ${workspaceId} was not found.`);
+  }
+
+  const workspaceDoc = new Y.Doc();
+  Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+  const pages = workspaceDoc.getMap("meta").get("pages") as Y.Array<Y.Map<any>> | undefined;
+  let metadataIndex = -1;
+  pages?.forEach((page: Y.Map<any>, index: number) => {
+    if (metadataIndex < 0 && page instanceof Y.Map && page.get("id") === docId) {
+      metadataIndex = index;
+    }
+  });
+
+  const contentSnapshot = await loadDoc(socket, workspaceId, docId);
+  const metadataExisted = metadataIndex >= 0;
+  const contentExisted = typeof contentSnapshot.missing === "string";
+
+  if (!metadataExisted && !contentExisted) {
+    return receipt("doc.delete", {
+      status: "already_absent",
+      workspaceId,
+      docId,
+      deleted: false,
+      alreadyAbsent: true,
+      metadataExisted: false,
+      metadataRemoved: false,
+      contentExisted: false,
+      contentDeleted: false,
+      contentDeleteAcknowledged: false,
+      contentAbsenceVerified: true,
+    });
+  }
+
+  let metadataRemoved = false;
+  if (metadataExisted && pages) {
+    const previousState = Y.encodeStateVector(workspaceDoc);
+    pages.delete(metadataIndex, 1);
+    const workspaceDelta = Y.encodeStateAsUpdate(workspaceDoc, previousState);
+    try {
+      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(workspaceDelta).toString("base64"));
+      metadataRemoved = true;
+    } catch (error) {
+      return toolError(error, {
+        code: "doc_metadata_delete_failed",
+        data: {
+          kind: "doc.delete",
+          status: "failed",
+          workspaceId,
+          docId,
+          deleted: false,
+          alreadyAbsent: false,
+          metadataExisted: true,
+          metadataRemoved: false,
+          contentExisted,
+          contentDeleted: false,
+          contentDeleteAcknowledged: false,
+          contentAbsenceVerified: !contentExisted,
+        },
+      });
+    }
+  }
+
+  if (!contentExisted) {
+    return receipt("doc.delete", {
+      status: "deleted",
+      workspaceId,
+      docId,
+      deleted: true,
+      alreadyAbsent: false,
+      metadataExisted,
+      metadataRemoved,
+      contentExisted: false,
+      contentDeleted: false,
+      contentDeleteAcknowledged: false,
+      contentAbsenceVerified: true,
+    });
+  }
+
+  try {
+    const deletion = await wsDeleteDoc(socket, workspaceId, docId);
+    return receipt("doc.delete", {
+      status: "deleted",
+      workspaceId,
+      docId,
+      deleted: true,
+      alreadyAbsent: false,
+      metadataExisted,
+      metadataRemoved,
+      contentExisted: true,
+      contentDeleted: true,
+      contentDeleteAcknowledged: deletion.acknowledged,
+      contentAbsenceVerified: deletion.verifiedAbsent,
+    });
+  } catch (error) {
+    return toolError(error, {
+      code: "doc_content_delete_failed",
+      data: {
+        kind: "doc.delete",
+        status: metadataRemoved ? "partial" : "failed",
+        workspaceId,
+        docId,
+        deleted: false,
+        alreadyAbsent: false,
+        metadataExisted,
+        metadataRemoved,
+        contentExisted: true,
+        contentDeleted: false,
+        contentDeleteAcknowledged: false,
+        contentAbsenceVerified: false,
+      },
+    });
   }
 }
 
@@ -4133,7 +4273,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
-        limit: z.number().optional().describe("Max results to return (default: 20)."),
+        limit: BoundedSearchLimit.optional().describe("Max results to return (default: 20, maximum: 200)."),
         matchMode: z.enum(["substring", "prefix", "exact"]).optional().describe("How to match titles (default: substring)."),
         tag: z.string().optional().describe("Optional tag filter (case-insensitive substring match against resolved tag names)."),
         sortBy: z.enum(["relevance", "updatedAt"]).optional().describe("Sort by match relevance (default) or by updatedAt."),
@@ -5848,7 +5988,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // DELETE DOC
-  const deleteDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+  const deleteDocHandler = async (parsed: { workspaceId?: string; docId: string; confirmDocId?: string }) => {
+    requireMatchingConfirmation("delete_doc", parsed.docId, parsed.confirmDocId);
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error('workspaceId is required');
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
@@ -5856,31 +5997,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      // remove from workspace pages
-      const wsDoc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (snapshot.missing) Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, 'base64'));
-      const prevSV = Y.encodeStateVector(wsDoc);
-      const wsMeta = wsDoc.getMap('meta');
-      const pages = wsMeta.get('pages') as Y.Array<Y.Map<any>> | undefined;
-      if (pages) {
-        // find by id
-        let idx = -1;
-        pages.forEach((m: any, i: number) => {
-          if (idx >= 0) return;
-          if (m.get && m.get('id') === parsed.docId) idx = i;
-        });
-        if (idx >= 0) pages.delete(idx, 1);
-      }
-      const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
-      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString('base64'));
-      // delete doc content
-      wsDeleteDoc(socket, workspaceId, parsed.docId);
-      return receipt("doc.delete", {
-        workspaceId,
-        docId: parsed.docId,
-        deleted: true,
-      });
+      return await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
     } finally {
       socket.disconnect();
     }
@@ -5889,10 +6006,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     'delete_doc',
     {
       title: 'Delete Document',
-      description: 'Delete a document by removing its workspace metadata entry and sending the AFFiNE WebSocket delete request for its content. This is destructive; use revoke_doc when you only need to remove public access.',
+      description: 'Delete a document, wait for the AFFiNE WebSocket outcome, and report workspace-metadata and content deletion separately. This is destructive; use revoke_doc when you only need to remove public access.',
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
+        confirmDocId: DocId.describe("Must exactly match docId to confirm permanent document deletion."),
       },
     },
     deleteDocHandler as any
@@ -5948,7 +6066,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces. Each node includes an inTrash flag.",
     inputSchema: {
       workspaceId: z.string().optional(),
-      depth: z.number().optional().describe("Max nesting depth to return (default: 3)."),
+      depth: BoundedTreeDepth.optional().describe("Max nesting depth to return (default: 3, maximum: 20)."),
     },
   }, listWorkspaceTreeHandler as any);
 
