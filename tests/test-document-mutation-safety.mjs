@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   executeSafeDocumentMove,
   handleMarkdownOperationFailure,
+  isDocumentMoveSuccessful,
+  toDocumentMoveResult,
 } from "../dist/util/mutationSafety.js";
 
 function dependencies(overrides = {}) {
@@ -51,6 +53,7 @@ function dependencies(overrides = {}) {
   assert.equal(outcome.status, "moved");
   assert.equal(outcome.moved, true);
   assert.equal(outcome.partial, false);
+  assert.equal(isDocumentMoveSuccessful(outcome), true);
   assert.deepEqual(deps.events, [
     "assert",
     "cycle",
@@ -96,7 +99,33 @@ function dependencies(overrides = {}) {
   assert.equal(outcome.moved, false);
   assert.equal(outcome.linkedToNewParent, true);
   assert.equal(outcome.requiresManualRepair, true);
+  assert.equal(isDocumentMoveSuccessful(outcome), false);
+  assert.deepEqual(toDocumentMoveResult(outcome), {
+    ok: false,
+    ...outcome,
+    error: outcome.warnings[0],
+    code: "DOCUMENT_MOVE_PARTIAL",
+    retryable: true,
+  });
   assert.match(outcome.warnings[0], /source write timed out/);
+}
+
+{
+  const deps = dependencies({
+    removeFromOldParent: async () => false,
+  });
+  const outcome = await executeSafeDocumentMove(
+    { docId: "doc-1", toParentDocId: "new-parent", fromParentDocId: "missing-parent-link" },
+    deps.value,
+  );
+  assert.equal(outcome.status, "linked");
+  assert.equal(outcome.moved, false);
+  assert.equal(outcome.partial, false);
+  assert.equal(outcome.linkedToNewParent, true);
+  assert.equal(outcome.removedFromParent, false);
+  assert.equal(isDocumentMoveSuccessful(outcome), true);
+  assert.deepEqual(toDocumentMoveResult(outcome), { ok: true, ...outcome });
+  assert.match(outcome.warnings[0], /no matching link was found/);
 }
 
 {
@@ -162,7 +191,22 @@ function dependencies(overrides = {}) {
   );
   assert.equal(outcome.status, "unchanged");
   assert.equal(outcome.moved, false);
+  assert.equal(isDocumentMoveSuccessful(outcome), true);
   assert.deepEqual(events, ["inspect-destination"]);
+}
+
+{
+  const deps = dependencies({
+    isLinkedToNewParent: async () => false,
+  });
+  const outcome = await executeSafeDocumentMove(
+    { docId: "doc-1", toParentDocId: "same-parent", fromParentDocId: "same-parent" },
+    deps.value,
+  );
+  assert.equal(outcome.status, "unchanged");
+  assert.equal(outcome.requiresManualRepair, true);
+  assert.equal(isDocumentMoveSuccessful(outcome), false);
+  assert.equal(toDocumentMoveResult(outcome).code, "DOCUMENT_MOVE_INCONSISTENT");
 }
 
 assert.doesNotThrow(() => {

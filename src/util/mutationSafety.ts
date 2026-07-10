@@ -19,6 +19,33 @@ export interface SafeDocumentMoveDependencies {
   removeFromOldParent: () => Promise<boolean>;
 }
 
+/** Return whether the requested move reached a complete, trustworthy state. */
+export function isDocumentMoveSuccessful(outcome: DocumentMoveOutcome): boolean {
+  return !outcome.partial && !outcome.requiresManualRepair;
+}
+
+export type DocumentMoveResult = DocumentMoveOutcome & {
+  ok: boolean;
+  error?: string;
+  code?: "DOCUMENT_MOVE_PARTIAL" | "DOCUMENT_MOVE_INCONSISTENT";
+  retryable?: boolean;
+};
+
+/** Build the stable tool status fields for a document move outcome. */
+export function toDocumentMoveResult(outcome: DocumentMoveOutcome): DocumentMoveResult {
+  if (isDocumentMoveSuccessful(outcome)) {
+    return { ok: true, ...outcome };
+  }
+
+  return {
+    ok: false,
+    ...outcome,
+    error: outcome.warnings[0] ?? "The document move did not reach a complete state.",
+    code: outcome.partial ? "DOCUMENT_MOVE_PARTIAL" : "DOCUMENT_MOVE_INCONSISTENT",
+    retryable: true,
+  };
+}
+
 /**
  * Coordinate a cross-document move so the existing parent link is never
  * removed before the destination link is confirmed.
@@ -81,6 +108,21 @@ export async function executeSafeDocumentMove(
 
   try {
     const removedFromParent = await dependencies.removeFromOldParent();
+    if (!removedFromParent) {
+      return {
+        status: "linked",
+        moved: false,
+        partial: false,
+        linkedToNewParent: true,
+        addedToNewParent: !alreadyLinked,
+        removedFromParent: false,
+        requiresManualRepair: false,
+        warnings: [
+          "The destination link is present, but no matching link was found in the declared source parent.",
+        ],
+      };
+    }
+
     return {
       status: "moved",
       moved: true,
@@ -89,9 +131,7 @@ export async function executeSafeDocumentMove(
       addedToNewParent: !alreadyLinked,
       removedFromParent,
       requiresManualRepair: false,
-      warnings: removedFromParent
-        ? []
-        : ["The destination link is present, but no matching link was found in the declared source parent."],
+      warnings: [],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

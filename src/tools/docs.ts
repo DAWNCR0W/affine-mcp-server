@@ -6,6 +6,7 @@ import { receipt, text } from "../util/mcp.js";
 import {
   executeSafeDocumentMove,
   handleMarkdownOperationFailure,
+  toDocumentMoveResult,
 } from "../util/mutationSafety.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
@@ -5234,12 +5235,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         ),
       });
 
-      return receipt("doc.move", {
+      return text({
+        kind: "doc.move",
         workspaceId,
         docId: parsed.docId,
         toParentDocId: parsed.toParentDocId,
         fromParentDocId: parsed.fromParentDocId ?? null,
-        ...outcome,
+        ...toDocumentMoveResult(outcome),
       });
     } finally {
       socket.disconnect();
