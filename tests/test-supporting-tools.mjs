@@ -226,25 +226,54 @@ async function main() {
       filename: 'supporting-tools.txt',
       contentType: 'text/plain',
       content: 'supporting tools blob payload',
+      encoding: 'utf8',
     });
     blobKey = uploadedBlob?.key;
     expectTruthy(blobKey, 'upload_blob key');
+    expectEqual(uploadedBlob?.encoding, 'utf8', 'upload_blob encoding');
+    expectEqual(uploadedBlob?.size, 29, 'upload_blob decoded size');
 
     const deletedBlob = await call('delete_blob', {
       workspaceId,
       key: blobKey,
       permanently: true,
+      confirmKey: blobKey,
     });
     expectEqual(deletedBlob?.success, true, 'delete_blob success');
 
-    const cleanupBlobs = await call('cleanup_blobs', { workspaceId });
+    const cleanupBlobs = await call('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId });
     expectEqual(cleanupBlobs?.success, true, 'cleanup_blobs success');
 
     const notifications = await call('list_notifications', { first: 20 });
-    expectArray(notifications, 'list_notifications result');
+    expectEqual(notifications?.kind, 'notification.list', 'list_notifications kind');
+    expectArray(notifications?.notifications, 'list_notifications notifications');
+    expectEqual(
+      notifications?.counts?.returnedCount,
+      notifications.notifications.length,
+      'list_notifications returnedCount',
+    );
+    expectEqual(
+      notifications?.filter?.scope,
+      'none',
+      'list_notifications default filter scope',
+    );
+    expectTruthy(notifications?.pagination?.pageInfo, 'list_notifications pageInfo');
 
     const readAllNotifications = await call('read_all_notifications');
-    expectEqual(readAllNotifications?.success, true, 'read_all_notifications success');
+    expectTruthy(
+      typeof readAllNotifications?.applied === 'boolean',
+      'read_all_notifications applied boolean',
+    );
+    expectEqual(
+      readAllNotifications?.success,
+      readAllNotifications?.applied,
+      'read_all_notifications success mirrors applied',
+    );
+    expectEqual(
+      readAllNotifications?.status,
+      readAllNotifications?.applied ? 'applied' : 'not_applied',
+      'read_all_notifications status',
+    );
 
     const profileName = `Supporting Tools ${timestamp}`;
     const updatedProfile = await call('update_profile', { name: profileName });
@@ -260,7 +289,7 @@ async function main() {
       expectEqual(restoredProfile?.name, originalName, 'restore original profile name');
     }
 
-    const deletedWorkspace = await call('delete_workspace', { id: workspaceId });
+    const deletedWorkspace = await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
     expectEqual(deletedWorkspace?.success, true, 'delete_workspace success');
     workspaceId = null;
 
@@ -276,11 +305,11 @@ async function main() {
       await call('delete_comment', { id: commentId }).catch(() => {});
     }
     if (blobKey && workspaceId) {
-      await call('delete_blob', { workspaceId, key: blobKey, permanently: true }).catch(() => {});
-      await call('cleanup_blobs', { workspaceId }).catch(() => {});
+      await call('delete_blob', { workspaceId, key: blobKey, permanently: true, confirmKey: blobKey }).catch(() => {});
+      await call('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId }).catch(() => {});
     }
     if (workspaceId) {
-      await call('delete_workspace', { id: workspaceId }).catch(() => {});
+      await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId }).catch(() => {});
     }
     await transport.close();
   }

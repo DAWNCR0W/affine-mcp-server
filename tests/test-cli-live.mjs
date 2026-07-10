@@ -97,7 +97,7 @@ async function generateAccessToken() {
       workspaceId,
       async cleanup() {
         try {
-          await cleanupTool('delete_workspace', { id: workspaceId });
+          await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
         } finally {
           try {
             await cleanupTool('revoke_access_token', { id: tokenId });
@@ -109,7 +109,9 @@ async function generateAccessToken() {
     };
   } catch (error) {
     try {
-      if (workspaceId) await cleanupTool('delete_workspace', { id: workspaceId });
+      if (workspaceId) {
+        await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
+      }
     } finally {
       try {
         if (tokenId) await cleanupTool('revoke_access_token', { id: tokenId });

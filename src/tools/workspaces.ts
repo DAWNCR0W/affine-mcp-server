@@ -4,9 +4,10 @@ import { GraphQLClient } from "../graphqlClient.js";
 import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
-import { receipt, text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 import { secureRandomString } from "../util/random.js";
 import { connectWorkspaceSocket, joinWorkspace, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
+import { requireMatchingConfirmation } from "../util/inputSchemas.js";
 
 // Generate AFFiNE-style document ID
 function generateDocId(): string {
@@ -136,7 +137,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ workspaces: any[] }>(query);
       return text(data.workspaces || []);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "workspace_list_failed" });
     }
   };
 
@@ -167,7 +168,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ workspace: any }>(query, { id });
       return text(data.workspace);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "workspace_get_failed" });
     }
   };
 
@@ -278,11 +279,12 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         });
         
       } catch (error: any) {
-        return text({
-          kind: "workspace.create",
-          ok: false,
-          status: "failed",
-          error: error.message,
+        return toolError(error, {
+          code: "workspace_create_failed",
+          data: {
+            kind: "workspace.create",
+            status: "failed",
+          },
         });
       }
     };
@@ -319,13 +321,24 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         
         const data = await gql.request<{ updateWorkspace: any }>(mutation, { input });
         
+        if (!data.updateWorkspace || typeof data.updateWorkspace !== "object") {
+          return toolError("AFFiNE did not confirm the workspace update.", {
+            code: "workspace_update_failed",
+            data: { kind: "workspace.update", status: "not_applied", workspaceId: id, id },
+          });
+        }
+
         return receipt("workspace.update", {
+          status: "updated",
           workspaceId: id,
           id,
           ...data.updateWorkspace,
         });
       } catch (error: any) {
-        return text({ error: error.message });
+        return toolError(error, {
+          code: "workspace_update_failed",
+          data: { kind: "workspace.update", status: "failed", workspaceId: id, id },
+        });
       }
     };
   server.registerTool(
@@ -343,8 +356,9 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
   );
 
   // DELETE WORKSPACE
-  const deleteWorkspaceHandler = async ({ id }: { id: string }) => {
+  const deleteWorkspaceHandler = async ({ id, confirmWorkspaceId }: { id: string; confirmWorkspaceId?: string }) => {
       try {
+        requireMatchingConfirmation("delete_workspace", id, confirmWorkspaceId);
         const mutation = `
           mutation DeleteWorkspace($id: String!) {
             deleteWorkspace(id: $id)
@@ -352,25 +366,47 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         `;
         
         const data = await gql.request<{ deleteWorkspace: boolean }>(mutation, { id });
-        
+        if (!data.deleteWorkspace) {
+          return toolError("AFFiNE did not confirm workspace deletion.", {
+            code: "workspace_delete_failed",
+            data: {
+              kind: "workspace.delete",
+              status: "failed",
+              workspaceId: id,
+              id,
+              deleted: false,
+            },
+          });
+        }
+
         return receipt("workspace.delete", {
+          status: "deleted",
           workspaceId: id,
           id,
-          deleted: data.deleteWorkspace,
-          success: data.deleteWorkspace,
-          message: "Workspace deleted successfully",
+          deleted: true,
+          success: true,
         });
       } catch (error: any) {
-        return text({ error: error.message });
+        return toolError(error, {
+          code: "workspace_delete_failed",
+          data: {
+            kind: "workspace.delete",
+            status: "failed",
+            workspaceId: id,
+            id,
+            deleted: false,
+          },
+        });
       }
     };
   server.registerTool(
     "delete_workspace",
     {
       title: "Delete Workspace",
-      description: "Delete a workspace permanently",
+      description: "Delete a workspace permanently and report success only when AFFiNE confirms the mutation.",
       inputSchema: {
-        id: z.string().describe("Workspace ID")
+        id: z.string().describe("Workspace ID"),
+        confirmWorkspaceId: z.string().describe("Must exactly match id to confirm permanent workspace deletion.")
       }
     },
     deleteWorkspaceHandler as any

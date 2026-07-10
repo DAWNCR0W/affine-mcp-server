@@ -113,7 +113,7 @@ For Docker, health checks, and remote deployment details, see [docs/configuratio
 affine-mcp login
 ```
 
-This stores credentials in `~/.config/affine-mcp/config` with mode `600`.
+This stores credentials in `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise in `~/.config/affine-mcp/config`, with mode `600`.
 
 - For AFFiNE Cloud, use an API token from `Settings -> Integrations -> MCP Server`
 - For self-hosted AFFiNE, you can use either an API token or email/password
@@ -230,28 +230,23 @@ For common failures, see:
 - Restrict exposed tools with `AFFINE_DISABLED_GROUPS` and `AFFINE_DISABLED_TOOLS` for least-privilege setups
 - Treat OAuth mode as a shared AFFiNE service-account deployment: it defaults to `read_only`, and write-capable profiles require `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true`
 - Use `/healthz` and `/readyz` when running the HTTP server behind a container platform or load balancer
+- Set HTTP body, session, idle, and shutdown limits explicitly for high-volume deployments
 
 ## Development
 
 Run the main quality gates before opening a PR:
 
 ```bash
-npm run build
-npm run test:live-safety
-npm run test:tool-manifest
-npm run test:secure-random
-npm run test:tool-filtering
-npm run test:pr-route-policy
-npm run test:config-consistency
-npm run pack:check
+npm run ci
 ```
 
 Additional validation:
 
+- `npm test` verifies tool metadata, test-suite coverage, and the fast regression suite without requiring a live AFFiNE instance
 - `npm run test:comprehensive` boots a local Docker AFFiNE stack and validates the tool surface
 - `npm run test:e2e` runs Docker, MCP, and Playwright together
 - `npm run test:playwright` runs the Playwright suite only
-- Focused runners for the new high-level tool surface include `npm run test:create-placement`, `npm run test:capabilities-fidelity`, `npm run test:native-template`, `node tests/test-database-intent.mjs`, `node tests/test-semantic-page-composer.mjs`, `node tests/test-structured-receipts.mjs`, `node tests/test-organize-tools.mjs`, and `node tests/test-supporting-tools.mjs`
+- Focused runners for the new high-level tool surface include `npm run test:create-placement`, `npm run test:capabilities-fidelity`, `npm run test:native-template`, `npm run test:mutation-ack`, `node tests/test-database-intent.mjs`, `node tests/test-semantic-page-composer.mjs`, `node tests/test-structured-receipts.mjs`, `node tests/test-organize-tools.mjs`, and `node tests/test-supporting-tools.mjs`
 
 Live tests can mutate or delete AFFiNE data. They allow loopback targets by
 default and refuse non-loopback targets unless the disposable target is

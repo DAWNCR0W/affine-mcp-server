@@ -25,15 +25,16 @@ npm run build
 Run these before opening a PR:
 
 ```bash
-# Static quality gate (manifest + duplicate tool checks)
-npm run test:tool-manifest
-
-# Build
-npm run build
-
-# Package sanity check
-npm run pack:check
+# Build, fast regression tests, metadata checks, and package sanity
+npm run ci
 ```
+
+`npm test` is intentionally self-contained: it verifies the tool and test-suite
+manifests and runs only tests that do not require a live AFFiNE instance.
+
+Every `tests/test-*.mjs` file must be classified in `tests/test-suites.json`.
+Tests that require AFFiNE, Docker, credentials, a packaged artifact, or a browser
+must not be added to the `fast` suite.
 
 If you have a reachable AFFiNE dev server:
 
@@ -92,6 +93,9 @@ shell profile, CI environment, or repository file.
 - Keep `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, and `RELEASE_NOTES.md` in sync before tagging.
 - Use the matching version section from `RELEASE_NOTES.md` as the source for the GitHub Release body.
 - Treat `npm run ci` and `npm run test:e2e` as the release validation baseline.
+- Publish the exact npm tarball produced after release validation; install and smoke-test that artifact before publishing it with lifecycle scripts disabled.
+- Pull request CI also installs and smoke-tests a temporary tarball so packaging regressions fail before release.
+- Pull requests build the Docker image without pushing and verify the packaged CLI version and non-root runtime user.
 
 ## Commit Message Style
 

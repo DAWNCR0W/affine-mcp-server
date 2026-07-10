@@ -11,19 +11,34 @@ function ackErrorMessage(ack: any, fallback: string): string | null {
   return ack?.error ? fallback : null;
 }
 
+function deleteAcknowledged(ack: any): boolean {
+  return ack === true
+    || ack?.deleted === true
+    || ack?.data === true
+    || ack?.data?.deleted === true;
+}
+
+function deleteRejected(ack: any): boolean {
+  return ack === false
+    || ack?.deleted === false
+    || ack?.data === false
+    || ack?.data?.deleted === false;
+}
+
 function emitWithAck<T>(
   socket: WorkspaceSocket,
   event: string,
   payload: Record<string, any>,
   onAck: (ack: any) => T,
+  timeoutMs: number = WS_ACK_TIMEOUT_MS,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new Error(`${event} timeout after ${WS_ACK_TIMEOUT_MS}ms`));
-    }, WS_ACK_TIMEOUT_MS);
+      reject(new Error(`${event} timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     socket.emit(event, payload, (ack: any) => {
       if (settled) return;
@@ -136,6 +151,129 @@ export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string
   );
 }
 
-export function deleteDoc(socket: WorkspaceSocket, workspaceId: string, docId: string) {
-  socket.emit('space:delete-doc', { spaceType: 'workspace', spaceId: workspaceId, docId });
+export type DeleteDocResult = {
+  acknowledged: boolean;
+  verifiedAbsent: boolean;
+};
+
+export type DeleteDocOptions = {
+  timeoutMs?: number;
+  verificationIntervalMs?: number;
+};
+
+/**
+ * Delete a document and wait for a trustworthy completion signal.
+ *
+ * AFFiNE 0.26 returns an error acknowledgement, but its successful
+ * `space:delete-doc` handler returns void. NestJS filters that void response and
+ * therefore sends no success acknowledgement. To remain compatible, this
+ * helper accepts a future success acknowledgement and otherwise verifies that
+ * `space:load-doc` returns DOC_NOT_FOUND before resolving.
+ */
+export function deleteDoc(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  options: DeleteDocOptions = {},
+): Promise<DeleteDocResult> {
+  const timeoutMs = options.timeoutMs ?? WS_ACK_TIMEOUT_MS;
+  const verificationIntervalMs = options.verificationIntervalMs ?? Math.min(250, timeoutMs);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return Promise.reject(new Error(`space:delete-doc timeout must be positive. Received: ${timeoutMs}`));
+  }
+  if (!Number.isFinite(verificationIntervalMs) || verificationIntervalMs <= 0) {
+    return Promise.reject(
+      new Error(`space:delete-doc verification interval must be positive. Received: ${verificationIntervalMs}`),
+    );
+  }
+
+  const payload = { spaceType: 'workspace', spaceId: workspaceId, docId };
+
+  return new Promise<DeleteDocResult>((resolve, reject) => {
+    let settled = false;
+    let verificationTimer: NodeJS.Timeout | undefined;
+    const deadline = Date.now() + timeoutMs;
+
+    const cleanup = () => {
+      clearTimeout(operationTimer);
+      if (verificationTimer) clearTimeout(verificationTimer);
+      socket.off('disconnect', onDisconnect);
+    };
+    const resolveOnce = (result: DeleteDocResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onDisconnect = () => {
+      rejectOnce(new Error('space:delete-doc failed because the socket disconnected before completion.'));
+    };
+    const operationTimer = setTimeout(() => {
+      rejectOnce(
+        new Error(
+          `space:delete-doc was not acknowledged and deletion could not be verified within ${timeoutMs}ms`,
+        ),
+      );
+    }, timeoutMs);
+
+    const verifyDeletion = async () => {
+      if (settled) return;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return;
+
+      try {
+        const absent = await emitWithAck<boolean>(
+          socket,
+          'space:load-doc',
+          payload,
+          (ack) => {
+            if (ack?.error) {
+              if (ack.error.name === 'DOC_NOT_FOUND') return true;
+              throw new Error(ackErrorMessage(ack, 'load-doc verification failed') || 'load-doc verification failed');
+            }
+            return false;
+          },
+          Math.max(1, Math.min(remainingMs, verificationIntervalMs)),
+        );
+        if (absent) {
+          resolveOnce({ acknowledged: false, verifiedAbsent: true });
+          return;
+        }
+      } catch (error) {
+        if (settled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.startsWith('space:load-doc timeout after ')) {
+          rejectOnce(error instanceof Error ? error : new Error(message));
+          return;
+        }
+      }
+
+      if (!settled) {
+        verificationTimer = setTimeout(verifyDeletion, Math.min(verificationIntervalMs, Math.max(1, deadline - Date.now())));
+      }
+    };
+
+    socket.once('disconnect', onDisconnect);
+    socket.emit('space:delete-doc', payload, (ack: any) => {
+      const message = ackErrorMessage(ack, 'delete-doc failed');
+      if (message) {
+        rejectOnce(new Error(message));
+        return;
+      }
+      if (deleteAcknowledged(ack)) {
+        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        return;
+      }
+      if (deleteRejected(ack)) {
+        rejectOnce(new Error('AFFiNE did not confirm document deletion.'));
+      }
+    });
+    verificationTimer = setTimeout(verifyDeletion, 0);
+  });
 }

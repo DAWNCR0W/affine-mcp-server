@@ -7,7 +7,7 @@ This guide covers configuration precedence, environment variables, auth strategy
 The server resolves configuration in this order:
 
 1. Environment variables
-2. Saved config file at `~/.config/affine-mcp/config`
+2. Saved config file at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/affine-mcp/config`
 3. Built-in defaults
 
 The saved config file uses the same `KEY=value` names shown below. Environment variables always override saved values, and the CLI diagnostics report the source selected for each runtime option.
@@ -40,6 +40,17 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
 | `AFFINE_LOGIN_AT_START` | No | `async` | `async` starts one shared login without blocking transport startup; `sync` requires login before startup |
+| `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
+
+### Blob upload safeguards
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AFFINE_BLOB_UPLOAD_MAX_BYTES` | No | `26214400` (25 MiB) | Maximum decoded payload size accepted by `upload_blob` |
+| `AFFINE_BLOB_UPLOAD_TIMEOUT_MS` | No | `30000` | Maximum time allowed for the multipart upload request |
+| `AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES` | No | `1048576` (1 MiB) | Maximum AFFiNE response body size read after an upload |
+
+`upload_blob` treats content as UTF-8 by default and preserves it exactly, including leading and trailing whitespace. Binary callers must pass `encoding: "base64"`; Base64 input is validated for canonical padding before it is decoded. ASCII whitespace inside explicit Base64 input is ignored.
 
 ### Authentication
 
@@ -54,9 +65,9 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Variable | Purpose |
 | --- | --- |
-| `AFFINE_TOOL_PROFILE` | Select a predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
-| `AFFINE_DISABLED_GROUPS` | Disable entire tool groups by comma-separated group name |
-| `AFFINE_DISABLED_TOOLS` | Disable individual tools by exact canonical name |
+| `AFFINE_TOOL_PROFILE` | Environment-only predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
+| `AFFINE_DISABLED_GROUPS` | Environment-only comma-separated tool groups to disable |
+| `AFFINE_DISABLED_TOOLS` | Environment-only exact canonical tool names to disable |
 
 ### HTTP mode
 
@@ -71,11 +82,23 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_MCP_HTTP_TOKEN` | Required for non-loopback bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
 | `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer-mode listener |
 | `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
+| `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
+| `AFFINE_MCP_HTTP_MAX_SESSIONS` | No | `32` | Maximum combined Streamable HTTP and legacy SSE sessions |
+| `AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | No | `1800000` | Close sessions that receive no MCP activity for this duration |
+| `AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS` | No | `10000` | Deadline before remaining HTTP connections are forcibly closed |
 | `AFFINE_MCP_PUBLIC_BASE_URL` | Required in OAuth mode | none | Public base URL for this MCP server |
 | `AFFINE_OAUTH_ISSUER_URL` | Required in OAuth mode | none | OAuth issuer discovery URL |
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
 | `AFFINE_OAUTH_CLOCK_SKEW_SECONDS` | No | `60` | Positive integer tolerance for OAuth token timestamps |
 | `AFFINE_OAUTH_ALLOW_SERVICE_WRITES` | No | `false` | Explicitly acknowledge write-capable tools using the shared AFFiNE service identity |
+
+### WebSocket compatibility
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AFFINE_WS_CLIENT_VERSION` | No | `0.26.0` | Environment-only AFFiNE client version sent during workspace socket connection |
+| `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
+| `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement |
 
 ## Auth strategy matrix
 
@@ -126,6 +149,21 @@ HTTP mode exposes:
 - `/readyz` - unauthenticated readiness probe that checks OAuth discovery when enabled and the exact configured AFFiNE GraphQL endpoint
 
 `/readyz` returns `503` with the failing component when the configured AFFiNE GraphQL endpoint is unavailable. Keep both diagnostic routes private to your load balancer or trusted monitoring network.
+
+### Runtime limits and shutdown
+
+The HTTP transport limits JSON request bodies and the number of active sessions
+to prevent accidental resource exhaustion. Both Streamable HTTP and legacy SSE
+sessions count toward `AFFINE_MCP_HTTP_MAX_SESSIONS`. New sessions receive a
+`503` response with `Retry-After` when the limit is reached. Existing session
+traffic refreshes its idle deadline, and inactive sessions are closed after
+`AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS`.
+
+On `SIGINT` or `SIGTERM`, the server stops accepting connections and closes MCP
+transports concurrently. If a connection prevents graceful shutdown beyond
+`AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS`, the remaining HTTP connections are
+forcibly closed. Invalid runtime limit values and listen errors fail startup
+instead of leaving a partially running process.
 
 ### Bearer mode
 
