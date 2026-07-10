@@ -23,7 +23,7 @@ export type ServerConfig = {
   oauthClockSkewSeconds: number;
 };
 
-/** Config file location: ~/.config/affine-mcp/config */
+/** Config file location: $XDG_CONFIG_HOME/affine-mcp/config, or ~/.config/affine-mcp/config by default. */
 const CONFIG_DIR = path.join(
   process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
   "affine-mcp"

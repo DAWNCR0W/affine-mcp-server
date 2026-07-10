@@ -7,7 +7,7 @@ This guide covers configuration precedence, environment variables, auth strategy
 The server resolves configuration in this order:
 
 1. Environment variables
-2. Saved config file at `~/.config/affine-mcp/config`
+2. Saved config file at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/affine-mcp/config`
 3. Built-in defaults
 
 The saved config fallback applies only to values read by the core configuration loader. `MCP_TRANSPORT`, `PORT`, tool-filtering controls, `AFFINE_HEADERS_JSON`, HTTP bind/CORS/shared-token controls, and WebSocket controls are read from environment variables only.
@@ -29,6 +29,7 @@ Auth priority within the active configuration:
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
 | `AFFINE_LOGIN_AT_START` | No | `async` | Set to `sync` only when you must block startup on login |
 | `AFFINE_HEADERS_JSON` | No | None | Environment-only JSON object of additional GraphQL headers; do not duplicate `Authorization` or `Cookie` |
+| `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
 
 ### Authentication
 

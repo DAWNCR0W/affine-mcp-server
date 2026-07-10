@@ -4,10 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  extractDocumentedAffineVariables,
+  extractDocumentedRuntimeVariables,
   extractDocumentedTools,
   extractRelativeMarkdownTargets,
-  extractRuntimeAffineVariables,
+  extractRuntimeConfigVariables,
   validateDocumentation,
 } from "./docs-drift-lib.mjs";
 
@@ -44,8 +44,8 @@ const runtimeSources = collectTypeScriptFiles(path.join(rootDirectory, "src"))
   .map(file => fs.readFileSync(file, "utf8"));
 
 const documentedTools = extractDocumentedTools(toolReference);
-const runtimeAffineVariables = extractRuntimeAffineVariables(runtimeSources);
-const documentedAffineVariables = extractDocumentedAffineVariables(configurationReference);
+const runtimeConfigVariables = extractRuntimeConfigVariables(runtimeSources);
+const documentedRuntimeVariables = extractDocumentedRuntimeVariables(configurationReference);
 const readmeTargets = extractRelativeMarkdownTargets(readme);
 const existingPaths = new Set(
   readmeTargets.filter(target => fs.existsSync(path.join(rootDirectory, target)))
@@ -54,8 +54,8 @@ const existingPaths = new Set(
 const errors = validateDocumentation({
   manifestTools: toolManifest.tools,
   documentedTools,
-  runtimeAffineVariables,
-  documentedAffineVariables,
+  runtimeConfigVariables,
+  documentedRuntimeVariables,
   readmeTargets,
   packageFiles: packageJson.files,
   existingPaths,
@@ -71,6 +71,6 @@ if (errors.length > 0) {
 console.log(JSON.stringify({
   ok: true,
   documentedTools: documentedTools.length,
-  runtimeAffineVariables: runtimeAffineVariables.length,
+  runtimeConfigVariables: runtimeConfigVariables.length,
   packagedReadmeTargets: readmeTargets.length,
 }, null, 2));

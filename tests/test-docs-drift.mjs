@@ -2,10 +2,10 @@
 import assert from "node:assert/strict";
 
 import {
-  extractDocumentedAffineVariables,
+  extractDocumentedRuntimeVariables,
   extractDocumentedTools,
   extractRelativeMarkdownTargets,
-  extractRuntimeAffineVariables,
+  extractRuntimeConfigVariables,
   validateDocumentation,
 } from "../scripts/docs-drift-lib.mjs";
 
@@ -24,13 +24,19 @@ const configurationReference = [
   "| --- | --- |",
   "| `AFFINE_BASE_URL` | local |",
   "| `AFFINE_API_TOKEN` | none |",
+  "| `MCP_TRANSPORT` | stdio |",
+  "| `PORT` | 3000 |",
+  "| `XDG_CONFIG_HOME` | platform default |",
 ].join("\n");
 
 const documentedTools = extractDocumentedTools(toolReference);
-const documentedAffineVariables = extractDocumentedAffineVariables(configurationReference);
-const runtimeAffineVariables = extractRuntimeAffineVariables([
+const documentedRuntimeVariables = extractDocumentedRuntimeVariables(configurationReference);
+const runtimeConfigVariables = extractRuntimeConfigVariables([
   "const base = process.env.AFFINE_BASE_URL;",
   "const token = env.AFFINE_API_TOKEN; const duplicate = 'AFFINE_API_TOKEN';",
+  "const transport = process.env.MCP_TRANSPORT;",
+  "const port = process.env['PORT'];",
+  "const configHome = process.env.XDG_CONFIG_HOME;",
   "const documentationOnly = 'AFFINE_NOT_A_RUNTIME_ACCESS';",
 ]);
 const readmeTargets = extractRelativeMarkdownTargets(
@@ -38,15 +44,27 @@ const readmeTargets = extractRelativeMarkdownTargets(
 );
 
 assert.deepEqual(documentedTools, ["read_doc", "write_doc"]);
-assert.deepEqual(documentedAffineVariables, ["AFFINE_BASE_URL", "AFFINE_API_TOKEN"]);
-assert.deepEqual(runtimeAffineVariables, ["AFFINE_API_TOKEN", "AFFINE_BASE_URL"]);
+assert.deepEqual(documentedRuntimeVariables, [
+  "AFFINE_BASE_URL",
+  "AFFINE_API_TOKEN",
+  "MCP_TRANSPORT",
+  "PORT",
+  "XDG_CONFIG_HOME",
+]);
+assert.deepEqual(runtimeConfigVariables, [
+  "AFFINE_API_TOKEN",
+  "AFFINE_BASE_URL",
+  "MCP_TRANSPORT",
+  "PORT",
+  "XDG_CONFIG_HOME",
+]);
 assert.deepEqual(readmeTargets, ["CHANGELOG.md", "docs/guide.md"]);
 
 const validInput = {
   manifestTools: ["read_doc", "write_doc"],
   documentedTools,
-  runtimeAffineVariables,
-  documentedAffineVariables,
+  runtimeConfigVariables,
+  documentedRuntimeVariables,
   readmeTargets,
   packageFiles: ["docs", "CHANGELOG.md"],
   existingPaths: new Set(["docs/guide.md", "CHANGELOG.md"]),
@@ -64,9 +82,12 @@ function expectError(overrides, expectedMessage) {
 expectError({ documentedTools: ["read_doc"] }, "Manifest tools missing");
 expectError({ documentedTools: [...documentedTools, "removed_tool"] }, "missing from tool-manifest.json");
 expectError({ documentedTools: [...documentedTools, "read_doc"] }, "Duplicate canonical tool rows");
-expectError({ documentedAffineVariables: ["AFFINE_BASE_URL"] }, "Runtime AFFINE variables missing");
 expectError(
-  { documentedAffineVariables: [...documentedAffineVariables, "AFFINE_REMOVED"] },
+  { documentedRuntimeVariables: documentedRuntimeVariables.filter(variable => variable !== "XDG_CONFIG_HOME") },
+  "Runtime configuration variables missing",
+);
+expectError(
+  { documentedRuntimeVariables: [...documentedRuntimeVariables, "AFFINE_REMOVED"] },
   "missing from runtime source"
 );
 expectError({ existingPaths: new Set(["docs/guide.md"]) }, "links to a missing local path");

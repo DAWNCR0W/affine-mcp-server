@@ -33,19 +33,19 @@ export function extractDocumentedTools(markdown) {
   return extractCodeValuesFromTables(markdown, "Tool");
 }
 
-export function extractDocumentedAffineVariables(markdown) {
+export function extractDocumentedRuntimeVariables(markdown) {
   return extractCodeValuesFromTables(markdown, "Variable")
-    .filter(value => /^AFFINE_[A-Z0-9_]+$/.test(value));
+    .filter(value => /^[A-Z][A-Z0-9_]+$/.test(value));
 }
 
-export function extractRuntimeAffineVariables(sourceTexts) {
+export function extractRuntimeConfigVariables(sourceTexts) {
   const variables = [];
   const accessPatterns = [
-    /\bprocess\.env\.(AFFINE_[A-Z0-9_]+)/g,
-    /\bprocess\.env\[\s*["'](AFFINE_[A-Z0-9_]+)["']\s*\]/g,
-    /\benv\.(AFFINE_[A-Z0-9_]+)/g,
-    /\benv\[\s*["'](AFFINE_[A-Z0-9_]+)["']\s*\]/g,
-    /\benv\(\s*["'](AFFINE_[A-Z0-9_]+)["']/g,
+    /\bprocess\.env\.([A-Z][A-Z0-9_]+)/g,
+    /\bprocess\.env\[\s*["']([A-Z][A-Z0-9_]+)["']\s*\]/g,
+    /\benv\.([A-Z][A-Z0-9_]+)/g,
+    /\benv\[\s*["']([A-Z][A-Z0-9_]+)["']\s*\]/g,
+    /\benv\(\s*["']([A-Z][A-Z0-9_]+)["']/g,
   ];
   for (const source of sourceTexts) {
     for (const pattern of accessPatterns) {
@@ -92,8 +92,8 @@ export function isPackagePathIncluded(target, packageFiles) {
 export function validateDocumentation({
   manifestTools,
   documentedTools,
-  runtimeAffineVariables,
-  documentedAffineVariables,
+  runtimeConfigVariables,
+  documentedRuntimeVariables,
   readmeTargets,
   packageFiles,
   existingPaths,
@@ -101,8 +101,8 @@ export function validateDocumentation({
   const errors = [];
   const manifestSet = new Set(manifestTools);
   const documentedToolSet = new Set(documentedTools);
-  const runtimeVariableSet = new Set(runtimeAffineVariables);
-  const documentedVariableSet = new Set(documentedAffineVariables);
+  const runtimeVariableSet = new Set(runtimeConfigVariables);
+  const documentedVariableSet = new Set(documentedRuntimeVariables);
 
   const missingTools = sortedUnique(manifestTools.filter(tool => !documentedToolSet.has(tool)));
   if (missingTools.length > 0) {
@@ -120,26 +120,26 @@ export function validateDocumentation({
   }
 
   const missingVariables = sortedUnique(
-    runtimeAffineVariables.filter(variable => !documentedVariableSet.has(variable))
+    runtimeConfigVariables.filter(variable => !documentedVariableSet.has(variable))
   );
   if (missingVariables.length > 0) {
     errors.push(
-      `Runtime AFFINE variables missing from configuration tables: ${missingVariables.join(", ")}.`
+      `Runtime configuration variables missing from configuration tables: ${missingVariables.join(", ")}.`
     );
   }
 
   const unknownVariables = sortedUnique(
-    documentedAffineVariables.filter(variable => !runtimeVariableSet.has(variable))
+    documentedRuntimeVariables.filter(variable => !runtimeVariableSet.has(variable))
   );
   if (unknownVariables.length > 0) {
     errors.push(
-      `Documented AFFINE variables missing from runtime source: ${unknownVariables.join(", ")}.`
+      `Documented configuration variables missing from runtime source: ${unknownVariables.join(", ")}.`
     );
   }
 
-  const duplicateVariables = duplicateValues(documentedAffineVariables);
+  const duplicateVariables = duplicateValues(documentedRuntimeVariables);
   if (duplicateVariables.length > 0) {
-    errors.push(`Duplicate AFFINE variable rows in configuration docs: ${duplicateVariables.join(", ")}.`);
+    errors.push(`Duplicate configuration variable rows in configuration docs: ${duplicateVariables.join(", ")}.`);
   }
 
   for (const target of readmeTargets) {

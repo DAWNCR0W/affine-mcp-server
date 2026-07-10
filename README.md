@@ -113,7 +113,7 @@ For Docker, health checks, and remote deployment details, see [docs/configuratio
 affine-mcp login
 ```
 
-This stores credentials in `~/.config/affine-mcp/config` with mode `600`.
+This stores credentials in `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise in `~/.config/affine-mcp/config`, with mode `600`.
 
 - For AFFiNE Cloud, use an API token from `Settings -> Integrations -> MCP Server`
 - For self-hosted AFFiNE, you can use either an API token or email/password
