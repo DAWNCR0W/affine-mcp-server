@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { text, toolError } from "../util/mcp.js";
 import FormData from "form-data";
 import fetch, { type Response } from "node-fetch";
 
@@ -26,6 +26,13 @@ type BlobUploadGraphQLResponse = {
     message?: unknown;
   }>;
 };
+
+class BlobUploadTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Blob upload timed out after ${timeoutMs}ms.`);
+    this.name = "BlobUploadTimeoutError";
+  }
+}
 
 function parsePositiveInteger(name: string, raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === "") {
@@ -265,14 +272,25 @@ export function registerBlobTools(
         });
       } catch (error: any) {
         if (controller.signal.aborted) {
-          throw new Error(`Blob upload timed out after ${uploadConfig.timeoutMs}ms.`);
+          throw new BlobUploadTimeoutError(uploadConfig.timeoutMs);
         }
         throw error;
       } finally {
         clearTimeout(timeout);
       }
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: error instanceof BlobUploadTimeoutError
+          ? "blob_upload_timeout"
+          : "blob_upload_failed",
+        retryable: false,
+        data: {
+          kind: "blob.upload",
+          status: "failed",
+          workspaceId,
+          encoding,
+        },
+      });
     }
   };
   server.registerTool(
@@ -305,10 +323,36 @@ export function registerBlobTools(
         key,
         permanently
       });
-      
+
+      if (!data.deleteBlob) {
+        return toolError("AFFiNE did not confirm blob deletion.", {
+          code: "blob_delete_failed",
+          retryable: false,
+          data: {
+            kind: "blob.delete",
+            status: "not_applied",
+            workspaceId,
+            key,
+            permanently,
+            deleted: false,
+          },
+        });
+      }
+
       return text({ success: data.deleteBlob, key, workspaceId, permanently });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "blob_delete_failed",
+        retryable: true,
+        data: {
+          kind: "blob.delete",
+          status: "failed",
+          workspaceId,
+          key,
+          permanently,
+          deleted: false,
+        },
+      });
     }
   };
   server.registerTool(
@@ -337,10 +381,32 @@ export function registerBlobTools(
       const data = await gql.request<{ releaseDeletedBlobs: boolean }>(mutation, {
         workspaceId
       });
-      
+
+      if (!data.releaseDeletedBlobs) {
+        return toolError("AFFiNE did not confirm deleted blob cleanup.", {
+          code: "blob_cleanup_failed",
+          retryable: false,
+          data: {
+            kind: "blob.cleanup",
+            status: "not_applied",
+            workspaceId,
+            blobsReleased: false,
+          },
+        });
+      }
+
       return text({ success: data.releaseDeletedBlobs, workspaceId, blobsReleased: data.releaseDeletedBlobs });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "blob_cleanup_failed",
+        retryable: true,
+        data: {
+          kind: "blob.cleanup",
+          status: "failed",
+          workspaceId,
+          blobsReleased: false,
+        },
+      });
     }
   };
   server.registerTool(

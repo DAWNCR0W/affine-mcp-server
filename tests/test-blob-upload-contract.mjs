@@ -17,6 +17,18 @@ function parseToolResult(result) {
   return raw ? JSON.parse(raw) : null;
 }
 
+function expectToolFailure(result, expected, label) {
+  const payload = parseToolResult(result);
+  assert.equal(result.isError, true, `${label}: MCP isError`);
+  assert.equal(payload.ok, false, `${label}: ok`);
+  assert.equal(payload.code, expected.code, `${label}: code`);
+  assert.equal(payload.retryable, expected.retryable, `${label}: retryable`);
+  assert.equal(payload.status, expected.status, `${label}: status`);
+  assert.equal("success" in payload, false, `${label}: failure must not include success`);
+  if (expected.error) assert.match(payload.error, expected.error, `${label}: error`);
+  return payload;
+}
+
 class ToolRegistry {
   tools = new Map();
 
@@ -141,13 +153,22 @@ async function testToolContract() {
   const uploadServer = await startUploadServer();
   try {
     const registry = new ToolRegistry();
+    const mutationBehavior = {
+      cleanup: "false",
+      delete: "false",
+    };
     const gql = {
       endpoint: `${uploadServer.baseUrl}/success`,
       headers: { "x-test-header": "blob-contract" },
       cookie: "session=test-cookie",
       async request(query) {
+        if (query.includes("deleteBlob")) {
+          if (mutationBehavior.delete === "throw") throw new Error("blob deletion timed out");
+          return { deleteBlob: mutationBehavior.delete === "true" };
+        }
         if (query.includes("releaseDeletedBlobs")) {
-          return { releaseDeletedBlobs: false };
+          if (mutationBehavior.cleanup === "throw") throw new Error("blob cleanup timed out");
+          return { releaseDeletedBlobs: mutationBehavior.cleanup === "true" };
         }
         throw new Error("Unexpected GraphQL request in blob contract test.");
       },
@@ -159,8 +180,10 @@ async function testToolContract() {
     });
 
     const uploadBlob = registry.tools.get("upload_blob");
+    const deleteBlob = registry.tools.get("delete_blob");
     const cleanupBlobs = registry.tools.get("cleanup_blobs");
     assert.equal(typeof uploadBlob, "function");
+    assert.equal(typeof deleteBlob, "function");
     assert.equal(typeof cleanupBlobs, "function");
 
     const utf8Result = parseToolResult(await uploadBlob({
@@ -186,43 +209,106 @@ async function testToolContract() {
     assert.equal(uploadServer.requests[0].headers["x-test-header"], "blob-contract");
     assert.match(uploadServer.requests[0].body.toString("utf8"), /plain\.txt/);
 
-    const tooLarge = parseToolResult(await uploadBlob({
+    const tooLarge = expectToolFailure(await uploadBlob({
       workspaceId: "workspace-1",
       content: "x".repeat(17),
-    }));
-    assert.match(tooLarge.error, /configured limit is 16 bytes/);
+    }), {
+      code: "blob_upload_failed",
+      retryable: false,
+      status: "failed",
+      error: /configured limit is 16 bytes/,
+    }, "oversized request");
+    assert.equal(tooLarge.kind, "blob.upload");
 
-    const unsafeFilename = parseToolResult(await uploadBlob({
+    expectToolFailure(await uploadBlob({
       workspaceId: "workspace-1",
       content: "ok",
       filename: "unsafe\r\nname.txt",
-    }));
-    assert.match(unsafeFilename.error, /filename must not contain null bytes or line breaks/);
+    }), {
+      code: "blob_upload_failed",
+      retryable: false,
+      status: "failed",
+      error: /filename must not contain null bytes or line breaks/,
+    }, "unsafe filename");
 
     gql.endpoint = `${uploadServer.baseUrl}/status`;
-    const statusError = parseToolResult(await uploadBlob({
+    expectToolFailure(await uploadBlob({
       workspaceId: "workspace-1",
       content: "ok",
-    }));
-    assert.match(statusError.error, /HTTP 413: payload rejected/);
+    }), {
+      code: "blob_upload_failed",
+      retryable: false,
+      status: "failed",
+      error: /HTTP 413: payload rejected/,
+    }, "HTTP status failure");
 
     gql.endpoint = `${uploadServer.baseUrl}/oversized`;
-    const oversizedResponse = parseToolResult(await uploadBlob({
+    expectToolFailure(await uploadBlob({
       workspaceId: "workspace-1",
       content: "ok",
-    }));
-    assert.match(oversizedResponse.error, /response exceeded the configured limit of 128 bytes/);
+    }), {
+      code: "blob_upload_failed",
+      retryable: false,
+      status: "failed",
+      error: /response exceeded the configured limit of 128 bytes/,
+    }, "oversized response");
 
     gql.endpoint = `${uploadServer.baseUrl}/timeout`;
-    const timeoutResult = parseToolResult(await uploadBlob({
+    expectToolFailure(await uploadBlob({
       workspaceId: "workspace-1",
       content: "ok",
-    }));
-    assert.match(timeoutResult.error, /timed out after 100ms/);
+    }), {
+      code: "blob_upload_timeout",
+      retryable: false,
+      status: "failed",
+      error: /timed out after 100ms/,
+    }, "upload timeout");
 
-    const cleanupResult = parseToolResult(await cleanupBlobs({ workspaceId: "workspace-1" }));
-    assert.equal(cleanupResult.success, false);
-    assert.equal(cleanupResult.blobsReleased, false);
+    const deleteNotApplied = expectToolFailure(await deleteBlob({
+      workspaceId: "workspace-1",
+      key: "blob-key",
+    }), {
+      code: "blob_delete_failed",
+      retryable: false,
+      status: "not_applied",
+      error: /did not confirm blob deletion/,
+    }, "delete false result");
+    assert.equal(deleteNotApplied.deleted, false);
+
+    const cleanupNotApplied = expectToolFailure(
+      await cleanupBlobs({ workspaceId: "workspace-1" }),
+      {
+        code: "blob_cleanup_failed",
+        retryable: false,
+        status: "not_applied",
+        error: /did not confirm deleted blob cleanup/,
+      },
+      "cleanup false result",
+    );
+    assert.equal(cleanupNotApplied.blobsReleased, false);
+
+    mutationBehavior.delete = "throw";
+    expectToolFailure(await deleteBlob({ workspaceId: "workspace-1", key: "blob-key" }), {
+      code: "blob_delete_failed",
+      retryable: true,
+      status: "failed",
+      error: /blob deletion timed out/,
+    }, "delete exception");
+    mutationBehavior.cleanup = "throw";
+    expectToolFailure(await cleanupBlobs({ workspaceId: "workspace-1" }), {
+      code: "blob_cleanup_failed",
+      retryable: true,
+      status: "failed",
+      error: /blob cleanup timed out/,
+    }, "cleanup exception");
+
+    mutationBehavior.delete = "true";
+    mutationBehavior.cleanup = "true";
+    assert.equal(parseToolResult(await deleteBlob({
+      workspaceId: "workspace-1",
+      key: "blob-key",
+    })).success, true);
+    assert.equal(parseToolResult(await cleanupBlobs({ workspaceId: "workspace-1" })).success, true);
   } finally {
     await uploadServer.close();
   }
