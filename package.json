@@ -33,6 +33,7 @@
     "start": "node dist/index.js",
     "start:http": "MCP_TRANSPORT=http node dist/index.js",
     "test": "npm run test:tool-manifest",
+    "test:live-safety": "node tests/test-live-test-safety.mjs",
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
     "test:cli-live": "node tests/test-cli-live.mjs",
@@ -75,7 +76,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run pack:check",
+    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

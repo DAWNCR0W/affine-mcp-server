@@ -229,6 +229,7 @@ Run the main quality gates before opening a PR:
 
 ```bash
 npm run build
+npm run test:live-safety
 npm run test:tool-manifest
 npm run pack:check
 ```
@@ -239,6 +240,11 @@ Additional validation:
 - `npm run test:e2e` runs Docker, MCP, and Playwright together
 - `npm run test:playwright` runs the Playwright suite only
 - Focused runners for the new high-level tool surface include `npm run test:create-placement`, `npm run test:capabilities-fidelity`, `npm run test:native-template`, `node tests/test-database-intent.mjs`, `node tests/test-semantic-page-composer.mjs`, `node tests/test-structured-receipts.mjs`, `node tests/test-organize-tools.mjs`, and `node tests/test-supporting-tools.mjs`
+
+Live tests can mutate or delete AFFiNE data. They allow loopback targets by
+default and refuse non-loopback targets unless the disposable target is
+explicitly enabled and confirmed as documented in `CONTRIBUTING.md`. Never run
+them against production.
 
 Local clone flow:
 

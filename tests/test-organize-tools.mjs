@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for sidebar-oriented tooling:
  * - collection CRUD / allow-list updates
@@ -63,7 +65,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-organize-tools-noconfig',
+      XDG_CONFIG_HOME: testTempPath('organize-tools-config'),
     },
     stderr: 'pipe',
   });
@@ -96,7 +98,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call('create_workspace', { name: `organize-tools-${timestamp}` });
     const workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'create_workspace id');

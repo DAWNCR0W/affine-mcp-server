@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * E2E regression test: tag visibility data path.
  *
@@ -46,7 +48,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-tag-visibility-noconfig',
+      XDG_CONFIG_HOME: testTempPath('tag-visibility-config'),
     },
     stderr: 'pipe',
   });
@@ -97,7 +99,7 @@ async function main() {
   }
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     state.workspaceName = `mcp-tag-visibility-${timestamp}`;
     state.docTitle = `MCP TAG VISIBILITY ${timestamp}`;
     state.tag = `guide-${timestamp}`;
