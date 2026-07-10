@@ -74,7 +74,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:tool-manifest && npm run test:pr-route-policy && npm run pack:check",
+    "ci": "npm run build && npm run test:tool-manifest && npm run test:tool-filtering && npm run test:pr-route-policy && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

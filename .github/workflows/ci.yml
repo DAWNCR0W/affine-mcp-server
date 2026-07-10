@@ -40,6 +40,9 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify tool surface filtering
+        run: npm run test:tool-filtering
+
       - name: Verify pull request branch route policy
         run: npm run test:pr-route-policy
 

@@ -172,6 +172,8 @@ Available profiles:
 - `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
 - `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
 
+Profile, group, and tool names are validated at startup. An unknown value stops the server instead of falling back to a broader tool surface. This prevents a configuration typo from silently enabling tools that an operator intended to hide.
+
 ### Disable whole groups
 
 Example:
@@ -242,6 +244,8 @@ Example:
 ```
 
 Use tool-level filtering when you want a mostly complete tool surface but need to remove specific operations such as destructive actions or administrative access-token tools.
+
+Every registered tool must also be present in the canonical tool surface and `tool-manifest.json`. The server refuses to start when a tool is registered without that metadata, including when the `full` profile is selected.
 
 ## Deployment checklist
 
