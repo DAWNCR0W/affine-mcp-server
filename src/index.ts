@@ -22,6 +22,7 @@ import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { CONFIG_FILE } from "./config.js";
 import { createToolFilter, toolAnnotationsFor, toolFilterRequiresRegisterTool } from "./toolSurface.js";
+import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -170,8 +171,10 @@ async function buildServer() {
   } else {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
+      const outputSchema = options?.outputSchema ?? toolOutputSchemaFor(name);
       return originalRegisterTool(name, {
         ...options,
+        ...(outputSchema ? { outputSchema } : {}),
         annotations: {
           ...toolAnnotationsFor(name),
           ...(options?.annotations || {}),

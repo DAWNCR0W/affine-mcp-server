@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = path.resolve(__dirname, "..", "src", "index.ts");
 const REPO_ROOT = path.resolve(__dirname, "..");
+const TSX_CLI_PATH = path.resolve(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const execFileAsync = promisify(execFile);
 
 async function listToolEntries(env = {}) {
@@ -17,10 +18,10 @@ async function listToolEntries(env = {}) {
     { capabilities: {} }
   );
 
-  // Use npx tsx to avoid having to run tsc
+  // Use the installed tsx CLI directly to avoid shell-specific npx launchers.
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["tsx", SRC_PATH],
+    command: process.execPath,
+    args: [TSX_CLI_PATH, SRC_PATH],
     env: {
       ...process.env,
       ...env,
@@ -58,7 +59,7 @@ async function inspectToolSurfacePolicy() {
       disabledRequiresRegisterTool: toolFilterRequiresRegisterTool(disabled)
     }));
   `;
-  const { stdout } = await execFileAsync("npx", ["tsx", "--eval", script], {
+  const { stdout } = await execFileAsync(process.execPath, [TSX_CLI_PATH, "--eval", script], {
     cwd: REPO_ROOT,
     env: process.env,
   });
@@ -115,6 +116,18 @@ async function run() {
       console.log("✅ Success: Tool annotations are populated and match representative read/write/destructive tools.");
     } else {
       console.error(`❌ Failed: Tool annotations missing or mismatched. missing=${missingAnnotations.map(t => t.name).join(", ")}`);
+      hasFailures = true;
+    }
+
+    // 0b. Every advertised tool declares an object-shaped result contract.
+    console.log("\nCase 0b: Default tools expose MCP output schemas");
+    const missingOutputSchemas = defaultToolEntries.filter(tool =>
+      !tool.outputSchema || tool.outputSchema.type !== "object"
+    );
+    if (missingOutputSchemas.length === 0) {
+      console.log("✅ Success: All default tools expose object-shaped output schemas.");
+    } else {
+      console.error(`❌ Failed: Output schemas missing or invalid. tools=${missingOutputSchemas.map(t => t.name).join(", ")}`);
       hasFailures = true;
     }
 

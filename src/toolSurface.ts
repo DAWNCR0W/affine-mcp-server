@@ -1,4 +1,4 @@
-const ALL_TOOLS = [
+export const ALL_TOOLS = [
   "add_database_column",
   "add_database_row",
   "add_doc_to_collection",
@@ -96,7 +96,7 @@ const ALL_TOOLS = [
   "upload_blob",
 ] as const;
 
-type ToolName = typeof ALL_TOOLS[number];
+export type ToolName = typeof ALL_TOOLS[number];
 type ToolProfile = "full" | "read_only" | "core" | "authoring";
 type ToolAnnotations = {
   readOnlyHint: boolean;

@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added declared MCP `outputSchema` metadata for all 95 tools so ChatGPT and other clients can validate structured results and reason about follow-up calls.
+
 ### Changed
 - Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
+- Array and scalar tool results now include a stable object-shaped `structuredContent` envelope (`items`, `text`, or `value`) while preserving the existing text content for compatibility.
+
+### Tests
+- Added output-schema coverage and MCP round-trip validation, and included it in the default test and CI gates.
 
 ## [2.5.0] - 2026-07-06
 
