@@ -35,5 +35,8 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify pull request branch route policy
+        run: npm run test:pr-route-policy
+
       - name: Check package contents
         run: npm run pack:check

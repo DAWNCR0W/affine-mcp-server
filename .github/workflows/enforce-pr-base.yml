@@ -1,4 +1,4 @@
-name: Enforce PR Base Branch
+name: Enforce PR Branch Route
 
 on:
   pull_request_target:
@@ -15,33 +15,57 @@ permissions:
   pull-requests: write
 
 jobs:
-  enforce-base-branch:
+  enforce-branch-route:
     runs-on: ubuntu-latest
     steps:
-      - name: Allow PRs targeting develop
-        if: ${{ github.event.pull_request.base.ref == 'develop' }}
-        run: echo "PR base branch is develop."
+      # pull_request_target has a write-capable token. Check out only the trusted
+      # base revision, never the pull request head, and do not persist credentials.
+      - name: Checkout trusted base revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
 
-      - name: Allow release PRs targeting main
-        if: ${{ github.event.pull_request.base.ref == 'main' && startsWith(github.event.pull_request.head.ref, 'release/') }}
-        run: echo "Release PR targeting main is allowed."
+      - name: Verify branch route policy
+        run: node tests/test-pr-route-policy.mjs
 
-      - name: Close PRs targeting non-develop branches
-        if: ${{ github.event.pull_request.base.ref != 'develop' && !(github.event.pull_request.base.ref == 'main' && startsWith(github.event.pull_request.head.ref, 'release/')) }}
+      - name: Enforce branch route
         uses: actions/github-script@v9
         with:
           script: |
+            const path = require("node:path");
+            const policyPath = path.join(
+              process.env.GITHUB_WORKSPACE,
+              ".github",
+              "scripts",
+              "pr-route-policy.cjs",
+            );
+            const { evaluatePrRoute } = require(policyPath);
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
             const baseRef = context.payload.pull_request.base.ref;
             const headRef = context.payload.pull_request.head.ref;
+            const result = evaluatePrRoute({ baseRef, headRef });
+
+            if (result.allowed) {
+              core.info(`Allowed pull request route: ${headRef} -> ${baseRef} (${result.code})`);
+              return;
+            }
+
             const message = [
-              "This repository only accepts pull requests targeting `develop`, plus `release/*` pull requests targeting `main`.",
+              "This pull request uses a branch route that is not allowed.",
               "",
               `Current base branch: \`${baseRef}\``,
               `Current head branch: \`${headRef}\``,
               "",
-              "Please change the base branch to `develop`, or use a `release/*` branch when targeting `main`, and reopen this pull request.",
+              `Reason: ${result.reason}`,
+              "",
+              "Allowed routes:",
+              "- a dedicated non-protected branch targeting `develop`",
+              "- a `release/*` branch targeting `main`",
+              "",
+              "The protected branches `main`, `develop`, `dev`, and `master` may never be used as pull request heads.",
+              "Please create or select an allowed head branch, update the target if needed, and reopen the pull request.",
             ].join("\n");
 
             await github.rest.issues.createComment({
@@ -58,4 +82,4 @@ jobs:
               state: "closed",
             });
 
-            core.setFailed("Pull requests must target develop, or use release/* when targeting main.");
+            core.setFailed(`Blocked pull request route: ${headRef} -> ${baseRef} (${result.code})`);

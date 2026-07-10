@@ -55,7 +55,11 @@ npm run test:comprehensive
 ## Pull Request Guidelines
 
 - Keep each PR focused on one logical change.
-- Target the `develop` branch only. PRs against `main` or any other branch are closed automatically.
+- Use a dedicated, non-protected head branch for every pull request.
+- Target `develop` for normal feature, fix, refactor, documentation, and maintenance pull requests.
+- Only `release/*` branches may target `main`.
+- Never use `main`, `develop`, `dev`, or `master` as a pull request head, regardless of the target branch.
+- To synchronize release metadata from `main` back to `develop`, create a dedicated branch such as `chore/sync-v2.6.0-to-develop` from the confirmed `main` release commit.
 - Include what changed and why.
 - Include validation evidence (commands and result summary).
 - Update docs (`README.md`, `CHANGELOG.md`) when behavior changes.
