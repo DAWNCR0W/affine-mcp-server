@@ -35,5 +35,8 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify external URL safety
+        run: npm run test:url-safety
+
       - name: Check package contents
         run: npm run pack:check
