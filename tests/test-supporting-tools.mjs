@@ -224,9 +224,12 @@ async function main() {
       filename: 'supporting-tools.txt',
       contentType: 'text/plain',
       content: 'supporting tools blob payload',
+      encoding: 'utf8',
     });
     blobKey = uploadedBlob?.key;
     expectTruthy(blobKey, 'upload_blob key');
+    expectEqual(uploadedBlob?.encoding, 'utf8', 'upload_blob encoding');
+    expectEqual(uploadedBlob?.size, 29, 'upload_blob decoded size');
 
     const deletedBlob = await call('delete_blob', {
       workspaceId,

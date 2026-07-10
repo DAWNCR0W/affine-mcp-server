@@ -196,6 +196,6 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `upload_blob` | Upload a file or blob to workspace storage | |
+| `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content |
 | `delete_blob` | Delete a blob from workspace storage | Destructive |
-| `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented |
+| `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented; `success` and `blobsReleased` reflect the AFFiNE mutation result |

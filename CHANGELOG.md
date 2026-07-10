@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Blob uploads now default to exact UTF-8 handling, require explicit `encoding: "base64"` for binary payloads, validate canonical Base64, and enforce configurable decoded-size, timeout, HTTP-status, and response-size safeguards.
+- Blob cleanup results now report the boolean returned by AFFiNE instead of unconditionally reporting success.
+
+### Tests
+- Added a self-contained blob upload contract test covering decoding, configuration, multipart headers, response limits, timeouts, HTTP failures, and cleanup results.
+
 ## [2.5.0] - 2026-07-06
 
 ### Added
