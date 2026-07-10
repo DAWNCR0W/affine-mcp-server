@@ -32,7 +32,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "start:http": "MCP_TRANSPORT=http node dist/index.js",
-    "test": "npm run test:tool-manifest",
+    "pretest": "npm run build",
+    "test": "npm run test:metadata && npm run test:fast",
+    "test:metadata": "npm run test:tool-manifest && npm run test:surface-element-gating && npm run test:suite-manifest && npm run test:docs",
+    "test:fast": "node scripts/run-test-suite.mjs fast",
+    "test:suite-manifest": "node scripts/verify-test-suites.mjs",
     "test:live-safety": "node tests/test-live-test-safety.mjs",
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
@@ -94,7 +98,7 @@
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "release:verify": "node scripts/verify-release.mjs",
-    "ci": "npm run build && npm run test:url-safety && npm run test:markdown-export-safety && npm run test:live-safety && npm run test:notification-contract && npm run test:tool-manifest && npm run test:docs && npm run test:release-verification && npm run test:mcp-result-contract && npm run test:document-mutation-safety && npm run test:input-contracts && npm run test:mutation-ack && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
+    "ci": "npm test && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

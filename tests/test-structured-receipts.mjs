@@ -201,6 +201,7 @@ async function main() {
     const deletedDoc = await call('delete_doc', {
       workspaceId,
       docId,
+      confirmDocId: docId,
     });
     const deletedDocReceipt = assertReceipt(deletedDoc, 'doc.delete', {
       workspaceId,
