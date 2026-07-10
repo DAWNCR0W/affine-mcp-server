@@ -290,14 +290,14 @@ async function testToolContract() {
     mutationBehavior.delete = "throw";
     expectToolFailure(await deleteBlob({ workspaceId: "workspace-1", key: "blob-key" }), {
       code: "blob_delete_failed",
-      retryable: true,
+      retryable: false,
       status: "failed",
       error: /blob deletion timed out/,
     }, "delete exception");
     mutationBehavior.cleanup = "throw";
     expectToolFailure(await cleanupBlobs({ workspaceId: "workspace-1" }), {
       code: "blob_cleanup_failed",
-      retryable: true,
+      retryable: false,
       status: "failed",
       error: /blob cleanup timed out/,
     }, "cleanup exception");

@@ -343,7 +343,7 @@ export function registerBlobTools(
     } catch (error: any) {
       return toolError(error, {
         code: "blob_delete_failed",
-        retryable: true,
+        retryable: false,
         data: {
           kind: "blob.delete",
           status: "failed",
@@ -399,7 +399,7 @@ export function registerBlobTools(
     } catch (error: any) {
       return toolError(error, {
         code: "blob_cleanup_failed",
-        retryable: true,
+        retryable: false,
         data: {
           kind: "blob.cleanup",
           status: "failed",
