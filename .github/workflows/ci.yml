@@ -49,6 +49,9 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Test release verification
+        run: npm run test:release-verification
+
       - name: Verify documentation references
         run: npm run test:docs
 
@@ -96,3 +99,12 @@ jobs:
 
       - name: Check package contents
         run: npm run pack:check
+
+      - name: Smoke test packed package
+        run: |
+          ARTIFACT_DIR="$(mktemp -d)"
+          trap 'rm -rf "$ARTIFACT_DIR"' EXIT
+          PACK_RESULT="$ARTIFACT_DIR/npm-pack.json"
+          npm pack --json --pack-destination "$ARTIFACT_DIR" > "$PACK_RESULT"
+          TARBALL_NAME="$(node -e 'const fs = require("node:fs"); const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (result.length !== 1 || !result[0].filename) process.exit(1); process.stdout.write(result[0].filename);' "$PACK_RESULT")"
+          npm run test:package-smoke -- --tarball "$ARTIFACT_DIR/$TARBALL_NAME"

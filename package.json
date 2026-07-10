@@ -40,6 +40,8 @@
     "test:cli-live": "node tests/test-cli-live.mjs",
     "test:notification-contract": "node tests/test-notification-contract.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
+    "test:release-verification": "node tests/test-release-verification.mjs",
+    "test:package-smoke": "node tests/test-package-smoke.mjs",
     "test:docs": "node scripts/verify-docs.mjs && node tests/test-docs-drift.mjs",
     "test:mcp-result-contract": "node tests/test-mcp-result-contract.mjs",
     "test:input-contracts": "node tests/test-input-contracts.mjs",
@@ -91,7 +93,8 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:url-safety && npm run test:markdown-export-safety && npm run test:live-safety && npm run test:notification-contract && npm run test:tool-manifest && npm run test:docs && npm run test:mcp-result-contract && npm run test:document-mutation-safety && npm run test:input-contracts && npm run test:mutation-ack && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
+    "release:verify": "node scripts/verify-release.mjs",
+    "ci": "npm run build && npm run test:url-safety && npm run test:markdown-export-safety && npm run test:live-safety && npm run test:notification-contract && npm run test:tool-manifest && npm run test:docs && npm run test:release-verification && npm run test:mcp-result-contract && npm run test:document-mutation-safety && npm run test:input-contracts && npm run test:mutation-ack && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

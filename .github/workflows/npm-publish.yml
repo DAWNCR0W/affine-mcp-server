@@ -8,13 +8,15 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       id-token: write
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Use Node.js 24
         uses: actions/setup-node@v6
@@ -25,6 +27,12 @@ jobs:
 
       - name: Install deps
         run: npm ci
+        working-directory: .
+
+      - name: Verify release tag and metadata
+        run: |
+          git fetch origin main --no-tags
+          npm run release:verify -- --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --main-ref origin/main
         working-directory: .
 
       - name: Validate
@@ -39,6 +47,32 @@ jobs:
         run: npm run test:e2e
         working-directory: .
 
-      - name: Publish to npm
-        run: npm publish --access public
+      - name: Pack release artifact
+        id: package
+        run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/npm-release"
+          PACK_RESULT="$RUNNER_TEMP/npm-pack.json"
+          mkdir -p "$ARTIFACT_DIR"
+          npm pack --json --pack-destination "$ARTIFACT_DIR" > "$PACK_RESULT"
+          TARBALL_NAME="$(node -e 'const fs = require("node:fs"); const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (result.length !== 1 || !result[0].filename) process.exit(1); process.stdout.write(result[0].filename);' "$PACK_RESULT")"
+          TARBALL_PATH="$ARTIFACT_DIR/$TARBALL_NAME"
+          test -f "$TARBALL_PATH"
+          echo "filename=$TARBALL_NAME" >> "$GITHUB_OUTPUT"
+          echo "tarball=$TARBALL_PATH" >> "$GITHUB_OUTPUT"
+        working-directory: .
+
+      - name: Smoke test packed artifact
+        run: npm run test:package-smoke -- --tarball "${{ steps.package.outputs.tarball }}"
+        working-directory: .
+
+      - name: Upload validated package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: ${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish validated artifact to npm
+        run: npm publish "${{ steps.package.outputs.tarball }}" --access public --provenance --ignore-scripts
         working-directory: .
