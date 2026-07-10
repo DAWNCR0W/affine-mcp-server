@@ -14,16 +14,21 @@ on:
 
 jobs:
   validate:
+    name: Validate on Node.js ${{ matrix.node-version }}
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'develop' || (github.base_ref == 'main' && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
+      - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -32,11 +37,38 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify live-test safety guard
+        run: npm run test:live-safety
+
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
       - name: Verify blob upload contracts
         run: npm run test:blob-upload-contract
+
+      - name: Verify secure identifier generation
+        run: npm run test:secure-random
+
+      - name: Verify tool surface filtering
+        run: npm run test:tool-filtering
+
+      - name: Verify pull request branch route policy
+        run: npm run test:pr-route-policy
+
+      - name: Test configuration consistency
+        run: npm run test:config-consistency
+
+      - name: Verify authentication session state
+        run: npm run test:auth-session
+
+      - name: Verify OAuth service-account policy
+        run: npm run test:oauth-service-policy
+
+      - name: Verify HTTP security policy
+        run: npm run test:http-security
+
+      - name: Verify HTTP runtime safety
+        run: npm run test:http-runtime
 
       - name: Check package contents
         run: npm run pack:check

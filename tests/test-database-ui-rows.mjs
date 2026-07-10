@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Live regression test for UI-created database rows.
  *
@@ -72,7 +74,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
+      XDG_CONFIG_HOME: testTempPath('database-ui-rows-config'),
     },
     stderr: 'pipe',
   });
@@ -100,7 +102,7 @@ async function main() {
     await client.connect(transport);
     console.log('MCP client connected.\n');
 
-    const workspace = await call('create_workspace', { name: `db-ui-rows-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('db-ui-rows') });
     const workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'create_workspace did not return workspace id');
 

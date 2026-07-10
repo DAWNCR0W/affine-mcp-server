@@ -147,6 +147,10 @@ function testConfiguration() {
     () => loadBlobUploadConfig({ AFFINE_BLOB_UPLOAD_TIMEOUT_MS: "1.5" }),
     /must be a positive integer/,
   );
+  assert.throws(
+    () => loadBlobUploadConfig({ AFFINE_BLOB_UPLOAD_TIMEOUT_MS: "2147483648" }),
+    /must not exceed 2147483647/,
+  );
 }
 
 async function testToolContract() {
@@ -160,7 +164,15 @@ async function testToolContract() {
     const gql = {
       endpoint: `${uploadServer.baseUrl}/success`,
       headers: { "x-test-header": "blob-contract" },
-      cookie: "session=test-cookie",
+      async getConnectionAuth() {
+        return {
+          endpoint: this.endpoint,
+          headers: {
+            ...this.headers,
+            Cookie: "session=test-cookie",
+          },
+        };
+      },
       async request(query) {
         if (query.includes("deleteBlob")) {
           if (mutationBehavior.delete === "throw") throw new Error("blob deletion timed out");

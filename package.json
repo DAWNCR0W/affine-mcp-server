@@ -33,12 +33,17 @@
     "start": "node dist/index.js",
     "start:http": "MCP_TRANSPORT=http node dist/index.js",
     "test": "npm run test:tool-manifest",
+    "test:live-safety": "node tests/test-live-test-safety.mjs",
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
+    "test:config-consistency": "node tests/test-config-cli-consistency.mjs",
     "test:cli-live": "node tests/test-cli-live.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
+    "test:pr-route-policy": "node tests/test-pr-route-policy.mjs",
     "test:tool-filtering": "node tests/test-tool-filtering.mjs",
     "test:blob-upload-contract": "node tests/test-blob-upload-contract.mjs",
+    "test:secure-random": "node tests/test-secure-random.mjs",
+    "test:oauth-service-policy": "node tests/test-oauth-service-policy.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
@@ -63,7 +68,10 @@
     "test:data-view-ui": "npx playwright test tests/playwright/verify-data-view.pw.ts --config tests/playwright/playwright.config.ts",
     "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:http-email-password": "node tests/test-http-email-password.mjs",
+    "test:auth-session": "tsx tests/test-auth-session.mjs",
     "test:http-bearer": "node tests/test-http-bearer.mjs",
+    "test:http-security": "tsx tests/test-http-security.mjs",
+    "test:http-runtime": "tsx tests/test-http-runtime-safety.mjs",
     "test:oauth-http": "node tests/test-oauth-http.mjs",
     "test:organize": "node tests/test-organize-tools.mjs",
     "test:create-doc-folder-placement": "node tests/test-create-doc-folder-placement.mjs",
@@ -74,7 +82,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:tool-manifest && npm run test:blob-upload-contract && npm run pack:check",
+    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [
@@ -88,7 +96,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "publishConfig": {
     "access": "public"

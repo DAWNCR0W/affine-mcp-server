@@ -16,6 +16,7 @@ export type BlobUploadConfig = {
 const DEFAULT_MAX_DECODED_BYTES = 25 * 1024 * 1024;
 const DEFAULT_UPLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 type BlobUploadGraphQLResponse = {
@@ -34,7 +35,12 @@ class BlobUploadTimeoutError extends Error {
   }
 }
 
-function parsePositiveInteger(name: string, raw: string | undefined, fallback: number): number {
+function parsePositiveInteger(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  max?: number,
+): number {
   if (raw === undefined || raw.trim() === "") {
     return fallback;
   }
@@ -45,6 +51,9 @@ function parsePositiveInteger(name: string, raw: string | undefined, fallback: n
   const parsed = Number(normalized);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer. Received: ${raw}`);
+  }
+  if (max !== undefined && parsed > max) {
+    throw new Error(`${name} must not exceed ${max}. Received: ${raw}`);
   }
   return parsed;
 }
@@ -60,6 +69,7 @@ export function loadBlobUploadConfig(env: NodeJS.ProcessEnv = process.env): Blob
       "AFFINE_BLOB_UPLOAD_TIMEOUT_MS",
       env.AFFINE_BLOB_UPLOAD_TIMEOUT_MS,
       DEFAULT_UPLOAD_TIMEOUT_MS,
+      MAX_TIMER_DELAY_MS,
     ),
     maxResponseBytes: parsePositiveInteger(
       "AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES",
@@ -199,9 +209,7 @@ export function registerBlobTools(
     contentType?: string;
   }) => {
     try {
-      const endpoint = gql.endpoint;
-      const headers = gql.headers;
-      const cookie = gql.cookie;
+      const { endpoint, headers } = await gql.getConnectionAuth();
       const payload = decodeBlobContent(content, encoding, uploadConfig.maxDecodedBytes);
       const safeFilename = validateMultipartMetadata(filename ?? `blob-${Date.now()}.bin`, "filename");
       const mime = validateMultipartMetadata(contentType ?? "application/octet-stream", "contentType");
@@ -223,9 +231,6 @@ export function registerBlobTools(
         ...headers,
         ...form.getHeaders(),
       };
-      if (cookie) {
-        requestHeaders.Cookie = cookie;
-      }
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), uploadConfig.timeoutMs);

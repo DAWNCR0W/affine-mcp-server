@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for intent-driven database composition.
  *
@@ -76,7 +78,7 @@ async function main() {
     env: {
       AFFINE_BASE_URL: BASE_URL,
       AFFINE_COOKIE: auth.cookie,
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-database-intent-noconfig',
+      XDG_CONFIG_HOME: testTempPath('database-intent-config'),
     },
     stderr: 'pipe',
   });
@@ -187,7 +189,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const workspace = await call('create_workspace', { name: `database-intent-test-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('database-intent-test') });
     const workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'create_workspace id');
 
