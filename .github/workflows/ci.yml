@@ -35,5 +35,8 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify tool surface filtering
+        run: npm run test:tool-filtering
+
       - name: Check package contents
         run: npm run pack:check
