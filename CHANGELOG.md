@@ -10,11 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
 
+### Security
+- Added a fail-closed guard to destructive live-test entry points. Loopback targets remain available by default, while non-loopback targets require an explicit remote opt-in and an exact `DESTROY <target>` confirmation.
+- Isolated Docker-backed test runs with unique Compose projects, private per-run credential files, scoped cleanup, and collision-resistant AFFiNE resource names.
+- Stopped printing acquired session cookies from the E2E credential helper.
+
 ### Fixed
 - Persisted document, block, property, organize, fractional-index suffix, and surface seed values now use unbiased cryptographically secure randomness instead of `Math.random` or modulo-biased bytes.
 
 ### Tests
 - Added a source-wide regression guard that rejects `Math.random` in runtime TypeScript and validates identifier alphabets, lengths, uniqueness, seed ranges, and invalid generator inputs.
+- Added self-contained CI coverage for destructive-target validation, remote confirmation, URL normalization, and unique test resource naming.
 
 ## [2.5.0] - 2026-07-06
 

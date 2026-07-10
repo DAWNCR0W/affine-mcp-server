@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * E2E regression test: tag deletion data path.
  *
@@ -48,7 +50,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: `/tmp/affine-mcp-e2e-tag-deletion-noconfig-${process.pid}-${Date.now()}`,
+      XDG_CONFIG_HOME: testTempPath('tag-deletion-config'),
     },
     stderr: 'pipe',
   });
@@ -111,7 +113,7 @@ async function main() {
   }
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspaceName = `mcp-tag-deletion-${timestamp}`;
     const docTitle = `MCP TAG DELETION ${timestamp}`;
     const tag = `disposable-${timestamp}`;

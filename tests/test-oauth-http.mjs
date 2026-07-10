@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for optional OAuth mode on the HTTP MCP server.
  *
@@ -99,7 +101,7 @@ async function generateAffineApiToken() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-oauth-http-token-noconfig",
+      XDG_CONFIG_HOME: testTempPath('oauth-http-token-config'),
     },
     stderr: "pipe",
   });
@@ -111,7 +113,7 @@ async function generateAffineApiToken() {
   await client.connect(transport);
   try {
     const tokenResult = await client.callTool(
-      { name: "generate_access_token", arguments: { name: `oauth-http-${Date.now()}` } },
+      { name: "generate_access_token", arguments: { name: testResourceName('oauth-http') } },
       undefined,
       { timeout: TOOL_TIMEOUT_MS },
     );
@@ -120,9 +122,31 @@ async function generateAffineApiToken() {
     }
     const parsed = parseContent(tokenResult);
     expectTruthy(parsed?.token, "generate_access_token token");
-    return parsed.token;
-  } finally {
+    expectTruthy(parsed?.id, "generate_access_token id");
+    return {
+      token: parsed.token,
+      async cleanup() {
+        try {
+          const result = await client.callTool(
+            { name: "revoke_access_token", arguments: { id: parsed.id } },
+            undefined,
+            { timeout: TOOL_TIMEOUT_MS },
+          );
+          if (result?.isError) {
+            throw new Error(`revoke_access_token failed: ${result.content?.[0]?.text || 'unknown error'}`);
+          }
+          const revoked = parseContent(result);
+          if (revoked?.error || revoked?.success !== true) {
+            throw new Error(`revoke_access_token cleanup failed: ${revoked?.error || 'success was not true'}`);
+          }
+        } finally {
+          await transport.close();
+        }
+      },
+    };
+  } catch (error) {
     await transport.close();
+    throw error;
   }
 }
 
@@ -215,7 +239,7 @@ async function startOAuthHttpServer(affineApiToken, issuerBaseUrl) {
       AFFINE_MCP_PUBLIC_BASE_URL: publicBaseUrl,
       AFFINE_OAUTH_ISSUER_URL: issuerBaseUrl,
       AFFINE_OAUTH_SCOPES: "mcp",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-oauth-http-server-noconfig",
+      XDG_CONFIG_HOME: testTempPath('oauth-http-server-config'),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -241,12 +265,13 @@ async function main() {
   console.log(`AFFiNE Base URL: ${BASE_URL}`);
   console.log();
 
-  const affineApiToken = await generateAffineApiToken();
-  const issuer = await startMockIssuer();
+  const affineCredential = await generateAffineApiToken();
+  let issuer = null;
   let server = null;
 
   try {
-    server = await startOAuthHttpServer(affineApiToken, issuer.issuerBaseUrl);
+    issuer = await startMockIssuer();
+    server = await startOAuthHttpServer(affineCredential.token, issuer.issuerBaseUrl);
     issuer.setAudienceBase(server.publicBaseUrl);
 
     const healthz = await fetch(`${server.publicBaseUrl}/healthz`);
@@ -347,10 +372,15 @@ async function main() {
     console.log();
     console.log("=== OAuth HTTP integration test passed ===");
   } finally {
-    if (server) {
-      await server.close();
+    try {
+      if (server) await server.close();
+    } finally {
+      try {
+        if (issuer) await issuer.close();
+      } finally {
+        await affineCredential.cleanup();
+      }
     }
-    await issuer.close();
   }
 }
 
