@@ -117,6 +117,42 @@ function collectEmbeddedLinkedDocIds(blocks: Y.Map<any>): string[] {
   return [...ids];
 }
 
+/** Remove every duplicate embed block that links to the requested document. */
+export function removeEmbeddedLinkedDocumentBlocks(
+  blocks: Y.Map<any>,
+  docId: string,
+): number {
+  const matchingBlockIds = new Set<string>();
+  for (const [id, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    if (
+      raw.get("sys:flavour") === "affine:embed-linked-doc"
+      && raw.get("prop:pageId") === docId
+    ) {
+      matchingBlockIds.add(String(id));
+    }
+  }
+
+  if (matchingBlockIds.size === 0) return 0;
+
+  for (const [, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    const children = raw.get("sys:children");
+    if (!(children instanceof Y.Array)) continue;
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const childId = children.get(index);
+      if (typeof childId === "string" && matchingBlockIds.has(childId)) {
+        children.delete(index, 1);
+      }
+    }
+  }
+
+  for (const blockId of matchingBlockIds) {
+    blocks.delete(blockId);
+  }
+  return matchingBlockIds.size;
+}
+
 const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
 const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
 const MarkdownContent = z.string().min(1, "markdown required").describe("Markdown content to import, append, replace, or export-roundtrip.");
@@ -5176,39 +5212,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
     const prevSV = Y.encodeStateVector(parentDoc);
     const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
-    let embedBlockId: string | null = null;
-    let embedParentChildren: Y.Array<any> | null = null;
-    let embedIndex = -1;
-
-    for (const [id, raw] of blocks) {
-      if (!(raw instanceof Y.Map)) continue;
-      if (
-        raw.get("sys:flavour") === "affine:embed-linked-doc"
-        && raw.get("prop:pageId") === docId
-      ) {
-        embedBlockId = String(id);
-        break;
-      }
+    const removedCount = removeEmbeddedLinkedDocumentBlocks(blocks, docId);
+    if (removedCount === 0) return false;
+    if (collectEmbeddedLinkedDocIds(blocks).includes(docId)) {
+      throw new Error(`Source parent ${parentDocId} still contains links to document ${docId}.`);
     }
-
-    if (!embedBlockId) return false;
-
-    for (const [, raw] of blocks) {
-      if (!(raw instanceof Y.Map)) continue;
-      const children = raw.get("sys:children");
-      if (!(children instanceof Y.Array)) continue;
-      const index = (children.toArray() as string[]).indexOf(embedBlockId);
-      if (index >= 0) {
-        embedParentChildren = children;
-        embedIndex = index;
-        break;
-      }
-    }
-
-    if (embedParentChildren && embedIndex >= 0) {
-      embedParentChildren.delete(embedIndex, 1);
-    }
-    blocks.delete(embedBlockId);
     const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
     await pushDocUpdate(
       socket,

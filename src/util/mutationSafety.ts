@@ -42,7 +42,7 @@ export function toDocumentMoveResult(outcome: DocumentMoveOutcome): DocumentMove
     ...outcome,
     error: outcome.warnings[0] ?? "The document move did not reach a complete state.",
     code: outcome.partial ? "DOCUMENT_MOVE_PARTIAL" : "DOCUMENT_MOVE_INCONSISTENT",
-    retryable: true,
+    retryable: outcome.partial,
   };
 }
 

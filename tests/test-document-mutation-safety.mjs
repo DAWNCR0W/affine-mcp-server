@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 
-import { documentMoveToolResult } from "../dist/tools/docs.js";
+import * as Y from "yjs";
+
+import {
+  documentMoveToolResult,
+  removeEmbeddedLinkedDocumentBlocks,
+} from "../dist/tools/docs.js";
 
 import {
   executeSafeDocumentMove,
@@ -32,6 +37,36 @@ function dependencies(overrides = {}) {
       ...overrides,
     },
   };
+}
+
+{
+  const doc = new Y.Doc();
+  const blocks = doc.getMap("blocks");
+  const parentA = new Y.Map();
+  const parentB = new Y.Map();
+  const childrenA = new Y.Array();
+  const childrenB = new Y.Array();
+  childrenA.push(["embed-1", "keep", "embed-1"]);
+  childrenB.push(["embed-2"]);
+  parentA.set("sys:children", childrenA);
+  parentB.set("sys:children", childrenB);
+  blocks.set("parent-a", parentA);
+  blocks.set("parent-b", parentB);
+
+  for (const blockId of ["embed-1", "embed-2"]) {
+    const embed = new Y.Map();
+    embed.set("sys:flavour", "affine:embed-linked-doc");
+    embed.set("prop:pageId", "doc-1");
+    blocks.set(blockId, embed);
+  }
+
+  const removedCount = removeEmbeddedLinkedDocumentBlocks(blocks, "doc-1");
+  assert.equal(removedCount, 2);
+  assert.equal(blocks.has("embed-1"), false);
+  assert.equal(blocks.has("embed-2"), false);
+  assert.deepEqual(childrenA.toArray(), ["keep"]);
+  assert.deepEqual(childrenB.toArray(), []);
+  assert.equal(removeEmbeddedLinkedDocumentBlocks(blocks, "doc-1"), 0);
 }
 
 {
@@ -235,7 +270,17 @@ function dependencies(overrides = {}) {
   assert.equal(outcome.status, "unchanged");
   assert.equal(outcome.requiresManualRepair, true);
   assert.equal(isDocumentMoveSuccessful(outcome), false);
-  assert.equal(toDocumentMoveResult(outcome).code, "DOCUMENT_MOVE_INCONSISTENT");
+  const result = toDocumentMoveResult(outcome);
+  assert.equal(result.code, "DOCUMENT_MOVE_INCONSISTENT");
+  assert.equal(result.retryable, false);
+  const response = documentMoveToolResult({
+    workspaceId: "workspace-1",
+    docId: "doc-1",
+    toParentDocId: "same-parent",
+    fromParentDocId: "same-parent",
+  }, outcome);
+  assert.equal(response.isError, true);
+  assert.equal(response.structuredContent.retryable, false);
 }
 
 assert.doesNotThrow(() => {
