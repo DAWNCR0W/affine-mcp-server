@@ -1,0 +1,192 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+
+import {
+  executeSafeDocumentMove,
+  handleMarkdownOperationFailure,
+} from "../dist/util/mutationSafety.js";
+
+function dependencies(overrides = {}) {
+  const events = [];
+  return {
+    events,
+    value: {
+      assertResourcesExist: async () => events.push("assert"),
+      wouldCreateCycle: async () => {
+        events.push("cycle");
+        return false;
+      },
+      isLinkedToNewParent: async () => {
+        events.push("inspect-destination");
+        return false;
+      },
+      addToNewParent: async () => events.push("add-destination"),
+      removeFromOldParent: async () => {
+        events.push("remove-source");
+        return true;
+      },
+      ...overrides,
+    },
+  };
+}
+
+{
+  const deps = dependencies();
+  await assert.rejects(
+    executeSafeDocumentMove(
+      { docId: "doc-1", toParentDocId: "doc-1" },
+      deps.value,
+    ),
+    /cannot be moved under itself/,
+  );
+  assert.deepEqual(deps.events, [], "self-parent rejection must happen before any mutation callback");
+}
+
+{
+  const deps = dependencies();
+  const outcome = await executeSafeDocumentMove(
+    { docId: "doc-1", toParentDocId: "new-parent", fromParentDocId: "old-parent" },
+    deps.value,
+  );
+  assert.equal(outcome.status, "moved");
+  assert.equal(outcome.moved, true);
+  assert.equal(outcome.partial, false);
+  assert.deepEqual(deps.events, [
+    "assert",
+    "cycle",
+    "inspect-destination",
+    "add-destination",
+    "remove-source",
+  ]);
+}
+
+{
+  const events = [];
+  const deps = dependencies({
+    addToNewParent: async () => {
+      events.push("add-destination");
+      throw new Error("destination unavailable");
+    },
+    removeFromOldParent: async () => {
+      events.push("remove-source");
+      return true;
+    },
+  });
+  await assert.rejects(
+    executeSafeDocumentMove(
+      { docId: "doc-1", toParentDocId: "new-parent", fromParentDocId: "old-parent" },
+      deps.value,
+    ),
+    /destination unavailable/,
+  );
+  assert.deepEqual(events, ["add-destination"], "source removal must not run when destination addition fails");
+}
+
+{
+  const deps = dependencies({
+    removeFromOldParent: async () => {
+      throw new Error("source write timed out");
+    },
+  });
+  const outcome = await executeSafeDocumentMove(
+    { docId: "doc-1", toParentDocId: "new-parent", fromParentDocId: "old-parent" },
+    deps.value,
+  );
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.moved, false);
+  assert.equal(outcome.linkedToNewParent, true);
+  assert.equal(outcome.requiresManualRepair, true);
+  assert.match(outcome.warnings[0], /source write timed out/);
+}
+
+{
+  const events = [];
+  const deps = dependencies({
+    isLinkedToNewParent: async () => {
+      events.push("inspect-destination");
+      return true;
+    },
+    addToNewParent: async () => events.push("unexpected-add"),
+    removeFromOldParent: async () => {
+      events.push("remove-source");
+      return true;
+    },
+  });
+  const outcome = await executeSafeDocumentMove(
+    { docId: "doc-1", toParentDocId: "new-parent", fromParentDocId: "old-parent" },
+    deps.value,
+  );
+  assert.equal(outcome.addedToNewParent, false);
+  assert.deepEqual(events, ["inspect-destination", "remove-source"]);
+}
+
+{
+  const events = [];
+  const deps = dependencies({
+    wouldCreateCycle: async () => {
+      events.push("cycle");
+      return true;
+    },
+    addToNewParent: async () => events.push("unexpected-add"),
+    removeFromOldParent: async () => {
+      events.push("unexpected-remove");
+      return true;
+    },
+  });
+  await assert.rejects(
+    executeSafeDocumentMove(
+      { docId: "doc-1", toParentDocId: "descendant" },
+      deps.value,
+    ),
+    /would create a document cycle/,
+  );
+  assert.deepEqual(events, ["cycle"]);
+}
+
+{
+  const events = [];
+  const deps = dependencies({
+    isLinkedToNewParent: async () => {
+      events.push("inspect-destination");
+      return true;
+    },
+    addToNewParent: async () => events.push("unexpected-add"),
+    removeFromOldParent: async () => {
+      events.push("unexpected-remove");
+      return true;
+    },
+  });
+  const outcome = await executeSafeDocumentMove(
+    { docId: "doc-1", toParentDocId: "same-parent", fromParentDocId: "same-parent" },
+    deps.value,
+  );
+  assert.equal(outcome.status, "unchanged");
+  assert.equal(outcome.moved, false);
+  assert.deepEqual(events, ["inspect-destination"]);
+}
+
+assert.doesNotThrow(() => {
+  handleMarkdownOperationFailure(new Error("unsupported block"), {
+    strict: false,
+    replaceExisting: false,
+    operationIndex: 0,
+  });
+});
+assert.throws(
+  () => handleMarkdownOperationFailure(new Error("unsupported block"), {
+    strict: true,
+    replaceExisting: false,
+    operationIndex: 2,
+  }),
+  /strict append aborted at operation 3: unsupported block/,
+);
+assert.throws(
+  () => handleMarkdownOperationFailure(new Error("unsupported block"), {
+    strict: false,
+    replaceExisting: true,
+    operationIndex: 1,
+  }),
+  /replace aborted at operation 2: unsupported block/,
+);
+
+console.log("Document mutation safety tests passed");

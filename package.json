@@ -70,6 +70,7 @@
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",
     "test:tag-deletion": "node tests/test-tag-deletion.mjs",
     "test:markdown-roundtrip": "node tests/test-markdown-roundtrip.mjs",
+    "test:document-mutation-safety": "node tests/test-document-mutation-safety.mjs",
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",

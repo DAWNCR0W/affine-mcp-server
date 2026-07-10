@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Document moves now validate source and destination documents, reject hierarchy cycles, add the destination link before removing the source link, and report partial outcomes without orphaning the document.
+- Strict Markdown mutations now abort before any server update when an operation cannot be applied, and document creation preflights strict Markdown before creating remote state.
+- Document append operations now reject missing target documents instead of writing updates to an empty Yjs document.
+
+### Changed
+- Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
+
+### Tests
+- Added self-contained regression coverage for safe document move ordering, cycle rejection, partial failures, idempotent destination links, and Markdown batch failure policy.
+
 ## [2.5.0] - 2026-07-06
 
 ### Added

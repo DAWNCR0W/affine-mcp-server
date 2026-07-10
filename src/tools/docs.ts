@@ -3,6 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
+import {
+  executeSafeDocumentMove,
+  handleMarkdownOperationFailure,
+} from "../util/mutationSafety.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
@@ -65,6 +69,19 @@ function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
     }
   }
   return ids;
+}
+
+function collectEmbeddedLinkedDocIds(blocks: Y.Map<any>): string[] {
+  const ids = new Set<string>();
+  for (const [, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
+    const pageId = raw.get("prop:pageId");
+    if (typeof pageId === "string" && pageId.length > 0) {
+      ids.add(pageId);
+    }
+  }
+  return [...ids];
 }
 
 const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
@@ -2313,9 +2330,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const doc = new Y.Doc();
       const snapshot = await loadDoc(socket, workspaceId, normalized.docId);
-      if (snapshot.missing) {
-        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      if (!snapshot.missing) {
+        throw new Error(
+          `Document ${normalized.docId} was not found in workspace ${workspaceId}.`,
+        );
       }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
       const prevSV = Y.encodeStateVector(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
@@ -3189,7 +3209,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      for (const operation of parsed.operations) {
+      for (const [operationIndex, operation] of parsed.operations.entries()) {
         const placement =
           lastInsertedBlockId
             ? { afterBlockId: lastInsertedBlockId }
@@ -3224,7 +3244,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           if (!replaceParentId) {
             anchorPlacement = { afterBlockId: blockId };
           }
-        } catch {
+        } catch (error) {
+          handleMarkdownOperationFailure(error, {
+            strict,
+            replaceExisting,
+            operationIndex,
+          });
           skippedCount += 1;
         }
       }
@@ -3239,6 +3264,48 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       };
     } finally {
       socket.disconnect();
+    }
+  }
+
+  function preflightMarkdownOperationsBeforeCreate(
+    operations: MarkdownOperation[],
+    workspaceId: string,
+    strict: boolean,
+  ): void {
+    const validationDocId = "markdown-preflight";
+    const skeleton = createDocSkeleton("Markdown preflight", validationDocId);
+    let placement: AppendPlacement = { parentId: skeleton.noteId };
+
+    for (const [operationIndex, operation] of operations.entries()) {
+      try {
+        const normalized = normalizeAppendBlockInput(
+          markdownOperationToAppendInput(
+            operation,
+            validationDocId,
+            workspaceId,
+            strict,
+            placement,
+          ),
+        );
+        const context = resolveInsertContext(skeleton.blocks, normalized);
+        const { blockId, block, extraBlocks } = createBlock(normalized);
+        skeleton.blocks.set(blockId, block);
+        for (const extra of extraBlocks ?? []) {
+          skeleton.blocks.set(extra.blockId, extra.block);
+        }
+        if (context.insertIndex >= context.children.length) {
+          context.children.push([blockId]);
+        } else {
+          context.children.insert(context.insertIndex, [blockId]);
+        }
+        placement = { afterBlockId: blockId };
+      } catch (error) {
+        handleMarkdownOperationFailure(error, {
+          strict,
+          replaceExisting: false,
+          operationIndex,
+        });
+      }
     }
   }
 
@@ -3343,6 +3410,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         linkedToParent: false,
         warnings: [],
       };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  async function assertParentDocumentExistsBeforeCreate(
+    workspaceId: string,
+    parentDocId: string | undefined,
+  ): Promise<void> {
+    const normalizedParentDocId = parentDocId?.trim();
+    if (!normalizedParentDocId) return;
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(
+      wsUrlFromGraphQLEndpoint(endpoint),
+      cookie,
+      bearer,
+    );
+    try {
+      await joinWorkspace(socket, workspaceId);
+      await assertMoveResourcesExist(socket, workspaceId, [normalizedParentDocId]);
     } finally {
       socket.disconnect();
     }
@@ -4963,8 +5051,143 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     analyzeDocFidelityHandler as any
   );
 
-  // move_doc: move a doc in the sidebar by removing its embed_linked_doc from the old parent
-  // and adding it to the new parent. fromParentDocId is optional — if omitted, only adds to new parent.
+  async function loadExistingDocumentBlocks(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+  ): Promise<Y.Map<any>> {
+    const snapshot = await loadDoc(socket, workspaceId, docId);
+    if (!snapshot.missing) {
+      throw new Error(`Document ${docId} was not found in workspace ${workspaceId}.`);
+    }
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+    return doc.getMap("blocks") as Y.Map<any>;
+  }
+
+  async function assertMoveResourcesExist(
+    socket: any,
+    workspaceId: string,
+    docIds: string[],
+  ): Promise<void> {
+    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+    if (!snapshot.missing) {
+      throw new Error(`Workspace metadata could not be loaded for ${workspaceId}.`);
+    }
+
+    const workspaceDoc = new Y.Doc();
+    Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
+    const existingIds = new Set(
+      getWorkspacePageEntries(workspaceDoc.getMap("meta")).map(page => page.id),
+    );
+    const missingIds = [...new Set(docIds)].filter(docId => !existingIds.has(docId));
+    if (missingIds.length > 0) {
+      throw new Error(
+        `Document move aborted because these workspace documents do not exist: ${missingIds.join(", ")}.`,
+      );
+    }
+  }
+
+  async function wouldCreateDocumentCycle(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+    toParentDocId: string,
+  ): Promise<boolean> {
+    const pending = [docId];
+    const visited = new Set<string>();
+    const maximumVisitedDocuments = 1_000;
+
+    while (pending.length > 0) {
+      const currentId = pending.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+      if (visited.size > maximumVisitedDocuments) {
+        throw new Error(
+          `Document move cycle validation exceeded ${maximumVisitedDocuments} documents and failed closed.`,
+        );
+      }
+
+      const blocks = await loadExistingDocumentBlocks(socket, workspaceId, currentId);
+      for (const childId of collectEmbeddedLinkedDocIds(blocks)) {
+        if (childId === toParentDocId) return true;
+        if (!visited.has(childId)) pending.push(childId);
+      }
+    }
+
+    return false;
+  }
+
+  async function parentContainsLinkedDocument(
+    socket: any,
+    workspaceId: string,
+    parentDocId: string,
+    docId: string,
+  ): Promise<boolean> {
+    const blocks = await loadExistingDocumentBlocks(socket, workspaceId, parentDocId);
+    return collectEmbeddedLinkedDocIds(blocks).includes(docId);
+  }
+
+  async function removeLinkedDocumentFromParent(
+    socket: any,
+    workspaceId: string,
+    parentDocId: string,
+    docId: string,
+  ): Promise<boolean> {
+    const parentSnapshot = await loadDoc(socket, workspaceId, parentDocId);
+    if (!parentSnapshot.missing) {
+      throw new Error(`Source parent document ${parentDocId} was not found.`);
+    }
+
+    const parentDoc = new Y.Doc();
+    Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
+    const prevSV = Y.encodeStateVector(parentDoc);
+    const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
+    let embedBlockId: string | null = null;
+    let embedParentChildren: Y.Array<any> | null = null;
+    let embedIndex = -1;
+
+    for (const [id, raw] of blocks) {
+      if (!(raw instanceof Y.Map)) continue;
+      if (
+        raw.get("sys:flavour") === "affine:embed-linked-doc"
+        && raw.get("prop:pageId") === docId
+      ) {
+        embedBlockId = String(id);
+        break;
+      }
+    }
+
+    if (!embedBlockId) return false;
+
+    for (const [, raw] of blocks) {
+      if (!(raw instanceof Y.Map)) continue;
+      const children = raw.get("sys:children");
+      if (!(children instanceof Y.Array)) continue;
+      const index = (children.toArray() as string[]).indexOf(embedBlockId);
+      if (index >= 0) {
+        embedParentChildren = children;
+        embedIndex = index;
+        break;
+      }
+    }
+
+    if (embedParentChildren && embedIndex >= 0) {
+      embedParentChildren.delete(embedIndex, 1);
+    }
+    blocks.delete(embedBlockId);
+    const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
+    await pushDocUpdate(
+      socket,
+      workspaceId,
+      parentDocId,
+      Buffer.from(delta).toString("base64"),
+    );
+    return true;
+  }
+
+  // Add the destination link before removing the source link so a failed move
+  // cannot orphan the document from both parents.
   const moveDocHandler = async (parsed: { workspaceId?: string; docId: string; toParentDocId: string; fromParentDocId?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
@@ -4975,72 +5198,48 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
     try {
       await joinWorkspace(socket, workspaceId);
-
-      let removedFromParent = false;
-
-      // Step 1: remove embed_linked_doc from old parent (if provided)
-      if (parsed.fromParentDocId) {
-        const parentDoc = new Y.Doc();
-        const parentSnapshot = await loadDoc(socket, workspaceId, parsed.fromParentDocId);
-        if (parentSnapshot.missing) {
-          Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
-          const prevSV = Y.encodeStateVector(parentDoc);
-          const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
-
-          // Find the embed_linked_doc block pointing to our docId
-          let embedBlockId: string | null = null;
-          let embedParentChildren: Y.Array<any> | null = null;
-          let embedIndex = -1;
-
-          for (const [id, raw] of blocks) {
-            if (!(raw instanceof Y.Map)) continue;
-            const flavour = raw.get("sys:flavour");
-            const pageId = raw.get("prop:pageId");
-            if (flavour === "affine:embed-linked-doc" && pageId === parsed.docId) {
-              embedBlockId = String(id);
-              break;
-            }
-          }
-
-          if (embedBlockId) {
-            // Find the parent block whose sys:children contains embedBlockId
-            for (const [, raw] of blocks) {
-              if (!(raw instanceof Y.Map)) continue;
-              const children = raw.get("sys:children");
-              if (!(children instanceof Y.Array)) continue;
-              const arr = children.toArray() as string[];
-              const idx = arr.indexOf(embedBlockId);
-              if (idx >= 0) {
-                embedParentChildren = children;
-                embedIndex = idx;
-                break;
-              }
-            }
-            if (embedParentChildren && embedIndex >= 0) {
-              embedParentChildren.delete(embedIndex, 1);
-            }
-            blocks.delete(embedBlockId);
-            const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
-            await pushDocUpdate(socket, workspaceId, parsed.fromParentDocId, Buffer.from(delta).toString("base64"));
-            removedFromParent = true;
-          }
-        }
-      }
-
-      // Step 2: add embed_linked_doc to new parent
-      await appendBlockInternal({
-        workspaceId,
-        docId: parsed.toParentDocId,
-        type: "embed_linked_doc",
-        pageId: parsed.docId,
+      const outcome = await executeSafeDocumentMove(parsed, {
+        assertResourcesExist: () => assertMoveResourcesExist(
+          socket,
+          workspaceId,
+          [parsed.docId, parsed.toParentDocId, parsed.fromParentDocId].filter(
+            (value): value is string => Boolean(value),
+          ),
+        ),
+        wouldCreateCycle: () => wouldCreateDocumentCycle(
+          socket,
+          workspaceId,
+          parsed.docId,
+          parsed.toParentDocId,
+        ),
+        isLinkedToNewParent: () => parentContainsLinkedDocument(
+          socket,
+          workspaceId,
+          parsed.toParentDocId,
+          parsed.docId,
+        ),
+        addToNewParent: async () => {
+          await appendBlockInternal({
+            workspaceId,
+            docId: parsed.toParentDocId,
+            type: "embed_linked_doc",
+            pageId: parsed.docId,
+          });
+        },
+        removeFromOldParent: () => removeLinkedDocumentFromParent(
+          socket,
+          workspaceId,
+          parsed.fromParentDocId!,
+          parsed.docId,
+        ),
       });
 
       return receipt("doc.move", {
         workspaceId,
-        moved: true,
         docId: parsed.docId,
         toParentDocId: parsed.toParentDocId,
-        removedFromParent,
+        fromParentDocId: parsed.fromParentDocId ?? null,
+        ...outcome,
       });
     } finally {
       socket.disconnect();
@@ -5051,7 +5250,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "move_doc",
     {
       title: "Move Document in Sidebar",
-      description: "Move a doc in the AFFiNE sidebar by embedding it under a new parent. Optionally removes it from the old parent (fromParentDocId). If fromParentDocId is omitted, the doc is added to the new parent but not removed from the old one.",
+      description: "Move a doc in the AFFiNE sidebar. The destination link is validated and added before the optional source link is removed, cycles are rejected, and partial outcomes are reported explicitly.",
       inputSchema: {
         workspaceId: z.string().optional(),
         docId: z.string().describe("The doc to move."),
@@ -5117,7 +5316,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   // CREATE DOC (high-level)
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
-    const created = await createDocInternal(parsed);
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    await assertParentDocumentExistsBeforeCreate(workspaceId, parsed.parentDocId);
+    const created = await createDocInternal({ ...parsed, workspaceId });
     const placement = await finalizeDocPlacement({
       workspaceId: created.workspaceId,
       docId: created.docId,
@@ -5150,6 +5354,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
+      status: warnings.length > 0 ? "created_with_warnings" : "created",
+      requiresManualRepair: warnings.length > 0,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
       folderId: linkedFolderId,
@@ -5608,8 +5814,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       title = "Untitled";
     }
 
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    preflightMarkdownOperationsBeforeCreate(
+      operations,
+      workspaceId,
+      parsed.strict !== false,
+    );
+    await assertParentDocumentExistsBeforeCreate(workspaceId, parsed.parentDocId);
+
     const created = await createDocInternal({
-      workspaceId: parsed.workspaceId,
+      workspaceId,
       title,
     });
 
@@ -5620,12 +5837,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     };
 
     if (operations.length > 0) {
-      applied = await applyMarkdownOperationsInternal({
-        workspaceId: created.workspaceId,
-        docId: created.docId,
-        operations,
-        strict: parsed.strict,
-      });
+      try {
+        applied = await applyMarkdownOperationsInternal({
+          workspaceId: created.workspaceId,
+          docId: created.docId,
+          operations,
+          strict: parsed.strict,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Document ${created.docId} was created, but its Markdown content could not be confirmed: ${message}. Inspect or delete that document before retrying.`,
+        );
+      }
     }
 
     const placement = await finalizeDocPlacement({
@@ -5640,13 +5864,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       applyWarnings.push(`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`);
     }
 
+    const warnings = mergeWarnings(parsedMarkdown.warnings, applyWarnings, placement.warnings);
     return {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
+      status: warnings.length > 0 ? "created_with_warnings" : "created",
+      requiresManualRepair: placement.warnings.length > 0,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
-      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings, placement.warnings),
+      warnings,
       lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
@@ -5799,6 +6026,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     docId: string;
     markdown: string;
     strict?: boolean;
+    allowEmpty?: boolean;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -5806,6 +6034,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
+    if (parsedMarkdown.operations.length === 0 && parsed.allowEmpty !== true) {
+      throw new Error(
+        "Refusing to replace the document with empty Markdown. Pass allowEmpty=true to confirm clearing the main note.",
+      );
+    }
     const applied = await applyMarkdownOperationsInternal({
       workspaceId,
       docId: parsed.docId,
@@ -5842,6 +6075,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId,
         markdown: MarkdownContent.describe("Markdown content to replace with"),
         strict: z.boolean().optional(),
+        allowEmpty: z.boolean().optional().describe("Set true to explicitly allow clearing the main note when Markdown produces no blocks."),
       },
     },
     replaceDocWithMarkdownHandler as any
