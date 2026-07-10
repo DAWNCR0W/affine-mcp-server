@@ -35,6 +35,9 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Test release verification
+        run: npm run test:release-verification
+
       - name: Check package contents
         run: npm run pack:check
 

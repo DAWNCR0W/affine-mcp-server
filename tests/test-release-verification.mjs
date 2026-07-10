@@ -60,6 +60,7 @@ assert.throws(
 const calls = [];
 const fakeGit = (args) => {
   calls.push(args.join(" "));
+  if (args[0] === "cat-file") return "tag";
   if (args[0] === "rev-parse") return "abc123";
   return "";
 };
@@ -72,7 +73,8 @@ assert.deepEqual(
   { commit: "abc123", mainRef: "origin/main", tag: "v2.5.0" },
 );
 assert.deepEqual(calls, [
-  "rev-parse v2.5.0^{commit}",
+  "cat-file -t refs/tags/v2.5.0",
+  "rev-parse refs/tags/v2.5.0^{commit}",
   "rev-parse abc123^{commit}",
   "merge-base --is-ancestor abc123 origin/main",
 ]);
@@ -80,9 +82,21 @@ assert.deepEqual(calls, [
 assert.throws(
   () => validateReleaseGitState(validRoot, {
     tag: "v2.5.0",
+    commit: "abc123",
+    mainRef: "origin/main",
+  }, (args) => args[0] === "cat-file" ? "commit" : "abc123"),
+  /must be an annotated tag; found Git object type commit/,
+);
+
+assert.throws(
+  () => validateReleaseGitState(validRoot, {
+    tag: "v2.5.0",
     commit: "different",
     mainRef: "origin/main",
-  }, (args) => args[1].startsWith("v2.5.0") ? "tagged" : "requested"),
+  }, (args) => {
+    if (args[0] === "cat-file") return "tag";
+    return args[1].startsWith("refs/tags/v2.5.0") ? "tagged" : "requested";
+  }),
   /not the requested release commit/,
 );
 

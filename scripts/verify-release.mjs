@@ -73,6 +73,7 @@ function runGit(args, cwd) {
 }
 
 export function validateReleaseGitState(root, { tag, commit, mainRef }, git = runGit) {
+  versionFromReleaseTag(tag);
   if (!commit) {
     throw new Error("A release commit is required.");
   }
@@ -80,7 +81,13 @@ export function validateReleaseGitState(root, { tag, commit, mainRef }, git = ru
     throw new Error("A main branch reference is required.");
   }
 
-  const taggedCommit = git(["rev-parse", `${tag}^{commit}`], root);
+  const tagRef = `refs/tags/${tag}`;
+  const tagObjectType = git(["cat-file", "-t", tagRef], root);
+  if (tagObjectType !== "tag") {
+    throw new Error(`Release tag ${tag} must be an annotated tag; found Git object type ${tagObjectType}.`);
+  }
+
+  const taggedCommit = git(["rev-parse", `${tagRef}^{commit}`], root);
   const resolvedCommit = git(["rev-parse", `${commit}^{commit}`], root);
   if (taggedCommit !== resolvedCommit) {
     throw new Error(`Tag ${tag} resolves to ${taggedCommit}, not the requested release commit ${resolvedCommit}.`);

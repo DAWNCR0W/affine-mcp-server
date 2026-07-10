@@ -76,7 +76,7 @@
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "release:verify": "node scripts/verify-release.mjs",
-    "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
+    "ci": "npm run build && npm run test:release-verification && npm run test:tool-manifest && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [
