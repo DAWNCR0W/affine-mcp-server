@@ -71,6 +71,10 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_MCP_HTTP_TOKEN` | Required for non-loopback bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
 | `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer-mode listener |
 | `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
+| `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
+| `AFFINE_MCP_HTTP_MAX_SESSIONS` | No | `32` | Maximum combined Streamable HTTP and legacy SSE sessions |
+| `AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | No | `1800000` | Close sessions that receive no MCP activity for this duration |
+| `AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS` | No | `10000` | Deadline before remaining HTTP connections are forcibly closed |
 | `AFFINE_MCP_PUBLIC_BASE_URL` | Required in OAuth mode | none | Public base URL for this MCP server |
 | `AFFINE_OAUTH_ISSUER_URL` | Required in OAuth mode | none | OAuth issuer discovery URL |
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
@@ -126,6 +130,21 @@ HTTP mode exposes:
 - `/readyz` - unauthenticated readiness probe that checks OAuth discovery when enabled and the exact configured AFFiNE GraphQL endpoint
 
 `/readyz` returns `503` with the failing component when the configured AFFiNE GraphQL endpoint is unavailable. Keep both diagnostic routes private to your load balancer or trusted monitoring network.
+
+### Runtime limits and shutdown
+
+The HTTP transport limits JSON request bodies and the number of active sessions
+to prevent accidental resource exhaustion. Both Streamable HTTP and legacy SSE
+sessions count toward `AFFINE_MCP_HTTP_MAX_SESSIONS`. New sessions receive a
+`503` response with `Retry-After` when the limit is reached. Existing session
+traffic refreshes its idle deadline, and inactive sessions are closed after
+`AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS`.
+
+On `SIGINT` or `SIGTERM`, the server stops accepting connections and closes MCP
+transports concurrently. If a connection prevents graceful shutdown beyond
+`AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS`, the remaining HTTP connections are
+forcibly closed. Invalid runtime limit values and listen errors fail startup
+instead of leaving a partially running process.
 
 ### Bearer mode
 
