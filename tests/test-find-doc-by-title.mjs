@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for find_doc_by_title.
  *
@@ -53,7 +55,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-find-doc-by-title-noconfig",
+      XDG_CONFIG_HOME: testTempPath('find-doc-by-title-config'),
     },
   });
   const client = new Client({ name: "find-doc-by-title-test", version: "0.0.1" }, { capabilities: {} });
@@ -86,7 +88,7 @@ async function main() {
 
   let workspace;
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     workspace = await call("create_workspace", { name: `find-doc-by-title-${timestamp}` });
     if (!workspace?.id) throw new Error("create_workspace did not return an id");
     console.log(`  workspace created: ${workspace.id}`);
@@ -195,7 +197,7 @@ async function main() {
     try {
       if (workspace?.id) {
         await client.callTool(
-          { name: "delete_workspace", arguments: { id: workspace.id } },
+          { name: "delete_workspace", arguments: { id: workspace.id, confirmWorkspaceId: workspace.id } },
           undefined,
           { timeout: TOOL_TIMEOUT_MS },
         );

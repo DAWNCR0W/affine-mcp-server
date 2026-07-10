@@ -290,15 +290,32 @@ function parseCsv(raw: string | undefined, normalize = true): string[] {
     .map(value => normalize ? value.toLowerCase() : value);
 }
 
-function normalizeProfile(raw: string | undefined): { profile: ToolProfile; warning?: string } {
+export class ToolSurfaceConfigError extends Error {
+  readonly issues: readonly string[];
+
+  constructor(issues: readonly string[]) {
+    super(`Invalid tool surface configuration:\n- ${issues.join("\n- ")}`);
+    this.name = "ToolSurfaceConfigError";
+    this.issues = issues;
+  }
+}
+
+export class UnknownToolRegistrationError extends Error {
+  constructor(toolName: string) {
+    super(
+      `Tool "${toolName}" is not present in the canonical tool surface. ` +
+      "Add it to ALL_TOOLS, TOOL_GROUPS, and tool-manifest.json before registering it."
+    );
+    this.name = "UnknownToolRegistrationError";
+  }
+}
+
+function normalizeProfile(raw: string | undefined): ToolProfile | null {
   const value = (raw || "full").trim().toLowerCase();
   if (KNOWN_PROFILES.has(value as ToolProfile)) {
-    return { profile: value as ToolProfile };
+    return value as ToolProfile;
   }
-  return {
-    profile: "full",
-    warning: `Unknown AFFINE_TOOL_PROFILE "${raw}". Using "full". Valid profiles: ${[...KNOWN_PROFILES].join(", ")}`,
-  };
+  return null;
 }
 
 function profileAllowsTool(profile: ToolProfile, toolName: ToolName): boolean {
@@ -316,18 +333,21 @@ function profileAllowsTool(profile: ToolProfile, toolName: ToolName): boolean {
 }
 
 export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
-  const profileResult = normalizeProfile(env.AFFINE_TOOL_PROFILE);
+  const profile = normalizeProfile(env.AFFINE_TOOL_PROFILE);
   const disabledGroups = new Set(parseCsv(env.AFFINE_DISABLED_GROUPS));
   const disabledTools = new Set(parseCsv(env.AFFINE_DISABLED_TOOLS));
-  const warnings: string[] = [];
+  const issues: string[] = [];
 
-  if (profileResult.warning) {
-    warnings.push(profileResult.warning);
+  if (!profile) {
+    issues.push(
+      `Unknown AFFINE_TOOL_PROFILE "${env.AFFINE_TOOL_PROFILE}". ` +
+      `Valid profiles: ${[...KNOWN_PROFILES].join(", ")}`
+    );
   }
 
   for (const group of disabledGroups) {
     if (!KNOWN_GROUPS.has(group)) {
-      warnings.push(
+      issues.push(
         `Unknown group "${group}" in AFFINE_DISABLED_GROUPS. Valid groups: ${[...KNOWN_GROUPS].sort().join(", ")}`
       );
     }
@@ -335,14 +355,20 @@ export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
 
   for (const tool of disabledTools) {
     if (!KNOWN_TOOLS.has(tool)) {
-      warnings.push(`Unknown tool "${tool}" in AFFINE_DISABLED_TOOLS.`);
+      issues.push(`Unknown tool "${tool}" in AFFINE_DISABLED_TOOLS.`);
     }
   }
+
+  if (issues.length > 0) {
+    throw new ToolSurfaceConfigError(issues);
+  }
+
+  const validatedProfile = profile as ToolProfile;
 
   function isEnabled(name: string): boolean {
     const toolName = name as ToolName;
     if (!KNOWN_TOOLS.has(toolName)) {
-      return profileResult.profile === "full" && disabledGroups.size === 0 && disabledTools.size === 0;
+      throw new UnknownToolRegistrationError(name);
     }
     if (disabledTools.has(toolName)) {
       return false;
@@ -351,39 +377,29 @@ export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
     if (groups.some(group => disabledGroups.has(group))) {
       return false;
     }
-    return profileAllowsTool(profileResult.profile, toolName);
+    return profileAllowsTool(validatedProfile, toolName);
   }
 
   const enabledTools = ALL_TOOLS.filter(toolName => isEnabled(toolName));
+  const enabledWriteTools = enabledTools.filter(
+    toolName => toolName !== "sign_in" && TOOL_GROUPS[toolName].includes("write"),
+  );
 
   return {
-    profile: profileResult.profile,
+    profile: validatedProfile,
     disabledGroups,
     disabledTools,
-    warnings,
     enabledTools,
+    enabledWriteTools,
     totalToolCount: ALL_TOOLS.length,
     isEnabled,
   };
 }
 
-export function toolFilterRequiresRegisterTool(filter: {
-  profile: ToolProfile;
-  disabledGroups: ReadonlySet<string>;
-  disabledTools: ReadonlySet<string>;
-}): boolean {
-  return filter.profile !== "full" || filter.disabledGroups.size > 0 || filter.disabledTools.size > 0;
-}
-
 export function toolAnnotationsFor(name: string): ToolAnnotations {
   const toolName = name as ToolName;
   if (!KNOWN_TOOLS.has(toolName)) {
-    return {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    };
+    throw new UnknownToolRegistrationError(name);
   }
 
   const groups = TOOL_GROUPS[toolName];

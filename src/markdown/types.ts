@@ -1,14 +1,17 @@
 export type MarkdownListStyle = "bulleted" | "numbered" | "todo";
 
+export type TextDeltaAttributes = {
+  bold?: boolean;
+  italic?: boolean;
+  strike?: boolean;
+  code?: boolean;
+  link?: string;
+  [key: string]: unknown;
+};
+
 export type TextDelta = {
   insert: string;
-  attributes?: {
-    bold?: boolean;
-    italic?: boolean;
-    strike?: boolean;
-    code?: boolean;
-    link?: string;
-  };
+  attributes?: TextDeltaAttributes;
 };
 
 export type MarkdownOperation =
@@ -85,6 +88,8 @@ export type MarkdownRenderableBlock = {
   sourceId: string | null;
   caption: string | null;
   tableData: string[][] | null;
+  textDeltas?: TextDelta[] | null;
+  tableCellDeltas?: TextDelta[][][] | null;
 };
 
 export type MarkdownRenderResult = {
@@ -94,5 +99,6 @@ export type MarkdownRenderResult = {
   stats: {
     blockCount: number;
     unsupportedCount: number;
+    unsupportedInlineAttributeCount: number;
   };
 };

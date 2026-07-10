@@ -4,7 +4,7 @@ Thanks for contributing to `affine-mcp-server`.
 
 ## Before You Start
 
-- Node.js `18+` is required (Node `20` recommended).
+- Node.js `20+` is required. Use the version in `.nvmrc` for local development.
 - You need one AFFiNE instance to run end-to-end checks.
 - Read the project docs first:
   - `README.md`
@@ -33,8 +33,8 @@ npm run ci
 manifests and runs only tests that do not require a live AFFiNE instance.
 
 Every `tests/test-*.mjs` file must be classified in `tests/test-suites.json`.
-Tests that require AFFiNE, Docker, credentials, or a browser must not be added to
-the `fast` suite.
+Tests that require AFFiNE, Docker, credentials, a packaged artifact, or a browser
+must not be added to the `fast` suite.
 
 If you have a reachable AFFiNE dev server:
 
@@ -44,6 +44,28 @@ AFFINE_EMAIL=dev@affine.pro \
 AFFINE_PASSWORD=dev \
 npm run test:comprehensive
 ```
+
+## Destructive Live-Test Safety
+
+Live integration tests create, update, and delete AFFiNE resources. They are
+allowed against loopback targets by default and fail closed for every other
+host. The Docker-backed runners use a unique Compose project, private random
+credentials, and collision-resistant resource names for each run.
+
+Use `npm run test:live-safety` to verify the guard without contacting AFFiNE.
+Never point a live test at production. If a non-loopback disposable test
+instance is intentionally required, both values below must match the exact
+normalized target:
+
+```bash
+export AFFINE_BASE_URL="https://disposable-affine.example.test"
+export AFFINE_ALLOW_REMOTE_DESTRUCTIVE_TESTS=1
+export AFFINE_REMOTE_DESTRUCTIVE_TEST_CONFIRM="DESTROY https://disposable-affine.example.test"
+node tests/test-database-creation.mjs
+```
+
+Unset both opt-in variables immediately after the run. Do not store them in a
+shell profile, CI environment, or repository file.
 
 ## Tool Design Rules
 
@@ -56,7 +78,11 @@ npm run test:comprehensive
 ## Pull Request Guidelines
 
 - Keep each PR focused on one logical change.
-- Target the `develop` branch only. PRs against `main` or any other branch are closed automatically.
+- Use a dedicated, non-protected head branch for every pull request.
+- Target `develop` for normal feature, fix, refactor, documentation, and maintenance pull requests.
+- Only `release/*` branches may target `main`.
+- Never use `main`, `develop`, `dev`, or `master` as a pull request head, regardless of the target branch.
+- To synchronize release metadata from `main` back to `develop`, create a dedicated branch such as `chore/sync-v2.6.0-to-develop` from the confirmed `main` release commit.
 - Include what changed and why.
 - Include validation evidence (commands and result summary).
 - Update docs (`README.md`, `CHANGELOG.md`) when behavior changes.
@@ -67,6 +93,9 @@ npm run test:comprehensive
 - Keep `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, and `RELEASE_NOTES.md` in sync before tagging.
 - Use the matching version section from `RELEASE_NOTES.md` as the source for the GitHub Release body.
 - Treat `npm run ci` and `npm run test:e2e` as the release validation baseline.
+- Publish the exact npm tarball produced after release validation; install and smoke-test that artifact before publishing it with lifecycle scripts disabled.
+- Pull request CI also installs and smoke-tests a temporary tarball so packaging regressions fail before release.
+- Pull requests build the Docker image without pushing and verify the packaged CLI version and non-root runtime user.
 
 ## Commit Message Style
 

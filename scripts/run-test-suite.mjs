@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +8,8 @@ import { REQUIRED_SUITES, loadAndValidateTestSuites } from "./test-suite-lib.mjs
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDirectory = path.resolve(__dirname, "..");
+const require = createRequire(import.meta.url);
+const tsxCli = require.resolve("tsx/cli");
 const suiteName = process.argv[2];
 const listOnly = process.argv.includes("--list");
 
@@ -41,7 +44,7 @@ if (listOnly) {
 console.log(`=== Running ${suiteName} test suite (${testFiles.length} tests) ===`);
 for (const [index, file] of testFiles.entries()) {
   console.log(`\n[${index + 1}/${testFiles.length}] ${file}`);
-  const testResult = spawnSync(process.execPath, [path.join("tests", file)], {
+  const testResult = spawnSync(process.execPath, [tsxCli, path.join("tests", file)], {
     cwd: rootDirectory,
     env: process.env,
     stdio: "inherit",

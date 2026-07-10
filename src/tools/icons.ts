@@ -59,8 +59,9 @@ export function registerIconTools(
     workspaceId: string,
     fn: (socket: WorkspaceSocket) => Promise<T>,
   ): Promise<T> {
-    const wsUrl = wsUrlFromGraphQLEndpoint(gql.endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, gql.cookie, gql.bearer);
+    const { endpoint, cookie, bearer } = await gql.getConnectionAuth();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
       return await fn(socket);

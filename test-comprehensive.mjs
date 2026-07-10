@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './tests/require-destructive-test-safety.mjs';
+
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -12,7 +14,7 @@ const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
 const EMAIL = process.env.AFFINE_EMAIL || process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
 const PASSWORD = process.env.AFFINE_PASSWORD || process.env.AFFINE_ADMIN_PASSWORD;
 const LOGIN_MODE = process.env.AFFINE_LOGIN_AT_START || 'sync';
-const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || '/tmp/affine-mcp-comprehensive-noconfig';
+const XDG_CONFIG_HOME = testTempPath('comprehensive-config');
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 const MANIFEST_PATH = path.join(process.cwd(), 'tool-manifest.json');
 const EXPECTED_TOOLS = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).tools;
@@ -82,6 +84,18 @@ function isBlockedByEnvironment(_toolName, errorMessage) {
   return false;
 }
 
+function redactSecrets(value) {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (!value || typeof value !== 'object') return value;
+
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (/^(password|token|cookie|authorization|apiToken|accessToken|refreshToken)$/i.test(key)) {
+      return [key, '[redacted]'];
+    }
+    return [key, redactSecrets(entry)];
+  }));
+}
+
 class ComprehensiveRunner {
   constructor() {
     this.client = new Client({ name: 'affine-mcp-comprehensive-test', version: '3.0.0' });
@@ -129,7 +143,7 @@ class ComprehensiveRunner {
 
     const record = {
       name,
-      args,
+      args: redactSecrets(args),
       ok: false,
       blocked: false,
       durationMs: 0,
@@ -153,7 +167,7 @@ class ComprehensiveRunner {
       );
       const parsed = parseContent(result);
       const semanticError = getToolResultError(result, parsed);
-      record.result = parsed;
+      record.result = redactSecrets(parsed);
       record.durationMs = Date.now() - start;
 
       if (semanticError) {
@@ -202,7 +216,7 @@ class ComprehensiveRunner {
     await this.callTool('sign_in', { email: EMAIL, password: PASSWORD });
 
     await this.callTool('list_workspaces');
-    await this.callTool('create_workspace', { name: `mcp-main-${Date.now()}` }, parsed => {
+    await this.callTool('create_workspace', { name: testResourceName('mcp-main') }, parsed => {
       this.workspaceId = parsed?.id || null;
     });
 
@@ -233,7 +247,7 @@ class ComprehensiveRunner {
     if (!docId) {
       throw new Error('create_doc did not return docId');
     }
-    const tagName = `mcp-tag-${Date.now()}`;
+    const tagName = testResourceName('mcp-tag');
 
     await this.callTool('create_tag', { workspaceId, tag: tagName });
     await this.callTool('add_tag_to_doc', { workspaceId, docId, tag: tagName });
@@ -278,7 +292,7 @@ class ComprehensiveRunner {
     if (!databaseBlockId) {
       throw new Error('append_block(database) did not return blockId');
     }
-    const databaseColumnName = `Status-${Date.now()}`;
+    const databaseColumnName = testResourceName('status');
     let databaseRowBlockId = null;
     await this.callTool('add_database_column', {
       workspaceId,
@@ -412,7 +426,7 @@ class ComprehensiveRunner {
     await this.callTool('list_histories', { workspaceId, guid: docId, take: 20 });
 
     await this.callTool('list_access_tokens');
-    await this.callTool('generate_access_token', { name: `token-main-${Date.now()}` }, parsed => {
+    await this.callTool('generate_access_token', { name: testResourceName('token-main') }, parsed => {
       this.tokenId = parsed?.id || null;
     });
     await this.callTool('revoke_access_token', { id: this.tokenId || 'missing-token-id' });
@@ -432,8 +446,9 @@ class ComprehensiveRunner {
       workspaceId,
       key: this.blobKey || 'missing-blob-key',
       permanently: true,
+      confirmKey: this.blobKey || 'missing-blob-key',
     });
-    await this.callTool('cleanup_blobs', { workspaceId });
+    await this.callTool('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId });
 
     await this.callTool('update_profile', { name: 'Dev User' });
     await this.callTool('update_settings', { settings: { receiveCommentEmail: true } });
@@ -492,8 +507,8 @@ class ComprehensiveRunner {
     await this.callTool('delete_surface_element', { workspaceId, docId, elementId: shapeBId });
     await this.callTool('delete_block', { workspaceId, docId, blockId: noteBlockId });
 
-    await this.callTool('delete_doc', { workspaceId, docId });
-    await this.callTool('delete_workspace', { id: workspaceId });
+    await this.callTool('delete_doc', { workspaceId, docId, confirmDocId: docId });
+    await this.callTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
 
     const uncalledTools = this.serverTools.filter(name => !this.called.has(name));
     for (const name of uncalledTools) {
@@ -559,7 +574,7 @@ async function main() {
   }
 
   const summary = runner.summary();
-  const fileName = `comprehensive-test-results-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const fileName = `${testResourceName('comprehensive-test-results')}.json`;
   fs.writeFileSync(fileName, JSON.stringify(summary, null, 2));
 
   console.log(JSON.stringify({

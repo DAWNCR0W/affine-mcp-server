@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import {
+  announceRemoteDestructiveTestTarget,
+  assertDestructiveTestTarget,
+} from './live-test-safety.mjs';
+
 /**
  * Credential acquisition for E2E tests.
  *
@@ -8,7 +13,7 @@
  *   acquireCredentials(baseUrl, email, password)     — signs in, returns {cookie, baseUrl, email}
  *
  * CLI mode: reads AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL, AFFINE_ADMIN_PASSWORD
- * from env and outputs credentials JSON to stdout.
+ * from env and outputs a non-secret authentication summary to stdout.
  */
 
 /**
@@ -116,6 +121,8 @@ function parsePositiveIntEnv(name, fallback) {
 
 async function runCli() {
   const baseUrl = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
+  const target = assertDestructiveTestTarget({ target: baseUrl });
+  announceRemoteDestructiveTestTarget(target);
   const email = process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
   const password = process.env.AFFINE_ADMIN_PASSWORD;
   if (!password) throw new Error('AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh');
@@ -136,8 +143,8 @@ async function runCli() {
   console.error('[credentials] Signing in...');
   const creds = await acquireCredentials(baseUrl, email, password);
 
-  // Output JSON to stdout (logs go to stderr)
-  console.log(JSON.stringify(creds, null, 2));
+  // Keep the session cookie in-process. CI and local runner logs must not expose it.
+  console.log(JSON.stringify({ authenticated: true, baseUrl: creds.baseUrl, email: creds.email }, null, 2));
 }
 
 // --- CLI mode ---

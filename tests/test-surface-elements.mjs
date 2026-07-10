@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /** Integration test: append_block edgeless positioning, add/update/delete_surface_element (shape/connector/text/group),
  *  xywh merge semantics, pruneConnectors, and get_edgeless_canvas readback. */
 import fs from "node:fs";
@@ -61,7 +63,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-surface-elements-noconfig",
+      XDG_CONFIG_HOME: testTempPath('surface-elements-config'),
       ...(process.env.AFFINE_MCP_DEBUG_SURFACE_INDEX
         ? { AFFINE_MCP_DEBUG_SURFACE_INDEX: process.env.AFFINE_MCP_DEBUG_SURFACE_INDEX }
         : {}),
@@ -97,7 +99,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `surface-elements-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
 

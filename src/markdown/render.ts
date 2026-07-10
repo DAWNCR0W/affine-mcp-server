@@ -1,10 +1,27 @@
-import type { MarkdownRenderResult, MarkdownRenderableBlock } from "./types.js";
+import type {
+  MarkdownRenderResult,
+  MarkdownRenderableBlock,
+  TextDelta,
+  TextDeltaAttributes,
+} from "./types.js";
+import {
+  escapeMarkdownHtmlCommentValue,
+  escapeMarkdownPlainText,
+  escapeMarkdownTableCell,
+  renderFencedCodeBlock,
+  renderMarkdownImage,
+  renderMarkdownLink,
+  renderMarkdownLinkWithSafeLabel,
+} from "./safety.js";
+import { blobSourceIdToUrl } from "../urlSafety.js";
 
 type RenderState = {
   blocksById: Map<string, MarkdownRenderableBlock>;
   warnings: string[];
   warningSet: Set<string>;
   unsupportedCount: number;
+  unsupportedInlineAttributeCount: number;
+  inlineLossSet: Set<string>;
   visited: Set<string>;
 };
 
@@ -20,6 +37,198 @@ function addWarning(state: RenderState, warning: string): void {
   }
 }
 
+type SupportedInlineAttributes = {
+  bold: boolean;
+  italic: boolean;
+  strike: boolean;
+  code: boolean;
+  link: string | null;
+};
+
+type RenderInlineOptions = {
+  trim?: boolean;
+  tableCell?: boolean;
+};
+
+const BOOLEAN_INLINE_ATTRIBUTES = new Set(["bold", "italic", "strike", "code"]);
+
+function recordInlineLoss(
+  state: RenderState,
+  context: string,
+  attribute: string,
+  reason: string,
+): void {
+  const key = `${context}\u0000${attribute}\u0000${reason}`;
+  if (state.inlineLossSet.has(key)) {
+    return;
+  }
+  state.inlineLossSet.add(key);
+  state.unsupportedCount += 1;
+  state.unsupportedInlineAttributeCount += 1;
+  addWarning(
+    state,
+    `${context} used inline attribute '${attribute}' that Markdown export could not preserve (${reason}); text was retained without that attribute.`,
+  );
+}
+
+function supportedInlineAttributes(
+  attributes: TextDeltaAttributes | undefined,
+  context: string,
+  state: RenderState,
+): SupportedInlineAttributes {
+  const supported: SupportedInlineAttributes = {
+    bold: false,
+    italic: false,
+    strike: false,
+    code: false,
+    link: null,
+  };
+  if (!attributes) {
+    return supported;
+  }
+
+  for (const [name, value] of Object.entries(attributes)) {
+    if (BOOLEAN_INLINE_ATTRIBUTES.has(name)) {
+      if (typeof value === "boolean") {
+        supported[name as "bold" | "italic" | "strike" | "code"] = value;
+      } else {
+        recordInlineLoss(state, context, name, "expected a boolean value");
+      }
+      continue;
+    }
+    if (name === "link") {
+      if (typeof value === "string" && value.length > 0) {
+        supported.link = value;
+      } else {
+        recordInlineLoss(state, context, name, "expected a non-empty string URL");
+      }
+      continue;
+    }
+    recordInlineLoss(state, context, name, "unsupported attribute name");
+  }
+
+  return supported;
+}
+
+function trimTextDeltas(deltas: TextDelta[]): TextDelta[] {
+  const trimmed = deltas.map(delta => ({
+    insert: delta.insert,
+    attributes: delta.attributes ? { ...delta.attributes } : undefined,
+  }));
+
+  while (trimmed.length > 0) {
+    trimmed[0].insert = trimmed[0].insert.replace(/^\s+/, "");
+    if (trimmed[0].insert.length > 0) break;
+    trimmed.shift();
+  }
+  while (trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1];
+    last.insert = last.insert.replace(/\s+$/, "");
+    if (last.insert.length > 0) break;
+    trimmed.pop();
+  }
+  return trimmed;
+}
+
+function inlineCodeFence(text: string): string {
+  const longestRun = Math.max(0, ...Array.from(text.matchAll(/`+/g), match => match[0].length));
+  const fence = "`".repeat(Math.max(1, longestRun + 1));
+  const hasBoundarySpaces = /^\s/.test(text) && /\s$/.test(text) && /\S/.test(text);
+  const needsPadding = text.startsWith("`") || text.endsWith("`") || hasBoundarySpaces;
+  return `${fence}${needsPadding ? ` ${text} ` : text}${fence}`;
+}
+
+function sameSupportedInlineAttributes(
+  left: SupportedInlineAttributes,
+  right: SupportedInlineAttributes,
+): boolean {
+  return left.bold === right.bold &&
+    left.italic === right.italic &&
+    left.strike === right.strike &&
+    left.code === right.code &&
+    left.link === right.link;
+}
+
+function renderTextDelta(
+  insert: string,
+  attributes: SupportedInlineAttributes,
+  context: string,
+  state: RenderState,
+  options: RenderInlineOptions,
+): string {
+  if (insert.length === 0) {
+    return "";
+  }
+
+  const codeCannotBePreserved = attributes.code && (
+    /[\r\n\u2028\u2029]/.test(insert) ||
+    (options.tableCell === true && insert.includes("|"))
+  );
+  if (codeCannotBePreserved) {
+    recordInlineLoss(
+      state,
+      context,
+      "code",
+      options.tableCell ? "table delimiters or line breaks are unsafe in inline code" : "line breaks are unsafe in inline code",
+    );
+  }
+  const renderAsCode = attributes.code && !codeCannotBePreserved;
+  const hasFormatting =
+    attributes.bold ||
+    attributes.italic ||
+    attributes.strike ||
+    renderAsCode ||
+    attributes.link !== null;
+
+  let leading = "";
+  let trailing = "";
+  let content = insert;
+  if (hasFormatting && !renderAsCode) {
+    leading = content.match(/^ */)?.[0] ?? "";
+    trailing = content.match(/ *$/)?.[0] ?? "";
+    content = content.slice(leading.length, content.length - trailing.length);
+    if (!content) {
+      return insert;
+    }
+  }
+
+  let rendered = renderAsCode ? inlineCodeFence(content) : escapeMarkdownPlainText(content);
+  if (attributes.bold) rendered = `**${rendered}**`;
+  if (attributes.italic) rendered = `*${rendered}*`;
+  if (attributes.strike) rendered = `~~${rendered}~~`;
+  if (attributes.link) {
+    const link = renderMarkdownLinkWithSafeLabel(rendered, attributes.link);
+    if (link === null) {
+      recordInlineLoss(state, context, "link", "unsafe URL scheme");
+    } else {
+      rendered = link;
+    }
+  }
+  return `${leading}${rendered}${trailing}`;
+}
+
+function renderTextDeltas(
+  deltas: TextDelta[],
+  context: string,
+  state: RenderState,
+  options: RenderInlineOptions = {},
+): string {
+  const renderable = options.trim === false ? deltas : trimTextDeltas(deltas);
+  const runs: Array<{ insert: string; attributes: SupportedInlineAttributes }> = [];
+  for (const delta of renderable) {
+    const attributes = supportedInlineAttributes(delta.attributes, context, state);
+    const previous = runs[runs.length - 1];
+    if (previous && sameSupportedInlineAttributes(previous.attributes, attributes)) {
+      previous.insert += delta.insert;
+    } else {
+      runs.push({ insert: delta.insert, attributes });
+    }
+  }
+  return runs
+    .map(run => renderTextDelta(run.insert, run.attributes, context, state, options))
+    .join("");
+}
+
 function formatQuote(text: string): string[] {
   const lines = text.split("\n");
   return lines.map(line => `> ${line}`);
@@ -32,11 +241,12 @@ function formatCallout(lines: string[]): string[] {
   ];
 }
 
-function escapePipe(value: string): string {
-  return value.replace(/\|/g, "\\|");
-}
-
-function renderTable(tableData: string[][]): string[] {
+function renderTable(
+  tableData: string[][],
+  tableCellDeltas: TextDelta[][][] | null | undefined,
+  blockId: string,
+  state: RenderState,
+): string[] {
   if (tableData.length === 0) {
     return ["| |", "| --- |"];
   }
@@ -54,9 +264,25 @@ function renderTable(tableData: string[][]): string[] {
     return copy;
   });
 
-  const header = normalized[0].map(escapePipe);
+  const renderCell = (value: string, rowIndex: number, columnIndex: number): string => {
+    const deltas = tableCellDeltas?.[rowIndex]?.[columnIndex];
+    return deltas && deltas.length > 0
+      ? renderTextDeltas(
+        deltas,
+        `Table block '${blockId}' cell ${rowIndex + 1}:${columnIndex + 1}`,
+        state,
+        { trim: false, tableCell: true },
+      )
+      : escapeMarkdownTableCell(value);
+  };
+
+  const header = normalized[0].map((cell, columnIndex) => renderCell(cell, 0, columnIndex));
   const separator = new Array(columns).fill("---");
-  const body = normalized.slice(1).map(row => `| ${row.map(cell => escapePipe(cell ?? "")).join(" | ")} |`);
+  const body = normalized
+    .slice(1)
+    .map((row, rowIndex) =>
+      `| ${row.map((cell, columnIndex) => renderCell(cell ?? "", rowIndex + 1, columnIndex)).join(" | ")} |`
+    );
 
   return [
     `| ${header.join(" | ")} |`,
@@ -86,7 +312,10 @@ function renderBlock(
     return { lines: [], isList: false };
   }
 
-  const text = (block.text ?? "").trim();
+  const rawText = (block.text ?? "").trim();
+  const text = block.textDeltas && block.textDeltas.length > 0
+    ? renderTextDeltas(block.textDeltas, `Block '${blockId}'`, state)
+    : escapeMarkdownPlainText(rawText);
   const flavour = block.flavour ?? "";
   const type = block.type ?? "";
   const children = childList(block);
@@ -140,9 +369,10 @@ function renderBlock(
     }
 
     case "affine:code": {
-      const language = block.language ?? "";
-      const lines = [`\`\`\`${language}`, block.text ?? "", "\`\`\`"];
-      return { lines, isList: false };
+      return {
+        lines: renderFencedCodeBlock(block.text ?? "", block.language),
+        isList: false,
+      };
     }
 
     case "affine:divider":
@@ -160,19 +390,39 @@ function renderBlock(
         addWarning(state, `Bookmark/embed block '${blockId}' had no URL and was skipped.`);
         return { lines: [], isList: false };
       }
-      const label = (block.caption ?? "").trim() || text || url;
-      return { lines: [`[${label}](${url})`], isList: false };
+      const label = (block.caption ?? "").trim() || rawText || url;
+      const markdownLink = renderMarkdownLink(label, url);
+      if (markdownLink === null) {
+        state.unsupportedCount += 1;
+        addWarning(state, `Bookmark/embed block '${blockId}' used an unsafe URL scheme and was exported as plain text.`);
+        return { lines: [escapeMarkdownPlainText(label)], isList: false };
+      }
+      return { lines: [markdownLink], isList: false };
     }
 
     case "affine:image": {
-      const source = (block.sourceId ?? "").trim();
-      if (!source) {
+      const source = block.sourceId ?? "";
+      if (!source.trim()) {
         state.unsupportedCount += 1;
         addWarning(state, `Image block '${blockId}' had no sourceId and was skipped.`);
         return { lines: [], isList: false };
       }
       const alt = (block.caption ?? "").trim() || "image";
-      return { lines: [`![${alt}](affine://blob/${source})`], isList: false };
+      let sourceUrl: string;
+      try {
+        sourceUrl = blobSourceIdToUrl(source);
+      } catch {
+        state.unsupportedCount += 1;
+        addWarning(state, `Image block '${blockId}' had an invalid sourceId and was skipped.`);
+        return { lines: [], isList: false };
+      }
+      const markdownImage = renderMarkdownImage(alt, sourceUrl);
+      if (markdownImage === null) {
+        state.unsupportedCount += 1;
+        addWarning(state, `Image block '${blockId}' had an unsafe source URL and was skipped.`);
+        return { lines: [], isList: false };
+      }
+      return { lines: [markdownImage], isList: false };
     }
 
     case "affine:table": {
@@ -182,7 +432,7 @@ function renderBlock(
         return { lines: ["| |", "| --- |"], isList: false };
       }
       return {
-        lines: renderTable(block.tableData),
+        lines: renderTable(block.tableData, block.tableCellDeltas, blockId, state),
         isList: false,
       };
     }
@@ -226,8 +476,10 @@ function renderBlock(
     default: {
       state.unsupportedCount += 1;
       addWarning(state, `Unsupported AFFiNE block flavour '${flavour || "unknown"}' was exported as a comment placeholder.`);
+      const safeFlavour = escapeMarkdownHtmlCommentValue(flavour || "unknown");
+      const safeBlockId = escapeMarkdownHtmlCommentValue(blockId);
       return {
-        lines: [`<!-- unsupported: flavour=${flavour || "unknown"} blockId=${blockId} -->`],
+        lines: [`<!-- unsupported: flavour=${safeFlavour} blockId=${safeBlockId} -->`],
         isList: false,
       };
     }
@@ -243,6 +495,8 @@ export function renderBlocksToMarkdown(input: {
     warnings: [],
     warningSet: new Set<string>(),
     unsupportedCount: 0,
+    unsupportedInlineAttributeCount: 0,
+    inlineLossSet: new Set<string>(),
     visited: new Set<string>(),
   };
 
@@ -275,6 +529,7 @@ export function renderBlocksToMarkdown(input: {
     stats: {
       blockCount: state.visited.size,
       unsupportedCount: state.unsupportedCount,
+      unsupportedInlineAttributeCount: state.unsupportedInlineAttributeCount,
     },
   };
 }

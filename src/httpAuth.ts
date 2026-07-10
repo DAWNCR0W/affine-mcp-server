@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import type express from "express";
 import type { NextFunction, Request, Response } from "express";
 
@@ -26,6 +28,12 @@ function buildOAuthErrorResponse(error: string, description: string) {
   };
 }
 
+function tokenMatches(provided: string, expected: string): boolean {
+  const providedDigest = createHash("sha256").update(provided, "utf8").digest();
+  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(providedDigest, expectedDigest);
+}
+
 function buildWwwAuthenticateHeader(
   protectedResourceMetadataUrl: string | null,
   opts?: {
@@ -52,7 +60,11 @@ function buildWwwAuthenticateHeader(
 
 export function createHttpAuthState(
   config: ServerConfig,
-  opts: { allowAnyOrigin: boolean; httpAuthToken?: string },
+  opts: {
+    allowAnyOrigin: boolean;
+    allowQueryToken?: boolean;
+    httpAuthToken?: string;
+  },
 ): HttpAuthState {
   let oauthConfig: OAuthConfig | null = null;
   let protectedResourceMetadataUrl: string | null = null;
@@ -85,7 +97,7 @@ export function createHttpAuthState(
         return;
       }
 
-      if (typeof req.query.token === "string") {
+      if (req.query.token !== undefined) {
         res.set("WWW-Authenticate", buildWwwAuthenticateHeader(protectedResourceMetadataUrl, {
           error: "invalid_request",
           errorDescription: "Query parameter token is not allowed in oauth mode.",
@@ -144,6 +156,28 @@ export function createHttpAuthState(
     if (!httpAuthToken) return next();
 
     const authHeader = req.headers.authorization;
+    const hasQueryToken = req.query.token !== undefined;
+    if (hasQueryToken && !opts.allowQueryToken) {
+      res.set("WWW-Authenticate", "Bearer");
+      res.status(400).json(
+        buildOAuthErrorResponse(
+          "invalid_request",
+          "Query parameter token authentication is disabled. Use the Authorization header.",
+        ),
+      );
+      return;
+    }
+
+    if (hasQueryToken && typeof req.query.token !== "string") {
+      res.status(400).json(
+        buildOAuthErrorResponse(
+          "invalid_request",
+          "The token query parameter must contain exactly one string value.",
+        ),
+      );
+      return;
+    }
+
     const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
     let token: string | undefined;
 
@@ -160,7 +194,7 @@ export function createHttpAuthState(
       token = queryToken;
     }
 
-    if (token !== httpAuthToken) {
+    if (!token || !tokenMatches(token, httpAuthToken)) {
       res.status(401).send("Unauthorized: Invalid or missing token");
       return;
     }
