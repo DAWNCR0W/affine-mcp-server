@@ -10,6 +10,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 - Document editing relies on AFFiNE WebSocket-backed operations where noted
 - Experimental organize tools are marked explicitly
 - Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` in production if you want a reduced surface
+- Invalid profile, group, and tool names stop startup; the server never falls back to a broader surface
 
 ## Workspace
 

@@ -21,7 +21,7 @@ import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { CONFIG_FILE } from "./config.js";
-import { createToolFilter, toolAnnotationsFor, toolFilterRequiresRegisterTool } from "./toolSurface.js";
+import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -66,10 +66,6 @@ if (hasAuth && config.baseUrl.startsWith("http://")
   console.error("WARNING: Credentials configured over plain HTTP. Use HTTPS for remote servers.");
 }
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
-
-for (const warning of toolFilter.warnings) {
-  console.error(`[affine-mcp] WARNING: ${warning}`);
-}
 
 if (config.authMode === "oauth" && !useHttpTransport) {
   throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
@@ -160,13 +156,7 @@ async function buildServer() {
     const message =
       "[affine-mcp] server.registerTool not found - tool filtering cannot be enforced. " +
       "The MCP SDK API may have changed.";
-    if (toolFilterRequiresRegisterTool(toolFilter)) {
-      throw new Error(
-        `${message} Refusing to start because AFFINE_TOOL_PROFILE is not "full" ` +
-        "or AFFINE_DISABLED_GROUPS/AFFINE_DISABLED_TOOLS is configured."
-      );
-    }
-    console.error(`[affine-mcp] WARNING: ${message} Continuing with the full tool surface.`);
+    throw new Error(`${message} Refusing to start because the canonical tool surface cannot be enforced.`);
   } else {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;

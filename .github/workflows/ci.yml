@@ -43,6 +43,9 @@ jobs:
       - name: Verify secure identifier generation
         run: npm run test:secure-random
 
+      - name: Verify tool surface filtering
+        run: npm run test:tool-filtering
+
       - name: Verify pull request branch route policy
         run: npm run test:pr-route-policy
 
