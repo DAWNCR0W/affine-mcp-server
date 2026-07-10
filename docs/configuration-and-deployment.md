@@ -10,6 +10,8 @@ The server resolves configuration in this order:
 2. Saved config file at `~/.config/affine-mcp/config`
 3. Built-in defaults
 
+The saved config fallback applies only to values read by the core configuration loader. `MCP_TRANSPORT`, `PORT`, tool-filtering controls, `AFFINE_HEADERS_JSON`, HTTP bind/CORS/shared-token controls, and WebSocket controls are read from environment variables only.
+
 Auth priority within the active configuration:
 
 1. `AFFINE_API_TOKEN`
@@ -22,10 +24,11 @@ Auth priority within the active configuration:
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AFFINE_BASE_URL` | Yes | None | Base URL for AFFiNE Cloud or self-hosted AFFiNE |
+| `AFFINE_BASE_URL` | No | `http://localhost:3010` | Base URL for AFFiNE Cloud or self-hosted AFFiNE |
 | `AFFINE_GRAPHQL_PATH` | No | `/graphql` | Override only if your AFFiNE deployment uses a custom GraphQL path |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
-| `AFFINE_LOGIN_AT_START` | No | async login behavior | Set to `sync` only when you must block startup on login |
+| `AFFINE_LOGIN_AT_START` | No | `async` | Set to `sync` only when you must block startup on login |
+| `AFFINE_HEADERS_JSON` | No | None | Environment-only JSON object of additional GraphQL headers; do not duplicate `Authorization` or `Cookie` |
 
 ### Authentication
 
@@ -40,9 +43,9 @@ Auth priority within the active configuration:
 
 | Variable | Purpose |
 | --- | --- |
-| `AFFINE_TOOL_PROFILE` | Select a predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
-| `AFFINE_DISABLED_GROUPS` | Disable entire tool groups by comma-separated group name |
-| `AFFINE_DISABLED_TOOLS` | Disable individual tools by exact canonical name |
+| `AFFINE_TOOL_PROFILE` | Environment-only predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
+| `AFFINE_DISABLED_GROUPS` | Environment-only comma-separated tool groups to disable |
+| `AFFINE_DISABLED_TOOLS` | Environment-only exact canonical tool names to disable |
 
 ### HTTP mode
 
@@ -51,13 +54,22 @@ Auth priority within the active configuration:
 | `MCP_TRANSPORT` | Yes for HTTP mode | stdio | Set to `http` |
 | `PORT` | No | `3000` | Commonly injected by container platforms |
 | `AFFINE_MCP_AUTH_MODE` | No | `bearer` | `bearer` or `oauth` |
-| `AFFINE_MCP_HTTP_HOST` | No | platform default | Use `0.0.0.0` in containers |
-| `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | none | Comma-separated list for browser clients |
+| `AFFINE_MCP_HTTP_HOST` | No | `127.0.0.1` | Use `0.0.0.0` in containers |
+| `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | Loopback origins | Comma-separated list for browser clients |
 | `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS` | No | `false` | Testing only; rejected in OAuth mode |
 | `AFFINE_MCP_HTTP_TOKEN` | Required in bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
 | `AFFINE_MCP_PUBLIC_BASE_URL` | Required in OAuth mode | none | Public base URL for this MCP server |
 | `AFFINE_OAUTH_ISSUER_URL` | Required in OAuth mode | none | OAuth issuer discovery URL |
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
+| `AFFINE_OAUTH_CLOCK_SKEW_SECONDS` | No | `60` | Positive integer tolerance for OAuth token time validation |
+
+### WebSocket compatibility
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AFFINE_WS_CLIENT_VERSION` | No | `0.26.0` | Environment-only AFFiNE client version sent during workspace socket connection |
+| `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
+| `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement |
 
 ## Auth strategy matrix
 

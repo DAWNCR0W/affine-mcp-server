@@ -37,6 +37,7 @@
     "test:cli-commands": "node tests/test-cli-commands.mjs",
     "test:cli-live": "node tests/test-cli-live.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
+    "test:docs": "node scripts/verify-docs.mjs && node tests/test-docs-drift.mjs",
     "test:tool-filtering": "node tests/test-tool-filtering.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
@@ -73,7 +74,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
+    "ci": "npm run build && npm run test:tool-manifest && npm run test:docs && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [
@@ -81,6 +82,9 @@
     "dist",
     "docs",
     "README.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "RELEASE_NOTES.md",
     "SECURITY.md",
     "glama.json",
     "tool-manifest.json",

@@ -228,6 +228,7 @@ Run the main quality gates before opening a PR:
 ```bash
 npm run build
 npm run test:tool-manifest
+npm run test:docs
 npm run pack:check
 ```
 
