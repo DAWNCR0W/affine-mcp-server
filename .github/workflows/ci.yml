@@ -35,5 +35,8 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify secure identifier generation
+        run: npm run test:secure-random
+
       - name: Check package contents
         run: npm run pack:check

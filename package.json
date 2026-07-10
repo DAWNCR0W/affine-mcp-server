@@ -38,6 +38,7 @@
     "test:cli-live": "node tests/test-cli-live.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
     "test:tool-filtering": "node tests/test-tool-filtering.mjs",
+    "test:secure-random": "node tests/test-secure-random.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
@@ -73,7 +74,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:tool-manifest && npm run pack:check",
+    "ci": "npm run build && npm run test:tool-manifest && npm run test:secure-random && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [
