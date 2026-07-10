@@ -46,6 +46,10 @@ for (const tool of listed.tools) {
 }
 
 const columnResult = await client.callTool({ name: "add_database_column", arguments: {} });
+assert.deepEqual(columnResult.content, [{
+  type: "text",
+  text: '{"added":true,"columnId":"col-1","name":"Status","type":"select"}',
+}]);
 assert.deepEqual(columnResult.structuredContent, {
   added: true,
   columnId: "col-1",
@@ -54,6 +58,10 @@ assert.deepEqual(columnResult.structuredContent, {
 });
 
 const listResult = await client.callTool({ name: "list_docs", arguments: {} });
+assert.deepEqual(listResult.content, [{
+  type: "text",
+  text: '[{"id":"doc-1","title":"Example"}]',
+}]);
 assert.deepEqual(listResult.structuredContent, { items: [{ id: "doc-1", title: "Example" }] });
 
 await client.close();

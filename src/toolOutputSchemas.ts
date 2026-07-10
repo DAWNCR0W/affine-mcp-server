@@ -20,7 +20,10 @@ type OutputSpec = {
   optional?: boolean;
 };
 
+/** Builds a top-level tool output specification. */
 const spec = (fields: OutputSpec["fields"], optional = false): OutputSpec => ({ fields, optional });
+
+/** Builds the shared mutation-receipt fields plus tool-specific fields. */
 const receipt = (fields: OutputSpec["fields"], optional = false): OutputSpec =>
   spec({ kind: "string", ok: "boolean", ...fields }, optional);
 
@@ -128,6 +131,7 @@ const OUTPUT_SPECS = {
   upload_blob: spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", size: "number", uploadedAt: "string", error: "string" }, true),
 } satisfies Record<ToolName, OutputSpec>;
 
+/** Converts a compact field kind into its runtime Zod schema. */
 function fieldSchema(kind: FieldKind): ZodTypeAny {
   switch (kind) {
     case "string": return z.string();
@@ -146,9 +150,14 @@ function fieldSchema(kind: FieldKind): ZodTypeAny {
       z.null(),
     ]);
     case "unknown": return z.unknown();
+    default: {
+      const exhaustive: never = kind;
+      throw new Error(`Unhandled FieldKind: ${exhaustive}`);
+    }
   }
 }
 
+/** Returns the declared structured-result schema for a canonical MCP tool. */
 export function toolOutputSchemaFor(name: string): ZodTypeAny | undefined {
   const outputSpec = OUTPUT_SPECS[name as ToolName];
   if (!outputSpec) return undefined;
