@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { parseMarkdownToOperations } from '../dist/markdown/parse.js';
 import {
+  blobSourceIdToUrl,
   isSafeBlobSourceIdInput,
   isSafeIframeUrlInput,
   isSafeUrlInput,
@@ -18,6 +19,7 @@ function testBookmarkSchemesAndInternalBlobUrls() {
     'mailto:test@example.com',
     'tel:+12025550123',
     'affine://blob/fake-source-id',
+    'affine://doc/document-id',
   ];
   for (const url of allowed) {
     assert.equal(normalizeBlockUrl(`  ${url}  `, 'bookmark'), url);
@@ -31,20 +33,25 @@ function testBookmarkSchemesAndInternalBlobUrls() {
     'data:text/html,<script>alert(1)</script>',
     'file:///etc/passwd',
     'ftp://example.com/file',
+    'mailto:test@example.com?body=%0aInjected',
     'https://user:password@example.com',
     'https:\\example.com\\path',
     'https://example.com\n.evil.test',
     'https://example.com\u0000.evil.test',
     'https://example.com\u2028.evil.test',
-    'affine://doc/document-id',
     'affine://blob/',
     'affine://blob/fake-source-id?download=1',
-    'affine://blob/fake%2Fsource',
   ];
   for (const url of rejected) {
     assert.throws(() => normalizeBlockUrl(url, 'bookmark'), undefined, url);
     assert.equal(isSafeUrlInput(url), false, url);
   }
+
+  assert.equal(normalizeBlockUrl('affine://blob/%66oo', 'bookmark'), 'affine://blob/foo');
+  assert.equal(
+    normalizeBlockUrl('affine://blob/Folder%2FMy%20image%20(1).png', 'bookmark'),
+    'affine://blob/Folder%2FMy%20image%20(1).png',
+  );
 }
 
 function testProviderSpecificHosts() {
@@ -59,6 +66,10 @@ function testProviderSpecificHosts() {
   for (const [type, url] of accepted) {
     assert.equal(normalizeBlockUrl(url, type), url, `${type}: ${url}`);
   }
+  assert.equal(
+    normalizeBlockUrl('HTTPS://%79outube.com./a/%2e%2e/watch?v=video-id', 'embed_youtube'),
+    'https://youtube.com/watch?v=video-id',
+  );
 
   const rejected = [
     ['embed_youtube', 'http://www.youtube.com/watch?v=video-id'],
@@ -92,6 +103,7 @@ function testIframePolicyAndOverride() {
     'affine://blob/fake-source-id',
     'https://user:password@example.com/embed',
     'https://example.com\n.evil.test/embed',
+    'https://example.com/%0aevil',
   ]) {
     assert.throws(() => normalizeBlockUrl(url, 'embed_iframe', 'iframeUrl'), undefined, url);
     assert.equal(isSafeIframeUrlInput(url), false, url);
@@ -105,31 +117,37 @@ function testIframePolicyAndOverride() {
 }
 
 function testOpaqueBlobSourceIds() {
-  for (const sourceId of ['fake-source-id', 'template-attachment-source', '_blob.key~123']) {
-    assert.equal(normalizeBlobSourceId(` ${sourceId} `), sourceId);
+  for (const sourceId of [
+    'fake-source-id',
+    'template-attachment-source',
+    '_blob.key~123',
+    'Folder/My image (1).png',
+    'https://example.com/image.png',
+    ' blob key ',
+  ]) {
+    assert.equal(normalizeBlobSourceId(sourceId), sourceId);
     assert.equal(isSafeBlobSourceIdInput(sourceId), true);
   }
 
   for (const sourceId of [
-    'javascript:alert(1)',
-    'https://example.com/image.png',
-    'data:image/png;base64,abc',
-    '../blob',
-    'folder/blob',
-    'blob\\key',
-    'blob key',
     'blob\nkey',
-    '.',
-    '..',
+    'x'.repeat(2_049),
   ]) {
     assert.throws(() => normalizeBlobSourceId(sourceId), undefined, sourceId);
     assert.equal(isSafeBlobSourceIdInput(sourceId), false, sourceId);
   }
+  assert.equal(normalizeBlobSourceId('   '), '');
+  assert.equal(isSafeBlobSourceIdInput('   '), false);
 
-  assert.throws(() => normalizeUrlBearingBlockFields({
+  const opaqueUrlShapedKey = normalizeUrlBearingBlockFields({
     type: 'attachment',
     sourceId: 'file:///tmp/payload',
-  }));
+  });
+  assert.equal(opaqueUrlShapedKey.sourceId, 'file:///tmp/payload');
+  assert.equal(
+    blobSourceIdToUrl('Folder/My image (1).png'),
+    'affine://blob/Folder%2FMy%20image%20(1).png',
+  );
 }
 
 function testRuntimeNormalizationAndMarkdownImportPath() {
@@ -150,6 +168,13 @@ function testRuntimeNormalizationAndMarkdownImportPath() {
     type: affineImage.operations[0].type,
     url: affineImage.operations[0].url,
   }).url, 'affine://blob/fake-source-id');
+
+  const internalDoc = parseMarkdownToOperations('[Internal doc](affine://doc/document-id)');
+  assert.equal(internalDoc.operations[0]?.type, 'bookmark');
+  assert.equal(normalizeUrlBearingBlockFields({
+    type: internalDoc.operations[0].type,
+    url: internalDoc.operations[0].url,
+  }).url, 'affine://doc/document-id');
 
   const dataImage = parseMarkdownToOperations('![image](data:image/png;base64,abc)');
   assert.equal(dataImage.operations[0]?.type, 'bookmark');

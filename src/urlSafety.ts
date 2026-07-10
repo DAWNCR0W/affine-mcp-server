@@ -1,7 +1,5 @@
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
-// upload_blob returns an opaque id/key, and Markdown export represents that
-// exact key as affine://blob/<key>. It is not an arbitrary external URL.
-const BLOB_SOURCE_ID = /^[A-Za-z0-9._~-]+$/;
+const MAX_OPAQUE_ID_LENGTH = 2_048;
 
 export const URL_BEARING_BLOCK_TYPES = [
   "bookmark",
@@ -50,6 +48,16 @@ function assertNoControlCharacters(value: string, field: string): void {
   }
 }
 
+function assertNoEncodedControlCharacters(value: string, field: string): void {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new Error(`${field} must use valid percent encoding.`);
+  }
+  assertNoControlCharacters(decoded, field);
+}
+
 function parseAbsoluteUrl(value: string, field: string): URL {
   let parsed: URL;
   try {
@@ -68,7 +76,7 @@ function normalizedHostname(url: URL): string {
   return url.hostname.toLowerCase().replace(/\.$/, "");
 }
 
-function assertCanonicalWebUrl(value: string, parsed: URL, field: string): void {
+function canonicalWebUrl(value: string, parsed: URL, field: string): string {
   if (value.includes("\\")) {
     throw new Error(`${field} must not contain backslashes.`);
   }
@@ -78,6 +86,8 @@ function assertCanonicalWebUrl(value: string, parsed: URL, field: string): void 
   if (!parsed.hostname) {
     throw new Error(`${field} must include a hostname.`);
   }
+  parsed.hostname = normalizedHostname(parsed);
+  return parsed.href;
 }
 
 export function normalizeBlobSourceId(
@@ -86,42 +96,47 @@ export function normalizeBlobSourceId(
 ): string {
   const raw = value ?? "";
   assertNoControlCharacters(raw, `${blockType} sourceId`);
-  const normalized = raw.trim();
-  if (!normalized) {
+  if (!raw.trim()) {
     return "";
   }
-  if (
-    normalized === "." ||
-    normalized === ".." ||
-    normalized.length > 2048 ||
-    !BLOB_SOURCE_ID.test(normalized)
-  ) {
-    throw new Error(`${blockType} sourceId must be an opaque AFFiNE blob key, not a URL or path.`);
+  if (raw.length > MAX_OPAQUE_ID_LENGTH) {
+    throw new Error(`${blockType} sourceId must not exceed ${MAX_OPAQUE_ID_LENGTH} characters.`);
   }
-  return normalized;
+  return raw;
 }
 
-function assertAffineBlobUrl(parsed: URL, field: string): void {
+function canonicalAffineInternalUrl(parsed: URL, field: string): string {
+  const kind = normalizedHostname(parsed);
   if (
     parsed.username ||
     parsed.password ||
     parsed.port ||
-    normalizedHostname(parsed) !== "blob" ||
+    (kind !== "blob" && kind !== "doc") ||
     parsed.search ||
     parsed.hash
   ) {
-    throw new Error(`${field} only supports AFFiNE internal URLs in the form affine://blob/<key>.`);
+    throw new Error(`${field} only supports AFFiNE internal URLs in the form affine://blob/<key> or affine://doc/<id>.`);
   }
 
-  let blobKey: string;
+  let identifier: string;
   try {
-    blobKey = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+    identifier = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
   } catch {
-    throw new Error(`${field} contains an invalid AFFiNE blob key encoding.`);
+    throw new Error(`${field} contains invalid AFFiNE identifier encoding.`);
   }
-  if (!normalizeBlobSourceId(blobKey, "image")) {
-    throw new Error(`${field} must include an AFFiNE blob key.`);
+  const normalizedIdentifier = normalizeBlobSourceId(identifier, "image");
+  if (!normalizedIdentifier) {
+    throw new Error(`${field} must include an AFFiNE identifier.`);
   }
+  return `affine://${kind}/${encodeURIComponent(normalizedIdentifier)}`;
+}
+
+export function blobSourceIdToUrl(value: string): string {
+  const key = normalizeBlobSourceId(value, "image");
+  if (!key) {
+    throw new Error("image sourceId must include an AFFiNE blob key.");
+  }
+  return `affine://blob/${encodeURIComponent(key)}`;
 }
 
 export function normalizeBlockUrl(
@@ -136,6 +151,7 @@ export function normalizeBlockUrl(
   if (!normalized) {
     return "";
   }
+  assertNoEncodedControlCharacters(normalized, fieldLabel);
 
   const policy = field === "iframeUrl" ? "iframe" : POLICY_BY_BLOCK_TYPE[blockType];
   const parsed = parseAbsoluteUrl(normalized, fieldLabel);
@@ -143,26 +159,24 @@ export function normalizeBlockUrl(
 
   if (policy === "bookmark") {
     if (protocol === "affine:") {
-      assertAffineBlobUrl(parsed, fieldLabel);
-      return normalized;
+      return canonicalAffineInternalUrl(parsed, fieldLabel);
     }
     if (protocol === "http:" || protocol === "https:") {
-      assertCanonicalWebUrl(normalized, parsed, fieldLabel);
-      return normalized;
+      return canonicalWebUrl(normalized, parsed, fieldLabel);
     }
     if (protocol === "mailto:" || protocol === "tel:") {
-      return normalized;
+      return parsed.href;
     }
-    throw new Error(`${fieldLabel} must use http, https, mailto, tel, or affine://blob.`);
+    throw new Error(`${fieldLabel} must use http, https, mailto, tel, affine://blob, or affine://doc.`);
   }
 
   if (protocol !== "http:" && protocol !== "https:") {
     throw new Error(`${fieldLabel} must use http or https.`);
   }
-  assertCanonicalWebUrl(normalized, parsed, fieldLabel);
+  const canonical = canonicalWebUrl(normalized, parsed, fieldLabel);
 
   if (policy === "iframe") {
-    return normalized;
+    return canonical;
   }
 
   if (protocol !== "https:") {
@@ -175,7 +189,7 @@ export function normalizeBlockUrl(
   if (!allowedHosts.has(normalizedHostname(parsed))) {
     throw new Error(`${fieldLabel} must use an official ${policy} host.`);
   }
-  return normalized;
+  return canonical;
 }
 
 export function normalizeUrlBearingBlockFields(input: {
@@ -208,13 +222,19 @@ function accepts(value: () => unknown): boolean {
 }
 
 export function isSafeUrlInput(value: string): boolean {
-  return accepts(() => normalizeBlockUrl(value, "bookmark"));
+  return accepts(() => {
+    if (!normalizeBlockUrl(value, "bookmark")) throw new Error("url is empty");
+  });
 }
 
 export function isSafeIframeUrlInput(value: string): boolean {
-  return accepts(() => normalizeBlockUrl(value, "embed_iframe", "iframeUrl"));
+  return accepts(() => {
+    if (!normalizeBlockUrl(value, "embed_iframe", "iframeUrl")) throw new Error("iframeUrl is empty");
+  });
 }
 
 export function isSafeBlobSourceIdInput(value: string): boolean {
-  return accepts(() => normalizeBlobSourceId(value));
+  return accepts(() => {
+    if (!normalizeBlobSourceId(value)) throw new Error("sourceId is empty");
+  });
 }

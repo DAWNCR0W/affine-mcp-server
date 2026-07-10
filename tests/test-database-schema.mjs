@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for database schema discovery on empty databases.
  *
@@ -58,7 +60,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-noconfig',
+      XDG_CONFIG_HOME: testTempPath('database-schema-config'),
     },
     stderr: 'pipe',
   });
@@ -95,7 +97,7 @@ async function main() {
       throw new Error('Expected tool "read_database_columns" to be registered');
     }
 
-    const workspace = await call('create_workspace', { name: `db-schema-test-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('db-schema-test') });
     const workspaceId = workspace?.id;
     if (!workspaceId) throw new Error('create_workspace did not return workspace id');
 

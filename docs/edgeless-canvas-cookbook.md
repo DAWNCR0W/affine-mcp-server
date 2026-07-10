@@ -188,12 +188,17 @@ From the repo root with Docker available:
 
 ```bash
 . tests/generate-test-env.sh
-docker compose -f docker/docker-compose.yml up -d
+docker compose --env-file "$AFFINE_TEST_ENV_FILE" -p "affine_mcp_cookbook_$$" -f docker/docker-compose.yml up -d
 node tests/acquire-credentials.mjs
 npm run build
 ```
 
 Then drop the calls above into a Node script that opens a `StdioClientTransport` against `dist/index.js` — `tests/test-canvas-tool-map-demo.mjs` is a complete example of the client wiring, minus the auth-flow content. The script prints the seeded doc URL; open it in a browser, switch to edgeless mode (icon next to the doc title), and the frame + its five owned elements select and drag as one.
+
+The live example is destructive and is loopback-only by default. See the
+live-test safety section in `CONTRIBUTING.md` before using any non-loopback
+disposable target. Remove the Compose project and the generated private env
+file when the manual run is complete.
 
 ## Advanced: the tool-map showcase
 
