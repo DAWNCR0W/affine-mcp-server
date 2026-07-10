@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /** End-to-end test for `stackAfter` in all four directions: asserts the stack axis
  *  advances correctly with gap ≥ caller-provided, and the orthogonal axis stays
  *  centered on the anchor's center. */
@@ -29,7 +31,7 @@ const transport = new StdioClientTransport({
     AFFINE_EMAIL: EMAIL,
     AFFINE_PASSWORD: PASSWORD,
     AFFINE_LOGIN_AT_START: "sync",
-    XDG_CONFIG_HOME: "/tmp/affine-mcp-stack-after-directions",
+    XDG_CONFIG_HOME: testTempPath('stack-after-directions-config'),
   },
   stderr: "pipe",
 });
@@ -50,7 +52,7 @@ const ROOT = { x: 2000, y: 2000, w: 400, h: 200 };
 
 await client.connect(transport);
 try {
-  const ws = await call("create_workspace", { name: `affine-stack-directions-${Date.now()}` });
+  const ws = await call("create_workspace", { name: testResourceName('affine-stack-directions') });
   const { docId } = await call("create_doc", { workspaceId: ws.id, title: "stackAfter directions" });
   const W = ws.id, D = docId;
 

@@ -1,7 +1,76 @@
 import { fetch } from "undici";
+
+import type { AuthSnapshot } from "./authSession.js";
 import { VERSION } from "./config.js";
 
 const GQL_FETCH_TIMEOUT_MS = 30_000;
+
+export type ConnectionAuth = {
+  bearer: string;
+  cookie: string;
+  endpoint: string;
+  headers: Record<string, string>;
+};
+
+type GraphQLClientOptions = {
+  authProvider?: () => Promise<AuthSnapshot>;
+  bearer?: string;
+  endpoint: string;
+  headers?: Record<string, string>;
+};
+
+function isAuthenticationHeader(name: string): boolean {
+  return /^(authorization|cookie)$/i.test(name);
+}
+
+function findHeader(headers: Record<string, string>, name: string): string | undefined {
+  let found: string | undefined;
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === name.toLowerCase()) found = value;
+  }
+  return found;
+}
+
+function withoutAuthenticationHeaders(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) => !isAuthenticationHeader(name)),
+  );
+}
+
+function bearerFromHeader(value: string): string {
+  if (/[\r\n]/.test(value)) {
+    throw new Error("Authorization header contains illegal CR/LF characters");
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(value);
+  if (!match) throw new Error("Authorization header must use the Bearer scheme");
+  return match[1];
+}
+
+function validateAuthSnapshot(snapshot: AuthSnapshot): AuthSnapshot {
+  if (snapshot.kind === "bearer") {
+    if (/[\r\n]/.test(snapshot.token)) {
+      throw new Error("Bearer token contains illegal CR/LF characters");
+    }
+    if (!snapshot.token.trim()) throw new Error("Bearer token must not be empty");
+  }
+  if (snapshot.kind === "cookie") {
+    if (/[\r\n]/.test(snapshot.cookie)) {
+      throw new Error("Cookie header contains illegal CR/LF characters");
+    }
+    if (!snapshot.cookie.trim()) throw new Error("Cookie header must not be empty");
+  }
+  return snapshot;
+}
+
+function authHeaders(snapshot: AuthSnapshot): Record<string, string> {
+  if (snapshot.kind === "bearer") {
+    return { Authorization: `Bearer ${snapshot.token}` };
+  }
+  if (snapshot.kind === "cookie") {
+    return { Cookie: snapshot.cookie };
+  }
+  return {};
+}
 
 /** Strip HTML tags and truncate to a safe length for error messages. */
 function sanitizeErrorBody(s: string, max = 200): string {
@@ -10,66 +79,111 @@ function sanitizeErrorBody(s: string, max = 200): string {
 }
 
 export class GraphQLClient {
-  private _headers: Record<string, string>;
-  private authenticated: boolean = false;
+  private readonly baseHeaders: Record<string, string>;
+  private readonly authProvider?: () => Promise<AuthSnapshot>;
+  private authResolution?: Promise<AuthSnapshot>;
+  private resolvedAuth: AuthSnapshot = { kind: "none" };
+  private authOverride?: AuthSnapshot;
 
-  constructor(private opts: { endpoint: string; headers?: Record<string, string>; bearer?: string }) {
-    this._headers = { ...(opts.headers || {}) };
+  constructor(private readonly opts: GraphQLClientOptions) {
+    const sourceHeaders = { ...(opts.headers || {}) };
+    this.baseHeaders = withoutAuthenticationHeaders(sourceHeaders);
+    this.authProvider = opts.authProvider;
 
-    // Set authentication in priority order
+    const authorization = findHeader(sourceHeaders, "authorization");
+    const cookie = findHeader(sourceHeaders, "cookie");
     if (opts.bearer) {
-      this._headers["Authorization"] = `Bearer ${opts.bearer}`;
-      this.authenticated = true;
-      console.error("Using Bearer token authentication");
-    } else if (this._headers.Cookie) {
-      this.authenticated = true;
-      console.error("Using Cookie authentication");
+      this.resolvedAuth = validateAuthSnapshot({ kind: "bearer", token: opts.bearer });
+    } else if (authorization !== undefined) {
+      this.resolvedAuth = validateAuthSnapshot({
+        kind: "bearer",
+        token: bearerFromHeader(authorization),
+      });
+    } else if (cookie !== undefined) {
+      this.resolvedAuth = validateAuthSnapshot({ kind: "cookie", cookie });
     }
   }
 
-  /** The GraphQL endpoint URL */
+  /** The GraphQL endpoint URL. */
   get endpoint(): string {
     return this.opts.endpoint;
   }
 
-  /** Current request headers (including auth) */
+  /** Synchronous snapshot for compatibility. Async consumers must use getConnectionAuth(). */
   get headers(): Record<string, string> {
-    return { ...this._headers };
+    const snapshot = this.authOverride || this.resolvedAuth;
+    return { ...this.baseHeaders, ...authHeaders(snapshot) };
   }
 
-  /** Cookie header value, if set */
   get cookie(): string {
-    return this._headers["Cookie"] || "";
+    const snapshot = this.authOverride || this.resolvedAuth;
+    return snapshot.kind === "cookie" ? snapshot.cookie : "";
   }
 
-  /** Bearer token, if set */
   get bearer(): string {
-    const auth = this._headers["Authorization"] || "";
-    return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    const snapshot = this.authOverride || this.resolvedAuth;
+    return snapshot.kind === "bearer" ? snapshot.token : "";
   }
 
   setHeaders(next: Record<string, string>) {
-    this._headers = { ...this._headers, ...next };
+    const authorization = findHeader(next, "authorization");
+    const cookie = findHeader(next, "cookie");
+    Object.assign(this.baseHeaders, withoutAuthenticationHeaders(next));
+
+    if (authorization !== undefined) {
+      this.setBearer(bearerFromHeader(authorization));
+    } else if (cookie !== undefined) {
+      this.setCookie(cookie);
+    }
   }
 
   setCookie(cookieHeader: string) {
-    if (/[\r\n]/.test(cookieHeader)) {
-      throw new Error("Cookie header contains illegal CR/LF characters");
-    }
-    this._headers["Cookie"] = cookieHeader;
-    this.authenticated = true;
+    this.authOverride = validateAuthSnapshot({ kind: "cookie", cookie: cookieHeader });
     console.error("Session cookies set from email/password login");
   }
 
+  setBearer(token: string) {
+    this.authOverride = validateAuthSnapshot({ kind: "bearer", token });
+    console.error("Using Bearer token authentication");
+  }
+
   isAuthenticated(): boolean {
-    return this.authenticated;
+    return (this.authOverride || this.resolvedAuth).kind !== "none";
+  }
+
+  private resolveAuth(): Promise<AuthSnapshot> {
+    if (this.authOverride) return Promise.resolve(this.authOverride);
+    if (!this.authProvider) return Promise.resolve(this.resolvedAuth);
+    if (!this.authResolution) {
+      this.authResolution = this.authProvider().then((snapshot) => {
+        const provided = validateAuthSnapshot(snapshot);
+        if (provided.kind !== "none" || this.resolvedAuth.kind === "none") {
+          this.resolvedAuth = provided;
+        }
+        return this.resolvedAuth;
+      });
+    }
+    return this.authResolution;
+  }
+
+  /** Await authentication and return one normalized credential set for HTTP or WebSocket consumers. */
+  async getConnectionAuth(): Promise<ConnectionAuth> {
+    const snapshot = this.authOverride || await this.resolveAuth();
+    const headers = { ...this.baseHeaders, ...authHeaders(snapshot) };
+    return {
+      bearer: snapshot.kind === "bearer" ? snapshot.token : "",
+      cookie: snapshot.kind === "cookie" ? snapshot.cookie : "",
+      endpoint: this.opts.endpoint,
+      headers,
+    };
   }
 
   async request<T>(query: string, variables?: Record<string, any>): Promise<T> {
+    const connection = await this.getConnectionAuth();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "User-Agent": `affine-mcp-server/${VERSION}`,
-      ...this._headers,
+      ...connection.headers,
     };
 
     const controller = new AbortController();
@@ -83,35 +197,33 @@ export class GraphQLClient {
         signal: controller.signal,
       });
     } catch (err: any) {
-      if (err.name === "AbortError") throw new Error(`GraphQL request timed out after ${GQL_FETCH_TIMEOUT_MS / 1000}s`);
+      if (err.name === "AbortError") {
+        throw new Error(`GraphQL request timed out after ${GQL_FETCH_TIMEOUT_MS / 1000}s`);
+      }
       throw err;
     } finally {
       clearTimeout(timer);
     }
 
-    // Handle redirects (undici may follow them but strip auth headers)
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       throw new Error(
         `GraphQL endpoint returned redirect ${res.status} -> ${location || "(no location)"}. ` +
-        `Check AFFINE_BASE_URL.`
+        "Check AFFINE_BASE_URL.",
       );
     }
 
     const contentType = res.headers.get("content-type") || "";
-
-    // Guard against non-JSON responses (Cloudflare challenges, HTML error pages)
     if (!contentType.includes("application/json") && !contentType.includes("application/graphql")) {
       const body = await res.text();
       const snippet = sanitizeErrorBody(body);
       throw new Error(
         `GraphQL endpoint returned non-JSON response (${res.status} ${res.statusText}, ` +
-        `Content-Type: ${contentType || "(none)"}). Body: ${snippet}`
+        `Content-Type: ${contentType || "(none)"}). Body: ${snippet}`,
       );
     }
 
     if (!res.ok) {
-      // Try to parse error body as JSON
       let body: string;
       try {
         const json = await res.json() as any;

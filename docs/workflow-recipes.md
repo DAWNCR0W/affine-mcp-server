@@ -1,5 +1,16 @@
 # Workflow Recipes
 
+## Destructive confirmations
+
+Permanent destructive tools require callers to repeat the target identifier so a stale or incorrectly selected resource cannot be deleted accidentally:
+
+- `delete_doc`: pass `confirmDocId` equal to `docId`
+- `delete_workspace`: pass `confirmWorkspaceId` equal to `id`
+- `delete_blob` with `permanently: true`: pass `confirmKey` equal to `key`
+- `cleanup_blobs`: pass `confirmWorkspaceId` equal to `workspaceId`
+
+Read or list the target immediately before deletion and never reuse a confirmation value for a different resource.
+
 This guide shows practical tool sequences for common AFFiNE workflows.
 
 The exact JSON schema for each tool is discoverable from MCP `tools/list`. The recipes below focus on tool selection and ordering.

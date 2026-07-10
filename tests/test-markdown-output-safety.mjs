@@ -74,6 +74,37 @@ function testYamlFrontmatterEscaping() {
   assert.match(emptyTags, /tags: \[\]\nlossy: false/);
 }
 
+function testExportedFrontmatterDoesNotBecomeImportedBody() {
+  const body = renderSingleBlock(markdownBlock({
+    type: 'h2',
+    text: 'Safe copied heading',
+  })).markdown;
+  const frontmatter = buildMarkdownFrontmatter({
+    docId: 'doc\n---\n# injected',
+    title: 'Title\n---\n- injected',
+    tags: ['tag\n# injected'],
+    lossy: false,
+  });
+  const parsed = parseMarkdownToOperations(`${frontmatter}\n\n${body}`);
+
+  assert.equal(parsed.operations.length, 1);
+  assert.equal(parsed.operations[0]?.type, 'heading');
+  assert.equal(parsed.operations[0]?.level, 2);
+  assert.equal(parsed.operations[0]?.text, 'Safe copied heading');
+  assert.equal(parsed.lossy, false);
+
+  const ordinaryRule = parseMarkdownToOperations('---\n\nBody without a closing frontmatter delimiter');
+  assert.deepEqual(ordinaryRule.operations.map(operation => operation.type), ['divider', 'paragraph']);
+
+  const ordinaryDelimitedBody = parseMarkdownToOperations('---\nFirst section\n---\nSecond section');
+  assert.deepEqual(
+    ordinaryDelimitedBody.operations.map(operation => operation.type),
+    ['divider', 'heading', 'paragraph'],
+  );
+  assert.equal(ordinaryDelimitedBody.operations[1]?.text, 'First section');
+  assert.equal(ordinaryDelimitedBody.operations[2]?.text, 'Second section');
+}
+
 function testCodeFenceSelectionAndRoundTrip() {
   assert.deepEqual(renderFencedCodeBlock('const ok = true;', 'ts'), [
     '``` ts',
@@ -317,6 +348,7 @@ function testUnsupportedPlaceholderCannotCloseItsComment() {
 }
 
 testYamlFrontmatterEscaping();
+testExportedFrontmatterDoesNotBecomeImportedBody();
 testCodeFenceSelectionAndRoundTrip();
 testLinkEscapingAndUnsafeSchemes();
 testPlainAndDeltaTextCannotInjectBlocks();

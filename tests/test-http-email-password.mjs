@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for HTTP transport using AFFiNE email/password auth.
  *
@@ -83,7 +85,7 @@ async function startEmailPasswordHttpServer() {
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
       AFFINE_MCP_HTTP_HOST: "127.0.0.1",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-http-email-password-server-noconfig",
+      XDG_CONFIG_HOME: testTempPath('http-email-password-server-config'),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

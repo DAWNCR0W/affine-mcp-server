@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /** Executes the auth-flow scene from docs/edgeless-canvas-cookbook.md end-to-end
  *  and asserts the cookbook's claims: connector auto-snap + labelXYWH seeding,
  *  frame auto-size via childElementIds, update_frame_children (resizeToFit true/false),
@@ -19,7 +21,7 @@ if (!BASE || !EMAIL || !PASSWORD) {
   console.error("Set AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL, AFFINE_ADMIN_PASSWORD first.");
   console.error("Typical flow (from repo root):");
   console.error("  . tests/generate-test-env.sh");
-  console.error("  docker compose -f docker/docker-compose.yml up -d");
+  console.error('  docker compose --env-file "$AFFINE_TEST_ENV_FILE" -p "affine_mcp_manual_$$" -f docker/docker-compose.yml up -d');
   console.error("  node tests/acquire-credentials.mjs");
   console.error("  node tests/test-edgeless-canvas-cookbook.mjs");
   process.exit(1);
@@ -35,7 +37,7 @@ const transport = new StdioClientTransport({
     AFFINE_EMAIL: EMAIL,
     AFFINE_PASSWORD: PASSWORD,
     AFFINE_LOGIN_AT_START: "sync",
-    XDG_CONFIG_HOME: "/tmp/affine-mcp-cookbook-auth-flow",
+    XDG_CONFIG_HOME: testTempPath('cookbook-auth-flow-config'),
   },
   stderr: "pipe",
 });
@@ -60,7 +62,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(`ASSERTION FAILED: ${
 await client.connect(transport);
 try {
   // ────────────── §1 Fresh doc ──────────────
-  const ws = await call("create_workspace", { name: `affine-mcp-cookbook-${Date.now()}` });
+  const ws = await call("create_workspace", { name: testResourceName('affine-mcp-cookbook') });
   const W = ws.id;
   const { docId: D } = await call("create_doc", {
     workspaceId: W,
