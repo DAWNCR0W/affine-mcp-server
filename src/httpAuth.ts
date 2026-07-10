@@ -97,7 +97,7 @@ export function createHttpAuthState(
         return;
       }
 
-      if (typeof req.query.token === "string") {
+      if (req.query.token !== undefined) {
         res.set("WWW-Authenticate", buildWwwAuthenticateHeader(protectedResourceMetadataUrl, {
           error: "invalid_request",
           errorDescription: "Query parameter token is not allowed in oauth mode.",

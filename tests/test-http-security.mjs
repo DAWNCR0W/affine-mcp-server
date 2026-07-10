@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { validateBaseUrl } from "../src/config.ts";
+import { createHttpAuthState } from "../src/httpAuth.ts";
 import {
   isLoopbackHostname,
   isRemotePlainHttpUrl,
@@ -178,6 +179,78 @@ async function readJson(response) {
   }
 }
 
+function invokeAuthMiddleware(state, query) {
+  let nextCalled = false;
+  const response = {
+    statusCode: 200,
+    body: undefined,
+    headers: {},
+    set(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+      return this;
+    },
+    status(statusCode) {
+      this.statusCode = statusCode;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
+    },
+    send(body) {
+      this.body = body;
+      return this;
+    },
+  };
+
+  state.authMiddleware(
+    { method: "GET", query, headers: {} },
+    response,
+    () => { nextCalled = true; },
+  );
+  return { nextCalled, response };
+}
+
+function testQueryTokenShapeRejection() {
+  const commonConfig = {
+    baseUrl: "http://127.0.0.1:3010",
+    graphqlPath: "/graphql",
+    oauthScopes: ["mcp"],
+    oauthClockSkewSeconds: 60,
+  };
+  const oauth = createHttpAuthState(
+    {
+      ...commonConfig,
+      authMode: "oauth",
+      publicBaseUrl: "http://127.0.0.1:3100",
+      oauthIssuerUrl: "http://127.0.0.1:3200",
+    },
+    { allowAnyOrigin: false },
+  );
+  const bearer = createHttpAuthState(
+    { ...commonConfig, authMode: "bearer" },
+    {
+      allowAnyOrigin: false,
+      allowQueryToken: false,
+      httpAuthToken: "static-test-token",
+    },
+  );
+
+  const queryTokenShapes = [
+    ["string", "one"],
+    ["duplicate/array", ["one", "two"]],
+    ["object", { value: "one" }],
+  ];
+  for (const [label, token] of queryTokenShapes) {
+    for (const [mode, state] of [["oauth", oauth], ["bearer", bearer]]) {
+      const { nextCalled, response } = invokeAuthMiddleware(state, { token });
+      assertEqual(response.statusCode, 400, `${mode} ${label} query token status`);
+      assertEqual(response.body?.error, "invalid_request", `${mode} ${label} query token error`);
+      assertEqual(nextCalled, false, `${mode} ${label} query token must not call next`);
+    }
+  }
+}
+
 async function testNetworkPolicyHelpers() {
   const loopbackHosts = ["localhost", "LOCALHOST", "127.0.0.1", "127.255.255.255", "::1", "[::1]"];
   for (const host of loopbackHosts) {
@@ -305,6 +378,7 @@ async function testBearerTokenPolicy() {
 
 async function main() {
   assert(existsSync(SERVER_PATH), "dist/index.js is missing; run npm run build first");
+  testQueryTokenShapeRejection();
   await testNetworkPolicyHelpers();
   await testRemoteBindPolicy();
   await testBearerTokenPolicy();
