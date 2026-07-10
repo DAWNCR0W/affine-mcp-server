@@ -3,6 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text } from "../util/mcp.js";
+import {
+  isSafeBlobSourceIdInput,
+  isSafeIframeUrlInput,
+  isSafeUrlInput,
+  normalizeUrlBearingBlockFields,
+} from "../urlSafety.js";
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
@@ -1116,11 +1122,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (!normalized.url) {
         throw new Error(`${normalized.type} blocks require a non-empty url.`);
       }
-      try {
-        new URL(normalized.url);
-      } catch {
-        throw new Error(`Invalid url for ${normalized.type} block: '${normalized.url}'.`);
-      }
     }
 
     if (normalized.type === "bookmark") {
@@ -1249,9 +1250,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const dataViewMode = parsed.viewMode ?? (typeInfo.type === "data_view" ? "kanban" : "table");
     const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
     const placement = normalizePlacement(parsed.placement);
-    const url = (parsed.url ?? "").trim();
+    const { url, iframeUrl, sourceId } = normalizeUrlBearingBlockFields({
+      type: typeInfo.type,
+      url: parsed.url,
+      iframeUrl: parsed.iframeUrl,
+      sourceId: parsed.sourceId,
+    });
     const pageId = (parsed.pageId ?? "").trim();
-    const iframeUrl = (parsed.iframeUrl ?? "").trim();
     const html = parsed.html ?? "";
     const design = parsed.design ?? "";
     const reference = (parsed.reference ?? "").trim();
@@ -1271,7 +1276,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       typeof parsed.background === "string"
         ? (parsed.background.trim() || "transparent")
         : (parsed.background && typeof parsed.background === "object" ? parsed.background : "transparent");
-    const sourceId = (parsed.sourceId ?? "").trim();
     const name = (parsed.name ?? "attachment").trim() || "attachment";
     const mimeType = (parsed.mimeType ?? "application/octet-stream").trim() || "application/octet-stream";
     const size = Number.isFinite(parsed.size) ? Math.max(0, Math.floor(parsed.size as number)) : 0;
@@ -5351,9 +5355,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId,
         type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe|database|data_view|surface_ref|frame|edgeless_text|note. Legacy aliases remain supported."),
         text: z.string().optional().describe("Block content text"),
-        url: z.string().optional().describe("URL for bookmark/embeds"),
+        url: z.string()
+          .refine(isSafeUrlInput, "url must be a safe absolute URL without control characters or embedded credentials")
+          .optional()
+          .describe("URL for bookmark/embeds. Runtime validation also enforces provider-specific hosts."),
         pageId: z.string().optional().describe("Target page/doc id for linked/synced doc embeds"),
-        iframeUrl: z.string().optional().describe("Override iframe src for embed_iframe"),
+        iframeUrl: z.string()
+          .refine(isSafeIframeUrlInput, "iframeUrl must use a safe absolute http(s) URL")
+          .optional()
+          .describe("Override iframe src for embed_iframe"),
         html: z.string().optional().describe("Raw html for embed_html"),
         design: z.string().optional().describe("Design payload for embed_html"),
         reference: z.string().optional().describe("Target id for surface_ref"),
@@ -5371,7 +5381,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           gap: z.number().int().optional().describe("Gap in px between the anchor and the new block. Default is direction-aware: 80 for left/right, 40 for down/up — mirrors native-flowchart spacing where the flow axis gets more breathing room than the cross axis. Explicit `padding` on the block overrides this default; explicit `gap` wins over both."),
         }).optional().describe("Layout helper — position this block relative to one or more existing edgeless blocks. Picks the furthest anchor in `direction` for the stack axis, and centers the new block on the anchor group's union on the orthogonal axis (matches how BlockSuite aligns selection-derived blocks; reduces to inherit-anchor-x when widths match). Caller-provided x/y on the orthogonal axis still wins. Works for frame/note/edgeless_text. Example: `stackAfter: { blockId: [f1, f2, f3], gap: 80 }` stacks below whichever column frame ends lowest, centered across all three. Note heights shift at first render (page-root grows with the title, content notes shrink/grow with their children); give extra gap and fix up with `update_edgeless_block` if the down/right chain drifts."),
         padding: z.number().int().optional().describe("Default padding (px) for `childElementIds` auto-sizing on frames (each side, plus +30px title band) and fallback gap for `stackAfter` (default 40)."),
-        sourceId: z.string().optional().describe("Blob source id for image/attachment"),
+        sourceId: z.string()
+          .refine(isSafeBlobSourceIdInput, "sourceId must be an opaque AFFiNE blob key")
+          .optional()
+          .describe("Blob key returned by upload_blob for image/attachment"),
         name: z.string().optional().describe("Attachment file name"),
         mimeType: z.string().optional().describe("Attachment mime type"),
         size: z.number().optional().describe("Attachment/image file size in bytes"),

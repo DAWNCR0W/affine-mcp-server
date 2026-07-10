@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Hardened URL-bearing block creation with shared runtime validation for bookmarks, blob-backed media, iframes, and provider embeds. Unsafe schemes, control-character parser differentials, embedded credentials, URL-shaped blob keys, and provider host lookalikes are now rejected before AFFiNE blocks are written.
+
+### Tests
+- Added self-contained external URL safety regressions and included them in the package CI gate.
+
 ## [2.5.0] - 2026-07-06
 
 ### Added

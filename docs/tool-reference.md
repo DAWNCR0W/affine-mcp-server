@@ -87,7 +87,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
 | `get_doc_icon` | Read a document's current sidebar icon | |
-| `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph so it renders on the edgeless canvas. |
+| `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow safe web, mail, telephone, and exported `affine://blob/<key>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts; image and attachment `sourceId` values must be opaque keys returned by `upload_blob`. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
@@ -196,6 +196,6 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `upload_blob` | Upload a file or blob to workspace storage | |
+| `upload_blob` | Upload a file or blob to workspace storage | Returns the opaque blob key accepted as image/attachment `sourceId`; it is not an external URL |
 | `delete_blob` | Delete a blob from workspace storage | Destructive |
 | `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented |
