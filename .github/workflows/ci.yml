@@ -58,5 +58,8 @@ jobs:
       - name: Verify authentication session state
         run: npm run test:auth-session
 
+      - name: Verify OAuth service-account policy
+        run: npm run test:oauth-service-policy
+
       - name: Check package contents
         run: npm run pack:check

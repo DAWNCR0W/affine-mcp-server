@@ -36,6 +36,7 @@ export type ServerConfig = {
   transportMode: TransportMode;
   loginAtStart: LoginAtStartMode;
   http: HttpServerConfig;
+  oauthAllowServiceWrites: boolean;
 };
 
 /** Config file location: ~/.config/affine-mcp/config */
@@ -225,7 +226,7 @@ function parseLoginAtStart(raw: string | undefined): LoginAtStartMode {
 }
 
 function parseBooleanEnv(name: string, raw: string | undefined, fallback: boolean): boolean {
-  if (!raw) return fallback;
+  if (raw === undefined || raw.trim() === "") return fallback;
   const normalized = raw.trim().toLowerCase();
   if (normalized === "true") return true;
   if (normalized === "false") return false;
@@ -318,6 +319,11 @@ export function loadConfig(): ServerConfig {
       false,
     ),
   };
+  const oauthAllowServiceWrites = parseBooleanEnv(
+    "AFFINE_OAUTH_ALLOW_SERVICE_WRITES",
+    env("AFFINE_OAUTH_ALLOW_SERVICE_WRITES", file),
+    false,
+  );
 
   return {
     baseUrl,
@@ -337,5 +343,6 @@ export function loadConfig(): ServerConfig {
     transportMode,
     loginAtStart,
     http,
+    oauthAllowServiceWrites,
   };
 }
