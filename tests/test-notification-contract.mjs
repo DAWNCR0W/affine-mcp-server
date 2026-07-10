@@ -13,6 +13,18 @@ function expectEqual(actual, expected, message) {
   }
 }
 
+function expectToolFailure(result, expected, label) {
+  const payload = result.structuredContent;
+  expect(result.isError === true, `${label}: MCP isError must be true`);
+  expectEqual(payload.ok, false, `${label}: ok`);
+  expectEqual(payload.code, expected.code, `${label}: code`);
+  expectEqual(payload.retryable, expected.retryable, `${label}: retryable`);
+  expectEqual(payload.status, expected.status, `${label}: status`);
+  expect(typeof payload.error === "string" && payload.error.length > 0, `${label}: error message`);
+  expect(!("success" in payload), `${label}: failure must not include success`);
+  return payload;
+}
+
 async function expectRejected(promise, messagePattern, label) {
   try {
     await promise;
@@ -81,9 +93,15 @@ const server = {
 
 const requests = [];
 const readAllResults = [true, false];
+let nextRequestError = null;
 const gql = {
   async request(query, variables) {
     requests.push({ query, variables });
+    if (nextRequestError) {
+      const error = nextRequestError;
+      nextRequestError = null;
+      throw error;
+    }
     if (query.includes("ReadAllNotifications")) {
       return { readAllNotifications: readAllResults.shift() };
     }
@@ -193,6 +211,16 @@ for (const [args, pattern, label] of invalidCases) {
 }
 expectEqual(requests.length, 3, "invalid pagination must fail before GraphQL requests");
 
+nextRequestError = new Error("notification backend unavailable");
+const listFailure = await listTool.handler({ first: 5 });
+const listFailurePayload = expectToolFailure(listFailure, {
+  code: "notification_list_failed",
+  retryable: true,
+  status: "failed",
+}, "list failure contract");
+expectEqual(listFailurePayload.kind, "notification.list", "list failure kind");
+expectEqual(listFailurePayload.error, "notification backend unavailable", "list failure error");
+
 const appliedResult = (await readAllTool.handler({})).structuredContent;
 expectEqual(appliedResult, {
   kind: "notification.read_all",
@@ -203,19 +231,38 @@ expectEqual(appliedResult, {
   message: "AFFiNE reported that all notifications were marked as read.",
 }, "truthful applied read-all contract");
 
-const notAppliedResult = (await readAllTool.handler({})).structuredContent;
+const notAppliedToolResult = await readAllTool.handler({});
+const notAppliedResult = expectToolFailure(notAppliedToolResult, {
+  code: "notification_update_failed",
+  retryable: false,
+  status: "not_applied",
+}, "not-applied read-all contract");
 expectEqual(notAppliedResult, {
   kind: "notification.read_all",
-  success: false,
   applied: false,
   status: "not_applied",
   serverResult: false,
-  message: "AFFiNE did not report applying the read-all mutation; notification state may be unchanged.",
+  ok: false,
+  error: "AFFiNE did not report applying the read-all mutation; notification state may be unchanged.",
+  code: "notification_update_failed",
+  retryable: false,
 }, "truthful false read-all contract");
 expect(
-  !/all notifications marked as read/i.test(notAppliedResult.message),
+  !/all notifications marked as read/i.test(notAppliedResult.error),
   "false read-all responses must not use a success-like message",
 );
+
+nextRequestError = new Error("notification mutation timed out");
+const failedReadAll = await readAllTool.handler({});
+const failedReadAllPayload = expectToolFailure(failedReadAll, {
+  code: "notification_update_failed",
+  retryable: true,
+  status: "failed",
+}, "read-all exception contract");
+expectEqual(failedReadAllPayload.kind, "notification.read_all", "read-all exception kind");
+expectEqual(failedReadAllPayload.applied, false, "read-all exception applied");
+expectEqual(failedReadAllPayload.serverResult, null, "read-all exception server result");
+expectEqual(failedReadAllPayload.error, "notification mutation timed out", "read-all exception error");
 
 console.log(JSON.stringify({
   ok: true,
@@ -230,5 +277,7 @@ console.log(JSON.stringify({
     "offset/after conflict",
     "truthful read-all true response",
     "truthful read-all false response",
+    "stable list failure envelope",
+    "stable read-all failure envelope",
   ],
 }, null, 2));

@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { text, toolError } from "../util/mcp.js";
 
 const MAX_NOTIFICATION_PAGE_SIZE = 100;
 const MAX_GRAPHQL_OFFSET = 2_147_483_647;
@@ -185,7 +185,14 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
         unreadOnly,
       }));
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "notification_list_failed",
+        retryable: true,
+        data: {
+          kind: "notification.list",
+          status: "failed",
+        },
+      });
     }
   };
   server.registerTool(
@@ -214,18 +221,41 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
         : null;
       const applied = serverResult === true;
 
+      if (!applied) {
+        return toolError(
+          "AFFiNE did not report applying the read-all mutation; notification state may be unchanged.",
+          {
+            code: "notification_update_failed",
+            retryable: false,
+            data: {
+              kind: "notification.read_all",
+              applied: false,
+              status: "not_applied",
+              serverResult,
+            },
+          },
+        );
+      }
+
       return text({
         kind: "notification.read_all",
-        success: applied,
-        applied,
-        status: applied ? "applied" : "not_applied",
+        success: true,
+        applied: true,
+        status: "applied",
         serverResult,
-        message: applied
-          ? "AFFiNE reported that all notifications were marked as read."
-          : "AFFiNE did not report applying the read-all mutation; notification state may be unchanged.",
+        message: "AFFiNE reported that all notifications were marked as read.",
       });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, {
+        code: "notification_update_failed",
+        retryable: true,
+        data: {
+          kind: "notification.read_all",
+          applied: false,
+          status: "failed",
+          serverResult: null,
+        },
+      });
     }
   };
   server.registerTool(

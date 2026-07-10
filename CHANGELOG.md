@@ -10,13 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `list_notifications` now returns a stable envelope containing cursor-bearing notifications, server page info, server and page-level counts, pagination mode, and explicit filter scope.
 - `unreadOnly` now reports that it filters only the fetched page and leaves server totals and page info unchanged.
-- `read_all_notifications` now returns `applied` and `status`; a false server result is reported as `not_applied` with a non-success message.
+- `read_all_notifications` now returns `applied` and `status`; false and exception outcomes use stable MCP error envelopes instead of success-shaped responses.
 
 ### Fixed
 - Added fail-closed bounds for notification page size, offset, and cursor inputs, and rejected requests that combine offset and cursor pagination.
 
 ### Tests
-- Added self-contained handler coverage for notification envelopes, cursor preservation, page-local unread filtering, pagination validation, and true/false read-all results.
+- Added self-contained handler coverage for notification envelopes, cursor preservation, page-local unread filtering, pagination validation, and stable list/read-all failure results.
 
 ## [2.5.0] - 2026-07-06
 
