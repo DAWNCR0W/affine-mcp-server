@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 
+import { documentMoveToolResult } from "../dist/tools/docs.js";
+
 import {
   executeSafeDocumentMove,
   handleMarkdownOperationFailure,
@@ -107,6 +109,15 @@ function dependencies(overrides = {}) {
     code: "DOCUMENT_MOVE_PARTIAL",
     retryable: true,
   });
+  const response = documentMoveToolResult({
+    workspaceId: "workspace-1",
+    docId: "doc-1",
+    toParentDocId: "new-parent",
+    fromParentDocId: "old-parent",
+  }, outcome);
+  assert.equal(response.isError, true);
+  assert.equal(response.structuredContent.ok, false);
+  assert.equal(response.structuredContent.code, "DOCUMENT_MOVE_PARTIAL");
   assert.match(outcome.warnings[0], /source write timed out/);
 }
 
@@ -118,13 +129,23 @@ function dependencies(overrides = {}) {
     { docId: "doc-1", toParentDocId: "new-parent", fromParentDocId: "missing-parent-link" },
     deps.value,
   );
-  assert.equal(outcome.status, "linked");
+  assert.equal(outcome.status, "partial");
   assert.equal(outcome.moved, false);
-  assert.equal(outcome.partial, false);
+  assert.equal(outcome.partial, true);
   assert.equal(outcome.linkedToNewParent, true);
   assert.equal(outcome.removedFromParent, false);
-  assert.equal(isDocumentMoveSuccessful(outcome), true);
-  assert.deepEqual(toDocumentMoveResult(outcome), { ok: true, ...outcome });
+  assert.equal(outcome.requiresManualRepair, true);
+  assert.equal(isDocumentMoveSuccessful(outcome), false);
+  assert.equal(toDocumentMoveResult(outcome).code, "DOCUMENT_MOVE_PARTIAL");
+  const response = documentMoveToolResult({
+    workspaceId: "workspace-1",
+    docId: "doc-1",
+    toParentDocId: "new-parent",
+    fromParentDocId: "missing-parent-link",
+  }, outcome);
+  assert.equal(response.isError, true);
+  assert.equal(response.structuredContent.ok, false);
+  assert.equal(response.structuredContent.status, "partial");
   assert.match(outcome.warnings[0], /no matching link was found/);
 }
 
@@ -192,6 +213,14 @@ function dependencies(overrides = {}) {
   assert.equal(outcome.status, "unchanged");
   assert.equal(outcome.moved, false);
   assert.equal(isDocumentMoveSuccessful(outcome), true);
+  const response = documentMoveToolResult({
+    workspaceId: "workspace-1",
+    docId: "doc-1",
+    toParentDocId: "same-parent",
+    fromParentDocId: "same-parent",
+  }, outcome);
+  assert.equal(response.isError, undefined);
+  assert.equal(response.structuredContent.ok, true);
   assert.deepEqual(events, ["inspect-destination"]);
 }
 

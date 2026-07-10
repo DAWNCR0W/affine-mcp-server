@@ -110,15 +110,15 @@ export async function executeSafeDocumentMove(
     const removedFromParent = await dependencies.removeFromOldParent();
     if (!removedFromParent) {
       return {
-        status: "linked",
+        status: "partial",
         moved: false,
-        partial: false,
+        partial: true,
         linkedToNewParent: true,
         addedToNewParent: !alreadyLinked,
         removedFromParent: false,
-        requiresManualRepair: false,
+        requiresManualRepair: true,
         warnings: [
-          "The destination link is present, but no matching link was found in the declared source parent.",
+          "The destination link is present, but no matching link was found in the declared source parent; verify the source parent before retrying.",
         ],
       };
     }

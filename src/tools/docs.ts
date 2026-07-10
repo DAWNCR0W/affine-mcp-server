@@ -2,8 +2,9 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 import {
+  type DocumentMoveOutcome,
   executeSafeDocumentMove,
   handleMarkdownOperationFailure,
   toDocumentMoveResult,
@@ -30,6 +31,37 @@ import {
   sortByFractionalIndex,
   stackRelativeTo,
 } from "../edgeless/layout.js";
+
+export type DocumentMoveToolContext = {
+  workspaceId: string;
+  docId: string;
+  toParentDocId: string;
+  fromParentDocId: string | null;
+};
+
+/** Convert a move outcome into a truthful MCP success or failure response. */
+export function documentMoveToolResult(
+  context: DocumentMoveToolContext,
+  outcome: DocumentMoveOutcome,
+) {
+  const { ok, error, code, retryable, ...outcomeData } = toDocumentMoveResult(outcome);
+  if (!ok) {
+    return toolError(error, {
+      code,
+      retryable,
+      data: {
+        kind: "doc.move",
+        ...context,
+        ...outcomeData,
+      },
+    });
+  }
+
+  return receipt("doc.move", {
+    ...context,
+    ...outcomeData,
+  });
+}
 
 function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
   const databaseRowIds = new Set<string>();
@@ -5235,14 +5267,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         ),
       });
 
-      return text({
-        kind: "doc.move",
+      return documentMoveToolResult({
         workspaceId,
         docId: parsed.docId,
         toParentDocId: parsed.toParentDocId,
         fromParentDocId: parsed.fromParentDocId ?? null,
-        ...toDocumentMoveResult(outcome),
-      });
+      }, outcome);
     } finally {
       socket.disconnect();
     }
