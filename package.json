@@ -114,6 +114,6 @@
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^26.0.1",
     "tsx": "^4.16.2",
-    "typescript": "^6.0.2"
+    "typescript": "^7.0.2"
   }
 }
