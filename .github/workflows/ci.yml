@@ -32,6 +32,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify Markdown export safety
+        run: npm run test:markdown-export-safety
+
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 

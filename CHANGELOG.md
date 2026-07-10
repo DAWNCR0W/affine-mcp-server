@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Markdown export now preserves supported AFFiNE rich-text attributes across paragraphs, headings, lists, quotes, callouts, and table cells while reporting unsupported attributes as explicit fidelity loss.
+- Hardened Markdown serialization prevents untrusted block text, link labels and destinations, YAML frontmatter, code fences, table cells, and placeholder metadata from injecting new Markdown structure or unsafe URL schemes.
+
+### Tests
+- Added focused rich-text round-trip and Markdown output-safety regressions, including injection payloads in every supported text context, and wired them into package and workflow CI gates.
+
 ## [2.5.0] - 2026-07-06
 
 ### Added
