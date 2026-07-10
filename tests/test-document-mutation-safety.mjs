@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 
 import {
+  collectLinkedChildIds,
   documentMoveToolResult,
   removeEmbeddedLinkedDocumentBlocks,
 } from "../dist/tools/docs.js";
@@ -37,6 +38,36 @@ function dependencies(overrides = {}) {
       ...overrides,
     },
   };
+}
+
+{
+  const doc = new Y.Doc();
+  const blocks = doc.getMap("blocks");
+
+  const linkedEmbed = new Y.Map();
+  linkedEmbed.set("sys:flavour", "affine:embed-linked-doc");
+  linkedEmbed.set("prop:pageId", "linked-doc");
+  blocks.set("linked-embed", linkedEmbed);
+
+  const syncedEmbed = new Y.Map();
+  syncedEmbed.set("sys:flavour", "affine:embed-synced-doc");
+  syncedEmbed.set("prop:pageId", "synced-doc");
+  blocks.set("synced-embed", syncedEmbed);
+
+  const paragraph = new Y.Map();
+  paragraph.set("sys:flavour", "affine:paragraph");
+  const text = new Y.Text();
+  text.insert(0, "linked", {
+    reference: { type: "LinkedPage", pageId: "inline-doc" },
+  });
+  paragraph.set("prop:text", text);
+  blocks.set("paragraph", paragraph);
+
+  assert.deepEqual(
+    collectLinkedChildIds(blocks).sort(),
+    ["inline-doc", "linked-doc", "synced-doc"],
+    "cycle detection must use the same hierarchy links as tree traversal",
+  );
 }
 
 {

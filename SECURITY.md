@@ -29,3 +29,15 @@ Please include:
 - Fix timeline: depends on severity and complexity
 
 We will coordinate disclosure and credit reporters unless they prefer anonymity.
+
+## Deployment Hardening
+
+- Remote AFFiNE destinations must use HTTPS. Plain HTTP requires the explicit
+  `AFFINE_ALLOW_INSECURE_HTTP=true` opt-in and should only be used on a trusted
+  private network.
+- Bearer-mode HTTP MCP listeners on non-loopback interfaces require
+  `AFFINE_MCP_HTTP_TOKEN` unless the unsafe
+  `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED=true` escape hatch is explicitly set.
+- Send MCP bearer tokens in the `Authorization` header. Query-string token
+  authentication is disabled by default because URLs can leak through logs,
+  browser history, and monitoring systems.

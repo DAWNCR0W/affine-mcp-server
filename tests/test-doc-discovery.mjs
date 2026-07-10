@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for document discovery helpers.
  *
@@ -69,7 +71,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-doc-discovery-noconfig",
+      XDG_CONFIG_HOME: testTempPath('doc-discovery-config'),
     },
     stderr: "pipe",
   });
@@ -116,7 +118,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `doc-discovery-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
 
@@ -201,10 +203,19 @@ async function main() {
       "list_docs post-create visibility sync",
     );
 
-    await call("delete_doc", {
+    const deletion = await call("delete_doc", {
       workspaceId: workspace.id,
       docId: createdDocs[0].docId,
+      confirmDocId: createdDocs[0].docId,
     });
+    expectEqual(deletion?.status, "deleted", "delete_doc status");
+    expectEqual(deletion?.deleted, true, "delete_doc deleted");
+    expectEqual(deletion?.metadataRemoved, true, "delete_doc metadataRemoved");
+    expectEqual(deletion?.contentDeleted, true, "delete_doc contentDeleted");
+    expectTruthy(
+      deletion?.contentDeleteAcknowledged || deletion?.contentAbsenceVerified,
+      "delete_doc completion evidence",
+    );
 
     const listedAfterDelete = await waitForListDocs(
       workspace.id,

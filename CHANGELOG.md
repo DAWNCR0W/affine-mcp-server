@@ -7,16 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
+- Added bounded integer schemas for pagination, search limits, history size, and tree depth.
+- Permanent document, workspace, and blob cleanup operations now require an exact identifier confirmation before any AFFiNE request is sent.
+- `list_notifications` now returns a stable envelope containing cursor-bearing notifications, server page info, server and page-level counts, pagination mode, and explicit filter scope.
+- `unreadOnly` now reports that it filters only the fetched page and leaves server totals and page info unchanged.
+- `read_all_notifications` now returns `applied` and `status`; false and exception outcomes use stable MCP error envelopes instead of success-shaped responses.
+- Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
+- Centralized GraphQL endpoint, transport, login, port, host, CORS, and HTTP bearer settings under one `environment > saved config > defaults` resolver with strict validation.
+- Updated `status`, `doctor`, `show-config`, login, and generated client snippets to use the same effective configuration as the MCP runtime, including custom GraphQL paths and non-token authentication.
+- Made `/readyz` verify the exact configured AFFiNE GraphQL endpoint in addition to OAuth discovery.
+
+### Security
+- Added a fail-closed guard to destructive live-test entry points. Loopback targets remain available by default, while non-loopback targets require an explicit remote opt-in and an exact `DESTROY <target>` confirmation.
+- Isolated Docker-backed test runs with unique Compose projects, private per-run credential files, scoped cleanup, and collision-resistant AFFiNE resource names.
+- Stopped printing acquired session cookies from the E2E credential helper.
+- OAuth deployments now default to the read-only tool profile because all callers share one AFFiNE service credential.
+- Write-capable OAuth tool surfaces now fail closed unless operators explicitly set `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true` in addition to selecting a write-capable profile.
+- OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
+
 ### Fixed
 - Document moves now validate source and destination documents, reject hierarchy cycles, add the destination link before removing the source link, and report partial outcomes without orphaning the document.
 - Strict Markdown mutations now abort before any server update when an operation cannot be applied, and document creation preflights strict Markdown before creating remote state.
 - Document append operations now reject missing target documents instead of writing updates to an empty Yjs document.
-
-### Changed
-- Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
+- Hardened URL-bearing block creation with shared runtime validation and canonicalization for bookmarks, blob-backed media, internal document links, iframes, and provider embeds. Unsafe schemes, control-character parser differentials, embedded credentials, and provider host lookalikes are rejected before AFFiNE blocks are written, while exact opaque keys returned by `upload_blob` remain valid media `sourceId` values.
+- Markdown export now preserves supported AFFiNE rich-text attributes across paragraphs, headings, lists, quotes, callouts, and table cells while reporting unsupported attributes as explicit fidelity loss.
+- Hardened Markdown serialization prevents untrusted block text, link labels and destinations, YAML frontmatter, code fences, table cells, and placeholder metadata from injecting new Markdown structure or unsafe URL schemes; exported frontmatter is stripped when Markdown is imported again.
+- Document deletion now waits for an AFFiNE WebSocket error or success acknowledgement and falls back to a `DOC_NOT_FOUND` read-after-delete check for AFFiNE versions whose successful delete handler returns no acknowledgement.
+- `delete_doc` now reports workspace metadata and document-content outcomes separately, including partial and already-absent states.
+- Destructive document, workspace, and blob mutations now return stable MCP failure envelopes when AFFiNE rejects, does not confirm, or only partially completes an operation.
+- `delete_workspace`, `delete_blob`, and `cleanup_blobs` no longer report success when AFFiNE returns `false` or the mutation fails.
+- Added fail-closed bounds for notification page size, offset, and cursor inputs, and rejected requests that combine offset and cursor pagination.
+- Blob uploads now default to exact UTF-8 handling, require explicit `encoding: "base64"` for binary payloads, validate canonical Base64, and enforce configurable decoded-size, timeout, HTTP-status, and response-size safeguards.
+- Blob upload timeout and validation failures now return stable MCP error envelopes with distinct codes and explicit retryability.
+- Blob delete and cleanup `false` results now return `not_applied` MCP errors instead of success-shaped responses.
+- Persisted document, block, property, organize, fractional-index suffix, and surface seed values now use unbiased cryptographically secure randomness instead of `Math.random` or modulo-biased bytes.
+- Fixed CLI requests that always used `/graphql`, custom GraphQL paths becoming unintended Socket.IO namespaces, environment-only credentials that `status` ignored, and missing config-file values for custom headers and HTTP runtime settings.
+- Corrected documented defaults for the AFFiNE base URL, HTTP bind host, transport aliases, and browser origin policy.
+- Quoted Codex snippet environment arguments safely for POSIX shells and removed saved `Authorization`/`Cookie` headers during logout without deleting unrelated headers or runtime settings.
+- Email/password authentication is now process-scoped and single-flight across concurrent HTTP MCP sessions, and backend requests wait for the shared result instead of falling back to anonymous access.
+- Bearer, cookie, custom-header, and email/password credentials now follow one exclusive priority order across GraphQL, multipart, and WebSocket consumers.
+- Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
 - Added self-contained regression coverage for safe document move ordering, cycle rejection, partial failures, idempotent destination links, and Markdown batch failure policy.
+- Added self-contained external URL safety regressions and included them in the package CI gate.
+- Added focused rich-text round-trip and Markdown output-safety regressions, including injection payloads in every supported text context, and wired them into package and workflow CI gates.
+- Added self-contained input-boundary, destructive-confirmation, WebSocket positive/empty/negative acknowledgement, timeout, read-after-delete, partial-failure receipt, and false-mutation regression coverage.
+- Wired the focused input-contract and destructive-mutation suites into both the package `ci` script and GitHub Actions.
+- Updated live cleanup callers to use the new confirmation contract.
+- Added self-contained handler coverage for notification envelopes, cursor preservation, page-local unread filtering, pagination validation, and stable list/read-all failure results.
+- Added a self-contained blob upload contract test covering decoding, configuration, multipart headers, response limits, timeouts, HTTP failures, and true/false/exception mutation results.
+- Added a source-wide regression guard that rejects `Math.random` in runtime TypeScript and validates identifier alphabets, lengths, uniqueness, seed ranges, and invalid generator inputs.
+- Added self-contained CI coverage for destructive-target validation, remote confirmation, URL normalization, and unique test resource naming.
+- Added self-contained regression coverage for config precedence, custom GraphQL paths, environment-only diagnostics, HTTP runtime flags, CORS, and upstream-aware readiness.
+- Added a self-contained mock AFFiNE regression suite for concurrent authentication, async request gating, credential exclusivity, failure propagation, and explicit recovery.
+- Added regression coverage for OAuth read-only defaults, explicit write acknowledgement, profile handling, and fully disabled write surfaces.
 
 ## [2.5.0] - 2026-07-06
 
