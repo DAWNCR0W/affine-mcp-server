@@ -64,5 +64,8 @@ jobs:
       - name: Verify HTTP security policy
         run: npm run test:http-security
 
+      - name: Verify HTTP runtime safety
+        run: npm run test:http-runtime
+
       - name: Check package contents
         run: npm run pack:check

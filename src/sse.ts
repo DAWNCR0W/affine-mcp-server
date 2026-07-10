@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { Server as HttpServer } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -13,11 +15,79 @@ import {
   isLoopbackHostname,
   parseBooleanFlag,
 } from "./networkSecurity.js";
+import {
+  loadHttpRuntimeConfig,
+  type HttpRuntimeConfig,
+} from "./httpRuntimeConfig.js";
+
+type HttpTransport = StreamableHTTPServerTransport | SSEServerTransport;
+
+type TrackedSession = {
+  activeRequests: number;
+  kind: "streamable" | "legacy-sse";
+  lastActivityAt: number;
+  transport: HttpTransport;
+};
+
+export type HttpMcpServerHandle = {
+  close: (reason?: string) => Promise<void>;
+  host: string;
+  port: number;
+  sessionCount: () => number;
+};
+
+type BodyParserError = Error & {
+  status?: number;
+  type?: string;
+};
+
+function sendJsonRpcError(
+  res: Response,
+  status: number,
+  code: number,
+  message: string,
+) {
+  res.status(status).json({
+    jsonrpc: "2.0",
+    error: { code, message },
+    id: null,
+  });
+}
+
+async function listen(app: express.Express, port: number, host: string): Promise<HttpServer> {
+  return await new Promise<HttpServer>((resolve, reject) => {
+    const server = app.listen(port, host);
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve(server);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+  });
+}
+
+function closeHttpServer(server: HttpServer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+    server.closeIdleConnections?.();
+  });
+}
 
 export async function startHttpMcpServer(
   createMcpServer: () => Promise<McpServer>,
   config: ServerConfig,
-) {
+): Promise<HttpMcpServerHandle> {
+  const runtimeConfig: HttpRuntimeConfig = loadHttpRuntimeConfig();
   const { host, port, authToken: httpAuthToken, allowedOrigins, allowAllOrigins } = config.http;
 
   // --- Bearer Token guard (AFFINE_MCP_HTTP_TOKEN) ---
@@ -71,10 +141,33 @@ export async function startHttpMcpServer(
   }
 
   // Use a plain Express app here so it can fully control JSON parser ordering/limits.
-  // `createMcpExpressApp()` installs its own JSON parser first, which can enforce
-  // a smaller default limit before the intended 50mb parser runs on /mcp.
+  // `createMcpExpressApp()` installs its own JSON parser before route-specific policy.
   const app = express();
-  const jsonBody = express.json({ limit: "50mb" });
+  const jsonBody = express.json({ limit: runtimeConfig.bodyLimitBytes });
+
+  const parseJsonBody = async (req: Request, res: Response): Promise<boolean> => {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        jsonBody(req, res, (error) => (error ? reject(error) : resolve()));
+      });
+      return true;
+    } catch (error) {
+      const parserError = error as BodyParserError;
+      if (parserError.status === 413 || parserError.type === "entity.too.large") {
+        sendJsonRpcError(res, 413, -32001, "Request body exceeds the configured HTTP body limit");
+        return false;
+      }
+      if (
+        parserError.status === 400 ||
+        parserError.type === "entity.parse.failed" ||
+        error instanceof SyntaxError
+      ) {
+        sendJsonRpcError(res, 400, -32700, "Parse error: Invalid JSON request body");
+        return false;
+      }
+      throw error;
+    }
+  };
 
   // --- CORS origin allowlist ---
   // AFFINE_MCP_HTTP_ALLOWED_ORIGINS: comma-separated list, e.g. "https://app.example.com,http://localhost:3000".
@@ -147,10 +240,86 @@ export async function startHttpMcpServer(
   app.options("/sse", corsMiddleware);
   app.options("/messages", corsMiddleware);
 
-  const transports: Record<
-    string,
-    StreamableHTTPServerTransport | SSEServerTransport
-  > = {};
+  const sessions = new Map<string, TrackedSession>();
+  let pendingSessionCount = 0;
+  let shutdownPromise: Promise<void> | null = null;
+  let idleSweepTimer: NodeJS.Timeout | undefined;
+
+  const hasSessionCapacity = () =>
+    sessions.size + pendingSessionCount < runtimeConfig.maxSessions;
+
+  const rejectUnavailable = (res: Response, message: string) => {
+    res.set("Retry-After", "1");
+    sendJsonRpcError(res, 503, -32002, message);
+  };
+
+  const reserveSessionSlot = (): (() => void) | null => {
+    if (!hasSessionCapacity()) return null;
+    pendingSessionCount += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      pendingSessionCount = Math.max(0, pendingSessionCount - 1);
+    };
+  };
+
+  const registerSession = (
+    sessionId: string,
+    transport: HttpTransport,
+    kind: TrackedSession["kind"],
+  ) => {
+    sessions.set(sessionId, {
+      activeRequests: 0,
+      kind,
+      lastActivityAt: Date.now(),
+      transport,
+    });
+  };
+
+  const removeSession = (sessionId: string, transport: HttpTransport) => {
+    const current = sessions.get(sessionId);
+    if (current?.transport === transport) sessions.delete(sessionId);
+  };
+
+  const beginSessionRequest = (sessionId: string, method: string) => {
+    const session = sessions.get(sessionId);
+    if (!session) return () => {};
+    session.lastActivityAt = Date.now();
+    const tracksInFlightWork = method !== "GET";
+    if (tracksInFlightWork) session.activeRequests += 1;
+
+    return () => {
+      const current = sessions.get(sessionId);
+      if (!current || current.transport !== session.transport) return;
+      if (tracksInFlightWork) {
+        current.activeRequests = Math.max(0, current.activeRequests - 1);
+      }
+      current.lastActivityAt = Date.now();
+    };
+  };
+
+  const closeSession = async (sessionId: string, reason: string) => {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    sessions.delete(sessionId);
+    console.error(`[affine-mcp] Closing ${session.kind} session ${sessionId}: ${reason}`);
+    try {
+      await session.transport.close();
+    } catch (error) {
+      console.error(`[affine-mcp] Failed to close session ${sessionId}:`, error);
+    }
+  };
+
+  const sweepIdleSessions = async () => {
+    const cutoff = Date.now() - runtimeConfig.sessionIdleTimeoutMs;
+    const expired = [...sessions.entries()]
+      .filter(([, session]) =>
+        session.activeRequests === 0 && session.lastActivityAt <= cutoff
+      )
+      .map(([sessionId]) => sessionId);
+    await Promise.all(expired.map((sessionId) => closeSession(sessionId, "idle timeout")));
+  };
 
   // ===========================================================================
   // STREAMABLE HTTP TRANSPORT — MCP protocol 2025-03-26
@@ -159,84 +328,99 @@ export async function startHttpMcpServer(
   // ===========================================================================
   app.all("/mcp", corsMiddleware, authMiddleware, async (req, res) => {
     console.error(`[affine-mcp] Received ${req.method} request to /mcp`);
+    let newTransport: StreamableHTTPServerTransport | undefined;
+    let releaseReservation: (() => void) | undefined;
+    let initializedSessionId: string | undefined;
+    let endSessionRequest: (() => void) | undefined;
     try {
+      if (shutdownPromise) {
+        rejectUnavailable(res, "Server is shutting down");
+        return;
+      }
+
       // mcp-session-id header can technically be string | string[]; normalise.
       const sidHeader = req.headers["mcp-session-id"];
       const sessionId = Array.isArray(sidHeader) ? sidHeader[0] : sidHeader;
 
       let transport: StreamableHTTPServerTransport;
-      const existing = sessionId ? transports[sessionId] : undefined;
+      const existing = sessionId ? sessions.get(sessionId) : undefined;
 
-      if (existing instanceof StreamableHTTPServerTransport) {
-        transport = existing;
+      if (existing?.transport instanceof StreamableHTTPServerTransport) {
+        transport = existing.transport;
+        endSessionRequest = beginSessionRequest(sessionId!, req.method);
       } else if (!sessionId && req.method === "POST") {
         // Parse body only for the initialize POST (lazy — avoids consuming the stream early).
-        await new Promise<void>((resolve, reject) => {
-          jsonBody(req, res, (err) => (err ? reject(err) : resolve()));
-        });
+        if (!(await parseJsonBody(req, res))) return;
 
         if (!isInitializeRequest(req.body)) {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: "Bad Request: Not an initialize request",
-            },
-            id: null,
-          });
+          sendJsonRpcError(res, 400, -32000, "Bad Request: Not an initialize request");
+          return;
+        }
+
+        releaseReservation = reserveSessionSlot() || undefined;
+        if (!releaseReservation) {
+          rejectUnavailable(res, "Server busy: maximum HTTP MCP session capacity reached");
           return;
         }
 
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
+            initializedSessionId = sid;
+            releaseReservation?.();
             console.error(
               `[affine-mcp] StreamableHTTP session initialized: ${sid}`,
             );
-            transports[sid] = transport;
+            registerSession(sid, transport, "streamable");
+            endSessionRequest = beginSessionRequest(sid, req.method);
           },
         });
+        newTransport = transport;
 
         transport.onclose = () => {
           const sid = transport.sessionId;
-          if (sid && transports[sid]) {
+          if (sid && sessions.has(sid)) {
             console.error(`[affine-mcp] StreamableHTTP session closed: ${sid}`);
-            delete transports[sid];
+            removeSession(sid, transport);
           }
         };
 
-        const server = await createMcpServer();
-        await server.connect(transport);
+        const mcpServer = await createMcpServer();
+        await mcpServer.connect(transport);
       } else {
-        res.status(400).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message:
-              "Bad Request: No valid session ID or not an initialize request",
-          },
-          id: null,
-        });
+        sendJsonRpcError(
+          res,
+          400,
+          -32000,
+          "Bad Request: No valid session ID or not an initialize request",
+        );
         return;
       }
 
       // Ensure JSON body is available for subsequent POST requests within the session.
       if (req.method === "POST" && req.body === undefined) {
-        await new Promise<void>((resolve, reject) => {
-          jsonBody(req, res, (err) => (err ? reject(err) : resolve()));
-        });
+        if (!(await parseJsonBody(req, res))) return;
       }
 
       await transport.handleRequest(req, res, req.body);
+      if (newTransport && !initializedSessionId) {
+        releaseReservation?.();
+        await newTransport.close();
+      }
     } catch (e) {
+      releaseReservation?.();
+      if (newTransport && !initializedSessionId) {
+        try {
+          await newTransport.close();
+        } catch {}
+      }
       console.error("[affine-mcp] Error handling /mcp request:", e);
       if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: "2.0",
-          error: { code: -32603, message: "Internal server error" },
-          id: null,
-        });
+        sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
+    } finally {
+      endSessionRequest?.();
+      releaseReservation?.();
     }
   });
 
@@ -247,23 +431,39 @@ export async function startHttpMcpServer(
   // @deprecated — SSEServerTransport is deprecated by the SDK; use /mcp for new clients.
   // ===========================================================================
   app.get("/sse", corsMiddleware, authMiddleware, async (req, res) => {
+    let transport: SSEServerTransport | undefined;
     try {
+      if (shutdownPromise) {
+        rejectUnavailable(res, "Server is shutting down");
+        return;
+      }
+      if (!hasSessionCapacity()) {
+        rejectUnavailable(res, "Server busy: maximum HTTP MCP session capacity reached");
+        return;
+      }
+
       // @ts-ignore — intentional: SSEServerTransport retained for backward compat only
-      const transport = new SSEServerTransport("/messages", res);
+      transport = new SSEServerTransport("/messages", res);
       const sessionId = transport.sessionId;
-      transports[sessionId] = transport;
+      registerSession(sessionId, transport, "legacy-sse");
 
       res.on("close", () => {
         console.error(`[affine-mcp] Legacy SSE session closed: ${sessionId}`);
-        delete transports[sessionId];
+        removeSession(sessionId, transport!);
       });
 
-      const server = await createMcpServer();
-      await server.connect(transport);
+      const mcpServer = await createMcpServer();
+      await mcpServer.connect(transport);
       console.error(
         `[affine-mcp] Legacy SSE session established: ${sessionId}`,
       );
     } catch (e) {
+      if (transport) {
+        removeSession(transport.sessionId, transport);
+        try {
+          await transport.close();
+        } catch {}
+      }
       console.error("[affine-mcp] Error establishing legacy SSE stream:", e);
       if (!res.headersSent)
         res.status(500).send("Error establishing SSE stream");
@@ -274,8 +474,13 @@ export async function startHttpMcpServer(
     "/messages",
     corsMiddleware,
     authMiddleware,
-    jsonBody,
     async (req, res) => {
+      if (shutdownPromise) {
+        rejectUnavailable(res, "Server is shutting down");
+        return;
+      }
+      if (!(await parseJsonBody(req, res))) return;
+
       const sessionId =
         typeof req.query.sessionId === "string"
           ? req.query.sessionId
@@ -285,65 +490,142 @@ export async function startHttpMcpServer(
         return;
       }
 
-      const transport = transports[sessionId];
-      if (!(transport instanceof SSEServerTransport)) {
-        res.status(400).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message: "Bad Request: Session uses a different transport protocol",
-          },
-          id: null,
-        });
+      const session = sessions.get(sessionId);
+      if (!(session?.transport instanceof SSEServerTransport)) {
+        sendJsonRpcError(
+          res,
+          400,
+          -32000,
+          "Bad Request: Session uses a different transport protocol",
+        );
         return;
       }
+      const endSessionRequest = beginSessionRequest(sessionId, req.method);
 
       try {
         // @ts-ignore — intentional: SSEServerTransport retained for backward compat only
-        await transport.handlePostMessage(req, res, req.body);
+        await session.transport.handlePostMessage(req, res, req.body);
       } catch (e) {
         console.error("[affine-mcp] Error handling legacy SSE message:", e);
         if (!res.headersSent)
           res.status(500).send("Error handling POST message");
+      } finally {
+        endSessionRequest();
       }
     },
   );
 
-  const server = app.listen(port, host, () => {
-    const displayHostValue = host === "0.0.0.0" ? "localhost" : host;
-    const displayHost = displayHostValue.includes(":") ? `[${displayHostValue}]` : displayHostValue;
-    const address = server.address();
-    const listeningPort = typeof address === "object" && address ? address.port : port;
-    console.error(`[affine-mcp] MCP server listening on ${host}:${listeningPort}`);
-    console.error(
-      `[affine-mcp] Streamable HTTP (2025-03-26): http://${displayHost}:${listeningPort}/mcp`,
-    );
-    console.error(
-      `[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${listeningPort}/sse`,
-    );
-    console.error(`[affine-mcp] Diagnostics: http://${displayHost}:${listeningPort}/healthz`);
-    console.error(`[affine-mcp] Readiness:   http://${displayHost}:${listeningPort}/readyz`);
-    if (authState.protectedResourceMetadataUrl) {
-      console.error(`[affine-mcp] Protected resource metadata: ${authState.protectedResourceMetadataUrl}`);
-    }
-  });
+  const server = await listen(app, port, host);
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.closeAllConnections?.();
+    throw new Error("HTTP MCP server did not expose a TCP listening address");
+  }
+  const boundPort = address.port;
+  const displayHost = host === "0.0.0.0"
+    ? "localhost"
+    : host.includes(":") && !host.startsWith("[")
+      ? `[${host}]`
+      : host;
 
-  // Graceful shutdown: stop accepting new connections, then close active transports.
-  const shutdown = async (signal: string) => {
-    console.error(`[affine-mcp] ${signal} received - shutting down gracefully`);
-    server.close(() => {
-      void (async () => {
-        for (const sessionId in transports) {
-          try {
-            await transports[sessionId].close();
-          } catch {}
-          delete transports[sessionId];
-        }
-        process.exit(0);
-      })();
+  console.error(`[affine-mcp] MCP server listening on ${host}:${boundPort}`);
+  console.error(
+    `[affine-mcp] Streamable HTTP (2025-03-26): http://${displayHost}:${boundPort}/mcp`,
+  );
+  console.error(
+    `[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${boundPort}/sse`,
+  );
+  console.error(`[affine-mcp] Diagnostics: http://${displayHost}:${boundPort}/healthz`);
+  console.error(`[affine-mcp] Readiness:   http://${displayHost}:${boundPort}/readyz`);
+  console.error(
+    `[affine-mcp] HTTP runtime limits: body=${runtimeConfig.bodyLimitBytes} bytes, ` +
+      `sessions=${runtimeConfig.maxSessions}, idle=${runtimeConfig.sessionIdleTimeoutMs}ms, ` +
+      `shutdown=${runtimeConfig.shutdownTimeoutMs}ms`,
+  );
+  if (authState.protectedResourceMetadataUrl) {
+    console.error(`[affine-mcp] Protected resource metadata: ${authState.protectedResourceMetadataUrl}`);
+  }
+
+  idleSweepTimer = setInterval(() => {
+    void sweepIdleSessions().catch((error) => {
+      console.error("[affine-mcp] Idle session cleanup failed:", error);
     });
+  }, runtimeConfig.sessionSweepIntervalMs);
+  idleSweepTimer.unref();
+
+  let sigintHandler: (() => void) | undefined;
+  let sigtermHandler: (() => void) | undefined;
+
+  const removeSignalHandlers = () => {
+    if (sigintHandler) process.off("SIGINT", sigintHandler);
+    if (sigtermHandler) process.off("SIGTERM", sigtermHandler);
   };
 
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  const performShutdown = async (reason: string) => {
+    console.error(`[affine-mcp] ${reason} received - shutting down gracefully`);
+    if (idleSweepTimer) {
+      clearInterval(idleSweepTimer);
+      idleSweepTimer = undefined;
+    }
+    pendingSessionCount = 0;
+
+    const closeSessionsPromise = Promise.all(
+      [...sessions.keys()].map((sessionId) => closeSession(sessionId, "server shutdown")),
+    ).then(() => undefined);
+    const closeServerPromise = closeHttpServer(server);
+    const gracefulClose = Promise.all([closeSessionsPromise, closeServerPromise]).then(() => undefined);
+
+    const outcome = await Promise.race([
+      gracefulClose.then(
+        () => ({ completed: true as const }),
+        (error) => ({ completed: true as const, error }),
+      ),
+      delay(runtimeConfig.shutdownTimeoutMs, undefined, { ref: false }).then(
+        () => ({ completed: false as const }),
+      ),
+    ]);
+
+    if (!outcome.completed) {
+      console.error(
+        `[affine-mcp] Graceful shutdown exceeded ${runtimeConfig.shutdownTimeoutMs}ms; forcing remaining HTTP connections closed`,
+      );
+      server.closeAllConnections?.();
+      void gracefulClose.catch((error) => {
+        console.error("[affine-mcp] Shutdown cleanup failed after the deadline:", error);
+      });
+      await delay(25);
+      return;
+    }
+    if ("error" in outcome) throw outcome.error;
+  };
+
+  const shutdown = (reason = "Manual shutdown"): Promise<void> => {
+    if (!shutdownPromise) {
+      shutdownPromise = performShutdown(reason).finally(removeSignalHandlers);
+    }
+    return shutdownPromise;
+  };
+
+  const handleSignal = (signal: "SIGINT" | "SIGTERM") => {
+    void shutdown(signal)
+      .then(() => {
+        process.exitCode = 0;
+      })
+      .catch((error) => {
+        console.error("[affine-mcp] Graceful shutdown failed:", error);
+        server.closeAllConnections?.();
+        process.exitCode = 1;
+      });
+  };
+  sigintHandler = () => handleSignal("SIGINT");
+  sigtermHandler = () => handleSignal("SIGTERM");
+  process.on("SIGINT", sigintHandler);
+  process.on("SIGTERM", sigtermHandler);
+
+  return {
+    close: shutdown,
+    host,
+    port: boundPort,
+    sessionCount: () => sessions.size,
+  };
 }

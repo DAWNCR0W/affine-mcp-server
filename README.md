@@ -228,6 +228,7 @@ For common failures, see:
 - Restrict exposed tools with `AFFINE_DISABLED_GROUPS` and `AFFINE_DISABLED_TOOLS` for least-privilege setups
 - Treat OAuth mode as a shared AFFiNE service-account deployment: it defaults to `read_only`, and write-capable profiles require `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true`
 - Use `/healthz` and `/readyz` when running the HTTP server behind a container platform or load balancer
+- Set HTTP body, session, idle, and shutdown limits explicitly for high-volume deployments
 
 ## Development
 

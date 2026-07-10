@@ -331,7 +331,10 @@ async function testBearerTokenPolicy() {
     assertEqual(health.status, 200, "protected server health remains unauthenticated");
     assertEqual((await readJson(health)).protected, true, "protected server health metadata");
     const readiness = await fetch(`${server.baseUrl}/readyz`);
-    assertEqual(readiness.status, 200, "protected server readiness remains unauthenticated");
+    assertEqual(readiness.status, 503, "protected server readiness bypasses authentication");
+    const readinessBody = await readJson(readiness);
+    assertEqual(readinessBody.status, "not_ready", "unavailable upstream readiness status");
+    assertEqual(readinessBody.component, "affine-graphql", "unavailable readiness component");
 
     const missing = await fetch(`${server.baseUrl}/mcp`);
     assertEqual(missing.status, 401, "missing bearer token");
