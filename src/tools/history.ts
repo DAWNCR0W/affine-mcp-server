@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
 import { z } from "zod";
+import { BoundedHistoryTake } from "../util/inputSchemas.js";
 
 export function registerHistoryTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
   const listHistoriesHandler = async (parsed: { workspaceId?: string; guid: string; take?: number; before?: string }) => {
@@ -19,7 +20,7 @@ export function registerHistoryTools(server: McpServer, gql: GraphQLClient, defa
       inputSchema: {
         workspaceId: z.string().optional(),
         guid: z.string(),
-        take: z.number().optional(),
+        take: BoundedHistoryTake.optional().describe("Maximum history entries to return (1-200)."),
         before: z.string().optional()
       }
     },

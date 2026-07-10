@@ -277,9 +277,9 @@ async function main() {
     console.log("=== read_doc LinkedPage reference integration test passed ===");
   } finally {
     try {
-      if (hostDocId) await call("delete_doc", { workspaceId, docId: hostDocId }).catch(() => {});
-      if (firstTargetDocId) await call("delete_doc", { workspaceId, docId: firstTargetDocId }).catch(() => {});
-      if (secondTargetDocId) await call("delete_doc", { workspaceId, docId: secondTargetDocId }).catch(() => {});
+      if (hostDocId) await call("delete_doc", { workspaceId, docId: hostDocId, confirmDocId: hostDocId }).catch(() => {});
+      if (firstTargetDocId) await call("delete_doc", { workspaceId, docId: firstTargetDocId, confirmDocId: firstTargetDocId }).catch(() => {});
+      if (secondTargetDocId) await call("delete_doc", { workspaceId, docId: secondTargetDocId, confirmDocId: secondTargetDocId }).catch(() => {});
     } finally {
       await client.close();
     }

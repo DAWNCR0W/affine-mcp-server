@@ -296,7 +296,10 @@ async function testToolContract() {
     assert.equal(deleteNotApplied.deleted, false);
 
     const cleanupNotApplied = expectToolFailure(
-      await cleanupBlobs({ workspaceId: "workspace-1" }),
+      await cleanupBlobs({
+        workspaceId: "workspace-1",
+        confirmWorkspaceId: "workspace-1",
+      }),
       {
         code: "blob_cleanup_failed",
         retryable: false,
@@ -315,7 +318,10 @@ async function testToolContract() {
       error: /blob deletion timed out/,
     }, "delete exception");
     mutationBehavior.cleanup = "throw";
-    expectToolFailure(await cleanupBlobs({ workspaceId: "workspace-1" }), {
+    expectToolFailure(await cleanupBlobs({
+      workspaceId: "workspace-1",
+      confirmWorkspaceId: "workspace-1",
+    }), {
       code: "blob_cleanup_failed",
       retryable: false,
       status: "failed",
@@ -328,7 +334,10 @@ async function testToolContract() {
       workspaceId: "workspace-1",
       key: "blob-key",
     })).success, true);
-    assert.equal(parseToolResult(await cleanupBlobs({ workspaceId: "workspace-1" })).success, true);
+    assert.equal(parseToolResult(await cleanupBlobs({
+      workspaceId: "workspace-1",
+      confirmWorkspaceId: "workspace-1",
+    })).success, true);
   } finally {
     await uploadServer.close();
   }

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 import { z } from "zod";
-import { text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 
 export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) {
   const listAccessTokensHandler = async () => {
@@ -43,9 +43,28 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
   );
 
   const revokeAccessTokenHandler = async (parsed: { id: string }) => {
-    const mutation = `mutation($id:String!){ revokeUserAccessToken(id:$id) }`;
-    const data = await gql.request<{ revokeUserAccessToken: boolean }>(mutation, { id: parsed.id });
-    return text({ success: data.revokeUserAccessToken });
+    try {
+      const mutation = `mutation($id:String!){ revokeUserAccessToken(id:$id) }`;
+      const data = await gql.request<{ revokeUserAccessToken: boolean }>(mutation, { id: parsed.id });
+      if (!data.revokeUserAccessToken) {
+        return toolError("AFFiNE did not confirm access token revocation.", {
+          code: "access_token_revoke_failed",
+          data: { kind: "access_token.revoke", status: "not_applied", tokenId: parsed.id, id: parsed.id },
+        });
+      }
+      return receipt("access_token.revoke", {
+        status: "revoked",
+        tokenId: parsed.id,
+        id: parsed.id,
+        revoked: true,
+        success: true,
+      });
+    } catch (error) {
+      return toolError(error, {
+        code: "access_token_revoke_failed",
+        data: { kind: "access_token.revoke", status: "failed", tokenId: parsed.id, id: parsed.id },
+      });
+    }
   };
   server.registerTool(
     "revoke_access_token",

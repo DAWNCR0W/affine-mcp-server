@@ -210,7 +210,7 @@ async function main() {
   } finally {
     if (workspaceId && !NO_CLEANUP) {
       console.log('\n[cleanup] Delete workspace');
-      await call('delete_workspace', { id: workspaceId }).catch(e => console.warn('  cleanup failed:', e.message));
+      await call('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId }).catch(e => console.warn('  cleanup failed:', e.message));
     } else if (NO_CLEANUP && workspaceId) {
       console.log(`\n[cleanup skipped] workspace ${workspaceId} left intact`);
     }

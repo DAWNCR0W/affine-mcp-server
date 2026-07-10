@@ -349,14 +349,14 @@ async function main() {
   } finally {
     try {
       if (workspaceId && docId) {
-        await client.callTool({ name: 'delete_doc', arguments: { workspaceId, docId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
+        await client.callTool({ name: 'delete_doc', arguments: { workspaceId, docId, confirmDocId: docId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
       }
     } catch {
       // noop
     }
     try {
       if (workspaceId) {
-        await client.callTool({ name: 'delete_workspace', arguments: { id: workspaceId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
+        await client.callTool({ name: 'delete_workspace', arguments: { id: workspaceId, confirmWorkspaceId: workspaceId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
       }
     } catch {
       // noop

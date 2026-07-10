@@ -46,6 +46,12 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify input and destructive confirmation contracts
+        run: npm run test:input-contracts
+
+      - name: Verify destructive mutation outcomes
+        run: npm run test:mutation-ack
+
       - name: Verify blob upload contracts
         run: npm run test:blob-upload-contract
 

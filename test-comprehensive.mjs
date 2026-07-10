@@ -454,8 +454,9 @@ class ComprehensiveRunner {
       workspaceId,
       key: this.blobKey || 'missing-blob-key',
       permanently: true,
+      confirmKey: this.blobKey || 'missing-blob-key',
     });
-    await this.callTool('cleanup_blobs', { workspaceId });
+    await this.callTool('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId });
 
     await this.callTool('update_profile', { name: 'Dev User' });
     await this.callTool('update_settings', { settings: { receiveCommentEmail: true } });
@@ -514,8 +515,8 @@ class ComprehensiveRunner {
     await this.callTool('delete_surface_element', { workspaceId, docId, elementId: shapeBId });
     await this.callTool('delete_block', { workspaceId, docId, blockId: noteBlockId });
 
-    await this.callTool('delete_doc', { workspaceId, docId });
-    await this.callTool('delete_workspace', { id: workspaceId });
+    await this.callTool('delete_doc', { workspaceId, docId, confirmDocId: docId });
+    await this.callTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
 
     const uncalledTools = this.serverTools.filter(name => !this.called.has(name));
     for (const name of uncalledTools) {

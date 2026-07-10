@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Added bounded integer schemas for pagination, search limits, history size, and tree depth.
+- Permanent document, workspace, and blob cleanup operations now require an exact identifier confirmation before any AFFiNE request is sent.
 - `list_notifications` now returns a stable envelope containing cursor-bearing notifications, server page info, server and page-level counts, pagination mode, and explicit filter scope.
 - `unreadOnly` now reports that it filters only the fetched page and leaves server totals and page info unchanged.
 - `read_all_notifications` now returns `applied` and `status`; false and exception outcomes use stable MCP error envelopes instead of success-shaped responses.
@@ -25,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- Document deletion now waits for an AFFiNE WebSocket error or success acknowledgement and falls back to a `DOC_NOT_FOUND` read-after-delete check for AFFiNE versions whose successful delete handler returns no acknowledgement.
+- `delete_doc` now reports workspace metadata and document-content outcomes separately, including partial and already-absent states.
+- Destructive document, workspace, and blob mutations now return stable MCP failure envelopes when AFFiNE rejects, does not confirm, or only partially completes an operation.
+- `delete_workspace`, `delete_blob`, and `cleanup_blobs` no longer report success when AFFiNE returns `false` or the mutation fails.
 - Added fail-closed bounds for notification page size, offset, and cursor inputs, and rejected requests that combine offset and cursor pagination.
 - Blob uploads now default to exact UTF-8 handling, require explicit `encoding: "base64"` for binary payloads, validate canonical Base64, and enforce configurable decoded-size, timeout, HTTP-status, and response-size safeguards.
 - Blob upload timeout and validation failures now return stable MCP error envelopes with distinct codes and explicit retryability.
@@ -38,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
+- Added self-contained input-boundary, destructive-confirmation, WebSocket positive/empty/negative acknowledgement, timeout, read-after-delete, partial-failure receipt, and false-mutation regression coverage.
+- Wired the focused input-contract and destructive-mutation suites into both the package `ci` script and GitHub Actions.
+- Updated live cleanup callers to use the new confirmation contract.
 - Added self-contained handler coverage for notification envelopes, cursor preservation, page-local unread filtering, pagination validation, and stable list/read-all failure results.
 - Added a self-contained blob upload contract test covering decoding, configuration, multipart headers, response limits, timeouts, HTTP failures, and true/false/exception mutation results.
 - Added a source-wide regression guard that rejects `Math.random` in runtime TypeScript and validates identifier alphabets, lengths, uniqueness, seed ranges, and invalid generator inputs.

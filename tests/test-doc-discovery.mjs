@@ -203,10 +203,19 @@ async function main() {
       "list_docs post-create visibility sync",
     );
 
-    await call("delete_doc", {
+    const deletion = await call("delete_doc", {
       workspaceId: workspace.id,
       docId: createdDocs[0].docId,
+      confirmDocId: createdDocs[0].docId,
     });
+    expectEqual(deletion?.status, "deleted", "delete_doc status");
+    expectEqual(deletion?.deleted, true, "delete_doc deleted");
+    expectEqual(deletion?.metadataRemoved, true, "delete_doc metadataRemoved");
+    expectEqual(deletion?.contentDeleted, true, "delete_doc contentDeleted");
+    expectTruthy(
+      deletion?.contentDeleteAcknowledged || deletion?.contentAbsenceVerified,
+      "delete_doc completion evidence",
+    );
 
     const listedAfterDelete = await waitForListDocs(
       workspace.id,
