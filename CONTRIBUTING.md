@@ -25,15 +25,16 @@ npm run build
 Run these before opening a PR:
 
 ```bash
-# Static quality gate (manifest + duplicate tool checks)
-npm run test:tool-manifest
-
-# Build
-npm run build
-
-# Package sanity check
-npm run pack:check
+# Build, fast regression tests, metadata checks, and package sanity
+npm run ci
 ```
+
+`npm test` is intentionally self-contained: it verifies the tool and test-suite
+manifests and runs only tests that do not require a live AFFiNE instance.
+
+Every `tests/test-*.mjs` file must be classified in `tests/test-suites.json`.
+Tests that require AFFiNE, Docker, credentials, or a browser must not be added to
+the `fast` suite.
 
 If you have a reachable AFFiNE dev server:
 

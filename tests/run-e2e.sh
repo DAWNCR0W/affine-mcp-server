@@ -4,13 +4,9 @@
 #   1. Start AFFiNE via Docker Compose
 #   2. Wait for health + acquire credentials
 #   3. Build the MCP server
-#   4. Run MCP database creation test (email/password auth)
-#   5. Run MCP bearer token auth test
-#   6. Run MCP HTTP email/password multi-session test
-#   7. Run MCP tag visibility setup test
-#   8. Run MCP data-view setup test
-#   9. Run Playwright UI verification (all scenarios)
-#  10. Tear down Docker (on exit)
+#   4. Run the manifest-defined release integration suite
+#   5. Run Playwright UI verification (all scenarios)
+#   6. Tear down Docker (on exit)
 #
 set -euo pipefail
 
@@ -284,112 +280,12 @@ echo "=== Building MCP server ==="
 cd "$PROJECT_DIR"
 npm run build
 
-# --- Step 4: Run MCP database creation test ---
+# --- Step 4: Run the manifest-defined release integration suite ---
 echo ""
-echo "=== Running MCP database creation test ==="
-node "$SCRIPT_DIR/test-database-creation.mjs"
+echo "=== Running release integration suite ==="
+node "$PROJECT_DIR/scripts/run-test-suite.mjs" e2e
 
-# --- Step 4b: Run MCP database linked-doc regression test ---
-echo ""
-echo "=== Running MCP database linked-doc regression test ==="
-node "$SCRIPT_DIR/test-database-linked-doc.mjs"
-
-# --- Step 5: Run MCP bearer token auth test ---
-echo ""
-echo "=== Running MCP bearer token auth test ==="
-node "$SCRIPT_DIR/test-bearer-auth.mjs"
-
-# --- Step 6: Run MCP HTTP email/password multi-session test ---
-echo ""
-echo "=== Running MCP HTTP email/password multi-session test ==="
-node "$SCRIPT_DIR/test-http-email-password.mjs"
-
-# --- Step 7: Run MCP HTTP bearer auth test ---
-echo ""
-echo "=== Running MCP HTTP bearer auth test ==="
-node "$SCRIPT_DIR/test-http-bearer.mjs"
-
-# --- Step 8: Run MCP OAuth HTTP auth test ---
-echo ""
-echo "=== Running MCP OAuth HTTP auth test ==="
-node "$SCRIPT_DIR/test-oauth-http.mjs"
-
-# --- Step 9: Run MCP tag visibility setup test ---
-echo ""
-echo "=== Running MCP tag visibility setup test ==="
-node "$SCRIPT_DIR/test-tag-visibility.mjs"
-
-# --- Step 9b: Run MCP tag deletion regression test ---
-echo ""
-echo "=== Running MCP tag deletion regression test ==="
-node "$SCRIPT_DIR/test-tag-deletion.mjs"
-
-# --- Step 10: Run MCP data-view setup test ---
-echo ""
-echo "=== Running MCP data-view setup test ==="
-node "$SCRIPT_DIR/test-data-view.mjs"
-
-# --- Step 11: Run MCP create-with-placement regression test ---
-echo ""
-echo "=== Running MCP create-with-placement regression test ==="
-node "$SCRIPT_DIR/test-create-placement.mjs"
-
-# --- Step 12: Run MCP doc discovery regression test ---
-echo ""
-echo "=== Running MCP doc discovery regression test ==="
-node "$SCRIPT_DIR/test-doc-discovery.mjs"
-
-# --- Step 12b: Run MCP find_doc_by_title regression test ---
-echo ""
-echo "=== Running MCP find_doc_by_title regression test ==="
-node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
-
-# --- Step 12c: Run MCP document custom-property regression test ---
-echo ""
-echo "=== Running MCP document custom-property regression test ==="
-node "$SCRIPT_DIR/test-doc-properties.mjs"
-
-# --- Step 12d: Run MCP read_doc LinkedPage reference regression test ---
-echo ""
-echo "=== Running MCP read_doc LinkedPage reference regression test ==="
-node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
-
-# --- Step 12e: Run MCP explorer-icon regression test ---
-echo ""
-echo "=== Running MCP explorer-icon regression test ==="
-node "$SCRIPT_DIR/test-icons.mjs"
-
-# --- Step 13: Run MCP surface-element CRUD + edgeless canvas test ---
-echo ""
-echo "=== Running MCP surface-element CRUD + edgeless canvas test ==="
-node "$SCRIPT_DIR/test-surface-elements.mjs"
-
-# --- Step 13b: Seed an edgeless-canvas doc for the Playwright verification ---
-echo ""
-echo "=== Seeding edgeless canvas doc for Playwright verification ==="
-node "$SCRIPT_DIR/test-edgeless-canvas-setup.mjs"
-
-# --- Step 13c: Canvas tool-map demo + layout-helper assertions ---
-echo ""
-echo "=== Running MCP canvas tool-map demo + layout-helper assertions ==="
-node "$SCRIPT_DIR/test-canvas-tool-map-demo.mjs"
-
-# --- Step 13c1: Cookbook auth-flow scene + per-claim assertions ---
-echo ""
-echo "=== Running MCP edgeless-canvas cookbook auth-flow scene ==="
-node "$SCRIPT_DIR/test-edgeless-canvas-cookbook.mjs"
-
-# --- Step 13c2: stackAfter direction coverage (4-way star) ---
-echo ""
-echo "=== Running MCP stackAfter direction assertions (4-way star) ==="
-node "$SCRIPT_DIR/test-stack-after-directions.mjs"
-
-# --- Step 13d: Theme-default CRDT assertions + state for Playwright ---
-echo ""
-echo "=== Seeding theme-defaults doc + asserting palette tokens ==="
-node "$SCRIPT_DIR/test-theme-defaults-setup.mjs"
-
-# --- Step 14: Run Playwright verification ---
+# --- Step 5: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready

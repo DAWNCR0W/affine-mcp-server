@@ -4,8 +4,9 @@
 #   1. Start AFFiNE via Docker Compose
 #   2. Wait for health + verify credentials
 #   3. Build the MCP server
-#   4. Run the comprehensive MCP tool-surface test
-#   5. Tear down Docker on exit
+#   4. Run the manifest-defined focused tests
+#   5. Run the comprehensive MCP tool-surface test
+#   6. Tear down Docker on exit
 #
 set -euo pipefail
 
@@ -171,60 +172,8 @@ echo "=== Re-checking AFFiNE auth readiness ==="
 wait_for_auth_ready
 
 echo ""
-echo "=== Running tool filtering regression ==="
-npm run test:tool-filtering
-
-echo ""
-echo "=== Running capabilities and fidelity regression ==="
-node "$SCRIPT_DIR/test-capabilities-fidelity.mjs"
-
-echo ""
-echo "=== Running create-with-placement regression ==="
-node "$SCRIPT_DIR/test-create-placement.mjs"
-
-echo ""
-echo "=== Running document discovery regression ==="
-node "$SCRIPT_DIR/test-doc-discovery.mjs"
-
-echo ""
-echo "=== Running find_doc_by_title regression ==="
-node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
-
-echo ""
-echo "=== Running document custom-property regression ==="
-node "$SCRIPT_DIR/test-doc-properties.mjs"
-
-echo ""
-echo "=== Running database linked-doc regression ==="
-node "$SCRIPT_DIR/test-database-linked-doc.mjs"
-
-echo ""
-echo "=== Running read_doc LinkedPage reference regression ==="
-node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
-
-echo ""
-echo "=== Running semantic page composer regression ==="
-node "$SCRIPT_DIR/test-semantic-page-composer.mjs"
-
-echo ""
-echo "=== Running database intent regression ==="
-node "$SCRIPT_DIR/test-database-intent.mjs"
-
-echo ""
-echo "=== Running database cells regression ==="
-node "$SCRIPT_DIR/test-database-cells.mjs"
-
-echo ""
-echo "=== Running native template regression ==="
-node "$SCRIPT_DIR/test-native-template-instantiation.mjs"
-
-echo ""
-echo "=== Running organize tools regression ==="
-node "$SCRIPT_DIR/test-organize-tools.mjs"
-
-echo ""
-echo "=== Running supporting tools regression ==="
-node "$SCRIPT_DIR/test-supporting-tools.mjs"
+echo "=== Running focused comprehensive suite ==="
+node "$PROJECT_DIR/scripts/run-test-suite.mjs" comprehensive
 
 echo ""
 echo "=== Running comprehensive MCP regression ==="

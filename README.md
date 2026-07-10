@@ -226,13 +226,12 @@ For common failures, see:
 Run the main quality gates before opening a PR:
 
 ```bash
-npm run build
-npm run test:tool-manifest
-npm run pack:check
+npm run ci
 ```
 
 Additional validation:
 
+- `npm test` verifies tool metadata, test-suite coverage, and the fast regression suite without requiring a live AFFiNE instance
 - `npm run test:comprehensive` boots a local Docker AFFiNE stack and validates the tool surface
 - `npm run test:e2e` runs Docker, MCP, and Playwright together
 - `npm run test:playwright` runs the Playwright suite only

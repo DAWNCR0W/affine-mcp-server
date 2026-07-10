@@ -5,6 +5,8 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+import { getToolResultError } from './tests/support/comprehensive-result.mjs';
+
 const MCP_SERVER_PATH = './dist/index.js';
 const BASE_URL = process.env.AFFINE_BASE_URL || 'http://localhost:3010';
 const EMAIL = process.env.AFFINE_EMAIL || process.env.AFFINE_ADMIN_EMAIL || 'test@affine.local';
@@ -73,16 +75,6 @@ function parseContent(result) {
   } catch {
     return text;
   }
-}
-
-function toErrorMessage(parsed) {
-  if (!parsed) return null;
-  if (typeof parsed === 'string') {
-    if (/^GraphQL error:/i.test(parsed) || /^Error:/i.test(parsed)) return parsed;
-    return null;
-  }
-  if (typeof parsed === 'object' && parsed.error) return String(parsed.error);
-  return null;
 }
 
 function isBlockedByEnvironment(_toolName, errorMessage) {
@@ -160,7 +152,7 @@ class ComprehensiveRunner {
         { timeout: TOOL_TIMEOUT_MS }
       );
       const parsed = parseContent(result);
-      const semanticError = toErrorMessage(parsed);
+      const semanticError = getToolResultError(result, parsed);
       record.result = parsed;
       record.durationMs = Date.now() - start;
 
@@ -177,7 +169,7 @@ class ComprehensiveRunner {
         record.ok = true;
       }
 
-      if (after) {
+      if (after && record.ok) {
         try {
           after(parsed);
         } catch (error) {
