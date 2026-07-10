@@ -5360,7 +5360,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) {
       throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
     }
-    await assertParentDocumentExistsBeforeCreate(workspaceId, parsed.parentDocId);
     const created = await createDocInternal({ ...parsed, workspaceId });
     const placement = await finalizeDocPlacement({
       workspaceId: created.workspaceId,
