@@ -363,13 +363,19 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         `;
         
         const data = await gql.request<{ deleteWorkspace: boolean }>(mutation, { id });
+        if (!data.deleteWorkspace) {
+          return toolError("AFFiNE did not confirm workspace deletion.", {
+            code: "workspace_delete_failed",
+            retryable: false,
+            data: { kind: "workspace.delete", workspaceId: id, id, status: "failed" },
+          });
+        }
         
         return receipt("workspace.delete", {
           workspaceId: id,
           id,
           deleted: data.deleteWorkspace,
           success: data.deleteWorkspace,
-          message: "Workspace deleted successfully",
         });
       } catch (error: any) {
         return toolError(error, {

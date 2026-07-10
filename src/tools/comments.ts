@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 
 const CommentContent = z.union([
   z.string(),
@@ -73,6 +73,13 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     const mutation = `mutation UpdateComment($input: CommentUpdateInput!){ updateComment(input:$input) }`;
     const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
     const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: normalizedContent } });
+    if (!data.updateComment) {
+      return toolError("AFFiNE did not confirm the comment update.", {
+        code: "comment_update_failed",
+        retryable: false,
+        data: { kind: "comment.update", commentId: parsed.id, id: parsed.id },
+      });
+    }
     return receipt("comment.update", {
       commentId: parsed.id,
       id: parsed.id,
@@ -95,6 +102,13 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   const deleteCommentHandler = async (parsed: { id: string }) => {
     const mutation = `mutation DeleteComment($id:String!){ deleteComment(id:$id) }`;
     const data = await gql.request<{ deleteComment: boolean }>(mutation, { id: parsed.id });
+    if (!data.deleteComment) {
+      return toolError("AFFiNE did not confirm comment deletion.", {
+        code: "comment_delete_failed",
+        retryable: false,
+        data: { kind: "comment.delete", commentId: parsed.id, id: parsed.id },
+      });
+    }
     return receipt("comment.delete", {
       commentId: parsed.id,
       id: parsed.id,
@@ -116,6 +130,13 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   const resolveCommentHandler = async (parsed: { id: string; resolved: boolean }) => {
     const mutation = `mutation ResolveComment($input: CommentResolveInput!){ resolveComment(input:$input) }`;
     const data = await gql.request<{ resolveComment: boolean }>(mutation, { input: parsed });
+    if (!data.resolveComment) {
+      return toolError("AFFiNE did not confirm the comment resolution change.", {
+        code: "comment_resolve_failed",
+        retryable: false,
+        data: { kind: "comment.resolve", commentId: parsed.id, id: parsed.id, resolved: parsed.resolved },
+      });
+    }
     return receipt("comment.resolve", {
       commentId: parsed.id,
       id: parsed.id,
