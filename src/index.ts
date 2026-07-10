@@ -141,11 +141,7 @@ if (authSource === "not configured") {
   console.error("[affine-mcp] Set AFFINE_API_TOKEN or run: affine-mcp login");
 }
 console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
-if (authSource !== "not configured" && config.baseUrl.startsWith("http://")
-    && !config.baseUrl.includes("localhost")
-    && !config.baseUrl.includes("127.0.0.1")) {
-  console.error("WARNING: Credentials configured over plain HTTP. Use HTTPS for remote servers.");
-}
+
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
 for (const warning of toolFilter.warnings) {

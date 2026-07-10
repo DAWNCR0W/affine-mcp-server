@@ -15,6 +15,7 @@ import {
 } from "./config.js";
 import { loginWithPassword } from "./auth.js";
 import { probeOAuthReadiness, validateOAuthConfig } from "./oauth.js";
+import { parseBooleanFlag } from "./networkSecurity.js";
 
 const CLI_FETCH_TIMEOUT_MS = 30_000;
 
@@ -479,7 +480,14 @@ async function login(args: string[]) {
 
   const defaultUrl = "https://app.affine.pro";
   const rawUrl = providedUrl ?? ((await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl);
-  const baseUrl = validateBaseUrl(rawUrl);
+  const baseUrl = validateBaseUrl(rawUrl, {
+    allowInsecureHttp: parseBooleanFlag(
+      "AFFINE_ALLOW_INSECURE_HTTP",
+      process.env.AFFINE_ALLOW_INSECURE_HTTP,
+    ),
+    insecureHttpOptInName: "AFFINE_ALLOW_INSECURE_HTTP",
+    label: "AFFINE URL",
+  });
   const graphqlPath = validateGraphqlPath(
     providedGraphqlPath || process.env.AFFINE_GRAPHQL_PATH || existing.AFFINE_GRAPHQL_PATH || "/graphql",
   );

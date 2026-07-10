@@ -3,6 +3,11 @@ import * as os from "os";
 import * as path from "path";
 import { createRequire } from "module";
 
+import {
+  isRemotePlainHttpUrl,
+  parseBooleanFlag,
+} from "./networkSecurity.js";
+
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 export const VERSION: string = pkg.version;
@@ -85,8 +90,17 @@ export function writeConfigFile(vars: Record<string, string>) {
   }
 }
 
+type BaseUrlValidationOptions = {
+  allowInsecureHttp?: boolean;
+  insecureHttpOptInName?: string;
+  label?: string;
+};
+
 /** Validate and sanitize a base URL. Throws on invalid or dangerous URLs. */
-export function validateBaseUrl(input: string): string {
+export function validateBaseUrl(
+  input: string,
+  options: BaseUrlValidationOptions = {},
+): string {
   let parsed: URL;
   try {
     parsed = new URL(input);
@@ -101,11 +115,18 @@ export function validateBaseUrl(input: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`Unsupported URL scheme: ${parsed.protocol} (only http/https allowed)`);
   }
-  // Warn (but allow) plain HTTP for non-local targets
-  const host = parsed.hostname;
-  const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
-  if (parsed.protocol === "http:" && !isLocal) {
-    console.error("WARNING: Using plain HTTP for a non-localhost URL. Consider HTTPS for security.");
+  if (isRemotePlainHttpUrl(parsed)) {
+    const label = options.label || "URL";
+    if (!options.allowInsecureHttp) {
+      const optIn = options.insecureHttpOptInName
+        ? ` Set ${options.insecureHttpOptInName}=true only for a trusted private network.`
+        : "";
+      throw new Error(`${label} must use HTTPS for non-loopback destinations.${optIn}`);
+    }
+    console.warn(
+      `[affine-mcp] WARNING: ${label} uses plain HTTP for a non-loopback destination. ` +
+        "Credentials and content are not protected in transit.",
+    );
   }
   // Return normalized URL without trailing slash
   return parsed.origin + parsed.pathname.replace(/\/+$/, "");
@@ -278,7 +299,18 @@ function parseAllowedOrigins(raw: string | undefined): string[] {
 
 export function loadConfig(): ServerConfig {
   const file = loadConfigFile();
-  const baseUrl = validateBaseUrl(env("AFFINE_BASE_URL", file, "http://localhost:3010")!);
+  const allowInsecureHttp = parseBooleanFlag(
+    "AFFINE_ALLOW_INSECURE_HTTP",
+    env("AFFINE_ALLOW_INSECURE_HTTP", file),
+  );
+  const baseUrl = validateBaseUrl(
+    env("AFFINE_BASE_URL", file, "http://localhost:3010")!,
+    {
+      allowInsecureHttp,
+      insecureHttpOptInName: "AFFINE_ALLOW_INSECURE_HTTP",
+      label: "AFFINE_BASE_URL",
+    },
+  );
   const authMode = parseAuthMode(env("AFFINE_MCP_AUTH_MODE", file, "bearer"));
   const apiToken = env("AFFINE_API_TOKEN", file);
   const cookie = env("AFFINE_COOKIE", file);
@@ -298,8 +330,12 @@ export function loadConfig(): ServerConfig {
   const defaultWorkspaceId = env("AFFINE_WORKSPACE_ID", file);
   const publicBaseUrlRaw = env("AFFINE_MCP_PUBLIC_BASE_URL", file);
   const oauthIssuerUrlRaw = env("AFFINE_OAUTH_ISSUER_URL", file);
-  const publicBaseUrl = publicBaseUrlRaw ? validateBaseUrl(publicBaseUrlRaw) : undefined;
-  const oauthIssuerUrl = oauthIssuerUrlRaw ? validateBaseUrl(oauthIssuerUrlRaw) : undefined;
+  const publicBaseUrl = publicBaseUrlRaw
+    ? validateBaseUrl(publicBaseUrlRaw, { label: "AFFINE_MCP_PUBLIC_BASE_URL" })
+    : undefined;
+  const oauthIssuerUrl = oauthIssuerUrlRaw
+    ? validateBaseUrl(oauthIssuerUrlRaw, { label: "AFFINE_OAUTH_ISSUER_URL" })
+    : undefined;
   const oauthScopes = parseOAuthScopes(env("AFFINE_OAUTH_SCOPES", file, "mcp"));
   const oauthClockSkewSeconds = parsePositiveIntegerEnv(
     "AFFINE_OAUTH_CLOCK_SKEW_SECONDS",
