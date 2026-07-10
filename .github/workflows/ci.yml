@@ -37,6 +37,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test notification contracts
+        run: npm run test:notification-contract
+
       - name: Verify live-test safety guard
         run: npm run test:live-safety
 

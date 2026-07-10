@@ -190,8 +190,19 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_notifications` | List notifications for the current user | |
-| `read_all_notifications` | Mark notifications as read | |
+| `list_notifications` | List one page of notifications for the current user | Returns a stable envelope with notification cursors, server page info, explicit counts, and filter scope |
+| `read_all_notifications` | Ask AFFiNE to mark notifications as read | Check `applied` and `status`; false or failed outcomes return MCP errors with stable codes |
+
+`list_notifications` accepts either zero-based `offset` pagination or an `after` cursor, never both. `first` is limited to 1-100, offsets must fit a GraphQL signed integer, and cursors must contain 1-2,048 characters. The response uses these fields:
+
+- `notifications`: notification nodes from this page, each with its GraphQL edge `cursor`
+- `pagination.pageInfo`: unmodified server `hasNextPage` and `endCursor` values
+- `counts.serverTotalCount`: the server's total notification count before local filtering
+- `counts.serverUnreadTotalCount`: always `null` because this endpoint does not provide a global unread total
+- `counts.fetchedPageCount`, `unreadOnFetchedPageCount`, and `returnedCount`: explicit page-level counts
+- `filter.scope`: `fetched_page` when `unreadOnly=true`, otherwise `none`
+
+`unreadOnly` is intentionally a client-side filter over the fetched server page. It does not rewrite `serverTotalCount` or `pageInfo`; continue pagination to inspect unread notifications beyond the current page.
 
 ## Blob storage
 

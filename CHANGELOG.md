@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `list_notifications` now returns a stable envelope containing cursor-bearing notifications, server page info, server and page-level counts, pagination mode, and explicit filter scope.
+- `unreadOnly` now reports that it filters only the fetched page and leaves server totals and page info unchanged.
+- `read_all_notifications` now returns `applied` and `status`; false and exception outcomes use stable MCP error envelopes instead of success-shaped responses.
 - Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
 - Centralized GraphQL endpoint, transport, login, port, host, CORS, and HTTP bearer settings under one `environment > saved config > defaults` resolver with strict validation.
 - Updated `status`, `doctor`, `show-config`, login, and generated client snippets to use the same effective configuration as the MCP runtime, including custom GraphQL paths and non-token authentication.
@@ -22,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- Added fail-closed bounds for notification page size, offset, and cursor inputs, and rejected requests that combine offset and cursor pagination.
 - Blob uploads now default to exact UTF-8 handling, require explicit `encoding: "base64"` for binary payloads, validate canonical Base64, and enforce configurable decoded-size, timeout, HTTP-status, and response-size safeguards.
 - Blob upload timeout and validation failures now return stable MCP error envelopes with distinct codes and explicit retryability.
 - Blob delete and cleanup `false` results now return `not_applied` MCP errors instead of success-shaped responses.
@@ -34,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
+- Added self-contained handler coverage for notification envelopes, cursor preservation, page-local unread filtering, pagination validation, and stable list/read-all failure results.
 - Added a self-contained blob upload contract test covering decoding, configuration, multipart headers, response limits, timeouts, HTTP failures, and true/false/exception mutation results.
 - Added a source-wide regression guard that rejects `Math.random` in runtime TypeScript and validates identifier alphabets, lengths, uniqueness, seed ranges, and invalid generator inputs.
 - Added self-contained CI coverage for destructive-target validation, remote confirmation, URL normalization, and unique test resource naming.

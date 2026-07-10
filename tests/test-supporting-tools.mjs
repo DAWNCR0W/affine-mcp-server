@@ -244,10 +244,35 @@ async function main() {
     expectEqual(cleanupBlobs?.success, true, 'cleanup_blobs success');
 
     const notifications = await call('list_notifications', { first: 20 });
-    expectArray(notifications, 'list_notifications result');
+    expectEqual(notifications?.kind, 'notification.list', 'list_notifications kind');
+    expectArray(notifications?.notifications, 'list_notifications notifications');
+    expectEqual(
+      notifications?.counts?.returnedCount,
+      notifications.notifications.length,
+      'list_notifications returnedCount',
+    );
+    expectEqual(
+      notifications?.filter?.scope,
+      'none',
+      'list_notifications default filter scope',
+    );
+    expectTruthy(notifications?.pagination?.pageInfo, 'list_notifications pageInfo');
 
     const readAllNotifications = await call('read_all_notifications');
-    expectEqual(readAllNotifications?.success, true, 'read_all_notifications success');
+    expectTruthy(
+      typeof readAllNotifications?.applied === 'boolean',
+      'read_all_notifications applied boolean',
+    );
+    expectEqual(
+      readAllNotifications?.success,
+      readAllNotifications?.applied,
+      'read_all_notifications success mirrors applied',
+    );
+    expectEqual(
+      readAllNotifications?.status,
+      readAllNotifications?.applied ? 'applied' : 'not_applied',
+      'read_all_notifications status',
+    );
 
     const profileName = `Supporting Tools ${timestamp}`;
     const updatedProfile = await call('update_profile', { name: profileName });
