@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for the explorer-icon tools.
  *
@@ -84,7 +86,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-icons-noconfig",
+      XDG_CONFIG_HOME: testTempPath('icons-config'),
     },
     stderr: "pipe",
   });
@@ -135,7 +137,7 @@ async function main() {
   let folderId;
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `icons-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
     workspaceId = workspace.id;

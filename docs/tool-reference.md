@@ -10,6 +10,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 - Document editing relies on AFFiNE WebSocket-backed operations where noted
 - Experimental organize tools are marked explicitly
 - Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` in production if you want a reduced surface
+- Invalid profile, group, and tool names stop startup; the server never falls back to a broader surface
 
 ## Workspace
 
@@ -19,8 +20,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `get_workspace` | Read workspace details | Includes settings and metadata |
 | `create_workspace` | Create a workspace with an initial document | Destructive in the sense that it creates new server state |
 | `update_workspace` | Update workspace settings | Use carefully in shared workspaces |
-| `delete_workspace` | Permanently delete a workspace | Destructive |
-| `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs |
+| `delete_workspace` | Permanently delete a workspace | Destructive; `confirmWorkspaceId` must exactly match `id`; unconfirmed outcomes return an MCP error instead of a success receipt |
+| `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs; depth is limited to 0-20 |
 | `get_orphan_docs` | Find documents that are not linked from a parent doc | Useful for cleanup and audits |
 
 ## Organization
@@ -54,7 +55,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | --- | --- | --- |
 | `list_docs` | List documents with pagination | Includes `node.tags` |
 | `list_tags` | List all tags in a workspace | |
-| `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting |
+| `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting; limit is 1-200 |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
 | `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
@@ -77,8 +78,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_doc_from_markdown` | Create a document from Markdown content | |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
-| `move_doc` | Move a document in the sidebar by relinking it under another parent | |
-| `delete_doc` | Delete a document | WebSocket-backed and destructive |
+| `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
+| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
 
 ### Content editing
 
@@ -87,11 +88,11 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
 | `get_doc_icon` | Read a document's current sidebar icon | |
-| `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph so it renders on the edgeless canvas. |
+| `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
-| `replace_doc_with_markdown` | Replace the main note content with Markdown | Overwrites main note content |
+| `replace_doc_with_markdown` | Replace the main note content with Markdown | Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
 ### Tags
 
@@ -116,8 +117,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `export_doc_markdown` | Export document content as Markdown | Useful for backup and automation |
-| `export_with_fidelity_report` | Export a document with a machine-readable fidelity report | Useful when native AFFiNE structures matter |
+| `export_doc_markdown` | Export document content as Markdown | Preserves supported inline rich text and safely escapes untrusted Markdown contexts, URLs, tables, code fences, and optional frontmatter |
+| `export_with_fidelity_report` | Export a document with a machine-readable fidelity report | Reports unsupported inline attributes and native block loss while using the same safe serializer |
 
 ## Database blocks
 
@@ -189,13 +190,24 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_notifications` | List notifications for the current user | |
-| `read_all_notifications` | Mark notifications as read | |
+| `list_notifications` | List one page of notifications for the current user | Returns a stable envelope with notification cursors, server page info, explicit counts, and filter scope |
+| `read_all_notifications` | Ask AFFiNE to mark notifications as read | Check `applied` and `status`; false or failed outcomes return MCP errors with stable codes |
+
+`list_notifications` accepts either zero-based `offset` pagination or an `after` cursor, never both. `first` is limited to 1-100, offsets must fit a GraphQL signed integer, and cursors must contain 1-2,048 characters. The response uses these fields:
+
+- `notifications`: notification nodes from this page, each with its GraphQL edge `cursor`
+- `pagination.pageInfo`: unmodified server `hasNextPage` and `endCursor` values
+- `counts.serverTotalCount`: the server's total notification count before local filtering
+- `counts.serverUnreadTotalCount`: always `null` because this endpoint does not provide a global unread total
+- `counts.fetchedPageCount`, `unreadOnFetchedPageCount`, and `returnedCount`: explicit page-level counts
+- `filter.scope`: `fetched_page` when `unreadOnly=true`, otherwise `none`
+
+`unreadOnly` is intentionally a client-side filter over the fetched server page. It does not rewrite `serverTotalCount` or `pageInfo`; continue pagination to inspect unread notifications beyond the current page.
 
 ## Blob storage
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `upload_blob` | Upload a file or blob to workspace storage | |
-| `delete_blob` | Delete a blob from workspace storage | Destructive |
-| `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented |
+| `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
+| `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
+| `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |

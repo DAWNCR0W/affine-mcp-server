@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for placement-first document creation.
  *
@@ -91,7 +93,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-create-placement-noconfig",
+      XDG_CONFIG_HOME: testTempPath('create-placement-config'),
     },
     stderr: "pipe",
   });
@@ -138,7 +140,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `create-placement-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
     expectTruthy(workspace?.firstDocId, "create_workspace firstDocId");

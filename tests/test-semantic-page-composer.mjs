@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -78,7 +80,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-semantic-page",
+      XDG_CONFIG_HOME: testTempPath('semantic-page-config'),
     },
     stderr: "pipe",
   });
@@ -107,7 +109,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const workspace = await call("create_workspace", { name: `semantic-page-${Date.now()}` });
+    const workspace = await call("create_workspace", { name: testResourceName('semantic-page') });
     expectTruthy(workspace?.id, "create_workspace id");
 
     const parent = await call("create_doc", {

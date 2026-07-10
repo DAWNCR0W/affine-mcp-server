@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import "./require-destructive-test-safety.mjs";
+
 import assert from "node:assert/strict";
 
 import { receipt, text, toolError } from "../dist/util/mcp.js";
@@ -85,7 +87,11 @@ registerWorkspaceTools(registry, falseResultClient);
 const falseMutationCases = [
   ["revoke_access_token", { id: "token-1" }, "access_token_revoke_failed"],
   ["delete_blob", { workspaceId: "workspace-1", key: "blob-1" }, "blob_delete_failed"],
-  ["cleanup_blobs", { workspaceId: "workspace-1" }, "blob_cleanup_failed"],
+  [
+    "cleanup_blobs",
+    { workspaceId: "workspace-1", confirmWorkspaceId: "workspace-1" },
+    "blob_cleanup_failed",
+  ],
   ["read_all_notifications", {}, "notification_update_failed"],
   ["update_settings", { settings: { receiveCommentEmail: true } }, "settings_update_failed"],
   [
@@ -108,7 +114,7 @@ const falseMutationCases = [
   ],
   [
     "delete_workspace",
-    { id: "workspace-1" },
+    { id: "workspace-1", confirmWorkspaceId: "workspace-1" },
     "workspace_delete_failed",
     "AFFiNE did not confirm workspace deletion.",
   ],
@@ -134,7 +140,10 @@ const successResultClient = {
 };
 const successRegistry = new ToolRegistry();
 registerWorkspaceTools(successRegistry, successResultClient);
-const deletedWorkspace = parsed(await successRegistry.tools.get("delete_workspace")({ id: "workspace-1" }));
+const deletedWorkspace = parsed(await successRegistry.tools.get("delete_workspace")({
+  id: "workspace-1",
+  confirmWorkspaceId: "workspace-1",
+}));
 assert.equal(deletedWorkspace.success, true);
 assert.equal(deletedWorkspace.deleted, true);
 assert.equal(
