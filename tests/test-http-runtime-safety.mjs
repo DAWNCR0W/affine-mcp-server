@@ -346,13 +346,22 @@ async function testIdempotentProgrammaticClose() {
   try {
     const handle = await startHttpMcpServer(
       async () => new McpServer({ name: "runtime-close-test", version: "1.0.0" }),
-      0,
       {
         baseUrl: "http://127.0.0.1:3010",
+        graphqlEndpoint: "http://127.0.0.1:3010/graphql",
         graphqlPath: "/graphql",
         authMode: "bearer",
         oauthScopes: ["mcp"],
         oauthClockSkewSeconds: 60,
+        transportMode: "http",
+        loginAtStart: "async",
+        http: {
+          host: "127.0.0.1",
+          port: 0,
+          allowedOrigins: [],
+          allowAllOrigins: false,
+        },
+        oauthAllowServiceWrites: false,
       },
     );
     const first = handle.close("Test shutdown");

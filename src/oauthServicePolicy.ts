@@ -13,14 +13,7 @@ export function assertOAuthServiceWritePolicy(input: {
   authMode: "bearer" | "oauth";
   allowServiceWrites: boolean;
   enabledWriteTools: readonly string[];
-  toolFilterWarnings?: readonly string[];
 }): void {
-  if (
-    input.authMode === "oauth"
-    && input.toolFilterWarnings?.some(warning => warning.startsWith("Unknown AFFINE_TOOL_PROFILE"))
-  ) {
-    throw new Error("OAuth mode refuses an unknown AFFINE_TOOL_PROFILE instead of falling back to full.");
-  }
   if (
     input.authMode === "oauth"
     && input.enabledWriteTools.length > 0

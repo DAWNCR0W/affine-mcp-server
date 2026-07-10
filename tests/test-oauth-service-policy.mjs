@@ -65,17 +65,11 @@ assert.doesNotThrow(() => assertOAuthServiceWritePolicy({
   enabledWriteTools: explicitlyRestrictedFullFilter.enabledWriteTools,
 }));
 
-const invalidProfileFilter = createToolFilter(
-  createToolFilterEnvironment("oauth", { AFFINE_TOOL_PROFILE: "readonly" }),
-);
 assert.throws(
-  () => assertOAuthServiceWritePolicy({
-    authMode: "oauth",
-    allowServiceWrites: true,
-    enabledWriteTools: invalidProfileFilter.enabledWriteTools,
-    toolFilterWarnings: invalidProfileFilter.warnings,
-  }),
-  /refuses an unknown AFFINE_TOOL_PROFILE/,
+  () => createToolFilter(
+    createToolFilterEnvironment("oauth", { AFFINE_TOOL_PROFILE: "readonly" }),
+  ),
+  /Unknown AFFINE_TOOL_PROFILE "readonly"/,
 );
 
 const inputEnvironment = { AFFINE_DISABLED_TOOLS: "delete_doc" };
@@ -114,6 +108,6 @@ const invalidBooleanProcess = spawnSync(process.execPath, ["dist/index.js"], {
   timeout: 5_000,
 });
 assert.equal(invalidBooleanProcess.status, 1);
-assert.match(invalidBooleanProcess.stderr, /must be "true" or "false"/);
+assert.match(invalidBooleanProcess.stderr, /must be ['"]true['"] or ['"]false['"]/);
 
 console.log("OAuth service-account policy tests passed");
