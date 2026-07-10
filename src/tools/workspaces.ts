@@ -186,11 +186,8 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
   // CREATE WORKSPACE
   const createWorkspaceHandler = async ({ name, avatar }: { name: string; avatar?: string }) => {
       try {
-        // Get endpoint and headers from GraphQL client
-        const endpoint = gql.endpoint;
-        const headers = gql.headers;
-        const cookie = gql.cookie;
-        const bearer = gql.bearer;
+        // Wait for the shared auth session before multipart or WebSocket operations.
+        const { endpoint, headers, cookie, bearer } = await gql.getConnectionAuth();
         
         // Create initial workspace data
         const { workspaceUpdate, firstDocId, docUpdate } = createInitialWorkspaceData(name, avatar || '');
@@ -229,7 +226,6 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           method: 'POST',
           headers: {
             ...headers,
-            'Cookie': cookie,
             ...form.getHeaders()
           },
           body: form as any

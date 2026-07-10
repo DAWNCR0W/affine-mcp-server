@@ -25,9 +25,7 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
   // UPLOAD BLOB/FILE
   const uploadBlobHandler = async ({ workspaceId, content, filename, contentType }: { workspaceId: string; content: string; filename?: string; contentType?: string }) => {
     try {
-      const endpoint = gql.endpoint;
-      const headers = gql.headers;
-      const cookie = gql.cookie;
+      const { endpoint, headers } = await gql.getConnectionAuth();
       const payload = decodeBlobContent(content);
       const safeFilename = filename || `blob-${Date.now()}.bin`;
       const mime = contentType || "application/octet-stream";
@@ -49,7 +47,6 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
         method: "POST",
         headers: {
           ...headers,
-          Cookie: cookie,
           ...form.getHeaders(),
         },
         body: form as any,

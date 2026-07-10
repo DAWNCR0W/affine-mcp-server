@@ -630,9 +630,7 @@ export function registerOrganizeTools(
   defaults: { workspaceId?: string }
 ) {
   async function getSocketContext() {
-    const endpoint = gql.endpoint;
-    const cookie = gql.cookie;
-    const bearer = gql.bearer;
+    const { endpoint, cookie, bearer } = await gql.getConnectionAuth();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     return { socket };

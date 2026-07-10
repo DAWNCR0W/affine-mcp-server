@@ -183,8 +183,8 @@ export function registerPropertyTools(
   defaults: { workspaceId?: string }
 ) {
   /** Snapshot the current GraphQL endpoint and auth material for WebSocket use. */
-  function getCookieAndEndpoint() {
-    return { endpoint: gql.endpoint, cookie: gql.cookie, bearer: gql.bearer };
+  async function getCookieAndEndpoint() {
+    return await gql.getConnectionAuth();
   }
 
   /** Resolve the workspace id from the argument or the configured default; throws if absent. */
@@ -249,7 +249,7 @@ export function registerPropertyTools(
   /** Handle `list_doc_properties`: definitions, decoded per-doc values, and orphan values. */
   const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -320,7 +320,7 @@ export function registerPropertyTools(
     const name = parsed.name.trim();
     if (!name) throw new Error("name is required");
 
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -376,7 +376,7 @@ export function registerPropertyTools(
     property: string;
   }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -422,7 +422,7 @@ export function registerPropertyTools(
     value: string | number | boolean;
   }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
@@ -492,7 +492,7 @@ export function registerPropertyTools(
     property: string;
   }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
-    const { endpoint, cookie, bearer } = getCookieAndEndpoint();
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);

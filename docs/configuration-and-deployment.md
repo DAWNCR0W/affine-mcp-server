@@ -18,6 +18,16 @@ Auth priority within the active configuration:
 2. `AFFINE_COOKIE`
 3. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
 
+Email/password authentication is process-scoped. Concurrent HTTP MCP sessions
+share one sign-in attempt and the resulting cookie. In the default `async`
+mode, transport startup is not blocked, but the first backend operation waits
+for authentication to finish. A failed login is returned to every waiting
+operation and is never retried as an unauthenticated request.
+
+Bearer and cookie credentials are mutually exclusive on outbound requests.
+Explicit `sign_in` replaces the current client credential with its session
+cookie, while setting a bearer credential removes any cookie header.
+
 ## Environment variables
 
 ### Core configuration
@@ -28,7 +38,7 @@ Auth priority within the active configuration:
 | `AFFINE_GRAPHQL_PATH` | No | `/graphql` | Override only if your AFFiNE deployment uses a custom GraphQL path |
 | `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
-| `AFFINE_LOGIN_AT_START` | No | `async` | Set to `sync` only when you must block startup on email/password login |
+| `AFFINE_LOGIN_AT_START` | No | `async` | `async` starts one shared login without blocking transport startup; `sync` requires login before startup |
 
 ### Authentication
 

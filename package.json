@@ -66,6 +66,7 @@
     "test:data-view-ui": "npx playwright test tests/playwright/verify-data-view.pw.ts --config tests/playwright/playwright.config.ts",
     "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:http-email-password": "node tests/test-http-email-password.mjs",
+    "test:auth-session": "tsx tests/test-auth-session.mjs",
     "test:http-bearer": "node tests/test-http-bearer.mjs",
     "test:oauth-http": "node tests/test-oauth-http.mjs",
     "test:organize": "node tests/test-organize-tools.mjs",
@@ -77,7 +78,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run pack:check",
+    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [
