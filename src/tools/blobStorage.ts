@@ -17,6 +17,11 @@ const DEFAULT_MAX_DECODED_BYTES = 25 * 1024 * 1024;
 const DEFAULT_UPLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const MULTIPART_MANAGED_HEADERS = new Set([
+  "content-length",
+  "content-type",
+  "transfer-encoding",
+]);
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 type BlobUploadGraphQLResponse = {
@@ -189,6 +194,21 @@ function validateMultipartMetadata(value: string, label: string): string {
   return value;
 }
 
+function buildMultipartHeaders(
+  headers: Record<string, string>,
+  formHeaders: Record<string, string>,
+): Record<string, string> {
+  const preserved = Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => !MULTIPART_MANAGED_HEADERS.has(name.toLowerCase()),
+    ),
+  );
+  return {
+    ...preserved,
+    ...formHeaders,
+  };
+}
+
 export function registerBlobTools(
   server: McpServer,
   gql: GraphQLClient,
@@ -227,10 +247,7 @@ export function registerBlobTools(
       form.append("map", JSON.stringify({ "0": ["variables.blob"] }));
       form.append("0", payload, { filename: safeFilename, contentType: mime });
 
-      const requestHeaders: Record<string, string> = {
-        ...headers,
-        ...form.getHeaders(),
-      };
+      const requestHeaders = buildMultipartHeaders(headers, form.getHeaders());
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), uploadConfig.timeoutMs);

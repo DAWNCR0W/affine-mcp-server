@@ -163,7 +163,12 @@ async function testToolContract() {
     };
     const gql = {
       endpoint: `${uploadServer.baseUrl}/success`,
-      headers: { "x-test-header": "blob-contract" },
+      headers: {
+        "x-test-header": "blob-contract",
+        "Content-Type": "application/json",
+        "CONTENT-LENGTH": "1",
+        "Transfer-Encoding": "identity",
+      },
       async getConnectionAuth() {
         return {
           endpoint: this.endpoint,
@@ -219,6 +224,9 @@ async function testToolContract() {
 
     assert.equal(uploadServer.requests[0].headers.cookie, "session=test-cookie");
     assert.equal(uploadServer.requests[0].headers["x-test-header"], "blob-contract");
+    assert.match(uploadServer.requests[0].headers["content-type"], /^multipart\/form-data; boundary=/);
+    assert.notEqual(uploadServer.requests[0].headers["content-length"], "1");
+    assert.notEqual(uploadServer.requests[0].headers["transfer-encoding"], "identity");
     assert.match(uploadServer.requests[0].body.toString("utf8"), /plain\.txt/);
 
     const tooLarge = expectToolFailure(await uploadBlob({
