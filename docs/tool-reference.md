@@ -117,8 +117,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `export_doc_markdown` | Export document content as Markdown | Useful for backup and automation |
-| `export_with_fidelity_report` | Export a document with a machine-readable fidelity report | Useful when native AFFiNE structures matter |
+| `export_doc_markdown` | Export document content as Markdown | Preserves supported inline rich text and safely escapes untrusted Markdown contexts, URLs, tables, code fences, and optional frontmatter |
+| `export_with_fidelity_report` | Export a document with a machine-readable fidelity report | Reports unsupported inline attributes and native block loss while using the same safe serializer |
 
 ## Database blocks
 

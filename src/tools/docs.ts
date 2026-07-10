@@ -23,6 +23,8 @@ import {
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
+import { richTextValueToDeltas, richTextValueToString } from "../markdown/richText.js";
+import { buildMarkdownFrontmatter } from "../markdown/safety.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
 import {
@@ -544,10 +546,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
    * linked doc that opens in "center peek" when the row title is clicked.
    */
   function makeLinkedDocText(docId: string): Y.Text {
-    const delta = [{ insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } }];
-    // Cast needed: TextDelta.attributes doesn't declare `reference`, but
-    // makeText spreads all attributes at runtime via `{ ...delta.attributes }`.
-    return makeText(delta as TextDelta[]);
+    const delta: TextDelta[] = [
+      { insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } },
+    ];
+    return makeText(delta);
   }
 
   /**
@@ -2639,32 +2641,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return null;
   }
 
-  function richTextValueToString(value: unknown): string {
-    if (value instanceof Y.Text) {
-      return value.toString();
-    }
-    if (typeof value === "string") {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return value
-        .map((entry) => {
-          if (typeof entry === "string") {
-            return entry;
-          }
-          if (entry && typeof entry === "object" && typeof (entry as any).insert === "string") {
-            return (entry as any).insert as string;
-          }
-          return "";
-        })
-        .join("");
-    }
-    if (value && typeof value === "object" && typeof (value as any).insert === "string") {
-      return (value as any).insert as string;
-    }
-    return "";
-  }
-
   function mapEntries(value: unknown): Array<[string, any]> {
     if (value instanceof Y.Map) {
       const entries: Array<[string, any]> = [];
@@ -2679,7 +2655,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return [];
   }
 
-  function extractTableData(block: Y.Map<any>): string[][] | null {
+  function extractTableData(block: Y.Map<any>): {
+    tableData: string[][];
+    tableCellDeltas: TextDelta[][][];
+  } | null {
     const compareOrder = (left: string, right: string) => {
       if (left < right) return -1;
       if (left > right) return 1;
@@ -2709,7 +2688,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }))
       .sort((a, b) => compareOrder(a.order, b.order));
 
-    let cells = new Map<string, string>();
+    let cells = new Map<string, { text: string; deltas: TextDelta[] }>();
 
     if (rowEntries.length === 0 || columnEntries.length === 0) {
       // Fallback: AFFiNE self-hosted stores table props as flat dot-notation keys
@@ -2719,7 +2698,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       //   prop:cells.{rowId}:{colId}.text  (Y.Text)
       const flatRows = new Map<string, string>(); // rowId -> order
       const flatColumns = new Map<string, string>(); // colId -> order
-      const flatCells = new Map<string, string>(); // rowId:colId -> text
+      const flatCells = new Map<string, { text: string; deltas: TextDelta[] }>(); // rowId:colId -> content
 
       block.forEach((value: unknown, key: string) => {
         const rowMatch = key.match(/^prop:rows\.([^.]+)\.order$/);
@@ -2734,7 +2713,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
         const cellMatch = key.match(/^prop:cells\.([^.]+:[^.]+)\.text$/);
         if (cellMatch) {
-          flatCells.set(cellMatch[1], richTextValueToString(value));
+          flatCells.set(cellMatch[1], {
+            text: richTextValueToString(value),
+            deltas: richTextValueToDeltas(value) ?? [],
+          });
         }
       });
 
@@ -2750,11 +2732,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     } else {
       for (const [cellKey, payload] of mapEntries(cellsValue)) {
         if (payload instanceof Y.Map) {
-          cells.set(cellKey, richTextValueToString(payload.get("text")));
+          const textValue = payload.get("text");
+          cells.set(cellKey, {
+            text: richTextValueToString(textValue),
+            deltas: richTextValueToDeltas(textValue) ?? [],
+          });
           continue;
         }
         if (payload && typeof payload === "object" && "text" in payload) {
-          cells.set(cellKey, richTextValueToString((payload as any).text));
+          const textValue = (payload as any).text;
+          cells.set(cellKey, {
+            text: richTextValueToString(textValue),
+            deltas: richTextValueToDeltas(textValue) ?? [],
+          });
         }
       }
     }
@@ -2764,15 +2754,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     const tableData: string[][] = [];
+    const tableCellDeltas: TextDelta[][][] = [];
     for (const { rowId } of rowEntries) {
       const row: string[] = [];
+      const rowDeltas: TextDelta[][] = [];
       for (const { columnId } of columnEntries) {
-        row.push(cells.get(`${rowId}:${columnId}`) ?? "");
+        const cell = cells.get(`${rowId}:${columnId}`);
+        row.push(cell?.text ?? "");
+        rowDeltas.push(cell?.deltas ?? []);
       }
       tableData.push(row);
+      tableCellDeltas.push(rowDeltas);
     }
 
-    return tableData;
+    return { tableData, tableCellDeltas };
   }
 
   function collectDocForMarkdown(
@@ -2823,19 +2818,23 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
 
       const childIds = childIdsFrom(block.get("sys:children"));
+      const textValue = block.get("prop:text");
+      const table = block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null;
       const entry: MarkdownRenderableBlock = {
         id: blockId,
         parentId: asStringOrNull(block.get("sys:parent")),
         flavour: asStringOrNull(block.get("sys:flavour")),
         type: asStringOrNull(block.get("prop:type")),
-        text: asText(block.get("prop:text")) || null,
+        text: richTextValueToString(textValue) || null,
+        textDeltas: richTextValueToDeltas(textValue),
         checked: typeof block.get("prop:checked") === "boolean" ? Boolean(block.get("prop:checked")) : null,
         language: asStringOrNull(block.get("prop:language")),
         childIds,
         url: asStringOrNull(block.get("prop:url")),
         sourceId: asStringOrNull(block.get("prop:sourceId")),
         caption: asStringOrNull(block.get("prop:caption")),
-        tableData: block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null,
+        tableData: table?.tableData ?? null,
+        tableCellDeltas: table?.tableCellDeltas ?? null,
       };
       blocksById.set(blockId, entry);
 
@@ -2989,6 +2988,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       stats: {
         blockCount: blockRows.length,
         markdownUnsupportedCount: rendered.stats.unsupportedCount,
+        markdownUnsupportedInlineAttributeCount: rendered.stats.unsupportedInlineAttributeCount,
         unsupportedBlockCount: unsupportedBlocks.length,
         conditionallyRiskyBlockCount: conditionallyRiskyBlocks.length,
       },
@@ -5574,6 +5574,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           stats: {
             blockCount: 0,
             unsupportedCount: 0,
+            unsupportedInlineAttributeCount: 0,
           },
         });
       }
@@ -5588,17 +5589,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       let markdown = rendered.markdown;
       if (parsed.includeFrontmatter) {
-        const escapedTitle = (collected.title || "Untitled").replace(/\"/g, "\\\"");
-        const frontmatterLines = [
-          "---",
-          `docId: \"${parsed.docId}\"`,
-          `title: \"${escapedTitle}\"`,
-          "tags:",
-          ...(collected.tags.length > 0 ? collected.tags.map(tag => `  - \"${tag.replace(/\"/g, "\\\"")}\"`) : ["  -"]),
-          `lossy: ${rendered.lossy ? "true" : "false"}`,
-          "---",
-        ];
-        markdown = `${frontmatterLines.join("\n")}\n\n${markdown}`;
+        const frontmatter = buildMarkdownFrontmatter({
+          docId: parsed.docId,
+          title: collected.title || "Untitled",
+          tags: collected.tags,
+          lossy: rendered.lossy,
+        });
+        markdown = `${frontmatter}\n\n${markdown}`;
       }
 
       return text({
@@ -5674,18 +5671,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let markdown = summary.markdown;
 
       if (parsed.includeFrontmatter) {
-        const escapedTitle = (summary.title || "Untitled").replace(/\"/g, "\\\"");
-        const frontmatterLines = [
-          "---",
-          `docId: \"${parsed.docId}\"`,
-          `title: \"${escapedTitle}\"`,
-          "tags:",
-          ...(summary.tags.length > 0 ? summary.tags.map(tag => `  - \"${tag.replace(/\"/g, "\\\"")}\"`) : ["  -"]),
-          `lossy: ${summary.markdownLossy ? "true" : "false"}`,
-          `fidelityRisk: \"${summary.overallRisk}\"`,
-          "---",
-        ];
-        markdown = `${frontmatterLines.join("\n")}\n\n${markdown}`;
+        const frontmatter = buildMarkdownFrontmatter({
+          docId: parsed.docId,
+          title: summary.title || "Untitled",
+          tags: summary.tags,
+          lossy: summary.markdownLossy,
+          fidelityRisk: summary.overallRisk,
+        });
+        markdown = `${frontmatter}\n\n${markdown}`;
       }
 
       return text({
