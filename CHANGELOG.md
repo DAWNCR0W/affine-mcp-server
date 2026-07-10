@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
+
 ### Fixed
 - Persisted document, block, property, organize, fractional-index suffix, and surface seed values now use unbiased cryptographically secure randomness instead of `Math.random` or modulo-biased bytes.
 

@@ -14,16 +14,21 @@ on:
 
 jobs:
   validate:
+    name: Validate on Node.js ${{ matrix.node-version }}
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'develop' || (github.base_ref == 'main' && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
+      - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -37,6 +42,9 @@ jobs:
 
       - name: Verify secure identifier generation
         run: npm run test:secure-random
+
+      - name: Verify pull request branch route policy
+        run: npm run test:pr-route-policy
 
       - name: Check package contents
         run: npm run pack:check
