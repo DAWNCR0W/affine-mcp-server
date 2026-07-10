@@ -137,7 +137,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ workspaces: any[] }>(query);
       return text(data.workspaces || []);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "workspace_list_failed" });
     }
   };
 
@@ -168,7 +168,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ workspace: any }>(query, { id });
       return text(data.workspace);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "workspace_get_failed" });
     }
   };
 

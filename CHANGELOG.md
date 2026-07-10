@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- Tool handlers now return MCP `isError: true` with stable error codes, retryability, and machine-readable context instead of reporting failures as successful text results.
+- Structured receipts derive `ok` from explicit `ok`, `success`, and failed status values rather than defaulting every operation to success.
 - Document moves now validate source and destination documents, reject hierarchy cycles, add the destination link before removing the source link, and report partial outcomes without orphaning the document.
 - Strict Markdown mutations now abort before any server update when an operation cannot be applied, and document creation preflights strict Markdown before creating remote state.
 - Document append operations now reject missing target documents instead of writing updates to an empty Yjs document.
@@ -51,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
+- Added self-contained coverage for success, error, and partial receipt contracts.
 - Added self-contained regression coverage for safe document move ordering, cycle rejection, partial failures, idempotent destination links, and Markdown batch failure policy.
 - Added self-contained external URL safety regressions and included them in the package CI gate.
 - Added focused rich-text round-trip and Markdown output-safety regressions, including injection payloads in every supported text context, and wired them into package and workflow CI gates.

@@ -49,6 +49,9 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify MCP result contracts
+        run: npm run test:mcp-result-contract
+
       - name: Verify document mutation safety
         run: npm run test:document-mutation-safety
 

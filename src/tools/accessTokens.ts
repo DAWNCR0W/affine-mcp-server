@@ -11,7 +11,7 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
       return text(data.currentUser?.accessTokens || []);
     } catch (error: any) {
       console.error("List access tokens error:", error.message);
-      return text({ error: error.message });
+      return toolError(error, { code: "access_token_list_failed" });
     }
   };
   server.registerTool(

@@ -53,9 +53,17 @@ export function toolError(error: unknown, options: ToolErrorOptions = {}) {
 }
 
 export function receipt(kind: string, data: Record<string, unknown>) {
-  return text({
+  const ok = typeof data.ok === "boolean"
+    ? data.ok
+    : typeof data.success === "boolean"
+      ? data.success
+      : data.status === "failed"
+        ? false
+        : true;
+  const result = text({
     kind,
-    ok: true,
     ...data,
+    ok,
   });
+  return ok ? result : { ...result, isError: true };
 }

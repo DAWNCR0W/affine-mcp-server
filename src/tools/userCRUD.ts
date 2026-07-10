@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { text, toolError } from "../util/mcp.js";
 
 export function registerUserCRUDTools(server: McpServer, gql: GraphQLClient) {
   // UPDATE PROFILE
@@ -25,7 +25,7 @@ export function registerUserCRUDTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ updateProfile: any }>(mutation, { input });
       return text(data.updateProfile);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "profile_update_failed" });
     }
   };
   server.registerTool(
@@ -55,18 +55,25 @@ export function registerUserCRUDTools(server: McpServer, gql: GraphQLClient) {
       if (typeof settings.receiveInvitationEmail === 'boolean') input.receiveInvitationEmail = settings.receiveInvitationEmail;
       if (typeof settings.receiveMentionEmail === 'boolean') input.receiveMentionEmail = settings.receiveMentionEmail;
       if (Object.keys(input).length === 0) {
-        return text({
-          error: "settings must include at least one of: receiveCommentEmail, receiveInvitationEmail, receiveMentionEmail",
-        });
+        return toolError(
+          "settings must include at least one of: receiveCommentEmail, receiveInvitationEmail, receiveMentionEmail",
+          { code: "invalid_arguments" },
+        );
       }
 
       const data = await gql.request<{ updateSettings: boolean }>(mutation, { 
         input
       });
+
+      if (!data.updateSettings) {
+        return toolError("AFFiNE did not confirm the settings update.", {
+          code: "settings_update_failed",
+        });
+      }
       
       return text({ success: data.updateSettings });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "settings_update_failed" });
     }
   };
   server.registerTool(
