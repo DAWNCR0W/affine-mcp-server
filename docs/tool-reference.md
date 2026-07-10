@@ -56,6 +56,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `list_docs` | List documents with pagination | Includes `node.tags` |
 | `list_tags` | List all tags in a workspace | |
 | `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting; limit is 1-200 |
+| `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
 | `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |

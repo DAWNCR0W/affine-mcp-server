@@ -28,6 +28,9 @@ Run these before opening a PR:
 # Static quality gate (manifest + duplicate tool checks)
 npm run test:tool-manifest
 
+# Documentation references, runtime environment variables, and package links
+npm run test:docs
+
 # Build
 npm run build
 

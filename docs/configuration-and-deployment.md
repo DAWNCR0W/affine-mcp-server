@@ -7,7 +7,7 @@ This guide covers configuration precedence, environment variables, auth strategy
 The server resolves configuration in this order:
 
 1. Environment variables
-2. Saved config file at `~/.config/affine-mcp/config`
+2. Saved config file at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/affine-mcp/config`
 3. Built-in defaults
 
 The saved config file uses the same `KEY=value` names shown below. Environment variables always override saved values, and the CLI diagnostics report the source selected for each runtime option.
@@ -40,6 +40,7 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
 | `AFFINE_LOGIN_AT_START` | No | `async` | `async` starts one shared login without blocking transport startup; `sync` requires login before startup |
+| `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
 
 ### Blob upload safeguards
 
@@ -64,9 +65,9 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Variable | Purpose |
 | --- | --- |
-| `AFFINE_TOOL_PROFILE` | Select a predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
-| `AFFINE_DISABLED_GROUPS` | Disable entire tool groups by comma-separated group name |
-| `AFFINE_DISABLED_TOOLS` | Disable individual tools by exact canonical name |
+| `AFFINE_TOOL_PROFILE` | Environment-only predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
+| `AFFINE_DISABLED_GROUPS` | Environment-only comma-separated tool groups to disable |
+| `AFFINE_DISABLED_TOOLS` | Environment-only exact canonical tool names to disable |
 
 ### HTTP mode
 
@@ -90,6 +91,14 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
 | `AFFINE_OAUTH_CLOCK_SKEW_SECONDS` | No | `60` | Positive integer tolerance for OAuth token timestamps |
 | `AFFINE_OAUTH_ALLOW_SERVICE_WRITES` | No | `false` | Explicitly acknowledge write-capable tools using the shared AFFiNE service identity |
+
+### WebSocket compatibility
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AFFINE_WS_CLIENT_VERSION` | No | `0.26.0` | Environment-only AFFiNE client version sent during workspace socket connection |
+| `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
+| `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement |
 
 ## Auth strategy matrix
 

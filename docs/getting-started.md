@@ -35,7 +35,7 @@ What happens:
 - The CLI asks for your AFFiNE base URL
 - For AFFiNE Cloud, it prompts for an API token
 - For self-hosted AFFiNE, it can sign in with email/password and generate a token automatically
-- The effective config is stored at `~/.config/affine-mcp/config`
+- The effective config is stored at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise at `~/.config/affine-mcp/config`
 
 ### 3. Verify the saved config
 
