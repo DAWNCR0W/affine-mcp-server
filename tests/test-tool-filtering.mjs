@@ -44,19 +44,25 @@ async function testFiltering(env = {}) {
 
 async function inspectToolSurfacePolicy() {
   const script = `
-    import { createToolFilter, toolFilterRequiresRegisterTool } from "./src/toolSurface.ts";
+    import { createToolFilter } from "./src/toolSurface.ts";
 
     const full = createToolFilter({ AFFINE_TOOL_PROFILE: "full" });
     const readOnly = createToolFilter({ AFFINE_TOOL_PROFILE: "read_only" });
     const disabled = createToolFilter({ AFFINE_DISABLED_TOOLS: "create_doc" });
 
+    function rejectsUnknown(filter) {
+      try {
+        filter.isEnabled("future_tool");
+        return false;
+      } catch (error) {
+        return error?.name === "UnknownToolRegistrationError";
+      }
+    }
+
     console.log(JSON.stringify({
-      fullUnknown: full.isEnabled("future_tool"),
-      readOnlyUnknown: readOnly.isEnabled("future_tool"),
-      disabledUnknown: disabled.isEnabled("future_tool"),
-      fullRequiresRegisterTool: toolFilterRequiresRegisterTool(full),
-      readOnlyRequiresRegisterTool: toolFilterRequiresRegisterTool(readOnly),
-      disabledRequiresRegisterTool: toolFilterRequiresRegisterTool(disabled)
+      fullRejectsUnknown: rejectsUnknown(full),
+      readOnlyRejectsUnknown: rejectsUnknown(readOnly),
+      disabledRejectsUnknown: rejectsUnknown(disabled)
     }));
   `;
   const { stdout } = await execFileAsync(process.execPath, [TSX_CLI_PATH, "--eval", script], {
@@ -64,6 +70,29 @@ async function inspectToolSurfacePolicy() {
     env: process.env,
   });
   return JSON.parse(stdout);
+}
+
+async function expectInvalidConfiguration(env, expectedMessages) {
+  try {
+    await execFileAsync(process.execPath, [TSX_CLI_PATH, SRC_PATH], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        AFFINE_BASE_URL: "http://localhost:3000",
+        AFFINE_API_TOKEN: "dummy_token",
+        XDG_CONFIG_HOME: "/tmp/affine-invalid-config-" + Date.now(),
+        ...env,
+      },
+      timeout: 10_000,
+    });
+    return { ok: false, output: "process unexpectedly exited successfully" };
+  } catch (error) {
+    const output = `${error?.stdout || ""}\n${error?.stderr || ""}`;
+    return {
+      ok: error?.code !== 0 && expectedMessages.every(message => output.includes(message)),
+      output,
+    };
+  }
 }
 
 async function run() {
@@ -269,21 +298,41 @@ async function run() {
       hasFailures = true;
     }
 
-    // 9. Unknown tools fail closed whenever the configured surface is restricted.
-    console.log("\nCase 9: Unknown tool policy stays least-privilege for restricted surfaces");
+    // 9. Unknown tools fail closed for every profile, including full.
+    console.log("\nCase 9: Unknown tool registration fails closed for every surface");
     const policy = await inspectToolSurfacePolicy();
     if (
-      policy.fullUnknown === true &&
-      policy.readOnlyUnknown === false &&
-      policy.disabledUnknown === false &&
-      policy.fullRequiresRegisterTool === false &&
-      policy.readOnlyRequiresRegisterTool === true &&
-      policy.disabledRequiresRegisterTool === true
+      policy.fullRejectsUnknown === true &&
+      policy.readOnlyRejectsUnknown === true &&
+      policy.disabledRejectsUnknown === true
     ) {
-      console.log("✅ Success: Unknown tools and missing registerTool handling stay least-privilege.");
+      console.log("✅ Success: Unknown tools and missing registerTool handling fail closed.");
     } else {
       console.error("❌ Failed: Tool surface policy mismatch.");
       console.error(JSON.stringify(policy, null, 2));
+      hasFailures = true;
+    }
+
+    // 10. Invalid environment configuration must stop startup and report every issue.
+    console.log("\nCase 10: Invalid tool surface configuration stops startup");
+    const invalidConfig = await expectInvalidConfiguration(
+      {
+        AFFINE_TOOL_PROFILE: "read-ony",
+        AFFINE_DISABLED_GROUPS: "unknown.group",
+        AFFINE_DISABLED_TOOLS: "future_tool",
+      },
+      [
+        "Invalid tool surface configuration",
+        "Unknown AFFINE_TOOL_PROFILE",
+        'Unknown group "unknown.group"',
+        'Unknown tool "future_tool"',
+      ],
+    );
+    if (invalidConfig.ok) {
+      console.log("✅ Success: Invalid profile, group, and tool names are reported together.");
+    } else {
+      console.error("❌ Failed: Invalid configuration did not fail closed with all diagnostics.");
+      console.error(invalidConfig.output);
       hasFailures = true;
     }
 

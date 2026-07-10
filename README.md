@@ -211,6 +211,8 @@ Useful CLI commands:
 - `affine-mcp snippet <claude|cursor|codex|all> [--env]` - generate ready-to-paste client config
 - `affine-mcp logout` - remove stored credentials
 
+`status`, `doctor`, and the server runtime use the same `environment > saved config > defaults` resolution. For a self-hosted deployment with a non-standard GraphQL route, use `affine-mcp login --graphql-path /your/graphql/path` or set `AFFINE_GRAPHQL_PATH`; `show-config --json` prints the exact resolved `graphqlEndpoint` without exposing secrets.
+
 For common failures, see:
 
 - [docs/getting-started.md#common-first-run-failures](docs/getting-started.md#common-first-run-failures)
@@ -220,6 +222,7 @@ For common failures, see:
 
 - Never commit secrets or long-lived tokens
 - Prefer API tokens over cookies or passwords in production
+- Email/password HTTP sessions share one login and never fall back to anonymous backend requests after authentication failure
 - Use HTTPS for non-local deployments
 - Rotate access tokens regularly
 - Restrict exposed tools with `AFFINE_DISABLED_GROUPS` and `AFFINE_DISABLED_TOOLS` for least-privilege setups
@@ -231,7 +234,12 @@ Run the main quality gates before opening a PR:
 
 ```bash
 npm run build
+npm run test:live-safety
 npm run test:tool-manifest
+npm run test:secure-random
+npm run test:tool-filtering
+npm run test:pr-route-policy
+npm run test:config-consistency
 npm run pack:check
 ```
 
@@ -241,6 +249,11 @@ Additional validation:
 - `npm run test:e2e` runs Docker, MCP, and Playwright together
 - `npm run test:playwright` runs the Playwright suite only
 - Focused runners for the new high-level tool surface include `npm run test:create-placement`, `npm run test:capabilities-fidelity`, `npm run test:native-template`, `node tests/test-database-intent.mjs`, `node tests/test-semantic-page-composer.mjs`, `node tests/test-structured-receipts.mjs`, `node tests/test-organize-tools.mjs`, and `node tests/test-supporting-tools.mjs`
+
+Live tests can mutate or delete AFFiNE data. They allow loopback targets by
+default and refuse non-loopback targets unless the disposable target is
+explicitly enabled and confirmed as documented in `CONTRIBUTING.md`. Never run
+them against production.
 
 Local clone flow:
 

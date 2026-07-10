@@ -13,9 +13,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
 - Array and scalar tool results now include a stable object-shaped `structuredContent` envelope (`items`, `text`, or `value`) while preserving the existing text content for compatibility.
+- Centralized GraphQL endpoint, transport, login, port, host, CORS, and HTTP bearer settings under one `environment > saved config > defaults` resolver with strict validation.
+- Updated `status`, `doctor`, `show-config`, login, and generated client snippets to use the same effective configuration as the MCP runtime, including custom GraphQL paths and non-token authentication.
+- Made `/readyz` verify the exact configured AFFiNE GraphQL endpoint in addition to OAuth discovery.
+
+### Security
+- Added a fail-closed guard to destructive live-test entry points. Loopback targets remain available by default, while non-loopback targets require an explicit remote opt-in and an exact `DESTROY <target>` confirmation.
+- Isolated Docker-backed test runs with unique Compose projects, private per-run credential files, scoped cleanup, and collision-resistant AFFiNE resource names.
+- Stopped printing acquired session cookies from the E2E credential helper.
+
+### Fixed
+- Persisted document, block, property, organize, fractional-index suffix, and surface seed values now use unbiased cryptographically secure randomness instead of `Math.random` or modulo-biased bytes.
+- Fixed CLI requests that always used `/graphql`, custom GraphQL paths becoming unintended Socket.IO namespaces, environment-only credentials that `status` ignored, and missing config-file values for custom headers and HTTP runtime settings.
+- Corrected documented defaults for the AFFiNE base URL, HTTP bind host, transport aliases, and browser origin policy.
+- Quoted Codex snippet environment arguments safely for POSIX shells and removed saved `Authorization`/`Cookie` headers during logout without deleting unrelated headers or runtime settings.
+- Email/password authentication is now process-scoped and single-flight across concurrent HTTP MCP sessions, and backend requests wait for the shared result instead of falling back to anonymous access.
+- Bearer, cookie, custom-header, and email/password credentials now follow one exclusive priority order across GraphQL, multipart, and WebSocket consumers.
+- Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
 - Added output-schema coverage and MCP round-trip validation, and included it in the default test and CI gates.
+- Added a source-wide regression guard that rejects `Math.random` in runtime TypeScript and validates identifier alphabets, lengths, uniqueness, seed ranges, and invalid generator inputs.
+- Added self-contained CI coverage for destructive-target validation, remote confirmation, URL normalization, and unique test resource naming.
+- Added self-contained regression coverage for config precedence, custom GraphQL paths, environment-only diagnostics, HTTP runtime flags, CORS, and upstream-aware readiness.
+- Added a self-contained mock AFFiNE regression suite for concurrent authentication, async request gating, credential exclusivity, failure propagation, and explicit recovery.
 
 ## [2.5.0] - 2026-07-06
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -197,7 +199,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-markdown-richtext",
+      XDG_CONFIG_HOME: testTempPath('markdown-richtext-config'),
     },
     stderr: "pipe",
   });
@@ -217,7 +219,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const workspace = await call("create_workspace", { name: `markdown-richtext-${Date.now()}` });
+    const workspace = await call("create_workspace", { name: testResourceName('markdown-richtext') });
     const workspaceId = workspace?.id;
     expect(workspaceId, "create_workspace did not return id");
 

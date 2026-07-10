@@ -25,7 +25,6 @@ find_free_port() {
 
 # --- Configuration ---
 export PORT="${PORT:-$(find_free_port)}"
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-affine_mcp_e2e_${PORT}_$$}"
 export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:${PORT}}"
 export AFFINE_HEALTH_MAX_RETRIES="${AFFINE_HEALTH_MAX_RETRIES:-90}"
 export AFFINE_HEALTH_INTERVAL_MS="${AFFINE_HEALTH_INTERVAL_MS:-5000}"
@@ -37,29 +36,50 @@ export AFFINE_AUTH_READY_INTERVAL_SECONDS="${AFFINE_AUTH_READY_INTERVAL_SECONDS:
 export AFFINE_DOCKER_START_RETRIES="${AFFINE_DOCKER_START_RETRIES:-3}"
 export AFFINE_DOCKER_RETRY_DELAY_SECONDS="${AFFINE_DOCKER_RETRY_DELAY_SECONDS:-5}"
 
-# Generate random credentials (writes docker/.env, exports env vars)
+# Fail before Docker setup or authentication if the selected target is unsafe.
+AFFINE_TEST_RUN_ID="$(node "$SCRIPT_DIR/assert-destructive-test-target.mjs" --print-run-id)"
+compose_run_id="$(printf '%s' "$AFFINE_TEST_RUN_ID" | tr '[:upper:].' '[:lower:]_')"
+export COMPOSE_PROJECT_NAME="affine_mcp_e2e_${compose_run_id}"
+AFFINE_TEST_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/affine-mcp-e2e.XXXXXX")"
+export AFFINE_TEST_RUN_ID AFFINE_TEST_TMP_DIR
+export XDG_CONFIG_HOME="$AFFINE_TEST_TMP_DIR/xdg"
+
+cleanup_test_files() {
+  if [[ "${AFFINE_TEST_ENV_FILE_OWNED:-0}" == "1" && -n "${AFFINE_TEST_ENV_FILE:-}" ]]; then
+    rm -f -- "$AFFINE_TEST_ENV_FILE"
+  fi
+  rm -rf -- "$AFFINE_TEST_TMP_DIR"
+}
+trap cleanup_test_files EXIT
+
+# Generate random credentials in a private per-run env file.
 echo "=== Generating test credentials ==="
-# shellcheck source=generate-test-env.sh
+# shellcheck source=tests/generate-test-env.sh
 . "$SCRIPT_DIR/generate-test-env.sh"
+
+compose() {
+  docker compose --env-file "$AFFINE_TEST_ENV_FILE" -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+}
 
 # --- Cleanup on exit ---
 cleanup() {
   echo ""
   echo "=== Tearing down Docker containers ==="
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+  compose down -v --remove-orphans 2>/dev/null || true
+  cleanup_test_files
 }
 trap cleanup EXIT
 
 compose_container_id() {
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" ps -aq "$1" 2>/dev/null || true
+  compose ps -aq "$1" 2>/dev/null || true
 }
 
 docker_diagnostics() {
   echo ""
   echo "=== Docker diagnostics (on failure) ==="
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" ps || true
+  compose ps || true
   echo ""
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" logs --no-color --tail=200 affine affine_migration postgres redis || true
+  compose logs --no-color --tail=200 affine affine_migration postgres redis || true
 }
 
 docker_compose_with_retry() {
@@ -67,10 +87,10 @@ docker_compose_with_retry() {
   shift
   local attempt
   local output_file
-  output_file="$(mktemp)"
+  output_file="$(mktemp "$AFFINE_TEST_TMP_DIR/docker-compose.XXXXXX")"
 
   for ((attempt = 1; attempt <= AFFINE_DOCKER_START_RETRIES; attempt++)); do
-    if docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@" >"$output_file" 2>&1; then
+    if compose "$@" >"$output_file" 2>&1; then
       cat "$output_file"
       rm -f "$output_file"
       return 0
@@ -79,7 +99,7 @@ docker_compose_with_retry() {
     echo "[e2e] ${description} failed (attempt ${attempt}/${AFFINE_DOCKER_START_RETRIES})"
     cat "$output_file"
     docker_diagnostics
-    docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+    compose down -v --remove-orphans 2>/dev/null || true
 
     if ((attempt < AFFINE_DOCKER_START_RETRIES)); then
       echo "[e2e] Retrying ${description} in ${AFFINE_DOCKER_RETRY_DELAY_SECONDS}s..."
@@ -209,18 +229,20 @@ wait_for_auth_ready() {
   local sign_in_status
   local base_url="${AFFINE_BASE_URL%/}"
   local payload
-  payload=$(printf '{"email":"%s","password":"%s"}' "$AFFINE_ADMIN_EMAIL" "$AFFINE_ADMIN_PASSWORD")
+  local setup_response="$AFFINE_TEST_TMP_DIR/setup-response.txt"
+  local sign_in_response="$AFFINE_TEST_TMP_DIR/sign-in-response.txt"
+  payload="$(node -e 'process.stdout.write(JSON.stringify({email:process.env.AFFINE_ADMIN_EMAIL,password:process.env.AFFINE_ADMIN_PASSWORD}))')"
 
   for ((attempt = 1; attempt <= AFFINE_AUTH_READY_MAX_RETRIES; attempt++)); do
     setup_status="$(
-      curl -sS -o /tmp/affine-setup-response.txt -w "%{http_code}" \
+      curl -sS -o "$setup_response" -w "%{http_code}" \
         -H "Content-Type: application/json" \
         -X POST "$base_url/api/setup/create-admin-user" \
         -d "$payload" || true
     )"
 
     sign_in_status="$(
-      curl -sS -o /tmp/affine-signin-response.txt -w "%{http_code}" \
+      curl -sS -o "$sign_in_response" -w "%{http_code}" \
         -H "Content-Type: application/json" \
         -X POST "$base_url/api/auth/sign-in" \
         -d "$payload" || true
@@ -238,9 +260,9 @@ wait_for_auth_ready() {
   done
 
   echo "[e2e] ERROR: AFFiNE sign-in endpoint did not become ready in time"
-  if [[ -s /tmp/affine-signin-response.txt ]]; then
+  if [[ -s "$sign_in_response" ]]; then
     echo "[e2e] Last sign-in response body (first 500 bytes):"
-    head -c 500 /tmp/affine-signin-response.txt
+    head -c 500 "$sign_in_response"
     echo ""
   fi
   docker_diagnostics
@@ -258,13 +280,13 @@ ensure_affine_ui_ready() {
   echo "[e2e] AFFiNE UI is not reachable before Playwright; attempting service recovery..."
   docker_diagnostics
 
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" up -d --no-deps affine
+  compose up -d --no-deps affine
   acquire_credentials_with_retry
   wait_for_auth_ready
 }
 
 # --- Step 0: Clean up any stale containers from previous runs ---
-docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+compose down -v --remove-orphans 2>/dev/null || true
 
 # --- Step 1: Start Docker ---
 echo "=== Starting AFFiNE via Docker Compose ==="
