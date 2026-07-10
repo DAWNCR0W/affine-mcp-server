@@ -12,7 +12,7 @@ import { registerUserCRUDTools } from "./tools/userCRUD.js";
 import { registerAccessTokenTools } from "./tools/accessTokens.js";
 import { registerBlobTools } from "./tools/blobStorage.js";
 import { registerNotificationTools } from "./tools/notifications.js";
-import { loginWithPassword } from "./auth.js";
+import { AuthSession, parseLoginMode } from "./authSession.js";
 import { registerAuthTools } from "./tools/auth.js";
 import { registerOrganizeTools } from "./tools/organize.js";
 import { registerPropertyTools } from "./tools/properties.js";
@@ -60,100 +60,97 @@ const useHttpTransport = config.transportMode === "http";
 // Tool filtering is parsed once at module load (not per-session in HTTP mode).
 const toolFilter = createToolFilter(process.env);
 
+if (config.authMode === "oauth" && !useHttpTransport) {
+  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
+}
+if (config.authMode === "oauth" && !config.apiToken) {
+  throw new Error("AFFINE_API_TOKEN is required when AFFINE_MCP_AUTH_MODE=oauth.");
+}
+if (config.authMode === "oauth" && (config.cookie || config.email || config.password)) {
+  console.error(
+    "[affine-mcp] OAuth mode uses the configured AFFINE_API_TOKEN service credential. " +
+    "Ignoring AFFINE_COOKIE / AFFINE_EMAIL / AFFINE_PASSWORD.",
+  );
+}
+if (config.authMode === "oauth" && process.env.AFFINE_LOGIN_AT_START) {
+  console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
+}
+
+const loginMode = config.authMode === "oauth"
+  ? "async"
+  : parseLoginMode(process.env.AFFINE_LOGIN_AT_START);
+
+function findConfiguredHeader(name: string): string | undefined {
+  let value: string | undefined;
+  for (const [headerName, headerValue] of Object.entries(config.headers || {})) {
+    if (headerName.toLowerCase() === name) value = headerValue;
+  }
+  return value;
+}
+
+const configuredAuthorization = findConfiguredHeader("authorization");
+const configuredCookie = findConfiguredHeader("cookie");
+let headerBearer: string | undefined;
+if (!config.apiToken && configuredAuthorization !== undefined) {
+  if (/[\r\n]/.test(configuredAuthorization)) {
+    throw new Error("Configured Authorization header contains illegal CR/LF characters.");
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(configuredAuthorization);
+  if (!match) {
+    throw new Error("Configured Authorization header must use the Bearer scheme.");
+  }
+  headerBearer = match[1];
+}
+
+const sessionBearer = config.apiToken || headerBearer;
+const sessionCookie = config.authMode === "oauth" || sessionBearer
+  ? undefined
+  : config.cookie || configuredCookie;
+const authSession = new AuthSession({
+  baseUrl: config.baseUrl,
+  bearer: sessionBearer,
+  cookie: sessionCookie,
+  email: config.authMode === "oauth" || sessionBearer || sessionCookie ? undefined : config.email,
+  password: config.authMode === "oauth" || sessionBearer || sessionCookie ? undefined : config.password,
+});
+
+// The process-scoped AuthSession owns credentials after configuration is loaded.
+config.email = undefined;
+config.password = undefined;
+
+if (loginMode === "async" && authSession.requiresLogin) {
+  authSession.start();
+}
+
 // Startup diagnostics (visible in Claude Code MCP server logs via stderr)
 console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
 console.error(`[affine-mcp] Endpoint: ${config.graphqlEndpoint}`);
-const hasAuth = !!(config.apiToken || config.cookie || (config.email && config.password));
-console.error(`[affine-mcp] Auth: ${hasAuth ? 'configured' : 'not configured'}`);
+const authSource = authSession.hasConfiguredAuth ? authSession.source : "not configured";
+console.error(`[affine-mcp] Auth: ${authSource}`);
+if (authSource === "not configured") {
+  console.error("[affine-mcp] WARNING: No authentication configured. Some operations may fail.");
+  console.error("[affine-mcp] Set AFFINE_API_TOKEN or run: affine-mcp login");
+}
 console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
-if (hasAuth && config.baseUrl.startsWith("http://")
+if (authSource !== "not configured" && config.baseUrl.startsWith("http://")
     && !config.baseUrl.includes("localhost")
     && !config.baseUrl.includes("127.0.0.1")) {
   console.error("WARNING: Credentials configured over plain HTTP. Use HTTPS for remote servers.");
 }
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
-if (config.authMode === "oauth" && !useHttpTransport) {
-  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
-}
 
 async function buildServer() {
   const server = new McpServer({ name: "affine-mcp", version: VERSION });
   const gqlHeaders = { ...(config.headers || {}) };
-  const gqlBearer = config.apiToken;
-
-  if (config.authMode === "oauth") {
-    if (!gqlBearer) {
-      throw new Error("AFFINE_API_TOKEN is required when AFFINE_MCP_AUTH_MODE=oauth.");
-    }
-    if (config.cookie || config.email || config.password) {
-      console.error(
-        "[affine-mcp] OAuth mode uses the configured AFFINE_API_TOKEN service credential. " +
-        "Ignoring AFFINE_COOKIE / AFFINE_EMAIL / AFFINE_PASSWORD.",
-      );
-    }
-    delete gqlHeaders.Cookie;
-    if (config.loginAtStart !== "async") {
-      console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
-    }
-  }
 
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
     endpoint: config.graphqlEndpoint,
     headers: gqlHeaders,
-    bearer: gqlBearer
+    authProvider: () => authSession.ready(),
   });
 
-  // Try email/password authentication if no other auth method is configured.
-  // To avoid startup timeouts in MCP clients, default to async login after the stdio handshake.
-  if (config.authMode !== "oauth" && !gql.isAuthenticated() && config.email && config.password) {
-    const mode = config.loginAtStart;
-    // In HTTP transport mode, buildServer() is called per session, so credentials
-    // must be retained for subsequent sessions. Only clear in stdio mode (single session).
-    const isHttpTransport = config.transportMode === "http";
-    if (mode === "sync") {
-      console.error("No token/cookie; performing synchronous email/password authentication at startup...");
-      try {
-        const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email, config.password);
-        gql.setCookie(cookieHeader);
-        console.error("Successfully authenticated with email/password");
-      } catch (e) {
-        console.error("Failed to authenticate with email/password:", e);
-        console.error("WARNING: Continuing without authentication - some operations may fail");
-      } finally {
-        if (!isHttpTransport) {
-          config.password = undefined;
-          config.email = undefined;
-        }
-      }
-    } else {
-      console.error("No token/cookie; deferring email/password authentication (async after connect)...");
-      // Capture credentials before clearing — async login needs them.
-      const loginEmail = config.email!;
-      const loginPassword = config.password!;
-      if (!isHttpTransport) {
-        config.password = undefined;
-        config.email = undefined;
-      }
-      // Fire-and-forget async login so stdio handshake is not delayed.
-      (async () => {
-        try {
-          const { cookieHeader } = await loginWithPassword(config.baseUrl, loginEmail, loginPassword);
-          gql.setCookie(cookieHeader);
-          console.error("Successfully authenticated with email/password (async)");
-        } catch (e) {
-          console.error("Failed to authenticate with email/password (async):", e);
-        }
-      })();
-    }
-  }
-
-  // Log authentication status
-  if (!gql.isAuthenticated()) {
-    console.error("WARNING: No authentication configured. Some operations may fail.");
-    console.error("Set AFFINE_API_TOKEN or run: affine-mcp login");
-  }
 
   const originalRegisterTool = (server as any).registerTool?.bind(server);
   if (typeof originalRegisterTool !== "function") {
@@ -197,6 +194,10 @@ async function buildServer() {
 }
 
 async function start() {
+  if (loginMode === "sync" && authSession.requiresLogin) {
+    await authSession.ready();
+  }
+
   if (useHttpTransport) {
     await startHttpMcpServer(buildServer, config);
   } else {

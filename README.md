@@ -220,6 +220,7 @@ For common failures, see:
 
 - Never commit secrets or long-lived tokens
 - Prefer API tokens over cookies or passwords in production
+- Email/password HTTP sessions share one login and never fall back to anonymous backend requests after authentication failure
 - Use HTTPS for non-local deployments
 - Rotate access tokens regularly
 - Restrict exposed tools with `AFFINE_DISABLED_GROUPS` and `AFFINE_DISABLED_TOOLS` for least-privilege setups

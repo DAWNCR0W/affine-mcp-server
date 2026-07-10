@@ -23,11 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed CLI requests that always used `/graphql`, custom GraphQL paths becoming unintended Socket.IO namespaces, environment-only credentials that `status` ignored, and missing config-file values for custom headers and HTTP runtime settings.
 - Corrected documented defaults for the AFFiNE base URL, HTTP bind host, transport aliases, and browser origin policy.
 - Quoted Codex snippet environment arguments safely for POSIX shells and removed saved `Authorization`/`Cookie` headers during logout without deleting unrelated headers or runtime settings.
+- Email/password authentication is now process-scoped and single-flight across concurrent HTTP MCP sessions, and backend requests wait for the shared result instead of falling back to anonymous access.
+- Bearer, cookie, custom-header, and email/password credentials now follow one exclusive priority order across GraphQL, multipart, and WebSocket consumers.
+- Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
 - Added a source-wide regression guard that rejects `Math.random` in runtime TypeScript and validates identifier alphabets, lengths, uniqueness, seed ranges, and invalid generator inputs.
 - Added self-contained CI coverage for destructive-target validation, remote confirmation, URL normalization, and unique test resource naming.
 - Added self-contained regression coverage for config precedence, custom GraphQL paths, environment-only diagnostics, HTTP runtime flags, CORS, and upstream-aware readiness.
+- Added a self-contained mock AFFiNE regression suite for concurrent authentication, async request gating, credential exclusivity, failure propagation, and explicit recovery.
 
 ## [2.5.0] - 2026-07-06
 
