@@ -21,7 +21,7 @@ function writeFixture(overrides = {}) {
     }),
     "tool-manifest.json": JSON.stringify({ version: overrides.manifestVersion || version, tools: [] }),
     "README.md": `[![Version](https://img.shields.io/badge/version-${overrides.badgeVersion || version}-blue)](#)`,
-    "CHANGELOG.md": `## [${overrides.changelogVersion || version}]\n[${overrides.changelogVersion || version}]: https://example.test/releases/tag/v${overrides.changelogVersion || version}`,
+    "CHANGELOG.md": `## [${overrides.changelogVersion || version}]\n[${overrides.changelogVersion || version}]: https://example.test/releases/tag/v${overrides.changelogTag || overrides.changelogVersion || version}${overrides.changelogExtra || ""}`,
     "RELEASE_NOTES.md": `## Version ${overrides.notesVersion || version}`,
   };
 
@@ -55,6 +55,21 @@ assert.throws(
     error.message.includes("tool-manifest.json version") &&
     error.message.includes("README version badge") &&
     error.message.includes("RELEASE_NOTES.md has no release section"),
+);
+
+const mismatchedLinkRoot = writeFixture({
+  changelogTag: "2.4.0",
+  changelogExtra: "\n[other]: https://example.test/releases/tag/v2.5.0",
+});
+assert.throws(
+  () => validateReleaseMetadata(mismatchedLinkRoot, "v2.5.0"),
+  /CHANGELOG\.md has no release link for v2\.5\.0/,
+);
+
+const prereleaseHeadingRoot = writeFixture({ notesVersion: "2.5.0-beta.1" });
+assert.throws(
+  () => validateReleaseMetadata(prereleaseHeadingRoot, "v2.5.0"),
+  /RELEASE_NOTES\.md has no release section for 2\.5\.0/,
 );
 
 const calls = [];

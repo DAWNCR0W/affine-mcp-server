@@ -32,6 +32,64 @@ function addWarning(state: ParseState, warning: string): void {
   }
 }
 
+function isJsonString(value: string): boolean {
+  try {
+    return typeof JSON.parse(value) === "string";
+  } catch {
+    return false;
+  }
+}
+
+function isGeneratedFrontmatter(lines: string[]): boolean {
+  let index = 0;
+  const readJsonString = (key: string): boolean => {
+    const prefix = `${key}: `;
+    const line = lines[index];
+    if (!line?.startsWith(prefix) || !isJsonString(line.slice(prefix.length))) {
+      return false;
+    }
+    index += 1;
+    return true;
+  };
+
+  if (!readJsonString("docId") || !readJsonString("title")) {
+    return false;
+  }
+  if (lines[index] === "tags: []") {
+    index += 1;
+  } else if (lines[index] === "tags:") {
+    index += 1;
+    const firstTagIndex = index;
+    while (lines[index]?.startsWith("  - ")) {
+      if (!isJsonString(lines[index].slice(4))) {
+        return false;
+      }
+      index += 1;
+    }
+    if (index === firstTagIndex) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+  if (lines[index] !== "lossy: true" && lines[index] !== "lossy: false") {
+    return false;
+  }
+  index += 1;
+  if (lines[index]?.startsWith("fidelityRisk: ") && !readJsonString("fidelityRisk")) {
+    return false;
+  }
+  return index === lines.length;
+}
+
+function stripGeneratedFrontmatter(source: string): string {
+  const match = /^(?:\uFEFF)?---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(source);
+  if (!match || !isGeneratedFrontmatter(match[1].split(/\r?\n/))) {
+    return source;
+  }
+  return source.slice(match[0].length).replace(/^\r?\n/, "");
+}
+
 function getAttr(token: TokenLike, name: string): string {
   if (typeof token.attrGet === "function") {
     return token.attrGet(name) ?? "";
@@ -643,7 +701,8 @@ export function parseMarkdownToOperations(markdown: string): MarkdownParseResult
   };
 
   const source = markdown ?? "";
-  const tokens = md.parse(source, {}) as unknown as TokenLike[];
+  const body = stripGeneratedFrontmatter(source);
+  const tokens = md.parse(body, {}) as unknown as TokenLike[];
   parseTokens(tokens, 0, tokens.length, state);
 
   return {

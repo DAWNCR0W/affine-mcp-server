@@ -20,6 +20,10 @@ function addMismatch(errors, label, actual, expected) {
   }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function versionFromReleaseTag(tag) {
   const match = RELEASE_TAG_PATTERN.exec(tag || "");
   if (!match) {
@@ -46,13 +50,18 @@ export function validateReleaseMetadata(root, tag) {
   const badgeVersion = readme.match(/badge\/version-([0-9]+\.[0-9]+\.[0-9]+)-blue/)?.[1];
   addMismatch(errors, "README version badge", badgeVersion, version);
 
-  if (!changelog.includes(`## [${version}]`)) {
+  const escapedVersion = escapeRegExp(version);
+  const escapedTag = escapeRegExp(tag);
+  if (!new RegExp(`^## \\[${escapedVersion}\\](?:[ \\t]+.*)?$`, "m").test(changelog)) {
     errors.push(`CHANGELOG.md has no release section for ${version}.`);
   }
-  if (!changelog.includes(`[${version}]:`) || !changelog.includes(`/releases/tag/${tag}`)) {
+  if (!new RegExp(
+    `^\\[${escapedVersion}\\]:\\s+\\S*/releases/tag/${escapedTag}\\s*$`,
+    "m",
+  ).test(changelog)) {
     errors.push(`CHANGELOG.md has no release link for ${tag}.`);
   }
-  if (!releaseNotes.includes(`## Version ${version}`)) {
+  if (!new RegExp(`^## Version ${escapedVersion}(?:[ \\t]+.*)?$`, "m").test(releaseNotes)) {
     errors.push(`RELEASE_NOTES.md has no release section for ${version}.`);
   }
 

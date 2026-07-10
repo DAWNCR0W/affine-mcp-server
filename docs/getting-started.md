@@ -35,7 +35,7 @@ What happens:
 - The CLI asks for your AFFiNE base URL
 - For AFFiNE Cloud, it prompts for an API token
 - For self-hosted AFFiNE, it can sign in with email/password and generate a token automatically
-- The effective config is stored at `~/.config/affine-mcp/config`
+- The effective config is stored at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise at `~/.config/affine-mcp/config`
 
 ### 3. Verify the saved config
 
@@ -133,6 +133,10 @@ Client-side MCP config:
 }
 ```
 
+Remote bearer-mode listeners fail to start without
+`AFFINE_MCP_HTTP_TOKEN`. Send this token only in the `Authorization` header;
+query-string tokens are rejected by default.
+
 For OAuth mode, origin controls, and deployment hardening, continue with [configuration and deployment](configuration-and-deployment.md#docker).
 
 ## Path D: Run from a local clone
@@ -176,7 +180,7 @@ Expected results:
 - `status` confirms the active base URL, auth source, and connection result
 - `show-config` prints the effective configuration with secrets redacted
 - `doctor` checks config shape and connectivity and points to the failing layer
-- `healthz` and `readyz` return successful probe responses when the HTTP server is healthy
+- `healthz` reports process liveness; `readyz` succeeds only when OAuth discovery (if enabled) and the configured AFFiNE GraphQL endpoint are reachable
 
 If you are onboarding another client, these helpers can generate snippets from the current config:
 

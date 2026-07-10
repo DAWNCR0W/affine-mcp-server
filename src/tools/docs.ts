@@ -2,11 +2,41 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text } from "../util/mcp.js";
-import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, deleteDoc as wsDeleteDoc } from "../ws.js";
+import { receipt, text, toolError } from "../util/mcp.js";
+import {
+  type DocumentMoveOutcome,
+  executeSafeDocumentMove,
+  handleMarkdownOperationFailure,
+  toDocumentMoveResult,
+} from "../util/mutationSafety.js";
+import {
+  isSafeBlobSourceIdInput,
+  isSafeIframeUrlInput,
+  isSafeUrlInput,
+  normalizeUrlBearingBlockFields,
+} from "../urlSafety.js";
+import {
+  BoundedOffset,
+  BoundedPageSize,
+  BoundedSearchLimit,
+  BoundedTreeDepth,
+  requireMatchingConfirmation,
+} from "../util/inputSchemas.js";
+import { secureRandomInt31, secureRandomString } from "../util/random.js";
+import {
+  wsUrlFromGraphQLEndpoint,
+  connectWorkspaceSocket,
+  joinWorkspace,
+  loadDoc,
+  pushDocUpdate,
+  deleteDoc as wsDeleteDoc,
+  type WorkspaceSocket,
+} from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
+import { richTextValueToDeltas, richTextValueToString } from "../markdown/richText.js";
+import { buildMarkdownFrontmatter } from "../markdown/safety.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
 import {
@@ -26,7 +56,38 @@ import {
   stackRelativeTo,
 } from "../edgeless/layout.js";
 
-function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
+export type DocumentMoveToolContext = {
+  workspaceId: string;
+  docId: string;
+  toParentDocId: string;
+  fromParentDocId: string | null;
+};
+
+/** Convert a move outcome into a truthful MCP success or failure response. */
+export function documentMoveToolResult(
+  context: DocumentMoveToolContext,
+  outcome: DocumentMoveOutcome,
+) {
+  const { ok, error, code, retryable, ...outcomeData } = toDocumentMoveResult(outcome);
+  if (!ok) {
+    return toolError(error, {
+      code,
+      retryable,
+      data: {
+        kind: "doc.move",
+        ...context,
+        ...outcomeData,
+      },
+    });
+  }
+
+  return receipt("doc.move", {
+    ...context,
+    ...outcomeData,
+  });
+}
+
+export function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
   const databaseRowIds = new Set<string>();
   for (const [, raw] of blocks) {
     if (!(raw instanceof Y.Map)) continue;
@@ -67,13 +128,62 @@ function collectLinkedChildIds(blocks: Y.Map<any>): string[] {
   return ids;
 }
 
+function collectEmbeddedLinkedDocIds(blocks: Y.Map<any>): string[] {
+  const ids = new Set<string>();
+  for (const [, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    if (raw.get("sys:flavour") !== "affine:embed-linked-doc") continue;
+    const pageId = raw.get("prop:pageId");
+    if (typeof pageId === "string" && pageId.length > 0) {
+      ids.add(pageId);
+    }
+  }
+  return [...ids];
+}
+
+/** Remove every duplicate embed block that links to the requested document. */
+export function removeEmbeddedLinkedDocumentBlocks(
+  blocks: Y.Map<any>,
+  docId: string,
+): number {
+  const matchingBlockIds = new Set<string>();
+  for (const [id, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    if (
+      raw.get("sys:flavour") === "affine:embed-linked-doc"
+      && raw.get("prop:pageId") === docId
+    ) {
+      matchingBlockIds.add(String(id));
+    }
+  }
+
+  if (matchingBlockIds.size === 0) return 0;
+
+  for (const [, raw] of blocks) {
+    if (!(raw instanceof Y.Map)) continue;
+    const children = raw.get("sys:children");
+    if (!(children instanceof Y.Array)) continue;
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const childId = children.get(index);
+      if (typeof childId === "string" && matchingBlockIds.has(childId)) {
+        children.delete(index, 1);
+      }
+    }
+  }
+
+  for (const blockId of matchingBlockIds) {
+    blocks.delete(blockId);
+  }
+  return matchingBlockIds.size;
+}
+
 const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
 const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
 const MarkdownContent = z.string().min(1, "markdown required").describe("Markdown content to import, append, replace, or export-roundtrip.");
 const TagName = z.string().trim().min(1, "tag required").describe("Workspace tag name.");
 const TagIdOrName = z.string().trim().min(1, "tag required").describe("Workspace tag id or tag name.");
-const PageSize = z.number().int().positive().describe("Maximum number of items to return from the AFFiNE pagination connection.");
-const PageOffset = z.number().int().nonnegative().describe("Zero-based offset used by AFFiNE pagination. Do not combine with after unless the AFFiNE API requires it.");
+const PageSize = BoundedPageSize.describe("Maximum number of items to return from the AFFiNE pagination connection (1-200).");
+const PageOffset = BoundedOffset.describe("Zero-based offset used by AFFiNE pagination (maximum 1,000,000). Do not combine with after unless the AFFiNE API requires it.");
 const APPEND_BLOCK_CANONICAL_TYPE_VALUES = [
   "paragraph",
   "heading",
@@ -361,20 +471,140 @@ function blockVersion(flavour: string): number {
   }
 }
 
+export async function deleteDocFromWorkspace(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+) {
+  if (docId === workspaceId) {
+    throw new Error("delete_doc cannot delete the workspace metadata document; use delete_workspace instead.");
+  }
+
+  const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+  if (typeof workspaceSnapshot.missing !== "string") {
+    throw new Error(`Workspace metadata document ${workspaceId} was not found.`);
+  }
+
+  const workspaceDoc = new Y.Doc();
+  Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+  const pages = workspaceDoc.getMap("meta").get("pages") as Y.Array<Y.Map<any>> | undefined;
+  let metadataIndex = -1;
+  pages?.forEach((page: Y.Map<any>, index: number) => {
+    if (metadataIndex < 0 && page instanceof Y.Map && page.get("id") === docId) {
+      metadataIndex = index;
+    }
+  });
+
+  const contentSnapshot = await loadDoc(socket, workspaceId, docId);
+  const metadataExisted = metadataIndex >= 0;
+  const contentExisted = typeof contentSnapshot.missing === "string";
+
+  if (!metadataExisted && !contentExisted) {
+    return receipt("doc.delete", {
+      status: "already_absent",
+      workspaceId,
+      docId,
+      deleted: false,
+      alreadyAbsent: true,
+      metadataExisted: false,
+      metadataRemoved: false,
+      contentExisted: false,
+      contentDeleted: false,
+      contentDeleteAcknowledged: false,
+      contentAbsenceVerified: true,
+    });
+  }
+
+  let metadataRemoved = false;
+  if (metadataExisted && pages) {
+    const previousState = Y.encodeStateVector(workspaceDoc);
+    pages.delete(metadataIndex, 1);
+    const workspaceDelta = Y.encodeStateAsUpdate(workspaceDoc, previousState);
+    try {
+      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(workspaceDelta).toString("base64"));
+      metadataRemoved = true;
+    } catch (error) {
+      return toolError(error, {
+        code: "doc_metadata_delete_failed",
+        data: {
+          kind: "doc.delete",
+          status: "failed",
+          workspaceId,
+          docId,
+          deleted: false,
+          alreadyAbsent: false,
+          metadataExisted: true,
+          metadataRemoved: false,
+          contentExisted,
+          contentDeleted: false,
+          contentDeleteAcknowledged: false,
+          contentAbsenceVerified: !contentExisted,
+        },
+      });
+    }
+  }
+
+  if (!contentExisted) {
+    return receipt("doc.delete", {
+      status: "deleted",
+      workspaceId,
+      docId,
+      deleted: true,
+      alreadyAbsent: false,
+      metadataExisted,
+      metadataRemoved,
+      contentExisted: false,
+      contentDeleted: false,
+      contentDeleteAcknowledged: false,
+      contentAbsenceVerified: true,
+    });
+  }
+
+  try {
+    const deletion = await wsDeleteDoc(socket, workspaceId, docId);
+    return receipt("doc.delete", {
+      status: "deleted",
+      workspaceId,
+      docId,
+      deleted: true,
+      alreadyAbsent: false,
+      metadataExisted,
+      metadataRemoved,
+      contentExisted: true,
+      contentDeleted: true,
+      contentDeleteAcknowledged: deletion.acknowledged,
+      contentAbsenceVerified: deletion.verifiedAbsent,
+    });
+  } catch (error) {
+    return toolError(error, {
+      code: "doc_content_delete_failed",
+      data: {
+        kind: "doc.delete",
+        status: metadataRemoved ? "partial" : "failed",
+        workspaceId,
+        docId,
+        deleted: false,
+        alreadyAbsent: false,
+        metadataExisted,
+        metadataRemoved,
+        contentExisted: true,
+        contentDeleted: false,
+        contentDeleteAcknowledged: false,
+        contentAbsenceVerified: false,
+      },
+    });
+  }
+}
+
 export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
   // helpers
   function generateId(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-    let id = '';
-    for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
-    return id;
+    return secureRandomString(10, chars);
   }
 
   async function getCookieAndEndpoint() {
-    const endpoint = gql.endpoint;
-    const cookie = gql.cookie;
-    const bearer = gql.bearer;
-    return { endpoint, cookie, bearer };
+    return await gql.getConnectionAuth();
   }
 
   const SELECT_COLORS = [
@@ -408,10 +638,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
    * linked doc that opens in "center peek" when the row title is clicked.
    */
   function makeLinkedDocText(docId: string): Y.Text {
-    const delta = [{ insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } }];
-    // Cast needed: TextDelta.attributes doesn't declare `reference`, but
-    // makeText spreads all attributes at runtime via `{ ...delta.attributes }`.
-    return makeText(delta as TextDelta[]);
+    const delta: TextDelta[] = [
+      { insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } },
+    ];
+    return makeText(delta);
   }
 
   /**
@@ -1116,11 +1346,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (!normalized.url) {
         throw new Error(`${normalized.type} blocks require a non-empty url.`);
       }
-      try {
-        new URL(normalized.url);
-      } catch {
-        throw new Error(`Invalid url for ${normalized.type} block: '${normalized.url}'.`);
-      }
     }
 
     if (normalized.type === "bookmark") {
@@ -1249,9 +1474,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const dataViewMode = parsed.viewMode ?? (typeInfo.type === "data_view" ? "kanban" : "table");
     const language = (parsed.language ?? "txt").trim().toLowerCase() || "txt";
     const placement = normalizePlacement(parsed.placement);
-    const url = (parsed.url ?? "").trim();
+    const { url, iframeUrl, sourceId } = normalizeUrlBearingBlockFields({
+      type: typeInfo.type,
+      url: parsed.url,
+      iframeUrl: parsed.iframeUrl,
+      sourceId: parsed.sourceId,
+    });
     const pageId = (parsed.pageId ?? "").trim();
-    const iframeUrl = (parsed.iframeUrl ?? "").trim();
     const html = parsed.html ?? "";
     const design = parsed.design ?? "";
     const reference = (parsed.reference ?? "").trim();
@@ -1271,7 +1500,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       typeof parsed.background === "string"
         ? (parsed.background.trim() || "transparent")
         : (parsed.background && typeof parsed.background === "object" ? parsed.background : "transparent");
-    const sourceId = (parsed.sourceId ?? "").trim();
     const name = (parsed.name ?? "attachment").trim() || "attachment";
     const mimeType = (parsed.mimeType ?? "application/octet-stream").trim() || "application/octet-stream";
     const size = Number.isFinite(parsed.size) ? Math.max(0, Math.floor(parsed.size as number)) : 0;
@@ -2313,9 +2541,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const doc = new Y.Doc();
       const snapshot = await loadDoc(socket, workspaceId, normalized.docId);
-      if (snapshot.missing) {
-        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      if (!snapshot.missing) {
+        throw new Error(
+          `Document ${normalized.docId} was not found in workspace ${workspaceId}.`,
+        );
       }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
       const prevSV = Y.encodeStateVector(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
@@ -2503,32 +2734,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return null;
   }
 
-  function richTextValueToString(value: unknown): string {
-    if (value instanceof Y.Text) {
-      return value.toString();
-    }
-    if (typeof value === "string") {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return value
-        .map((entry) => {
-          if (typeof entry === "string") {
-            return entry;
-          }
-          if (entry && typeof entry === "object" && typeof (entry as any).insert === "string") {
-            return (entry as any).insert as string;
-          }
-          return "";
-        })
-        .join("");
-    }
-    if (value && typeof value === "object" && typeof (value as any).insert === "string") {
-      return (value as any).insert as string;
-    }
-    return "";
-  }
-
   function mapEntries(value: unknown): Array<[string, any]> {
     if (value instanceof Y.Map) {
       const entries: Array<[string, any]> = [];
@@ -2543,7 +2748,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return [];
   }
 
-  function extractTableData(block: Y.Map<any>): string[][] | null {
+  function extractTableData(block: Y.Map<any>): {
+    tableData: string[][];
+    tableCellDeltas: TextDelta[][][];
+  } | null {
     const compareOrder = (left: string, right: string) => {
       if (left < right) return -1;
       if (left > right) return 1;
@@ -2573,7 +2781,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }))
       .sort((a, b) => compareOrder(a.order, b.order));
 
-    let cells = new Map<string, string>();
+    let cells = new Map<string, { text: string; deltas: TextDelta[] }>();
 
     if (rowEntries.length === 0 || columnEntries.length === 0) {
       // Fallback: AFFiNE self-hosted stores table props as flat dot-notation keys
@@ -2583,7 +2791,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       //   prop:cells.{rowId}:{colId}.text  (Y.Text)
       const flatRows = new Map<string, string>(); // rowId -> order
       const flatColumns = new Map<string, string>(); // colId -> order
-      const flatCells = new Map<string, string>(); // rowId:colId -> text
+      const flatCells = new Map<string, { text: string; deltas: TextDelta[] }>(); // rowId:colId -> content
 
       block.forEach((value: unknown, key: string) => {
         const rowMatch = key.match(/^prop:rows\.([^.]+)\.order$/);
@@ -2598,7 +2806,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
         const cellMatch = key.match(/^prop:cells\.([^.]+:[^.]+)\.text$/);
         if (cellMatch) {
-          flatCells.set(cellMatch[1], richTextValueToString(value));
+          flatCells.set(cellMatch[1], {
+            text: richTextValueToString(value),
+            deltas: richTextValueToDeltas(value) ?? [],
+          });
         }
       });
 
@@ -2614,11 +2825,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     } else {
       for (const [cellKey, payload] of mapEntries(cellsValue)) {
         if (payload instanceof Y.Map) {
-          cells.set(cellKey, richTextValueToString(payload.get("text")));
+          const textValue = payload.get("text");
+          cells.set(cellKey, {
+            text: richTextValueToString(textValue),
+            deltas: richTextValueToDeltas(textValue) ?? [],
+          });
           continue;
         }
         if (payload && typeof payload === "object" && "text" in payload) {
-          cells.set(cellKey, richTextValueToString((payload as any).text));
+          const textValue = (payload as any).text;
+          cells.set(cellKey, {
+            text: richTextValueToString(textValue),
+            deltas: richTextValueToDeltas(textValue) ?? [],
+          });
         }
       }
     }
@@ -2628,15 +2847,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     const tableData: string[][] = [];
+    const tableCellDeltas: TextDelta[][][] = [];
     for (const { rowId } of rowEntries) {
       const row: string[] = [];
+      const rowDeltas: TextDelta[][] = [];
       for (const { columnId } of columnEntries) {
-        row.push(cells.get(`${rowId}:${columnId}`) ?? "");
+        const cell = cells.get(`${rowId}:${columnId}`);
+        row.push(cell?.text ?? "");
+        rowDeltas.push(cell?.deltas ?? []);
       }
       tableData.push(row);
+      tableCellDeltas.push(rowDeltas);
     }
 
-    return tableData;
+    return { tableData, tableCellDeltas };
   }
 
   function collectDocForMarkdown(
@@ -2687,19 +2911,23 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       }
 
       const childIds = childIdsFrom(block.get("sys:children"));
+      const textValue = block.get("prop:text");
+      const table = block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null;
       const entry: MarkdownRenderableBlock = {
         id: blockId,
         parentId: asStringOrNull(block.get("sys:parent")),
         flavour: asStringOrNull(block.get("sys:flavour")),
         type: asStringOrNull(block.get("prop:type")),
-        text: asText(block.get("prop:text")) || null,
+        text: richTextValueToString(textValue) || null,
+        textDeltas: richTextValueToDeltas(textValue),
         checked: typeof block.get("prop:checked") === "boolean" ? Boolean(block.get("prop:checked")) : null,
         language: asStringOrNull(block.get("prop:language")),
         childIds,
         url: asStringOrNull(block.get("prop:url")),
         sourceId: asStringOrNull(block.get("prop:sourceId")),
         caption: asStringOrNull(block.get("prop:caption")),
-        tableData: block.get("sys:flavour") === "affine:table" ? extractTableData(block) : null,
+        tableData: table?.tableData ?? null,
+        tableCellDeltas: table?.tableCellDeltas ?? null,
       };
       blocksById.set(blockId, entry);
 
@@ -2853,6 +3081,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       stats: {
         blockCount: blockRows.length,
         markdownUnsupportedCount: rendered.stats.unsupportedCount,
+        markdownUnsupportedInlineAttributeCount: rendered.stats.unsupportedInlineAttributeCount,
         unsupportedBlockCount: unsupportedBlocks.length,
         conditionallyRiskyBlockCount: conditionallyRiskyBlocks.length,
       },
@@ -3189,7 +3418,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      for (const operation of parsed.operations) {
+      for (const [operationIndex, operation] of parsed.operations.entries()) {
         const placement =
           lastInsertedBlockId
             ? { afterBlockId: lastInsertedBlockId }
@@ -3224,7 +3453,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           if (!replaceParentId) {
             anchorPlacement = { afterBlockId: blockId };
           }
-        } catch {
+        } catch (error) {
+          handleMarkdownOperationFailure(error, {
+            strict,
+            replaceExisting,
+            operationIndex,
+          });
           skippedCount += 1;
         }
       }
@@ -3239,6 +3473,48 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       };
     } finally {
       socket.disconnect();
+    }
+  }
+
+  function preflightMarkdownOperationsBeforeCreate(
+    operations: MarkdownOperation[],
+    workspaceId: string,
+    strict: boolean,
+  ): void {
+    const validationDocId = "markdown-preflight";
+    const skeleton = createDocSkeleton("Markdown preflight", validationDocId);
+    let placement: AppendPlacement = { parentId: skeleton.noteId };
+
+    for (const [operationIndex, operation] of operations.entries()) {
+      try {
+        const normalized = normalizeAppendBlockInput(
+          markdownOperationToAppendInput(
+            operation,
+            validationDocId,
+            workspaceId,
+            strict,
+            placement,
+          ),
+        );
+        const context = resolveInsertContext(skeleton.blocks, normalized);
+        const { blockId, block, extraBlocks } = createBlock(normalized);
+        skeleton.blocks.set(blockId, block);
+        for (const extra of extraBlocks ?? []) {
+          skeleton.blocks.set(extra.blockId, extra.block);
+        }
+        if (context.insertIndex >= context.children.length) {
+          context.children.push([blockId]);
+        } else {
+          context.children.insert(context.insertIndex, [blockId]);
+        }
+        placement = { afterBlockId: blockId };
+      } catch (error) {
+        handleMarkdownOperationFailure(error, {
+          strict,
+          replaceExisting: false,
+          operationIndex,
+        });
+      }
     }
   }
 
@@ -3343,6 +3619,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         linkedToParent: false,
         warnings: [],
       };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  async function assertParentDocumentExistsBeforeCreate(
+    workspaceId: string,
+    parentDocId: string | undefined,
+  ): Promise<void> {
+    const normalizedParentDocId = parentDocId?.trim();
+    if (!normalizedParentDocId) return;
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(
+      wsUrlFromGraphQLEndpoint(endpoint),
+      cookie,
+      bearer,
+    );
+    try {
+      await joinWorkspace(socket, workspaceId);
+      await assertMoveResourcesExist(socket, workspaceId, [normalizedParentDocId]);
     } finally {
       socket.disconnect();
     }
@@ -4133,7 +4430,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
-        limit: z.number().optional().describe("Max results to return (default: 20)."),
+        limit: BoundedSearchLimit.optional().describe("Max results to return (default: 20, maximum: 200)."),
         matchMode: z.enum(["substring", "prefix", "exact"]).optional().describe("How to match titles (default: substring)."),
         tag: z.string().optional().describe("Optional tag filter (case-insensitive substring match against resolved tag names)."),
         sortBy: z.enum(["relevance", "updatedAt"]).optional().describe("Sort by match relevance (default) or by updatedAt."),
@@ -4963,8 +5260,115 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     analyzeDocFidelityHandler as any
   );
 
-  // move_doc: move a doc in the sidebar by removing its embed_linked_doc from the old parent
-  // and adding it to the new parent. fromParentDocId is optional — if omitted, only adds to new parent.
+  async function loadExistingDocumentBlocks(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+  ): Promise<Y.Map<any>> {
+    const snapshot = await loadDoc(socket, workspaceId, docId);
+    if (!snapshot.missing) {
+      throw new Error(`Document ${docId} was not found in workspace ${workspaceId}.`);
+    }
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+    return doc.getMap("blocks") as Y.Map<any>;
+  }
+
+  async function assertMoveResourcesExist(
+    socket: any,
+    workspaceId: string,
+    docIds: string[],
+  ): Promise<void> {
+    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+    if (!snapshot.missing) {
+      throw new Error(`Workspace metadata could not be loaded for ${workspaceId}.`);
+    }
+
+    const workspaceDoc = new Y.Doc();
+    Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
+    const existingIds = new Set(
+      getWorkspacePageEntries(workspaceDoc.getMap("meta")).map(page => page.id),
+    );
+    const missingIds = [...new Set(docIds)].filter(docId => !existingIds.has(docId));
+    if (missingIds.length > 0) {
+      throw new Error(
+        `Document move aborted because these workspace documents do not exist: ${missingIds.join(", ")}.`,
+      );
+    }
+  }
+
+  async function wouldCreateDocumentCycle(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+    toParentDocId: string,
+  ): Promise<boolean> {
+    const pending = [docId];
+    const visited = new Set<string>();
+    const maximumVisitedDocuments = 1_000;
+
+    while (pending.length > 0) {
+      const currentId = pending.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+      if (visited.size > maximumVisitedDocuments) {
+        throw new Error(
+          `Document move cycle validation exceeded ${maximumVisitedDocuments} documents and failed closed.`,
+        );
+      }
+
+      const blocks = await loadExistingDocumentBlocks(socket, workspaceId, currentId);
+      for (const childId of collectLinkedChildIds(blocks)) {
+        if (childId === toParentDocId) return true;
+        if (!visited.has(childId)) pending.push(childId);
+      }
+    }
+
+    return false;
+  }
+
+  async function parentContainsLinkedDocument(
+    socket: any,
+    workspaceId: string,
+    parentDocId: string,
+    docId: string,
+  ): Promise<boolean> {
+    const blocks = await loadExistingDocumentBlocks(socket, workspaceId, parentDocId);
+    return collectEmbeddedLinkedDocIds(blocks).includes(docId);
+  }
+
+  async function removeLinkedDocumentFromParent(
+    socket: any,
+    workspaceId: string,
+    parentDocId: string,
+    docId: string,
+  ): Promise<boolean> {
+    const parentSnapshot = await loadDoc(socket, workspaceId, parentDocId);
+    if (!parentSnapshot.missing) {
+      throw new Error(`Source parent document ${parentDocId} was not found.`);
+    }
+
+    const parentDoc = new Y.Doc();
+    Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
+    const prevSV = Y.encodeStateVector(parentDoc);
+    const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
+    const removedCount = removeEmbeddedLinkedDocumentBlocks(blocks, docId);
+    if (removedCount === 0) return false;
+    if (collectEmbeddedLinkedDocIds(blocks).includes(docId)) {
+      throw new Error(`Source parent ${parentDocId} still contains links to document ${docId}.`);
+    }
+    const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
+    await pushDocUpdate(
+      socket,
+      workspaceId,
+      parentDocId,
+      Buffer.from(delta).toString("base64"),
+    );
+    return true;
+  }
+
+  // Add the destination link before removing the source link so a failed move
+  // cannot orphan the document from both parents.
   const moveDocHandler = async (parsed: { workspaceId?: string; docId: string; toParentDocId: string; fromParentDocId?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
@@ -4975,73 +5379,48 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
     try {
       await joinWorkspace(socket, workspaceId);
-
-      let removedFromParent = false;
-
-      // Step 1: remove embed_linked_doc from old parent (if provided)
-      if (parsed.fromParentDocId) {
-        const parentDoc = new Y.Doc();
-        const parentSnapshot = await loadDoc(socket, workspaceId, parsed.fromParentDocId);
-        if (parentSnapshot.missing) {
-          Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
-          const prevSV = Y.encodeStateVector(parentDoc);
-          const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
-
-          // Find the embed_linked_doc block pointing to our docId
-          let embedBlockId: string | null = null;
-          let embedParentChildren: Y.Array<any> | null = null;
-          let embedIndex = -1;
-
-          for (const [id, raw] of blocks) {
-            if (!(raw instanceof Y.Map)) continue;
-            const flavour = raw.get("sys:flavour");
-            const pageId = raw.get("prop:pageId");
-            if (flavour === "affine:embed-linked-doc" && pageId === parsed.docId) {
-              embedBlockId = String(id);
-              break;
-            }
-          }
-
-          if (embedBlockId) {
-            // Find the parent block whose sys:children contains embedBlockId
-            for (const [, raw] of blocks) {
-              if (!(raw instanceof Y.Map)) continue;
-              const children = raw.get("sys:children");
-              if (!(children instanceof Y.Array)) continue;
-              const arr = children.toArray() as string[];
-              const idx = arr.indexOf(embedBlockId);
-              if (idx >= 0) {
-                embedParentChildren = children;
-                embedIndex = idx;
-                break;
-              }
-            }
-            if (embedParentChildren && embedIndex >= 0) {
-              embedParentChildren.delete(embedIndex, 1);
-            }
-            blocks.delete(embedBlockId);
-            const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
-            await pushDocUpdate(socket, workspaceId, parsed.fromParentDocId, Buffer.from(delta).toString("base64"));
-            removedFromParent = true;
-          }
-        }
-      }
-
-      // Step 2: add embed_linked_doc to new parent
-      await appendBlockInternal({
-        workspaceId,
-        docId: parsed.toParentDocId,
-        type: "embed_linked_doc",
-        pageId: parsed.docId,
+      const outcome = await executeSafeDocumentMove(parsed, {
+        assertResourcesExist: () => assertMoveResourcesExist(
+          socket,
+          workspaceId,
+          [parsed.docId, parsed.toParentDocId, parsed.fromParentDocId].filter(
+            (value): value is string => Boolean(value),
+          ),
+        ),
+        wouldCreateCycle: () => wouldCreateDocumentCycle(
+          socket,
+          workspaceId,
+          parsed.docId,
+          parsed.toParentDocId,
+        ),
+        isLinkedToNewParent: () => parentContainsLinkedDocument(
+          socket,
+          workspaceId,
+          parsed.toParentDocId,
+          parsed.docId,
+        ),
+        addToNewParent: async () => {
+          await appendBlockInternal({
+            workspaceId,
+            docId: parsed.toParentDocId,
+            type: "embed_linked_doc",
+            pageId: parsed.docId,
+          });
+        },
+        removeFromOldParent: () => removeLinkedDocumentFromParent(
+          socket,
+          workspaceId,
+          parsed.fromParentDocId!,
+          parsed.docId,
+        ),
       });
 
-      return receipt("doc.move", {
+      return documentMoveToolResult({
         workspaceId,
-        moved: true,
         docId: parsed.docId,
         toParentDocId: parsed.toParentDocId,
-        removedFromParent,
-      });
+        fromParentDocId: parsed.fromParentDocId ?? null,
+      }, outcome);
     } finally {
       socket.disconnect();
     }
@@ -5051,7 +5430,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "move_doc",
     {
       title: "Move Document in Sidebar",
-      description: "Move a doc in the AFFiNE sidebar by embedding it under a new parent. Optionally removes it from the old parent (fromParentDocId). If fromParentDocId is omitted, the doc is added to the new parent but not removed from the old one.",
+      description: "Move a doc in the AFFiNE sidebar. The destination link is validated and added before the optional source link is removed, cycles are rejected, and partial outcomes are reported explicitly.",
       inputSchema: {
         workspaceId: z.string().optional(),
         docId: z.string().describe("The doc to move."),
@@ -5117,7 +5496,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   // CREATE DOC (high-level)
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
-    const created = await createDocInternal(parsed);
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    const created = await createDocInternal({ ...parsed, workspaceId });
     const placement = await finalizeDocPlacement({
       workspaceId: created.workspaceId,
       docId: created.docId,
@@ -5150,6 +5533,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
+      status: warnings.length > 0 ? "created_with_warnings" : "created",
+      requiresManualRepair: warnings.length > 0,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
       folderId: linkedFolderId,
@@ -5351,9 +5736,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId,
         type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe|database|data_view|surface_ref|frame|edgeless_text|note. Legacy aliases remain supported."),
         text: z.string().optional().describe("Block content text"),
-        url: z.string().optional().describe("URL for bookmark/embeds"),
+        url: z.string()
+          .refine(isSafeUrlInput, "url must be a safe absolute URL without control characters or embedded credentials")
+          .optional()
+          .describe("URL for bookmark/embeds. Runtime validation also enforces provider-specific hosts."),
         pageId: z.string().optional().describe("Target page/doc id for linked/synced doc embeds"),
-        iframeUrl: z.string().optional().describe("Override iframe src for embed_iframe"),
+        iframeUrl: z.string()
+          .refine(isSafeIframeUrlInput, "iframeUrl must use a safe absolute http(s) URL")
+          .optional()
+          .describe("Override iframe src for embed_iframe"),
         html: z.string().optional().describe("Raw html for embed_html"),
         design: z.string().optional().describe("Design payload for embed_html"),
         reference: z.string().optional().describe("Target id for surface_ref"),
@@ -5371,7 +5762,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           gap: z.number().int().optional().describe("Gap in px between the anchor and the new block. Default is direction-aware: 80 for left/right, 40 for down/up — mirrors native-flowchart spacing where the flow axis gets more breathing room than the cross axis. Explicit `padding` on the block overrides this default; explicit `gap` wins over both."),
         }).optional().describe("Layout helper — position this block relative to one or more existing edgeless blocks. Picks the furthest anchor in `direction` for the stack axis, and centers the new block on the anchor group's union on the orthogonal axis (matches how BlockSuite aligns selection-derived blocks; reduces to inherit-anchor-x when widths match). Caller-provided x/y on the orthogonal axis still wins. Works for frame/note/edgeless_text. Example: `stackAfter: { blockId: [f1, f2, f3], gap: 80 }` stacks below whichever column frame ends lowest, centered across all three. Note heights shift at first render (page-root grows with the title, content notes shrink/grow with their children); give extra gap and fix up with `update_edgeless_block` if the down/right chain drifts."),
         padding: z.number().int().optional().describe("Default padding (px) for `childElementIds` auto-sizing on frames (each side, plus +30px title band) and fallback gap for `stackAfter` (default 40)."),
-        sourceId: z.string().optional().describe("Blob source id for image/attachment"),
+        sourceId: z.string()
+          .refine(isSafeBlobSourceIdInput, "sourceId must be an opaque AFFiNE blob key")
+          .optional()
+          .describe("Blob key returned by upload_blob for image/attachment"),
         name: z.string().optional().describe("Attachment file name"),
         mimeType: z.string().optional().describe("Attachment mime type"),
         size: z.number().optional().describe("Attachment/image file size in bytes"),
@@ -5438,6 +5832,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           stats: {
             blockCount: 0,
             unsupportedCount: 0,
+            unsupportedInlineAttributeCount: 0,
           },
         });
       }
@@ -5452,17 +5847,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       let markdown = rendered.markdown;
       if (parsed.includeFrontmatter) {
-        const escapedTitle = (collected.title || "Untitled").replace(/\"/g, "\\\"");
-        const frontmatterLines = [
-          "---",
-          `docId: \"${parsed.docId}\"`,
-          `title: \"${escapedTitle}\"`,
-          "tags:",
-          ...(collected.tags.length > 0 ? collected.tags.map(tag => `  - \"${tag.replace(/\"/g, "\\\"")}\"`) : ["  -"]),
-          `lossy: ${rendered.lossy ? "true" : "false"}`,
-          "---",
-        ];
-        markdown = `${frontmatterLines.join("\n")}\n\n${markdown}`;
+        const frontmatter = buildMarkdownFrontmatter({
+          docId: parsed.docId,
+          title: collected.title || "Untitled",
+          tags: collected.tags,
+          lossy: rendered.lossy,
+        });
+        markdown = `${frontmatter}\n\n${markdown}`;
       }
 
       return text({
@@ -5538,18 +5929,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let markdown = summary.markdown;
 
       if (parsed.includeFrontmatter) {
-        const escapedTitle = (summary.title || "Untitled").replace(/\"/g, "\\\"");
-        const frontmatterLines = [
-          "---",
-          `docId: \"${parsed.docId}\"`,
-          `title: \"${escapedTitle}\"`,
-          "tags:",
-          ...(summary.tags.length > 0 ? summary.tags.map(tag => `  - \"${tag.replace(/\"/g, "\\\"")}\"`) : ["  -"]),
-          `lossy: ${summary.markdownLossy ? "true" : "false"}`,
-          `fidelityRisk: \"${summary.overallRisk}\"`,
-          "---",
-        ];
-        markdown = `${frontmatterLines.join("\n")}\n\n${markdown}`;
+        const frontmatter = buildMarkdownFrontmatter({
+          docId: parsed.docId,
+          title: summary.title || "Untitled",
+          tags: summary.tags,
+          lossy: summary.markdownLossy,
+          fidelityRisk: summary.overallRisk,
+        });
+        markdown = `${frontmatter}\n\n${markdown}`;
       }
 
       return text({
@@ -5608,8 +5995,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       title = "Untitled";
     }
 
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    preflightMarkdownOperationsBeforeCreate(
+      operations,
+      workspaceId,
+      parsed.strict !== false,
+    );
+    await assertParentDocumentExistsBeforeCreate(workspaceId, parsed.parentDocId);
+
     const created = await createDocInternal({
-      workspaceId: parsed.workspaceId,
+      workspaceId,
       title,
     });
 
@@ -5620,12 +6018,19 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     };
 
     if (operations.length > 0) {
-      applied = await applyMarkdownOperationsInternal({
-        workspaceId: created.workspaceId,
-        docId: created.docId,
-        operations,
-        strict: parsed.strict,
-      });
+      try {
+        applied = await applyMarkdownOperationsInternal({
+          workspaceId: created.workspaceId,
+          docId: created.docId,
+          operations,
+          strict: parsed.strict,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Document ${created.docId} was created, but its Markdown content could not be confirmed: ${message}. Inspect or delete that document before retrying.`,
+        );
+      }
     }
 
     const placement = await finalizeDocPlacement({
@@ -5640,13 +6045,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       applyWarnings.push(`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`);
     }
 
+    const warnings = mergeWarnings(parsedMarkdown.warnings, applyWarnings, placement.warnings);
     return {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
+      status: warnings.length > 0 ? "created_with_warnings" : "created",
+      requiresManualRepair: placement.warnings.length > 0,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
-      warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings, placement.warnings),
+      warnings,
       lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
@@ -5799,6 +6207,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     docId: string;
     markdown: string;
     strict?: boolean;
+    allowEmpty?: boolean;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -5806,6 +6215,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
+    if (parsedMarkdown.operations.length === 0 && parsed.allowEmpty !== true) {
+      throw new Error(
+        "Refusing to replace the document with empty Markdown. Pass allowEmpty=true to confirm clearing the main note.",
+      );
+    }
     const applied = await applyMarkdownOperationsInternal({
       workspaceId,
       docId: parsed.docId,
@@ -5842,13 +6256,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId,
         markdown: MarkdownContent.describe("Markdown content to replace with"),
         strict: z.boolean().optional(),
+        allowEmpty: z.boolean().optional().describe("Set true to explicitly allow clearing the main note when Markdown produces no blocks."),
       },
     },
     replaceDocWithMarkdownHandler as any
   );
 
   // DELETE DOC
-  const deleteDocHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+  const deleteDocHandler = async (parsed: { workspaceId?: string; docId: string; confirmDocId?: string }) => {
+    requireMatchingConfirmation("delete_doc", parsed.docId, parsed.confirmDocId);
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error('workspaceId is required');
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
@@ -5856,31 +6272,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      // remove from workspace pages
-      const wsDoc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (snapshot.missing) Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, 'base64'));
-      const prevSV = Y.encodeStateVector(wsDoc);
-      const wsMeta = wsDoc.getMap('meta');
-      const pages = wsMeta.get('pages') as Y.Array<Y.Map<any>> | undefined;
-      if (pages) {
-        // find by id
-        let idx = -1;
-        pages.forEach((m: any, i: number) => {
-          if (idx >= 0) return;
-          if (m.get && m.get('id') === parsed.docId) idx = i;
-        });
-        if (idx >= 0) pages.delete(idx, 1);
-      }
-      const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
-      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString('base64'));
-      // delete doc content
-      wsDeleteDoc(socket, workspaceId, parsed.docId);
-      return receipt("doc.delete", {
-        workspaceId,
-        docId: parsed.docId,
-        deleted: true,
-      });
+      return await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
     } finally {
       socket.disconnect();
     }
@@ -5889,10 +6281,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     'delete_doc',
     {
       title: 'Delete Document',
-      description: 'Delete a document by removing its workspace metadata entry and sending the AFFiNE WebSocket delete request for its content. This is destructive; use revoke_doc when you only need to remove public access.',
+      description: 'Delete a document, wait for the AFFiNE WebSocket outcome, and report workspace-metadata and content deletion separately. This is destructive; use revoke_doc when you only need to remove public access.',
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
+        confirmDocId: DocId.describe("Must exactly match docId to confirm permanent document deletion."),
       },
     },
     deleteDocHandler as any
@@ -5948,7 +6341,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     description: "Returns the full document hierarchy as a tree (roots → children → grandchildren). Use depth to limit nesting (default: 3). Note: loads all docs — may be slow on large workspaces. Each node includes an inTrash flag.",
     inputSchema: {
       workspaceId: z.string().optional(),
-      depth: z.number().optional().describe("Max nesting depth to return (default: 3)."),
+      depth: BoundedTreeDepth.optional().describe("Max nesting depth to return (default: 3, maximum: 20)."),
     },
   }, listWorkspaceTreeHandler as any);
 
@@ -7933,7 +8326,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     input: SurfaceElementFields
   ): { elementId: string; data: Record<string, any> } {
     const elementId = generateId();
-    const seed = Math.floor(Math.random() * 2 ** 31);
+    const seed = secureRandomInt31();
     switch (type) {
       case "shape":
         return { elementId, data: buildShapeElementData(elementId, seed, index, input) };
