@@ -41,6 +41,7 @@
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
     "test:pr-route-policy": "node tests/test-pr-route-policy.mjs",
     "test:tool-filtering": "node tests/test-tool-filtering.mjs",
+    "test:blob-upload-contract": "node tests/test-blob-upload-contract.mjs",
     "test:secure-random": "node tests/test-secure-random.mjs",
     "test:oauth-service-policy": "node tests/test-oauth-service-policy.mjs",
     "test:comprehensive": "bash tests/run-comprehensive.sh",
@@ -81,7 +82,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
+    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

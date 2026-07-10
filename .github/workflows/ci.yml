@@ -43,6 +43,9 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify blob upload contracts
+        run: npm run test:blob-upload-contract
+
       - name: Verify secure identifier generation
         run: npm run test:secure-random
 
