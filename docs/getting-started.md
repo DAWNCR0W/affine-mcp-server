@@ -133,6 +133,10 @@ Client-side MCP config:
 }
 ```
 
+Remote bearer-mode listeners fail to start without
+`AFFINE_MCP_HTTP_TOKEN`. Send this token only in the `Authorization` header;
+query-string tokens are rejected by default.
+
 For OAuth mode, origin controls, and deployment hardening, continue with [configuration and deployment](configuration-and-deployment.md#docker).
 
 ## Path D: Run from a local clone

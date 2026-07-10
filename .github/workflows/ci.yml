@@ -61,5 +61,8 @@ jobs:
       - name: Verify OAuth service-account policy
         run: npm run test:oauth-service-policy
 
+      - name: Verify HTTP security policy
+        run: npm run test:http-security
+
       - name: Check package contents
         run: npm run pack:check
