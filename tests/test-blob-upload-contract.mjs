@@ -8,6 +8,7 @@ import {
   loadBlobUploadConfig,
   registerBlobTools,
 } from "../dist/tools/blobStorage.js";
+import { normalizeBlobSourceId } from "../dist/urlSafety.js";
 
 function parseToolResult(result) {
   if (result?.structuredContent) {
@@ -78,7 +79,11 @@ async function startUploadServer() {
     }
 
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ data: { setBlob: "blob-key" } }));
+    res.end(JSON.stringify({
+      data: {
+        setBlob: req.url === "/opaque-key" ? "Folder/My image (1).png" : "blob-key",
+      },
+    }));
   });
 
   server.listen(0, "127.0.0.1");
@@ -221,6 +226,16 @@ async function testToolContract() {
     }));
     assert.equal(base64Result.encoding, "base64");
     assert.equal(base64Result.size, 4);
+
+    gql.endpoint = `${uploadServer.baseUrl}/opaque-key`;
+    const opaqueKeyResult = parseToolResult(await uploadBlob({
+      workspaceId: "workspace-1",
+      content: "image",
+      filename: "My image (1).png",
+    }));
+    assert.equal(opaqueKeyResult.key, "Folder/My image (1).png");
+    assert.equal(normalizeBlobSourceId(opaqueKeyResult.key), opaqueKeyResult.key);
+    gql.endpoint = uploadServer.baseUrl;
 
     assert.equal(uploadServer.requests[0].headers.cookie, "session=test-cookie");
     assert.equal(uploadServer.requests[0].headers["x-test-header"], "blob-contract");

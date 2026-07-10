@@ -13,6 +13,7 @@ import {
   renderMarkdownLink,
   renderMarkdownLinkWithSafeLabel,
 } from "./safety.js";
+import { blobSourceIdToUrl } from "../urlSafety.js";
 
 type RenderState = {
   blocksById: Map<string, MarkdownRenderableBlock>;
@@ -400,14 +401,22 @@ function renderBlock(
     }
 
     case "affine:image": {
-      const source = (block.sourceId ?? "").trim();
-      if (!source) {
+      const source = block.sourceId ?? "";
+      if (!source.trim()) {
         state.unsupportedCount += 1;
         addWarning(state, `Image block '${blockId}' had no sourceId and was skipped.`);
         return { lines: [], isList: false };
       }
       const alt = (block.caption ?? "").trim() || "image";
-      const markdownImage = renderMarkdownImage(alt, `affine://blob/${source}`);
+      let sourceUrl: string;
+      try {
+        sourceUrl = blobSourceIdToUrl(source);
+      } catch {
+        state.unsupportedCount += 1;
+        addWarning(state, `Image block '${blockId}' had an invalid sourceId and was skipped.`);
+        return { lines: [], isList: false };
+      }
+      const markdownImage = renderMarkdownImage(alt, sourceUrl);
       if (markdownImage === null) {
         state.unsupportedCount += 1;
         addWarning(state, `Image block '${blockId}' had an unsafe source URL and was skipped.`);

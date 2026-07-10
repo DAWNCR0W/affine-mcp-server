@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- Hardened URL-bearing block creation with shared runtime validation and canonicalization for bookmarks, blob-backed media, internal document links, iframes, and provider embeds. Unsafe schemes, control-character parser differentials, embedded credentials, and provider host lookalikes are rejected before AFFiNE blocks are written, while exact opaque keys returned by `upload_blob` remain valid media `sourceId` values.
 - Markdown export now preserves supported AFFiNE rich-text attributes across paragraphs, headings, lists, quotes, callouts, and table cells while reporting unsupported attributes as explicit fidelity loss.
 - Hardened Markdown serialization prevents untrusted block text, link labels and destinations, YAML frontmatter, code fences, table cells, and placeholder metadata from injecting new Markdown structure or unsafe URL schemes; exported frontmatter is stripped when Markdown is imported again.
 - Document deletion now waits for an AFFiNE WebSocket error or success acknowledgement and falls back to a `DOC_NOT_FOUND` read-after-delete check for AFFiNE versions whose successful delete handler returns no acknowledgement.
@@ -46,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
+- Added self-contained external URL safety regressions and included them in the package CI gate.
 - Added focused rich-text round-trip and Markdown output-safety regressions, including injection payloads in every supported text context, and wired them into package and workflow CI gates.
 - Added self-contained input-boundary, destructive-confirmation, WebSocket positive/empty/negative acknowledgement, timeout, read-after-delete, partial-failure receipt, and false-mutation regression coverage.
 - Wired the focused input-contract and destructive-mutation suites into both the package `ci` script and GitHub Actions.
