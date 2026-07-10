@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for structured MCP receipts.
  *
@@ -86,7 +88,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-e2e-structured-receipts-noconfig',
+      XDG_CONFIG_HOME: testTempPath('structured-receipts-config'),
     },
     stderr: 'pipe',
   });
@@ -123,7 +125,7 @@ async function main() {
   let commentId = null;
 
   try {
-    const workspace = await call('create_workspace', { name: `structured-receipts-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('structured-receipts') });
     const workspaceReceipt = assertReceipt(workspace, 'workspace.create', {
     });
     workspaceId = workspaceReceipt.structured.workspaceId || workspaceReceipt.structured.id;

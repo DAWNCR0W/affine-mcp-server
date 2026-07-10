@@ -94,6 +94,8 @@ const server = {
 const requests = [];
 const readAllResults = [true, false];
 let nextRequestError = null;
+let nextListResponse;
+let nextReadAllResponse;
 const gql = {
   async request(query, variables) {
     requests.push({ query, variables });
@@ -103,7 +105,17 @@ const gql = {
       throw error;
     }
     if (query.includes("ReadAllNotifications")) {
+      if (nextReadAllResponse !== undefined) {
+        const response = nextReadAllResponse;
+        nextReadAllResponse = undefined;
+        return response;
+      }
       return { readAllNotifications: readAllResults.shift() };
+    }
+    if (nextListResponse !== undefined) {
+      const response = nextListResponse;
+      nextListResponse = undefined;
+      return response;
     }
     return {
       currentUser: {
@@ -211,6 +223,136 @@ for (const [args, pattern, label] of invalidCases) {
 }
 expectEqual(requests.length, 3, "invalid pagination must fail before GraphQL requests");
 
+const malformedListCases = [
+  {
+    label: "null current user",
+    response: { currentUser: null },
+    status: "auth_required",
+    message: /authentication may be missing or expired/i,
+  },
+  {
+    label: "null notifications",
+    response: { currentUser: { notifications: null } },
+    status: "invalid_response",
+    message: /notifications is null/i,
+  },
+  {
+    label: "malformed connection",
+    response: { currentUser: { notifications: [] } },
+    status: "invalid_response",
+    message: /notifications is missing or malformed/i,
+  },
+  {
+    label: "missing edges",
+    response: { currentUser: { notifications: { totalCount: 0, pageInfo: { hasNextPage: false } } } },
+    status: "invalid_response",
+    message: /notifications\.edges is missing or malformed/i,
+  },
+  {
+    label: "malformed edge",
+    response: {
+      currentUser: {
+        notifications: { edges: [null], totalCount: 1, pageInfo: { hasNextPage: false } },
+      },
+    },
+    status: "invalid_response",
+    message: /edges\[0\] is malformed/i,
+  },
+  {
+    label: "missing edge cursor",
+    response: {
+      currentUser: {
+        notifications: {
+          edges: [{ node: { id: "notification-1" } }],
+          totalCount: 1,
+          pageInfo: { hasNextPage: false },
+        },
+      },
+    },
+    status: "invalid_response",
+    message: /cursor is missing or malformed/i,
+  },
+  {
+    label: "missing edge node",
+    response: {
+      currentUser: {
+        notifications: {
+          edges: [{ cursor: "cursor-1", node: null }],
+          totalCount: 1,
+          pageInfo: { hasNextPage: false },
+        },
+      },
+    },
+    status: "invalid_response",
+    message: /node is missing or malformed/i,
+  },
+  {
+    label: "malformed edge node",
+    response: {
+      currentUser: {
+        notifications: {
+          edges: [{ cursor: "cursor-1", node: {} }],
+          totalCount: 1,
+          pageInfo: { hasNextPage: false },
+        },
+      },
+    },
+    status: "invalid_response",
+    message: /node\.id is missing or malformed/i,
+  },
+  {
+    label: "missing total count",
+    response: {
+      currentUser: {
+        notifications: { edges: [], pageInfo: { hasNextPage: false } },
+      },
+    },
+    status: "invalid_response",
+    message: /totalCount is missing or malformed/i,
+  },
+  {
+    label: "missing page info",
+    response: { currentUser: { notifications: { edges: [], totalCount: 0 } } },
+    status: "invalid_response",
+    message: /pageInfo is missing or malformed/i,
+  },
+  {
+    label: "missing has-next-page",
+    response: {
+      currentUser: { notifications: { edges: [], totalCount: 0, pageInfo: {} } },
+    },
+    status: "invalid_response",
+    message: /hasNextPage is missing or malformed/i,
+  },
+];
+
+for (const malformed of malformedListCases) {
+  nextListResponse = malformed.response;
+  const result = await listTool.handler({ first: 5 });
+  const payload = expectToolFailure(result, {
+    code: "notification_list_failed",
+    retryable: false,
+    status: malformed.status,
+  }, malformed.label);
+  expect(malformed.message.test(payload.error), `${malformed.label}: unexpected error: ${payload.error}`);
+}
+
+nextRequestError = new Error("GraphQL HTTP 401: session expired");
+const authFailure = await listTool.handler({ first: 5 });
+expectToolFailure(authFailure, {
+  code: "notification_list_failed",
+  retryable: false,
+  status: "auth_required",
+}, "list authentication failure");
+
+nextRequestError = new Error("GraphQL error: Forbidden");
+const authorizationFailure = await listTool.handler({ first: 5 });
+expectToolFailure(authorizationFailure, {
+  code: "notification_list_failed",
+  retryable: false,
+  status: "auth_required",
+}, "list authorization failure");
+
 nextRequestError = new Error("notification backend unavailable");
 const listFailure = await listTool.handler({ first: 5 });
 const listFailurePayload = expectToolFailure(listFailure, {
@@ -252,6 +394,20 @@ expect(
   "false read-all responses must not use a success-like message",
 );
 
+nextReadAllResponse = null;
+const malformedReadAll = await readAllTool.handler({});
+const malformedReadAllPayload = expectToolFailure(malformedReadAll, {
+  code: "notification_update_failed",
+  retryable: false,
+  status: "failed",
+}, "malformed read-all response");
+expectEqual(malformedReadAllPayload.applied, false, "malformed read-all applied");
+expectEqual(malformedReadAllPayload.serverResult, null, "malformed read-all server result");
+expect(
+  /readAllNotifications is missing or malformed/i.test(malformedReadAllPayload.error),
+  `malformed read-all response: unexpected error: ${malformedReadAllPayload.error}`,
+);
+
 nextRequestError = new Error("notification mutation timed out");
 const failedReadAll = await readAllTool.handler({});
 const failedReadAllPayload = expectToolFailure(failedReadAll, {
@@ -264,6 +420,15 @@ expectEqual(failedReadAllPayload.applied, false, "read-all exception applied");
 expectEqual(failedReadAllPayload.serverResult, null, "read-all exception server result");
 expectEqual(failedReadAllPayload.error, "notification mutation timed out", "read-all exception error");
 
+nextRequestError = new Error("GraphQL error: unauthenticated");
+const failedAuthReadAll = await readAllTool.handler({});
+const failedAuthReadAllPayload = expectToolFailure(failedAuthReadAll, {
+  code: "notification_update_failed",
+  retryable: false,
+  status: "failed",
+}, "read-all authentication failure");
+expectEqual(failedAuthReadAllPayload.kind, "notification.read_all", "read-all auth failure kind");
+
 console.log(JSON.stringify({
   ok: true,
   cases: [
@@ -275,6 +440,10 @@ console.log(JSON.stringify({
     "cursor pagination",
     "pagination bounds",
     "offset/after conflict",
+    "null authentication response",
+    "strict upstream response contracts",
+    "non-retryable authentication failures",
+    "non-retryable malformed mutation response",
     "truthful read-all true response",
     "truthful read-all false response",
     "stable list failure envelope",

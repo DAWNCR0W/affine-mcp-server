@@ -58,34 +58,134 @@ type NotificationNode = {
 };
 
 type NotificationEdge = {
-  cursor?: string | null;
-  node?: NotificationNode | null;
+  cursor: string;
+  node: NotificationNode;
 };
 
 type NotificationConnection = {
-  edges?: NotificationEdge[] | null;
-  totalCount?: number | null;
-  pageInfo?: {
-    hasNextPage?: boolean | null;
+  edges: NotificationEdge[];
+  totalCount: number;
+  pageInfo: {
+    hasNextPage: boolean;
     endCursor?: string | null;
-  } | null;
+  };
 };
 
+class NotificationAuthenticationError extends Error {}
+
+class NotificationResponseContractError extends Error {}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function responseContractError(message: string): NotificationResponseContractError {
+  return new NotificationResponseContractError(`AFFiNE returned an invalid notification response: ${message}.`);
+}
+
+function isAuthenticationError(error: unknown): boolean {
+  if (error instanceof NotificationAuthenticationError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /GraphQL HTTP (?:401|403)\b|\b(?:unauthenticated|unauthorized|forbidden|authentication required|login required|not authenticated|not logged in|not signed in|must be signed in|permission denied|access denied)\b/i.test(
+    message,
+  );
+}
+
+function notificationFailure(error: unknown): {
+  retryable: boolean;
+  status: "auth_required" | "invalid_response" | "failed";
+} {
+  if (isAuthenticationError(error)) {
+    return { retryable: false, status: "auth_required" };
+  }
+  if (error instanceof NotificationResponseContractError) {
+    return { retryable: false, status: "invalid_response" };
+  }
+  return { retryable: true, status: "failed" };
+}
+
+function requireNotificationConnection(data: unknown): NotificationConnection {
+  if (!isRecord(data)) {
+    throw responseContractError("the GraphQL data object is missing");
+  }
+  if (data.currentUser === null) {
+    throw new NotificationAuthenticationError(
+      "AFFiNE did not return a current user; authentication may be missing or expired.",
+    );
+  }
+  if (!isRecord(data.currentUser)) {
+    throw responseContractError("currentUser is missing or malformed");
+  }
+  if (data.currentUser.notifications === null) {
+    throw responseContractError("currentUser.notifications is null");
+  }
+  if (!isRecord(data.currentUser.notifications)) {
+    throw responseContractError("currentUser.notifications is missing or malformed");
+  }
+
+  const connection = data.currentUser.notifications;
+  if (!Array.isArray(connection.edges)) {
+    throw responseContractError("notifications.edges is missing or malformed");
+  }
+  const edges = connection.edges.map((edge, index) => {
+    if (!isRecord(edge)) {
+      throw responseContractError(`notifications.edges[${index}] is malformed`);
+    }
+    if (typeof edge.cursor !== "string" || edge.cursor.length === 0) {
+      throw responseContractError(`notifications.edges[${index}].cursor is missing or malformed`);
+    }
+    if (!isRecord(edge.node)) {
+      throw responseContractError(`notifications.edges[${index}].node is missing or malformed`);
+    }
+    if (typeof edge.node.id !== "string" || edge.node.id.length === 0) {
+      throw responseContractError(`notifications.edges[${index}].node.id is missing or malformed`);
+    }
+    return {
+      cursor: edge.cursor,
+      node: edge.node as NotificationNode,
+    };
+  });
+
+  if (
+    typeof connection.totalCount !== "number" ||
+    !Number.isSafeInteger(connection.totalCount) ||
+    connection.totalCount < 0
+  ) {
+    throw responseContractError("notifications.totalCount is missing or malformed");
+  }
+  if (!isRecord(connection.pageInfo)) {
+    throw responseContractError("notifications.pageInfo is missing or malformed");
+  }
+  if (typeof connection.pageInfo.hasNextPage !== "boolean") {
+    throw responseContractError("notifications.pageInfo.hasNextPage is missing or malformed");
+  }
+  if (
+    connection.pageInfo.endCursor !== undefined &&
+    connection.pageInfo.endCursor !== null &&
+    typeof connection.pageInfo.endCursor !== "string"
+  ) {
+    throw responseContractError("notifications.pageInfo.endCursor is malformed");
+  }
+
+  return {
+    edges,
+    totalCount: connection.totalCount,
+    pageInfo: {
+      hasNextPage: connection.pageInfo.hasNextPage,
+      endCursor: connection.pageInfo.endCursor as string | null | undefined,
+    },
+  };
+}
+
 function normalizeNotificationConnection(
-  connection: NotificationConnection | null | undefined,
+  connection: NotificationConnection,
   input: Required<Pick<NotificationListArgs, "first" | "unreadOnly">> &
     Pick<NotificationListArgs, "offset" | "after">,
 ) {
-  const edges = Array.isArray(connection?.edges) ? connection.edges : [];
-  const pageNotifications = edges.map((edge, index) => {
-    if (!edge?.node || typeof edge.node !== "object") {
-      throw new Error(`AFFiNE returned a malformed notification edge at index ${index}.`);
-    }
-    return {
-      ...edge.node,
-      cursor: typeof edge.cursor === "string" ? edge.cursor : null,
-    };
-  });
+  const pageNotifications = connection.edges.map((edge) => ({
+    ...edge.node,
+    cursor: edge.cursor,
+  }));
   const unreadOnFetchedPageCount = pageNotifications.filter(
     (notification) => notification.read === false,
   ).length;
@@ -110,16 +210,14 @@ function normalizeNotificationConnection(
         after: input.after ?? null,
       },
       pageInfo: {
-        hasNextPage: typeof connection?.pageInfo?.hasNextPage === "boolean"
-          ? connection.pageInfo.hasNextPage
-          : null,
-        endCursor: typeof connection?.pageInfo?.endCursor === "string"
+        hasNextPage: connection.pageInfo.hasNextPage,
+        endCursor: typeof connection.pageInfo.endCursor === "string"
           ? connection.pageInfo.endCursor
           : null,
       },
     },
     counts: {
-      serverTotalCount: typeof connection?.totalCount === "number" ? connection.totalCount : null,
+      serverTotalCount: connection.totalCount,
       serverUnreadTotalCount: null,
       fetchedPageCount: pageNotifications.length,
       unreadOnFetchedPageCount,
@@ -174,23 +272,23 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
         ...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
         ...(parsed.after !== undefined ? { after: parsed.after } : {}),
       };
-      const data = await gql.request<{
-        currentUser?: { notifications?: NotificationConnection | null } | null;
-      }>(query, { pagination });
+      const data = await gql.request<unknown>(query, { pagination });
+      const connection = requireNotificationConnection(data);
 
-      return text(normalizeNotificationConnection(data.currentUser?.notifications, {
+      return text(normalizeNotificationConnection(connection, {
         first,
         offset: parsed.offset,
         after: parsed.after,
         unreadOnly,
       }));
     } catch (error: any) {
+      const failure = notificationFailure(error);
       return toolError(error, {
         code: "notification_list_failed",
-        retryable: true,
+        retryable: failure.retryable,
         data: {
           kind: "notification.list",
-          status: "failed",
+          status: failure.status,
         },
       });
     }
@@ -215,10 +313,11 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
           readAllNotifications
         }
       `;
-      const data = await gql.request<{ readAllNotifications: boolean }>(mutation);
-      const serverResult = typeof data.readAllNotifications === "boolean"
-        ? data.readAllNotifications
-        : null;
+      const data = await gql.request<unknown>(mutation);
+      if (!isRecord(data) || typeof data.readAllNotifications !== "boolean") {
+        throw responseContractError("readAllNotifications is missing or malformed");
+      }
+      const serverResult = data.readAllNotifications;
       const applied = serverResult === true;
 
       if (!applied) {
@@ -246,9 +345,10 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
         message: "AFFiNE reported that all notifications were marked as read.",
       });
     } catch (error: any) {
+      const failure = notificationFailure(error);
       return toolError(error, {
         code: "notification_update_failed",
-        retryable: true,
+        retryable: failure.retryable,
         data: {
           kind: "notification.read_all",
           applied: false,

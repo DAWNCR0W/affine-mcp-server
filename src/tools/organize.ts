@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Y from "yjs";
@@ -7,6 +5,7 @@ import { generateKeyBetween } from "fractional-indexing";
 
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
+import { secureRandomString } from "../util/random.js";
 import {
   connectWorkspaceSocket,
   joinWorkspace,
@@ -74,12 +73,7 @@ type OrganizeNodeRecord = {
 
 function generateId(length = 21): string {
   const chars = "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
-  const bytes = randomBytes(length);
-  let result = "";
-  for (let i = 0; i < length; i += 1) {
-    result += chars[bytes[i]! % chars.length];
-  }
-  return result;
+  return secureRandomString(length, chars);
 }
 
 function hasSamePrefix(a: string, b: string): boolean {
@@ -95,12 +89,7 @@ function generateFractionalIndexingKeyBetween(
 
   function postfix(length = randomSize): string {
     const chars = "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    const values = randomBytes(length);
-    let result = "";
-    for (let i = 0; i < length; i += 1) {
-      result += chars[values[i]! % chars.length];
-    }
-    return result;
+    return secureRandomString(length, chars);
   }
 
   function subkey(key: string | null): string | null {
@@ -641,9 +630,7 @@ export function registerOrganizeTools(
   defaults: { workspaceId?: string }
 ) {
   async function getSocketContext() {
-    const endpoint = gql.endpoint;
-    const cookie = gql.cookie;
-    const bearer = gql.bearer;
+    const { endpoint, cookie, bearer } = await gql.getConnectionAuth();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     return { socket };

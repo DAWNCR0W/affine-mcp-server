@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for native template instantiation.
  *
@@ -67,7 +69,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-native-template-noconfig',
+      XDG_CONFIG_HOME: testTempPath('native-template-config'),
     },
     stderr: 'pipe',
   });
@@ -97,7 +99,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const workspace = await call('create_workspace', { name: `native-template-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('native-template') });
     const workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'create_workspace id');
 

@@ -10,6 +10,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 - Document editing relies on AFFiNE WebSocket-backed operations where noted
 - Experimental organize tools are marked explicitly
 - Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` in production if you want a reduced surface
+- Invalid profile, group, and tool names stop startup; the server never falls back to a broader surface
 
 ## Workspace
 
@@ -207,6 +208,6 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `upload_blob` | Upload a file or blob to workspace storage | |
-| `delete_blob` | Delete a blob from workspace storage | Destructive |
-| `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented |
+| `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content |
+| `delete_blob` | Delete a blob from workspace storage | Destructive; false and exception outcomes return stable MCP errors |
+| `cleanup_blobs` | Permanently remove deleted blobs | Cleanup-oriented; false and exception outcomes return stable MCP errors |

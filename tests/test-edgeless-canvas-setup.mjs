@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /** Seeds a clean, centered edgeless-canvas layout via stackAfter/childElementIds
  *  wherever the tool supports them, and asserts the default-note xywh +
  *  connector labelXYWH + frame ownership invariants at the CRDT level. Writes
@@ -41,7 +43,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-edgeless-setup-noconfig",
+      XDG_CONFIG_HOME: testTempPath('edgeless-setup-config'),
     },
     stderr: "pipe",
   });
@@ -55,7 +57,7 @@ async function main() {
 
   await client.connect(transport);
   try {
-    const workspace = await call("create_workspace", { name: `edgeless-canvas-${Date.now()}` });
+    const workspace = await call("create_workspace", { name: testResourceName('edgeless-canvas') });
     const doc = await call("create_doc", { workspaceId: workspace.id, title: "Edgeless Canvas Verify" });
     const W = workspace.id, D = doc.docId;
 
