@@ -66,6 +66,9 @@ npm run test:comprehensive
 - Keep `package.json`, `package-lock.json`, `tool-manifest.json`, `README.md`, `CHANGELOG.md`, and `RELEASE_NOTES.md` in sync before tagging.
 - Use the matching version section from `RELEASE_NOTES.md` as the source for the GitHub Release body.
 - Treat `npm run ci` and `npm run test:e2e` as the release validation baseline.
+- Publish the exact npm tarball produced after release validation; install and smoke-test that artifact before publishing it with lifecycle scripts disabled.
+- Pull request CI also installs and smoke-tests a temporary tarball so packaging regressions fail before release.
+- Pull requests build the Docker image without pushing and verify the packaged CLI version and non-root runtime user.
 
 ## Commit Message Style
 
