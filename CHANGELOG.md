@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a fail-closed guard to destructive live-test entry points. Loopback targets remain available by default, while non-loopback targets require an explicit remote opt-in and an exact `DESTROY <target>` confirmation.
 - Isolated Docker-backed test runs with unique Compose projects, private per-run credential files, scoped cleanup, and collision-resistant AFFiNE resource names.
 - Stopped printing acquired session cookies from the E2E credential helper.
+- OAuth deployments now default to the read-only tool profile because all callers share one AFFiNE service credential.
+- Write-capable OAuth tool surfaces now fail closed unless operators explicitly set `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true` in addition to selecting a write-capable profile.
+- OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
 - Persisted document, block, property, organize, fractional-index suffix, and surface seed values now use unbiased cryptographically secure randomness instead of `Math.random` or modulo-biased bytes.
@@ -37,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added self-contained CI coverage for destructive-target validation, remote confirmation, URL normalization, and unique test resource naming.
 - Added self-contained regression coverage for config precedence, custom GraphQL paths, environment-only diagnostics, HTTP runtime flags, CORS, and upstream-aware readiness.
 - Added a self-contained mock AFFiNE regression suite for concurrent authentication, async request gating, credential exclusivity, failure propagation, and explicit recovery.
+- Added regression coverage for OAuth read-only defaults, explicit write acknowledgement, profile handling, and fully disabled write surfaces.
 
 ## [2.5.0] - 2026-07-06
 

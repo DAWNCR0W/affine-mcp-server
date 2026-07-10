@@ -9,6 +9,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ServerConfig } from "./config.js";
 import { registerHttpDiagnosticsRoutes } from "./httpDiagnostics.js";
 import { createHttpAuthState, registerHttpAuthRoutes } from "./httpAuth.js";
+import {
+  isLoopbackHostname,
+  parseBooleanFlag,
+} from "./networkSecurity.js";
 
 export async function startHttpMcpServer(
   createMcpServer: () => Promise<McpServer>,
@@ -18,12 +22,51 @@ export async function startHttpMcpServer(
 
   // --- Bearer Token guard (AFFINE_MCP_HTTP_TOKEN) ---
   // When set, all requests to /mcp, /sse and /messages must include:
-  //   Authorization: Bearer <token>   OR   ?token=<token> (fallback for limited clients)
-  // When the server is bound to 0.0.0.0 without a token, a startup warning is emitted.
-  if (!httpAuthToken && host === "0.0.0.0") {
+  //   Authorization: Bearer <token>
+  // Query-string token authentication is disabled unless explicitly enabled for legacy clients.
+  const allowUnauthenticated = parseBooleanFlag(
+    "AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED",
+    process.env.AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED,
+  );
+  const allowQueryToken = parseBooleanFlag(
+    "AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN",
+    process.env.AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN,
+  );
+
+  if (config.authMode === "oauth" && allowUnauthenticated) {
+    throw new Error(
+      "AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED is not valid when AFFINE_MCP_AUTH_MODE=oauth.",
+    );
+  }
+  if (config.authMode === "oauth" && allowQueryToken) {
+    throw new Error(
+      "AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN is not valid when AFFINE_MCP_AUTH_MODE=oauth.",
+    );
+  }
+
+  const remoteBind = !isLoopbackHostname(host);
+  if (
+    config.authMode === "bearer" &&
+    remoteBind &&
+    !httpAuthToken &&
+    !allowUnauthenticated
+  ) {
+    throw new Error(
+      `Refusing to bind the HTTP MCP server to non-loopback host "${host}" without authentication. ` +
+        "Set AFFINE_MCP_HTTP_TOKEN, use OAuth, or explicitly set " +
+        "AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED=true only for a trusted private network.",
+    );
+  }
+  if (config.authMode === "bearer" && remoteBind && !httpAuthToken) {
     console.warn(
-      "[affine-mcp] WARNING: HTTP MCP server is bound to 0.0.0.0 without AFFINE_MCP_HTTP_TOKEN. " +
-        "The endpoint is unprotected. Set AFFINE_MCP_HTTP_TOKEN for public deployments.",
+      `[affine-mcp] WARNING: HTTP MCP server is bound to non-loopback host "${host}" without authentication ` +
+        "because AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED=true. Do not expose this listener to an untrusted network.",
+    );
+  }
+  if (config.authMode === "bearer" && allowQueryToken) {
+    console.warn(
+      "[affine-mcp] WARNING: Query-string bearer tokens are enabled by " +
+        "AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN=true. This legacy mode can leak credentials through URLs and logs.",
     );
   }
 
@@ -87,7 +130,11 @@ export async function startHttpMcpServer(
     });
   };
 
-  const authState = createHttpAuthState(config, { allowAnyOrigin: allowAllOrigins, httpAuthToken });
+  const authState = createHttpAuthState(config, {
+    allowAnyOrigin: allowAllOrigins,
+    allowQueryToken,
+    httpAuthToken,
+  });
 
   // Validates the Bearer token on all non-preflight requests.
   // The auth scheme match is case-insensitive for client compatibility.

@@ -22,6 +22,10 @@ import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
+import {
+  assertOAuthServiceWritePolicy,
+  createToolFilterEnvironment,
+} from "./oauthServicePolicy.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -58,8 +62,13 @@ function loadServerConfig(): ServerConfig {
 const config = loadServerConfig();
 const useHttpTransport = config.transportMode === "http";
 
+// OAuth callers share one AFFiNE service credential. Default that deployment
+// model to read-only unless operators explicitly enable both a write-capable
+// profile and the service-write acknowledgement.
+const toolFilterEnvironment = createToolFilterEnvironment(config.authMode, process.env);
+
 // Tool filtering is parsed once at module load (not per-session in HTTP mode).
-const toolFilter = createToolFilter(process.env);
+const toolFilter = createToolFilter(toolFilterEnvironment);
 
 if (config.authMode === "oauth" && !useHttpTransport) {
   throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
@@ -133,13 +142,27 @@ if (authSource === "not configured") {
   console.error("[affine-mcp] Set AFFINE_API_TOKEN or run: affine-mcp login");
 }
 console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
-if (authSource !== "not configured" && config.baseUrl.startsWith("http://")
-    && !config.baseUrl.includes("localhost")
-    && !config.baseUrl.includes("127.0.0.1")) {
-  console.error("WARNING: Credentials configured over plain HTTP. Use HTTPS for remote servers.");
-}
+
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
+if (config.authMode === "oauth" && !useHttpTransport) {
+  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
+}
+assertOAuthServiceWritePolicy({
+  authMode: config.authMode,
+  allowServiceWrites: config.oauthAllowServiceWrites,
+  enabledWriteTools: toolFilter.enabledWriteTools,
+});
+if (
+  config.authMode === "oauth"
+  && config.oauthAllowServiceWrites
+  && toolFilter.enabledWriteTools.length > 0
+) {
+  console.error(
+    "[affine-mcp] WARNING: OAuth service-account writes are enabled. Every authorized OAuth caller " +
+    "can mutate AFFiNE with the shared AFFINE_API_TOKEN permissions.",
+  );
+}
 
 async function buildServer() {
   const server = new McpServer({ name: "affine-mcp", version: VERSION });
@@ -174,8 +197,8 @@ async function buildServer() {
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
-  console.error(`[affine-mcp] Disabled groups: ${process.env.AFFINE_DISABLED_GROUPS || "(none)"}`);
-  console.error(`[affine-mcp] Disabled tools: ${process.env.AFFINE_DISABLED_TOOLS || "(none)"}`);
+  console.error(`[affine-mcp] Disabled groups: ${toolFilterEnvironment.AFFINE_DISABLED_GROUPS || "(none)"}`);
+  console.error(`[affine-mcp] Disabled tools: ${toolFilterEnvironment.AFFINE_DISABLED_TOOLS || "(none)"}`);
   console.error(`[affine-mcp] Enabled tools: ${toolFilter.enabledTools.length}/${toolFilter.totalToolCount}`);
 
   registerWorkspaceTools(server, gql);

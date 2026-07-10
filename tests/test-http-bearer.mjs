@@ -7,7 +7,7 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * Covers:
  * - /healthz and /readyz
  * - 401 for missing/invalid bearer token
- * - query-string token fallback
+ * - rejection of query-string bearer tokens
  * - valid static bearer auth over Streamable HTTP
  */
 import { createServer } from "node:http";
@@ -223,9 +223,9 @@ async function main() {
         Accept: "text/event-stream",
       },
     });
-    if (queryTokenResponse.status === 401) {
-      throw new Error("query-string token was rejected before reaching the MCP handler");
-    }
+    expectEqual(queryTokenResponse.status, 400, "query-string bearer token status");
+    const queryTokenError = await queryTokenResponse.json();
+    expectEqual(queryTokenError?.error, "invalid_request", "query-string bearer token error");
 
     const client = new Client({ name: "http-bearer-client", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(new URL(server.mcpUrl), {
