@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
 - Added bounded integer schemas for pagination, search limits, history size, and tree depth.
 - Permanent document, workspace, and blob cleanup operations now require an exact identifier confirmation before any AFFiNE request is sent.
 - `list_notifications` now returns a stable envelope containing cursor-bearing notifications, server page info, server and page-level counts, pagination mode, and explicit filter scope.
@@ -27,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- Document moves now validate source and destination documents, reject hierarchy cycles, add the destination link before removing the source link, and report partial outcomes without orphaning the document.
+- Strict Markdown mutations now abort before any server update when an operation cannot be applied, and document creation preflights strict Markdown before creating remote state.
+- Document append operations now reject missing target documents instead of writing updates to an empty Yjs document.
 - Hardened URL-bearing block creation with shared runtime validation and canonicalization for bookmarks, blob-backed media, internal document links, iframes, and provider embeds. Unsafe schemes, control-character parser differentials, embedded credentials, and provider host lookalikes are rejected before AFFiNE blocks are written, while exact opaque keys returned by `upload_blob` remain valid media `sourceId` values.
 - Markdown export now preserves supported AFFiNE rich-text attributes across paragraphs, headings, lists, quotes, callouts, and table cells while reporting unsupported attributes as explicit fidelity loss.
 - Hardened Markdown serialization prevents untrusted block text, link labels and destinations, YAML frontmatter, code fences, table cells, and placeholder metadata from injecting new Markdown structure or unsafe URL schemes; exported frontmatter is stripped when Markdown is imported again.
@@ -47,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
+- Added self-contained regression coverage for safe document move ordering, cycle rejection, partial failures, idempotent destination links, and Markdown batch failure policy.
 - Added self-contained external URL safety regressions and included them in the package CI gate.
 - Added focused rich-text round-trip and Markdown output-safety regressions, including injection payloads in every supported text context, and wired them into package and workflow CI gates.
 - Added self-contained input-boundary, destructive-confirmation, WebSocket positive/empty/negative acknowledgement, timeout, read-after-delete, partial-failure receipt, and false-mutation regression coverage.

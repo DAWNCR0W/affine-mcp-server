@@ -83,12 +83,13 @@
     "test:tag-deletion": "node tests/test-tag-deletion.mjs",
     "test:url-safety": "node tests/test-url-safety.mjs",
     "test:markdown-roundtrip": "node tests/test-markdown-roundtrip.mjs",
+    "test:document-mutation-safety": "node tests/test-document-mutation-safety.mjs",
     "test:markdown-output-safety": "node tests/test-markdown-output-safety.mjs",
     "test:markdown-export-safety": "npm run test:markdown-roundtrip && npm run test:markdown-output-safety",
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:url-safety && npm run test:markdown-export-safety && npm run test:live-safety && npm run test:notification-contract && npm run test:tool-manifest && npm run test:input-contracts && npm run test:mutation-ack && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
+    "ci": "npm run build && npm run test:url-safety && npm run test:markdown-export-safety && npm run test:live-safety && npm run test:notification-contract && npm run test:tool-manifest && npm run test:document-mutation-safety && npm run test:input-contracts && npm run test:mutation-ack && npm run test:blob-upload-contract && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run test:auth-session && npm run test:oauth-service-policy && npm run test:http-security && npm run test:http-runtime && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

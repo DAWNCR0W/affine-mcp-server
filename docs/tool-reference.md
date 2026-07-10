@@ -78,7 +78,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_doc_from_markdown` | Create a document from Markdown content | |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
-| `move_doc` | Move a document in the sidebar by relinking it under another parent | |
+| `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
 | `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
 
 ### Content editing
@@ -92,7 +92,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
-| `replace_doc_with_markdown` | Replace the main note content with Markdown | Overwrites main note content |
+| `replace_doc_with_markdown` | Replace the main note content with Markdown | Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
 ### Tags
 

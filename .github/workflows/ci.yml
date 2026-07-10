@@ -49,6 +49,9 @@ jobs:
       - name: Verify tool manifest
         run: npm run test:tool-manifest
 
+      - name: Verify document mutation safety
+        run: npm run test:document-mutation-safety
+
       - name: Verify external URL safety
         run: npm run test:url-safety
 
