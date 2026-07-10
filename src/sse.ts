@@ -12,19 +12,14 @@ import { createHttpAuthState, registerHttpAuthRoutes } from "./httpAuth.js";
 
 export async function startHttpMcpServer(
   createMcpServer: () => Promise<McpServer>,
-  port: number,
   config: ServerConfig,
 ) {
-  // --- HTTP host binding ---
-  // AFFINE_MCP_HTTP_HOST: network interface to bind (default: "127.0.0.1" — loopback only).
-  // Set to "0.0.0.0" for Docker / remote deployments (Render, Railway, etc.).
-  const host = (process.env.AFFINE_MCP_HTTP_HOST || "127.0.0.1").trim();
+  const { host, port, authToken: httpAuthToken, allowedOrigins, allowAllOrigins } = config.http;
 
   // --- Bearer Token guard (AFFINE_MCP_HTTP_TOKEN) ---
   // When set, all requests to /mcp, /sse and /messages must include:
   //   Authorization: Bearer <token>   OR   ?token=<token> (fallback for limited clients)
   // When the server is bound to 0.0.0.0 without a token, a startup warning is emitted.
-  const httpAuthToken = process.env.AFFINE_MCP_HTTP_TOKEN?.trim();
   if (!httpAuthToken && host === "0.0.0.0") {
     console.warn(
       "[affine-mcp] WARNING: HTTP MCP server is bound to 0.0.0.0 without AFFINE_MCP_HTTP_TOKEN. " +
@@ -44,13 +39,6 @@ export async function startHttpMcpServer(
   // Default (no env set): only loopback addresses (localhost / 127.0.0.1 / ::1) are allowed.
   //
   // CORS is applied per-route (/mcp, /sse, /messages) — not globally — to minimise attack surface.
-  const allowAnyOrigin =
-    process.env.AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS === "true";
-  const allowedOrigins = (process.env.AFFINE_MCP_HTTP_ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean);
-
   // Returns true if origin is a loopback address (http or https, any port).
   const isLoopbackOrigin = (origin: string): boolean => {
     try {
@@ -71,7 +59,7 @@ export async function startHttpMcpServer(
       // Non-browser clients (curl, MCP Inspector, server-to-server) send no Origin header.
       // CORS is a browser mechanism only; the token guard covers programmatic access.
       if (!origin) return callback(null, true);
-      if (allowAnyOrigin) return callback(null, true);
+      if (allowAllOrigins) return callback(null, true);
       const allowed =
         allowedOrigins.length > 0
           ? allowedOrigins.includes(origin)
@@ -99,7 +87,7 @@ export async function startHttpMcpServer(
     });
   };
 
-  const authState = createHttpAuthState(config, { allowAnyOrigin, httpAuthToken });
+  const authState = createHttpAuthState(config, { allowAnyOrigin: allowAllOrigins, httpAuthToken });
 
   // Validates the Bearer token on all non-preflight requests.
   // The auth scheme match is case-insensitive for client compatibility.
@@ -275,16 +263,19 @@ export async function startHttpMcpServer(
   );
 
   const server = app.listen(port, host, () => {
-    const displayHost = host === "0.0.0.0" ? "localhost" : host;
-    console.error(`[affine-mcp] MCP server listening on ${host}:${port}`);
+    const displayHostValue = host === "0.0.0.0" ? "localhost" : host;
+    const displayHost = displayHostValue.includes(":") ? `[${displayHostValue}]` : displayHostValue;
+    const address = server.address();
+    const listeningPort = typeof address === "object" && address ? address.port : port;
+    console.error(`[affine-mcp] MCP server listening on ${host}:${listeningPort}`);
     console.error(
-      `[affine-mcp] Streamable HTTP (2025-03-26): http://${displayHost}:${port}/mcp`,
+      `[affine-mcp] Streamable HTTP (2025-03-26): http://${displayHost}:${listeningPort}/mcp`,
     );
     console.error(
-      `[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${port}/sse`,
+      `[affine-mcp] Legacy SSE     (2024-11-05): http://${displayHost}:${listeningPort}/sse`,
     );
-    console.error(`[affine-mcp] Diagnostics: http://${displayHost}:${port}/healthz`);
-    console.error(`[affine-mcp] Readiness:   http://${displayHost}:${port}/readyz`);
+    console.error(`[affine-mcp] Diagnostics: http://${displayHost}:${listeningPort}/healthz`);
+    console.error(`[affine-mcp] Readiness:   http://${displayHost}:${listeningPort}/readyz`);
     if (authState.protectedResourceMetadataUrl) {
       console.error(`[affine-mcp] Protected resource metadata: ${authState.protectedResourceMetadataUrl}`);
     }

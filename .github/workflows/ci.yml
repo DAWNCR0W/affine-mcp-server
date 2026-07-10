@@ -52,5 +52,8 @@ jobs:
       - name: Verify pull request branch route policy
         run: npm run test:pr-route-policy
 
+      - name: Test configuration consistency
+        run: npm run test:config-consistency
+
       - name: Check package contents
         run: npm run pack:check

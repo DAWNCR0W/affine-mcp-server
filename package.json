@@ -36,6 +36,7 @@
     "test:live-safety": "node tests/test-live-test-safety.mjs",
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
+    "test:config-consistency": "node tests/test-config-cli-consistency.mjs",
     "test:cli-live": "node tests/test-cli-live.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
     "test:pr-route-policy": "node tests/test-pr-route-policy.mjs",
@@ -76,7 +77,7 @@
     "test:markdown-rich-text-import": "node tests/test-markdown-rich-text-import.mjs",
     "test:playwright": "npx playwright test --config tests/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
-    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run pack:check",
+    "ci": "npm run build && npm run test:live-safety && npm run test:tool-manifest && npm run test:secure-random && npm run test:tool-filtering && npm run test:pr-route-policy && npm run test:config-consistency && npm run pack:check",
     "prepublishOnly": "npm run ci"
   },
   "files": [

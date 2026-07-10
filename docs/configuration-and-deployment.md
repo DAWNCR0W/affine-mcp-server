@@ -10,6 +10,8 @@ The server resolves configuration in this order:
 2. Saved config file at `~/.config/affine-mcp/config`
 3. Built-in defaults
 
+The saved config file uses the same `KEY=value` names shown below. Environment variables always override saved values, and the CLI diagnostics report the source selected for each runtime option.
+
 Auth priority within the active configuration:
 
 1. `AFFINE_API_TOKEN`
@@ -22,10 +24,11 @@ Auth priority within the active configuration:
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AFFINE_BASE_URL` | Yes | None | Base URL for AFFiNE Cloud or self-hosted AFFiNE |
+| `AFFINE_BASE_URL` | No | `http://localhost:3010` | Base URL for AFFiNE Cloud or self-hosted AFFiNE |
 | `AFFINE_GRAPHQL_PATH` | No | `/graphql` | Override only if your AFFiNE deployment uses a custom GraphQL path |
+| `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
-| `AFFINE_LOGIN_AT_START` | No | async login behavior | Set to `sync` only when you must block startup on login |
+| `AFFINE_LOGIN_AT_START` | No | `async` | Set to `sync` only when you must block startup on email/password login |
 
 ### Authentication
 
@@ -48,16 +51,17 @@ Auth priority within the active configuration:
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `MCP_TRANSPORT` | Yes for HTTP mode | stdio | Set to `http` |
+| `MCP_TRANSPORT` | No | `stdio` | Set to `http`; `streamable` and legacy `sse` are accepted aliases |
 | `PORT` | No | `3000` | Commonly injected by container platforms |
 | `AFFINE_MCP_AUTH_MODE` | No | `bearer` | `bearer` or `oauth` |
-| `AFFINE_MCP_HTTP_HOST` | No | platform default | Use `0.0.0.0` in containers |
-| `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | none | Comma-separated list for browser clients |
+| `AFFINE_MCP_HTTP_HOST` | No | `127.0.0.1` | Use `0.0.0.0` in containers |
+| `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | loopback origins only | Comma-separated http(s) origins for browser clients |
 | `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS` | No | `false` | Testing only; rejected in OAuth mode |
-| `AFFINE_MCP_HTTP_TOKEN` | Required in bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
+| `AFFINE_MCP_HTTP_TOKEN` | Required for remote bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
 | `AFFINE_MCP_PUBLIC_BASE_URL` | Required in OAuth mode | none | Public base URL for this MCP server |
 | `AFFINE_OAUTH_ISSUER_URL` | Required in OAuth mode | none | OAuth issuer discovery URL |
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
+| `AFFINE_OAUTH_CLOCK_SKEW_SECONDS` | No | `60` | Positive integer tolerance for OAuth token timestamps |
 
 ## Auth strategy matrix
 
@@ -104,8 +108,10 @@ HTTP mode exposes:
 - `/mcp` - Streamable HTTP MCP endpoint protected by the configured MCP auth mode
 - `/sse` - SSE endpoint for older-compatible clients protected by the configured MCP auth mode
 - `/messages` - message endpoint for older-compatible clients protected by the configured MCP auth mode
-- `/healthz` - unauthenticated liveness probe for trusted platform checks
-- `/readyz` - unauthenticated readiness probe for trusted platform checks
+- `/healthz` - unauthenticated process liveness probe for trusted platform checks
+- `/readyz` - unauthenticated readiness probe that checks OAuth discovery when enabled and the exact configured AFFiNE GraphQL endpoint
+
+`/readyz` returns `503` with the failing component when the configured AFFiNE GraphQL endpoint is unavailable. Keep both diagnostic routes private to your load balancer or trusted monitoring network.
 
 ### Bearer mode
 
@@ -270,3 +276,6 @@ Before exposing the server remotely, confirm:
 - Missing tools: confirm filtering variables are not removing them
 - Browser CORS failures: verify `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`
 - OAuth failures: verify issuer discovery metadata and JWKS availability
+- Custom GraphQL deployments: run `affine-mcp show-config --json` and confirm `graphqlEndpoint`, then run `affine-mcp doctor --json`
+- `doctor` also rejects an unprotected non-loopback HTTP bind and validates OAuth transport, discovery metadata, and JWKS reachability
+- Invalid transport, port, origin, or boolean values now fail at startup instead of silently falling back

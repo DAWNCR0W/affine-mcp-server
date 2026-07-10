@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { loadConfig, VERSION } from "./config.js";
+import { CONFIG_FILE, loadConfig, type ServerConfig, VERSION } from "./config.js";
 import { GraphQLClient } from "./graphqlClient.js";
 import { registerWorkspaceTools } from "./tools/workspaces.js";
 import { registerDocTools } from "./tools/docs.js";
@@ -20,8 +20,7 @@ import { registerIconTools } from "./tools/icons.js";
 import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
-import { CONFIG_FILE } from "./config.js";
-import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
+import { createToolFilter, toolAnnotationsFor, toolFilterRequiresRegisterTool } from "./toolSurface.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -46,17 +45,24 @@ if (subcommand) {
 }
 
 // MCP server mode (default)
-const config = loadConfig();
-const transportMode = (process.env.MCP_TRANSPORT || "stdio").toLowerCase();
-const useHttpTransport =
-  transportMode === "sse" || transportMode === "http" || transportMode === "streamable";
+function loadServerConfig(): ServerConfig {
+  try {
+    return loadConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[affine-mcp] Invalid configuration: ${message}`);
+    process.exit(1);
+  }
+}
+const config = loadServerConfig();
+const useHttpTransport = config.transportMode === "http";
 
 // Tool filtering is parsed once at module load (not per-session in HTTP mode).
 const toolFilter = createToolFilter(process.env);
 
 // Startup diagnostics (visible in Claude Code MCP server logs via stderr)
 console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
-console.error(`[affine-mcp] Endpoint: ${config.baseUrl}${config.graphqlPath}`);
+console.error(`[affine-mcp] Endpoint: ${config.graphqlEndpoint}`);
 const hasAuth = !!(config.apiToken || config.cookie || (config.email && config.password));
 console.error(`[affine-mcp] Auth: ${hasAuth ? 'configured' : 'not configured'}`);
 console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
@@ -87,14 +93,14 @@ async function buildServer() {
       );
     }
     delete gqlHeaders.Cookie;
-    if (process.env.AFFINE_LOGIN_AT_START) {
+    if (config.loginAtStart !== "async") {
       console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
     }
   }
 
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
-    endpoint: `${config.baseUrl}${config.graphqlPath}`,
+    endpoint: config.graphqlEndpoint,
     headers: gqlHeaders,
     bearer: gqlBearer
   });
@@ -102,12 +108,10 @@ async function buildServer() {
   // Try email/password authentication if no other auth method is configured.
   // To avoid startup timeouts in MCP clients, default to async login after the stdio handshake.
   if (config.authMode !== "oauth" && !gql.isAuthenticated() && config.email && config.password) {
-    const mode = (process.env.AFFINE_LOGIN_AT_START || "async").toLowerCase();
+    const mode = config.loginAtStart;
     // In HTTP transport mode, buildServer() is called per session, so credentials
     // must be retained for subsequent sessions. Only clear in stdio mode (single session).
-    const isHttpTransport = ["sse", "http", "streamable"].includes(
-      (process.env.MCP_TRANSPORT || "stdio").toLowerCase()
-    );
+    const isHttpTransport = config.transportMode === "http";
     if (mode === "sync") {
       console.error("No token/cookie; performing synchronous email/password authentication at startup...");
       try {
@@ -194,25 +198,7 @@ async function buildServer() {
 
 async function start() {
   if (useHttpTransport) {
-    const DEFAULT_PORT = 3000;
-    const portEnvValue = process.env.PORT;
-
-    let port = DEFAULT_PORT;
-
-    // Validate the HTTP server port if provided.
-    if (portEnvValue != null && portEnvValue.trim() !== "") {
-      const parsedPort = Number(portEnvValue);
-
-      if (Number.isInteger(parsedPort) && parsedPort >= 0 && parsedPort <= 65535) {
-        port = parsedPort;
-      } else {
-        console.warn(
-          `[affine-mcp] Invalid PORT "${portEnvValue}" (expected 0..65535 integer). Falling back to ${DEFAULT_PORT}.`
-        );
-      }
-    }
-
-    await startHttpMcpServer(buildServer, port, config);
+    await startHttpMcpServer(buildServer, config);
   } else {
     // stdio transport is the default for typical desktop MCP clients
     const server = await buildServer();
