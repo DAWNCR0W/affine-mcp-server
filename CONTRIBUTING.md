@@ -4,7 +4,7 @@ Thanks for contributing to `affine-mcp-server`.
 
 ## Before You Start
 
-- Node.js `18+` is required (Node `20` recommended).
+- Node.js `20+` is required. Use the version in `.nvmrc` for local development.
 - You need one AFFiNE instance to run end-to-end checks.
 - Read the project docs first:
   - `README.md`
