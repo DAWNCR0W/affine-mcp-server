@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { text, toolError } from "../util/mcp.js";
 
 export function registerNotificationTools(server: McpServer, gql: GraphQLClient) {
   // LIST NOTIFICATIONS
@@ -48,7 +48,7 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
       
       return text(notifications);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "notification_list_failed" });
     }
   };
   server.registerTool(
@@ -76,10 +76,16 @@ export function registerNotificationTools(server: McpServer, gql: GraphQLClient)
       `;
       
       const data = await gql.request<{ readAllNotifications: boolean }>(mutation);
+
+      if (!data.readAllNotifications) {
+        return toolError("AFFiNE did not confirm that notifications were marked as read.", {
+          code: "notification_update_failed",
+        });
+      }
       
       return text({ success: data.readAllNotifications, message: "All notifications marked as read" });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "notification_update_failed" });
     }
   };
   server.registerTool(

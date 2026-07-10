@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { text, toolError } from "../util/mcp.js";
 import FormData from "form-data";
 import fetch from "node-fetch";
 
@@ -73,7 +73,7 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
         uploadedAt: new Date().toISOString()
       });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "blob_upload_failed" });
     }
   };
   server.registerTool(
@@ -105,10 +105,17 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
         key,
         permanently
       });
+
+      if (!data.deleteBlob) {
+        return toolError("AFFiNE did not confirm blob deletion.", {
+          code: "blob_delete_failed",
+          data: { key, workspaceId, permanently },
+        });
+      }
       
       return text({ success: data.deleteBlob, key, workspaceId, permanently });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "blob_delete_failed" });
     }
   };
   server.registerTool(
@@ -137,10 +144,17 @@ export function registerBlobTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ releaseDeletedBlobs: boolean }>(mutation, {
         workspaceId
       });
+
+      if (!data.releaseDeletedBlobs) {
+        return toolError("AFFiNE did not confirm deleted blob cleanup.", {
+          code: "blob_cleanup_failed",
+          data: { workspaceId, blobsReleased: false },
+        });
+      }
       
       return text({ success: true, workspaceId, blobsReleased: data.releaseDeletedBlobs });
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "blob_cleanup_failed" });
     }
   };
   server.registerTool(

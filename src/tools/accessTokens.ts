@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 import { z } from "zod";
-import { text } from "../util/mcp.js";
+import { text, toolError } from "../util/mcp.js";
 
 export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) {
   const listAccessTokensHandler = async () => {
@@ -11,7 +11,7 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
       return text(data.currentUser?.accessTokens || []);
     } catch (error: any) {
       console.error("List access tokens error:", error.message);
-      return text({ error: error.message });
+      return toolError(error, { code: "access_token_list_failed" });
     }
   };
   server.registerTool(
@@ -45,6 +45,12 @@ export function registerAccessTokenTools(server: McpServer, gql: GraphQLClient) 
   const revokeAccessTokenHandler = async (parsed: { id: string }) => {
     const mutation = `mutation($id:String!){ revokeUserAccessToken(id:$id) }`;
     const data = await gql.request<{ revokeUserAccessToken: boolean }>(mutation, { id: parsed.id });
+    if (!data.revokeUserAccessToken) {
+      return toolError("AFFiNE did not confirm access token revocation.", {
+        code: "access_token_revoke_failed",
+        data: { id: parsed.id },
+      });
+    }
     return text({ success: data.revokeUserAccessToken });
   };
   server.registerTool(

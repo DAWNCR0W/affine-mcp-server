@@ -4,7 +4,7 @@ import { GraphQLClient } from "../graphqlClient.js";
 import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
-import { receipt, text } from "../util/mcp.js";
+import { receipt, text, toolError } from "../util/mcp.js";
 import { connectWorkspaceSocket, joinWorkspace, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
 
 // Generate AFFiNE-style document ID
@@ -139,7 +139,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ workspaces: any[] }>(query);
       return text(data.workspaces || []);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "workspace_list_failed" });
     }
   };
 
@@ -170,7 +170,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
       const data = await gql.request<{ workspace: any }>(query, { id });
       return text(data.workspace);
     } catch (error: any) {
-      return text({ error: error.message });
+      return toolError(error, { code: "workspace_get_failed" });
     }
   };
 
@@ -285,11 +285,12 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
         });
         
       } catch (error: any) {
-        return text({
-          kind: "workspace.create",
-          ok: false,
-          status: "failed",
-          error: error.message,
+        return toolError(error, {
+          code: "workspace_create_failed",
+          data: {
+            kind: "workspace.create",
+            status: "failed",
+          },
         });
       }
     };
@@ -332,7 +333,10 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           ...data.updateWorkspace,
         });
       } catch (error: any) {
-        return text({ error: error.message });
+        return toolError(error, {
+          code: "workspace_update_failed",
+          data: { kind: "workspace.update", workspaceId: id, id },
+        });
       }
     };
   server.registerTool(
@@ -368,7 +372,10 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           message: "Workspace deleted successfully",
         });
       } catch (error: any) {
-        return text({ error: error.message });
+        return toolError(error, {
+          code: "workspace_delete_failed",
+          data: { kind: "workspace.delete", workspaceId: id, id, status: "failed" },
+        });
       }
     };
   server.registerTool(

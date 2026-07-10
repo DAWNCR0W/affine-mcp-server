@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Tool handlers now return MCP `isError: true` with stable error codes, retryability, and machine-readable context instead of reporting failures as successful text results.
+- Structured receipts derive `ok` from explicit `ok`, `success`, and failed status values rather than defaulting every operation to success.
+
+### Tests
+- Added self-contained coverage for success, error, and partial receipt contracts.
+
 ## [2.5.0] - 2026-07-06
 
 ### Added
