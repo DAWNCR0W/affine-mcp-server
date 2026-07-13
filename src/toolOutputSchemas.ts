@@ -48,7 +48,7 @@ const OUTPUT_SPECS = {
   append_block: receipt({ workspaceId: "nullableString", docId: "string", appended: "boolean", blockId: "string", flavour: "string", type: "nullableString", blockType: "nullableString", normalizedType: "string", legacyType: "nullableString" }),
   append_markdown: receipt({ workspaceId: "string", docId: "string", appended: "boolean", appendedCount: "number", blockIds: "stringArray", warnings: "stringArray", lossy: "boolean", stats: "object" }),
   append_semantic_section: spec({ workspaceId: "string", docId: "string", noteId: "string", sectionTitle: "string", sectionHeadingId: "string", afterSectionTitle: "nullableString", blockIds: "stringArray", appendedCount: "number" }),
-  cleanup_blobs: fallible(spec({ success: "boolean", workspaceId: "string", blobsReleased: "number", error: "string" }, true)),
+  cleanup_blobs: fallible(spec({ success: "boolean", workspaceId: "string", blobsReleased: "boolean", error: "string" }, true)),
   clear_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", cleared: "boolean" }),
   compose_database_from_intent: spec({ workspaceId: "string", docId: "string", intent: "string", title: "string", databaseBlockId: "string", primaryViewId: "nullableString", viewIds: "stringArray", columnIds: "stringArray", rowBlockIds: "stringArray", columns: "unknownArray", views: "unknownArray", warnings: "stringArray", lossy: "boolean", stats: "object" }),
   create_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
@@ -179,7 +179,7 @@ export function toolOutputSchemaFor(name: string): ZodTypeAny | undefined {
     shape[field] = outputSpec.optional || outputSpec.errorEnvelope ? schema.optional() : schema;
   }
   if (outputSpec.errorEnvelope) {
-    shape.ok ??= z.literal(false).optional();
+    shape.ok ??= z.boolean().optional();
     shape.error ??= z.string().optional();
     shape.code ??= z.string().optional();
     shape.retryable ??= z.boolean().optional();

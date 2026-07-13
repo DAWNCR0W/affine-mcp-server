@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { ALL_TOOLS } from "../src/toolSurface.ts";
 import { registerAccessTokenTools } from "../src/tools/accessTokens.ts";
+import { registerBlobTools } from "../src/tools/blobStorage.ts";
 import { TOOLS_WITH_ERROR_OUTPUT, toolOutputSchemaFor } from "../src/toolOutputSchemas.ts";
 import { text } from "../src/util/mcp.ts";
 
@@ -54,11 +55,30 @@ server.registerTool(
   },
   async () => text([{ id: "doc-1", title: "Example" }])
 );
-registerAccessTokenTools(server, {
-  async request() {
-    return { revokeUserAccessToken: false };
+const backendResults = {
+  revokeUserAccessToken: false,
+  deleteBlob: true,
+  releaseDeletedBlobs: true,
+};
+const gql = {
+  endpoint: "http://127.0.0.1:1/graphql",
+  headers: {},
+  cookie: undefined,
+  async request(query) {
+    if (query.includes("revokeUserAccessToken")) {
+      return { revokeUserAccessToken: backendResults.revokeUserAccessToken };
+    }
+    if (query.includes("deleteBlob")) {
+      return { deleteBlob: backendResults.deleteBlob };
+    }
+    if (query.includes("releaseDeletedBlobs")) {
+      return { releaseDeletedBlobs: backendResults.releaseDeletedBlobs };
+    }
+    throw new Error("Unexpected GraphQL request in output-schema test");
   },
-});
+};
+registerAccessTokenTools(server, gql);
+registerBlobTools(server, gql);
 
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 const client = new Client({ name: "output-schema-test-client", version: "1.0.0" });
@@ -102,6 +122,69 @@ assert.deepEqual(revokeResult.structuredContent, {
   ok: false,
   error: "AFFiNE did not confirm access token revocation.",
   code: "access_token_revoke_failed",
+  retryable: false,
+});
+
+backendResults.revokeUserAccessToken = true;
+const successfulRevokeResult = await client.callTool({
+  name: "revoke_access_token",
+  arguments: { id: "token-1" },
+});
+assert.equal(successfulRevokeResult.isError, undefined);
+assert.deepEqual(successfulRevokeResult.structuredContent, {
+  kind: "access_token.revoke",
+  status: "revoked",
+  tokenId: "token-1",
+  id: "token-1",
+  revoked: true,
+  success: true,
+  ok: true,
+});
+
+const successfulDeleteBlobResult = await client.callTool({
+  name: "delete_blob",
+  arguments: { workspaceId: "workspace-1", key: "blob-1" },
+});
+assert.equal(successfulDeleteBlobResult.isError, undefined);
+assert.deepEqual(successfulDeleteBlobResult.structuredContent, {
+  kind: "blob.delete",
+  status: "deleted",
+  key: "blob-1",
+  workspaceId: "workspace-1",
+  permanently: false,
+  deleted: true,
+  success: true,
+  ok: true,
+});
+
+const successfulCleanupBlobsResult = await client.callTool({
+  name: "cleanup_blobs",
+  arguments: { workspaceId: "workspace-1", confirmWorkspaceId: "workspace-1" },
+});
+assert.equal(successfulCleanupBlobsResult.isError, undefined);
+assert.deepEqual(successfulCleanupBlobsResult.structuredContent, {
+  kind: "blob.cleanup",
+  status: "completed",
+  workspaceId: "workspace-1",
+  blobsReleased: true,
+  success: true,
+  ok: true,
+});
+
+backendResults.releaseDeletedBlobs = false;
+const failedCleanupBlobsResult = await client.callTool({
+  name: "cleanup_blobs",
+  arguments: { workspaceId: "workspace-1", confirmWorkspaceId: "workspace-1" },
+});
+assert.equal(failedCleanupBlobsResult.isError, true);
+assert.deepEqual(failedCleanupBlobsResult.structuredContent, {
+  kind: "blob.cleanup",
+  status: "not_applied",
+  workspaceId: "workspace-1",
+  blobsReleased: false,
+  ok: false,
+  error: "AFFiNE did not confirm deleted blob cleanup.",
+  code: "blob_cleanup_failed",
   retryable: false,
 });
 
