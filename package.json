@@ -40,6 +40,7 @@
     "test:live-safety": "node tests/test-live-test-safety.mjs",
     "test:cli-version": "node tests/test-cli-version.mjs",
     "test:cli-commands": "node tests/test-cli-commands.mjs",
+    "test:cli-cookie-login": "node tests/test-cli-cookie-login.mjs",
     "test:config-consistency": "node tests/test-config-cli-consistency.mjs",
     "test:cli-live": "node tests/test-cli-live.mjs",
     "test:notification-contract": "node tests/test-notification-contract.mjs",

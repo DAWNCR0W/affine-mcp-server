@@ -37,7 +37,7 @@ Highlights:
 
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
-- Supports token, cookie, and email/password authentication
+- Includes a guided browser-session login for AFFiNE Cloud, plus cookie, legacy token, and self-hosted email/password authentication
 - Exposes 95 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage
@@ -46,7 +46,8 @@ Scope boundaries:
 
 - This server can access only server-backed AFFiNE workspaces
 - Browser-local workspaces stored only in local storage are not available through AFFiNE server APIs
-- AFFiNE Cloud requires API-token-based access for MCP usage; programmatic email/password sign-in is blocked by Cloudflare
+- Current `aff_mcp_v1.<id>.<secret>` credentials authenticate AFFiNE's smaller native workspace MCP endpoint, not the GraphQL and WebSocket APIs used by this server's full toolset
+- For the full toolset on AFFiNE Cloud, `affine-mcp login` securely reuses your browser's `affine_session` cookie; programmatic email/password sign-in is blocked by Cloudflare
 
 > New in v2.5.0: Added MCP behavior annotations and Glama metadata so clients and MCP directories can classify tools more safely.
 
@@ -82,8 +83,8 @@ npx -y -p affine-mcp-server affine-mcp -- --version
 docker run -d \
   -p 3000:3000 \
   -e MCP_TRANSPORT=http \
-  -e AFFINE_BASE_URL=https://your-affine-instance.com \
-  -e AFFINE_API_TOKEN=ut_your_token \
+  -e AFFINE_BASE_URL=https://app.affine.pro \
+  -e 'AFFINE_COOKIE=affine_session=your-session-id' \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
   ghcr.io/dawncr0w/affine-mcp-server:latest
@@ -115,8 +116,9 @@ affine-mcp login
 
 This stores credentials in `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise in `~/.config/affine-mcp/config`, with mode `600`.
 
-- For AFFiNE Cloud, use an API token from `Settings -> Integrations -> MCP Server`
-- For self-hosted AFFiNE, you can use either an API token or email/password
+- For AFFiNE Cloud, the CLI opens AFFiNE, guides you to the one required browser cookie, validates the session, lets you select a workspace, and saves only AFFiNE's authentication cookie
+- For self-hosted AFFiNE, email/password is the default; the resulting session cookie is stored instead of attempting to mint a removed access-token type
+- Existing legacy GraphQL API tokens remain supported, but `aff_mcp_v1` credentials do not unlock this server's full toolset
 
 ### 4. Register the server with your client
 
@@ -155,14 +157,14 @@ Node.js 20 is the minimum supported runtime. CI validates the minimum runtime an
 
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |
-| Claude Code | stdio | Saved config or API token | [docs/client-setup.md#claude-code](docs/client-setup.md#claude-code) |
-| Claude Desktop | stdio | Saved config or API token | [docs/client-setup.md#claude-desktop](docs/client-setup.md#claude-desktop) |
-| Codex CLI | stdio | Saved config or API token | [docs/client-setup.md#codex-cli](docs/client-setup.md#codex-cli) |
-| Cursor | stdio | Saved config or API token | [docs/client-setup.md#cursor](docs/client-setup.md#cursor) |
+| Claude Code | stdio | Saved config from `affine-mcp login` | [docs/client-setup.md#claude-code](docs/client-setup.md#claude-code) |
+| Claude Desktop | stdio | Saved config from `affine-mcp login` | [docs/client-setup.md#claude-desktop](docs/client-setup.md#claude-desktop) |
+| Codex CLI | stdio | Saved config from `affine-mcp login` | [docs/client-setup.md#codex-cli](docs/client-setup.md#codex-cli) |
+| Cursor | stdio | Saved config from `affine-mcp login` | [docs/client-setup.md#cursor](docs/client-setup.md#cursor) |
 | Containerized remote deployment | HTTP | Bearer token or OAuth | [docs/getting-started.md#path-c-run-from-the-docker-image](docs/getting-started.md#path-c-run-from-the-docker-image) |
 | Remote MCP clients | HTTP | Bearer token or OAuth | [docs/configuration-and-deployment.md#http-mode](docs/configuration-and-deployment.md#http-mode) |
-| AFFiNE Cloud | stdio or HTTP | API token | [docs/configuration-and-deployment.md#auth-strategy-matrix](docs/configuration-and-deployment.md#auth-strategy-matrix) |
-| Self-hosted AFFiNE | stdio or HTTP | API token, cookie, or email/password | [docs/configuration-and-deployment.md#auth-strategy-matrix](docs/configuration-and-deployment.md#auth-strategy-matrix) |
+| AFFiNE Cloud | stdio or bearer-mode HTTP | Browser session cookie | [docs/configuration-and-deployment.md#auth-strategy-matrix](docs/configuration-and-deployment.md#auth-strategy-matrix) |
+| Self-hosted AFFiNE | stdio or HTTP | Email/password session, cookie, or legacy GraphQL token | [docs/configuration-and-deployment.md#auth-strategy-matrix](docs/configuration-and-deployment.md#auth-strategy-matrix) |
 
 ## Tool Surface
 
@@ -218,8 +220,10 @@ For common failures, see:
 
 ## Security and Scope
 
-- Never commit secrets or long-lived tokens
-- Prefer API tokens over cookies or passwords in production
+- Never commit secrets, session cookies, or long-lived tokens
+- Treat `AFFINE_COOKIE` as an account credential: it can authorize the same write operations as your signed-in browser session
+- Prefer the saved mode-`600` config for local clients; rerun `affine-mcp login` when a browser session expires or is revoked
+- For unattended production deployments, use a supported legacy GraphQL service token only if your AFFiNE instance can issue one; otherwise provide and rotate a dedicated account's session cookie
 - Email/password HTTP sessions share one login and never fall back to anonymous backend requests after authentication failure
 - Use HTTPS for non-local deployments
 - Keep remote HTTP MCP listeners authenticated; bearer mode refuses a non-loopback bind without `AFFINE_MCP_HTTP_TOKEN`

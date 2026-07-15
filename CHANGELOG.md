@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a guided browser-session login for AFFiNE Cloud that opens the web app, accepts a raw `affine_session` value or complete Cookie header, validates the account, and selects a workspace.
+
 ### Changed
+- Self-hosted email/password login now saves the returned session cookie instead of trying to generate the legacy access-token type removed by current AFFiNE releases.
+- Legacy GraphQL token login is labeled explicitly, while `aff_mcp_v1` credentials fail with guidance to use the browser-session flow.
 - Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
 - Added bounded integer schemas for pagination, search limits, history size, and tree depth.
 - Permanent document, workspace, and blob cleanup operations now require an exact identifier confirmation before any AFFiNE request is sent.
@@ -20,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made `/readyz` verify the exact configured AFFiNE GraphQL endpoint in addition to OAuth discovery.
 
 ### Security
+- Browser Cookie headers are reduced to `affine_session` and optional `affine_user_id`; unrelated cookies are discarded, secret input is hidden, and the saved config remains mode `600`.
 - Added a fail-closed guard to destructive live-test entry points. Loopback targets remain available by default, while non-loopback targets require an explicit remote opt-in and an exact `DESTROY <target>` confirmation.
 - Isolated Docker-backed test runs with unique Compose projects, private per-run credential files, scoped cleanup, and collision-resistant AFFiNE resource names.
 - Stopped printing acquired session cookies from the E2E credential helper.
@@ -53,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
 ### Tests
+- Added cookie-first offline CLI integration coverage for login, status, doctor, snippets, input validation, and `aff_mcp_v1` rejection.
 - Added self-contained coverage for success, error, and partial receipt contracts.
 - Added self-contained regression coverage for safe document move ordering, cycle rejection, partial failures, idempotent destination links, and Markdown batch failure policy.
 - Added self-contained external URL safety regressions and included them in the package CI gate.

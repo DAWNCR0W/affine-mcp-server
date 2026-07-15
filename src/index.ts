@@ -61,6 +61,13 @@ function loadServerConfig(): ServerConfig {
 const config = loadServerConfig();
 const useHttpTransport = config.transportMode === "http";
 
+if (config.apiToken?.startsWith("aff_mcp_v1.")) {
+  throw new Error(
+    "aff_mcp_v1 credentials cannot access the GraphQL/WebSocket APIs required by this server's full toolset. " +
+    "Remove AFFINE_API_TOKEN, then run 'affine-mcp login' and choose browser session login.",
+  );
+}
+
 // OAuth callers share one AFFiNE service credential. Default that deployment
 // model to read-only unless operators explicitly enable both a write-capable
 // profile and the service-write acknowledgement.

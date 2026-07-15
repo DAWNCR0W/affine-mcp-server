@@ -56,8 +56,8 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Variable | Use when | Notes |
 | --- | --- | --- |
-| `AFFINE_API_TOKEN` | Preferred for cloud and automation | Recommended default for stable operation |
-| `AFFINE_COOKIE` | You must reuse browser-authenticated state | Copy only from a trusted local browser session |
+| `AFFINE_COOKIE` | Current AFFiNE Cloud with the full server toolset | Use `affine-mcp login`; treat it as a password-equivalent secret |
+| `AFFINE_API_TOKEN` | Your instance has already issued a legacy GraphQL access token | `aff_mcp_v1` credentials are not GraphQL tokens and are rejected |
 | `AFFINE_EMAIL` | Self-hosted email/password sign-in | Must be paired with `AFFINE_PASSWORD` |
 | `AFFINE_PASSWORD` | Self-hosted email/password sign-in | Avoid for automated public deployments |
 
@@ -104,14 +104,16 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Environment | Recommended auth | Why |
 | --- | --- | --- |
-| AFFiNE Cloud + stdio | `AFFINE_API_TOKEN` or saved config from `affine-mcp login` | Cloud sign-in is blocked by Cloudflare |
-| AFFiNE Cloud + HTTP | `AFFINE_API_TOKEN` + bearer or OAuth at the MCP layer | Stable and automation-friendly |
-| Self-hosted + stdio | API token first, email/password second | Token reduces startup and sign-in failure modes |
-| Self-hosted + HTTP | API token first, cookie or email/password only if necessary | Better for unattended deployments |
+| AFFiNE Cloud + stdio | Saved browser session from `affine-mcp login` | Enables the full GraphQL/WebSocket-backed toolset despite Cloudflare blocking programmatic sign-in |
+| AFFiNE Cloud + bearer HTTP | `AFFINE_COOKIE` for AFFiNE plus `AFFINE_MCP_HTTP_TOKEN` for MCP clients | Works today, but requires secure session rotation |
+| AFFiNE Cloud + OAuth HTTP | Existing legacy GraphQL service token | OAuth mode currently requires a non-cookie AFFiNE service credential; `aff_mcp_v1` is incompatible |
+| Self-hosted + stdio | Email/password session or browser cookie; legacy GraphQL token if available | Use the credential type the instance supports |
+| Self-hosted + HTTP | Dedicated-account cookie or legacy GraphQL service token | Avoid personal account credentials for unattended deployments |
 
 Important note for AFFiNE Cloud:
 
 - Programmatic email/password sign-in to `/api/auth/sign-in` is not supported because Cloudflare blocks those requests
+- Current `aff_mcp_v1.<id>.<secret>` values authorize AFFiNE's native workspace MCP endpoint only; they cannot authenticate this server's GraphQL or WebSocket calls
 
 ## Docker
 
@@ -126,8 +128,8 @@ Example:
 docker run -d \
   -p 3000:3000 \
   -e MCP_TRANSPORT=http \
-  -e AFFINE_BASE_URL=https://your-affine-instance.com \
-  -e AFFINE_API_TOKEN=ut_your_token \
+  -e AFFINE_BASE_URL=https://app.affine.pro \
+  -e 'AFFINE_COOKIE=affine_session=your-session-id' \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
   ghcr.io/dawncr0w/affine-mcp-server:latest
@@ -171,7 +173,7 @@ instead of leaving a partially running process.
 export MCP_TRANSPORT=http
 export AFFINE_MCP_AUTH_MODE=bearer
 export AFFINE_BASE_URL="https://app.affine.pro"
-export AFFINE_API_TOKEN="ut_xxx"
+export AFFINE_COOKIE="affine_session=your-session-id"
 export AFFINE_MCP_HTTP_HOST="0.0.0.0"
 export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
 export PORT=3000
@@ -220,6 +222,8 @@ OAuth mode behavior:
 - disables `AFFINE_MCP_HTTP_TOKEN` and `?token=`
 - does not register `sign_in`
 - still requires `AFFINE_API_TOKEN` so the server can call AFFiNE
+- cannot use `AFFINE_COOKIE` as that service credential in the current OAuth implementation
+- cannot use an `aff_mcp_v1` credential because it does not authenticate AFFiNE GraphQL/WebSocket APIs
 - authenticates callers at the MCP boundary but does not delegate their identity to AFFiNE; every request uses the same `AFFINE_API_TOKEN` service identity
 - defaults `AFFINE_TOOL_PROFILE` to `read_only` when no profile is configured
 - refuses any write-capable tool surface unless `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true` is also set
@@ -334,7 +338,7 @@ Every registered tool must also be present in the canonical tool surface and `to
 Before exposing the server remotely, confirm:
 
 - `AFFINE_BASE_URL` is reachable from the MCP host
-- `AFFINE_API_TOKEN` works through `affine-mcp status` or an equivalent health path
+- the configured `AFFINE_COOKIE` or legacy `AFFINE_API_TOKEN` works through `affine-mcp status` or an equivalent health path
 - `MCP_TRANSPORT=http` is set
 - `AFFINE_MCP_AUTH_MODE` is correct for your client model
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0` is set in containerized deployments
@@ -349,7 +353,8 @@ Before exposing the server remotely, confirm:
 
 ## Troubleshooting pointers
 
-- Cloudflare / sign-in failures: switch to an API token
+- Cloudflare / sign-in failures: run `affine-mcp login` and choose browser session login
+- `aff_mcp_v1` rejection: use a browser session for this server, or point the credential directly at AFFiNE's smaller native workspace MCP endpoint instead
 - Startup timeouts: avoid `AFFINE_LOGIN_AT_START=sync` unless required
 - Missing tools: confirm filtering variables are not removing them
 - Browser CORS failures: verify `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`

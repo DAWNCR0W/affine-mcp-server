@@ -6,10 +6,10 @@ This guide provides copy-paste configuration for the most common MCP clients.
 
 | Client | Transport | Recommended auth | Best starting point |
 | --- | --- | --- | --- |
-| Claude Code | stdio | Saved config or API token | `affine-mcp login` + `command: "affine-mcp"` |
-| Claude Desktop | stdio | Saved config or API token | Config JSON with `command: "affine-mcp"` |
-| Codex CLI | stdio | Saved config or API token | `codex mcp add affine -- affine-mcp` |
-| Cursor | stdio | Saved config or API token | `.cursor/mcp.json` |
+| Claude Code | stdio | Saved config | `affine-mcp login` + `command: "affine-mcp"` |
+| Claude Desktop | stdio | Saved config | Config JSON with `command: "affine-mcp"` |
+| Codex CLI | stdio | Saved config | `codex mcp add affine -- affine-mcp` |
+| Cursor | stdio | Saved config | `.cursor/mcp.json` |
 | Remote HTTP MCP clients | HTTP | Bearer token or OAuth | See [configuration and deployment](configuration-and-deployment.md#http-mode) |
 
 ## Claude Code
@@ -26,7 +26,7 @@ Project-local `.mcp.json`:
 }
 ```
 
-Explicit environment variables:
+Explicit environment variables (prefer saved config locally):
 
 ```json
 {
@@ -35,7 +35,7 @@ Explicit environment variables:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "affine_session=your-session-id"
       }
     }
   }
@@ -57,7 +57,7 @@ Typical config paths:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "affine_session=your-session-id"
       }
     }
   }
@@ -89,12 +89,12 @@ With saved config:
 codex mcp add affine -- affine-mcp
 ```
 
-With an API token:
+With a browser session cookie:
 
 ```bash
 codex mcp add affine \
   --env AFFINE_BASE_URL=https://app.affine.pro \
-  --env AFFINE_API_TOKEN=ut_xxx \
+  --env 'AFFINE_COOKIE=affine_session=your-session-id' \
   -- affine-mcp
 ```
 
@@ -119,7 +119,7 @@ Project-local `.cursor/mcp.json`:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "affine_session=your-session-id"
       }
     }
   }
@@ -136,7 +136,7 @@ Project-local `.cursor/mcp.json`:
       "args": ["-y", "-p", "affine-mcp-server", "affine-mcp"],
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "affine_session=your-session-id"
       }
     }
   }
@@ -171,8 +171,9 @@ browser history.
 
 ## Setup tips
 
-- Prefer `affine-mcp login` for local development
-- Prefer `AFFINE_API_TOKEN` for AFFiNE Cloud
-- Prefer tokens over passwords for automated environments
+- Prefer `affine-mcp login` for AFFiNE Cloud and local development; then keep client config to `command: "affine-mcp"`
+- Treat `AFFINE_COOKIE` as a password-equivalent secret and rerun login when the session expires or is revoked
+- Do not use an `aff_mcp_v1` credential here; it is scoped to AFFiNE's native workspace MCP and cannot authenticate this server's full GraphQL/WebSocket toolset
+- Use explicit `AFFINE_COOKIE` only for controlled automation; environment and client configuration can expose it more broadly than the mode-`600` saved config
 - If your shell treats `!` specially, wrap passwords in single quotes
 - Use `affine-mcp doctor` whenever a client config looks correct but the connection still fails
