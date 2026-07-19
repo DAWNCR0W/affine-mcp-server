@@ -76,7 +76,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `create_doc` | Create a new document | WebSocket-backed |
-| `create_doc_from_markdown` | Create a document from Markdown content | |
+| `create_doc_from_markdown` | Create a document from Markdown content | `[label](LinkedPage:<docId>)` links become native inline linked-doc references |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |

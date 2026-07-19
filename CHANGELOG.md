@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Markdown import now converts `[label](LinkedPage:<docId>)` links into native inline linked-doc references, and Markdown export serializes those references back to the same `LinkedPage:` scheme, making inline doc references round-trip safe.
+
 ### Changed
 - Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
 - Added bounded integer schemas for pagination, search limits, history size, and tree depth.
