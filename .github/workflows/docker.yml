@@ -4,15 +4,60 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  pull_request:
+    branches:
+      - develop
+      - main
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Existing vX.Y.Z release tag to rebuild
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
-    name: Build & Push
+  validate-pr-image:
+    if: github.event_name == 'pull_request'
+    name: Build & Smoke Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout pull request merge commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build local smoke image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: affine-mcp-server:pr-smoke
+          cache-from: type=gha
+
+      - name: Smoke test image
+        run: |
+          EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
+          ACTUAL_VERSION="$(docker run --rm affine-mcp-server:pr-smoke --version)"
+          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
+          CONTAINER_UID="$(docker run --rm --entrypoint id affine-mcp-server:pr-smoke -u)"
+          test -n "$CONTAINER_UID"
+          test "$CONTAINER_UID" != "0"
+
+  build-and-push-release:
+    if: github.event_name != 'pull_request'
+    name: Build & Push Release
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -21,21 +66,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Verify tag is on main
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      - name: Verify release tag and metadata
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
         run: |
-          git fetch origin main --depth=50
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Tagged commit is not reachable from origin/main. Refusing to publish."
-            exit 1
-          fi
+          RELEASE_COMMIT="$(git rev-parse HEAD)"
+          git fetch origin main --no-tags
+          node scripts/verify-release.mjs --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --main-ref origin/main
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -48,10 +96,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # semver tags: v1.2.3 → 1.2.3, 1.2, 1, latest
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            # semver tags: v1.2.3 to 1.2.3, 1.2, 1, latest
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.tag }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' }}
           labels: |
             org.opencontainers.image.title=affine-mcp-server
@@ -63,7 +111,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

@@ -11,14 +11,14 @@ jobs:
   e2e:
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'develop' || (github.base_ref == 'main' && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm

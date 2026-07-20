@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const browserChannel = process.env.PLAYWRIGHT_BROWSER_CHANNEL;
+
 export default defineConfig({
   testMatch: '**/*.pw.ts',
   fullyParallel: false,
@@ -19,6 +21,7 @@ export default defineConfig({
       name: 'chromium',
       use: {
         browserName: 'chromium',
+        ...(browserChannel ? { channel: browserChannel } : {}),
       },
     },
   ],

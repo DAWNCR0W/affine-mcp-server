@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from '../tests/require-destructive-test-safety.mjs';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -213,6 +215,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: LOGIN_MODE,
+      XDG_CONFIG_HOME: testTempPath('append-block-expansion-config'),
     },
     stderr: 'pipe',
   });
@@ -251,7 +254,7 @@ async function main() {
     }
 
     await callTool('sign_in', { email: EMAIL, password: PASSWORD });
-    const ws = await callTool('create_workspace', { name: `append-expansion-${Date.now()}` });
+    const ws = await callTool('create_workspace', { name: testResourceName('append-expansion') });
     workspaceId = ws?.id;
     if (!workspaceId) throw new Error('create_workspace did not return workspace id');
 
@@ -346,14 +349,14 @@ async function main() {
   } finally {
     try {
       if (workspaceId && docId) {
-        await client.callTool({ name: 'delete_doc', arguments: { workspaceId, docId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
+        await client.callTool({ name: 'delete_doc', arguments: { workspaceId, docId, confirmDocId: docId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
       }
     } catch {
       // noop
     }
     try {
       if (workspaceId) {
-        await client.callTool({ name: 'delete_workspace', arguments: { id: workspaceId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
+        await client.callTool({ name: 'delete_workspace', arguments: { id: workspaceId, confirmWorkspaceId: workspaceId } }, undefined, { timeout: TOOL_TIMEOUT_MS });
       }
     } catch {
       // noop

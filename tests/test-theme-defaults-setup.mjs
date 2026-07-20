@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /** Locks in color-default conventions at the CRDT level and writes a state file
  *  for the Playwright verifier. Shape fill/stroke/label stay on fixed palette
  *  tokens (+ literal `#000000` label); canvas text and connector stroke/label
@@ -32,7 +34,7 @@ const transport = new StdioClientTransport({
     AFFINE_EMAIL: EMAIL,
     AFFINE_PASSWORD: PASSWORD,
     AFFINE_LOGIN_AT_START: "sync",
-    XDG_CONFIG_HOME: "/tmp/affine-mcp-theme-defaults",
+    XDG_CONFIG_HOME: testTempPath('theme-defaults-config'),
   },
   stderr: "pipe",
 });
@@ -55,7 +57,7 @@ const isRawHex       = v => typeof v === "string" && /^#[0-9a-f]{3,8}$/i.test(v)
 
 await client.connect(transport);
 try {
-  const ws = await call("create_workspace", { name: `affine-theme-defaults-${Date.now()}` });
+  const ws = await call("create_workspace", { name: testResourceName('affine-theme-defaults') });
   const { docId } = await call("create_doc", { workspaceId: ws.id, title: "Theme Defaults" });
   const W = ws.id, D = docId;
 

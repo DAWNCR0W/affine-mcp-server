@@ -38,7 +38,6 @@ const ALL_TOOLS = [
   "export_doc_markdown",
   "export_with_fidelity_report",
   "find_doc_by_title",
-  "generate_access_token",
   "get_capabilities",
   "get_collection",
   "get_doc",
@@ -49,7 +48,6 @@ const ALL_TOOLS = [
   "get_workspace",
   "inspect_template_structure",
   "instantiate_template_native",
-  "list_access_tokens",
   "list_children",
   "list_collections",
   "list_comments",
@@ -75,7 +73,6 @@ const ALL_TOOLS = [
   "rename_folder",
   "replace_doc_with_markdown",
   "resolve_comment",
-  "revoke_access_token",
   "revoke_doc",
   "search_docs",
   "set_doc_property",
@@ -145,7 +142,6 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   export_doc_markdown: ["docs", "docs.export", "docs.markdown", "docs.read", "read"],
   export_with_fidelity_report: ["docs", "docs.export", "docs.markdown", "docs.read", "read"],
   find_doc_by_title: ["docs", "docs.read", "read"],
-  generate_access_token: ["access_tokens", "access_tokens.write", "admin", "write"],
   get_capabilities: ["docs", "docs.read", "read"],
   get_collection: ["organize", "organize.collections", "organize.read", "read"],
   get_doc: ["docs", "docs.read", "read"],
@@ -156,7 +152,6 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   get_workspace: ["workspaces", "workspaces.read", "read"],
   inspect_template_structure: ["docs", "docs.template", "docs.read", "read"],
   instantiate_template_native: ["docs", "docs.template", "docs.write", "write"],
-  list_access_tokens: ["access_tokens", "access_tokens.read", "admin", "read"],
   list_children: ["docs", "docs.tree", "docs.read", "read"],
   list_collections: ["organize", "organize.collections", "organize.read", "read"],
   list_comments: ["comments", "comments.read", "read"],
@@ -182,7 +177,6 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   rename_folder: ["organize", "organize.folders", "organize.write", "experimental", "write"],
   replace_doc_with_markdown: ["docs", "docs.markdown", "docs.write", "write"],
   resolve_comment: ["comments", "comments.write", "write"],
-  revoke_access_token: ["access_tokens", "access_tokens.write", "admin", "destructive", "write"],
   revoke_doc: ["docs", "docs.share", "docs.write", "destructive", "write"],
   search_docs: ["docs", "docs.read", "read"],
   set_doc_property: ["docs", "docs.properties", "docs.write", "write"],
@@ -218,7 +212,6 @@ const READ_ONLY_TOOLS = new Set<ToolName>([
   "get_orphan_docs",
   "get_workspace",
   "inspect_template_structure",
-  "list_access_tokens",
   "list_children",
   "list_collections",
   "list_comments",
@@ -290,15 +283,32 @@ function parseCsv(raw: string | undefined, normalize = true): string[] {
     .map(value => normalize ? value.toLowerCase() : value);
 }
 
-function normalizeProfile(raw: string | undefined): { profile: ToolProfile; warning?: string } {
+export class ToolSurfaceConfigError extends Error {
+  readonly issues: readonly string[];
+
+  constructor(issues: readonly string[]) {
+    super(`Invalid tool surface configuration:\n- ${issues.join("\n- ")}`);
+    this.name = "ToolSurfaceConfigError";
+    this.issues = issues;
+  }
+}
+
+export class UnknownToolRegistrationError extends Error {
+  constructor(toolName: string) {
+    super(
+      `Tool "${toolName}" is not present in the canonical tool surface. ` +
+      "Add it to ALL_TOOLS, TOOL_GROUPS, and tool-manifest.json before registering it."
+    );
+    this.name = "UnknownToolRegistrationError";
+  }
+}
+
+function normalizeProfile(raw: string | undefined): ToolProfile | null {
   const value = (raw || "full").trim().toLowerCase();
   if (KNOWN_PROFILES.has(value as ToolProfile)) {
-    return { profile: value as ToolProfile };
+    return value as ToolProfile;
   }
-  return {
-    profile: "full",
-    warning: `Unknown AFFINE_TOOL_PROFILE "${raw}". Using "full". Valid profiles: ${[...KNOWN_PROFILES].join(", ")}`,
-  };
+  return null;
 }
 
 function profileAllowsTool(profile: ToolProfile, toolName: ToolName): boolean {
@@ -316,18 +326,21 @@ function profileAllowsTool(profile: ToolProfile, toolName: ToolName): boolean {
 }
 
 export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
-  const profileResult = normalizeProfile(env.AFFINE_TOOL_PROFILE);
+  const profile = normalizeProfile(env.AFFINE_TOOL_PROFILE);
   const disabledGroups = new Set(parseCsv(env.AFFINE_DISABLED_GROUPS));
   const disabledTools = new Set(parseCsv(env.AFFINE_DISABLED_TOOLS));
-  const warnings: string[] = [];
+  const issues: string[] = [];
 
-  if (profileResult.warning) {
-    warnings.push(profileResult.warning);
+  if (!profile) {
+    issues.push(
+      `Unknown AFFINE_TOOL_PROFILE "${env.AFFINE_TOOL_PROFILE}". ` +
+      `Valid profiles: ${[...KNOWN_PROFILES].join(", ")}`
+    );
   }
 
   for (const group of disabledGroups) {
     if (!KNOWN_GROUPS.has(group)) {
-      warnings.push(
+      issues.push(
         `Unknown group "${group}" in AFFINE_DISABLED_GROUPS. Valid groups: ${[...KNOWN_GROUPS].sort().join(", ")}`
       );
     }
@@ -335,14 +348,20 @@ export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
 
   for (const tool of disabledTools) {
     if (!KNOWN_TOOLS.has(tool)) {
-      warnings.push(`Unknown tool "${tool}" in AFFINE_DISABLED_TOOLS.`);
+      issues.push(`Unknown tool "${tool}" in AFFINE_DISABLED_TOOLS.`);
     }
   }
+
+  if (issues.length > 0) {
+    throw new ToolSurfaceConfigError(issues);
+  }
+
+  const validatedProfile = profile as ToolProfile;
 
   function isEnabled(name: string): boolean {
     const toolName = name as ToolName;
     if (!KNOWN_TOOLS.has(toolName)) {
-      return profileResult.profile === "full" && disabledGroups.size === 0 && disabledTools.size === 0;
+      throw new UnknownToolRegistrationError(name);
     }
     if (disabledTools.has(toolName)) {
       return false;
@@ -351,39 +370,29 @@ export function createToolFilter(env: NodeJS.ProcessEnv = process.env) {
     if (groups.some(group => disabledGroups.has(group))) {
       return false;
     }
-    return profileAllowsTool(profileResult.profile, toolName);
+    return profileAllowsTool(validatedProfile, toolName);
   }
 
   const enabledTools = ALL_TOOLS.filter(toolName => isEnabled(toolName));
+  const enabledWriteTools = enabledTools.filter(
+    toolName => toolName !== "sign_in" && TOOL_GROUPS[toolName].includes("write"),
+  );
 
   return {
-    profile: profileResult.profile,
+    profile: validatedProfile,
     disabledGroups,
     disabledTools,
-    warnings,
     enabledTools,
+    enabledWriteTools,
     totalToolCount: ALL_TOOLS.length,
     isEnabled,
   };
 }
 
-export function toolFilterRequiresRegisterTool(filter: {
-  profile: ToolProfile;
-  disabledGroups: ReadonlySet<string>;
-  disabledTools: ReadonlySet<string>;
-}): boolean {
-  return filter.profile !== "full" || filter.disabledGroups.size > 0 || filter.disabledTools.size > 0;
-}
-
 export function toolAnnotationsFor(name: string): ToolAnnotations {
   const toolName = name as ToolName;
   if (!KNOWN_TOOLS.has(toolName)) {
-    return {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    };
+    throw new UnknownToolRegistrationError(name);
   }
 
   const groups = TOOL_GROUPS[toolName];

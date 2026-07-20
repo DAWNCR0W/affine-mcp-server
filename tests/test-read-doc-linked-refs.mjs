@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for read_doc inline LinkedPage references.
  *
@@ -119,7 +121,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-read-doc-linked-refs-noconfig",
+      XDG_CONFIG_HOME: testTempPath('read-doc-linked-refs-config'),
     },
     stderr: "pipe",
   });
@@ -169,7 +171,7 @@ async function main() {
   try {
     await client.connect(transport);
 
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `linked-ref-read-doc-${timestamp}` });
     workspaceId = workspace?.id;
     expectTruthy(workspaceId, "workspace id");
@@ -275,9 +277,9 @@ async function main() {
     console.log("=== read_doc LinkedPage reference integration test passed ===");
   } finally {
     try {
-      if (hostDocId) await call("delete_doc", { workspaceId, docId: hostDocId }).catch(() => {});
-      if (firstTargetDocId) await call("delete_doc", { workspaceId, docId: firstTargetDocId }).catch(() => {});
-      if (secondTargetDocId) await call("delete_doc", { workspaceId, docId: secondTargetDocId }).catch(() => {});
+      if (hostDocId) await call("delete_doc", { workspaceId, docId: hostDocId, confirmDocId: hostDocId }).catch(() => {});
+      if (firstTargetDocId) await call("delete_doc", { workspaceId, docId: firstTargetDocId, confirmDocId: firstTargetDocId }).catch(() => {});
+      if (secondTargetDocId) await call("delete_doc", { workspaceId, docId: secondTargetDocId, confirmDocId: secondTargetDocId }).catch(() => {});
     } finally {
       await client.close();
     }

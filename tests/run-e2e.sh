@@ -4,13 +4,9 @@
 #   1. Start AFFiNE via Docker Compose
 #   2. Wait for health + acquire credentials
 #   3. Build the MCP server
-#   4. Run MCP database creation test (email/password auth)
-#   5. Run MCP bearer token auth test
-#   6. Run MCP HTTP email/password multi-session test
-#   7. Run MCP tag visibility setup test
-#   8. Run MCP data-view setup test
-#   9. Run Playwright UI verification (all scenarios)
-#  10. Tear down Docker (on exit)
+#   4. Run the manifest-defined release integration suite
+#   5. Run Playwright UI verification (all scenarios)
+#   6. Tear down Docker (on exit)
 #
 set -euo pipefail
 
@@ -25,7 +21,6 @@ find_free_port() {
 
 # --- Configuration ---
 export PORT="${PORT:-$(find_free_port)}"
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-affine_mcp_e2e_${PORT}_$$}"
 export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:${PORT}}"
 export AFFINE_HEALTH_MAX_RETRIES="${AFFINE_HEALTH_MAX_RETRIES:-90}"
 export AFFINE_HEALTH_INTERVAL_MS="${AFFINE_HEALTH_INTERVAL_MS:-5000}"
@@ -37,29 +32,50 @@ export AFFINE_AUTH_READY_INTERVAL_SECONDS="${AFFINE_AUTH_READY_INTERVAL_SECONDS:
 export AFFINE_DOCKER_START_RETRIES="${AFFINE_DOCKER_START_RETRIES:-3}"
 export AFFINE_DOCKER_RETRY_DELAY_SECONDS="${AFFINE_DOCKER_RETRY_DELAY_SECONDS:-5}"
 
-# Generate random credentials (writes docker/.env, exports env vars)
+# Fail before Docker setup or authentication if the selected target is unsafe.
+AFFINE_TEST_RUN_ID="$(node "$SCRIPT_DIR/assert-destructive-test-target.mjs" --print-run-id)"
+compose_run_id="$(printf '%s' "$AFFINE_TEST_RUN_ID" | tr '[:upper:].' '[:lower:]_')"
+export COMPOSE_PROJECT_NAME="affine_mcp_e2e_${compose_run_id}"
+AFFINE_TEST_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/affine-mcp-e2e.XXXXXX")"
+export AFFINE_TEST_RUN_ID AFFINE_TEST_TMP_DIR
+export XDG_CONFIG_HOME="$AFFINE_TEST_TMP_DIR/xdg"
+
+cleanup_test_files() {
+  if [[ "${AFFINE_TEST_ENV_FILE_OWNED:-0}" == "1" && -n "${AFFINE_TEST_ENV_FILE:-}" ]]; then
+    rm -f -- "$AFFINE_TEST_ENV_FILE"
+  fi
+  rm -rf -- "$AFFINE_TEST_TMP_DIR"
+}
+trap cleanup_test_files EXIT
+
+# Generate random credentials in a private per-run env file.
 echo "=== Generating test credentials ==="
-# shellcheck source=generate-test-env.sh
+# shellcheck source=tests/generate-test-env.sh
 . "$SCRIPT_DIR/generate-test-env.sh"
+
+compose() {
+  docker compose --env-file "$AFFINE_TEST_ENV_FILE" -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+}
 
 # --- Cleanup on exit ---
 cleanup() {
   echo ""
   echo "=== Tearing down Docker containers ==="
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+  compose down -v --remove-orphans 2>/dev/null || true
+  cleanup_test_files
 }
 trap cleanup EXIT
 
 compose_container_id() {
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" ps -aq "$1" 2>/dev/null || true
+  compose ps -aq "$1" 2>/dev/null || true
 }
 
 docker_diagnostics() {
   echo ""
   echo "=== Docker diagnostics (on failure) ==="
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" ps || true
+  compose ps || true
   echo ""
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" logs --no-color --tail=200 affine affine_migration postgres redis || true
+  compose logs --no-color --tail=200 affine affine_migration postgres redis || true
 }
 
 docker_compose_with_retry() {
@@ -67,10 +83,10 @@ docker_compose_with_retry() {
   shift
   local attempt
   local output_file
-  output_file="$(mktemp)"
+  output_file="$(mktemp "$AFFINE_TEST_TMP_DIR/docker-compose.XXXXXX")"
 
   for ((attempt = 1; attempt <= AFFINE_DOCKER_START_RETRIES; attempt++)); do
-    if docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@" >"$output_file" 2>&1; then
+    if compose "$@" >"$output_file" 2>&1; then
       cat "$output_file"
       rm -f "$output_file"
       return 0
@@ -79,7 +95,7 @@ docker_compose_with_retry() {
     echo "[e2e] ${description} failed (attempt ${attempt}/${AFFINE_DOCKER_START_RETRIES})"
     cat "$output_file"
     docker_diagnostics
-    docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+    compose down -v --remove-orphans 2>/dev/null || true
 
     if ((attempt < AFFINE_DOCKER_START_RETRIES)); then
       echo "[e2e] Retrying ${description} in ${AFFINE_DOCKER_RETRY_DELAY_SECONDS}s..."
@@ -209,18 +225,20 @@ wait_for_auth_ready() {
   local sign_in_status
   local base_url="${AFFINE_BASE_URL%/}"
   local payload
-  payload=$(printf '{"email":"%s","password":"%s"}' "$AFFINE_ADMIN_EMAIL" "$AFFINE_ADMIN_PASSWORD")
+  local setup_response="$AFFINE_TEST_TMP_DIR/setup-response.txt"
+  local sign_in_response="$AFFINE_TEST_TMP_DIR/sign-in-response.txt"
+  payload="$(node -e 'process.stdout.write(JSON.stringify({email:process.env.AFFINE_ADMIN_EMAIL,password:process.env.AFFINE_ADMIN_PASSWORD}))')"
 
   for ((attempt = 1; attempt <= AFFINE_AUTH_READY_MAX_RETRIES; attempt++)); do
     setup_status="$(
-      curl -sS -o /tmp/affine-setup-response.txt -w "%{http_code}" \
+      curl -sS -o "$setup_response" -w "%{http_code}" \
         -H "Content-Type: application/json" \
         -X POST "$base_url/api/setup/create-admin-user" \
         -d "$payload" || true
     )"
 
     sign_in_status="$(
-      curl -sS -o /tmp/affine-signin-response.txt -w "%{http_code}" \
+      curl -sS -o "$sign_in_response" -w "%{http_code}" \
         -H "Content-Type: application/json" \
         -X POST "$base_url/api/auth/sign-in" \
         -d "$payload" || true
@@ -238,9 +256,9 @@ wait_for_auth_ready() {
   done
 
   echo "[e2e] ERROR: AFFiNE sign-in endpoint did not become ready in time"
-  if [[ -s /tmp/affine-signin-response.txt ]]; then
+  if [[ -s "$sign_in_response" ]]; then
     echo "[e2e] Last sign-in response body (first 500 bytes):"
-    head -c 500 /tmp/affine-signin-response.txt
+    head -c 500 "$sign_in_response"
     echo ""
   fi
   docker_diagnostics
@@ -258,13 +276,13 @@ ensure_affine_ui_ready() {
   echo "[e2e] AFFiNE UI is not reachable before Playwright; attempting service recovery..."
   docker_diagnostics
 
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" up -d --no-deps affine
+  compose up -d --no-deps affine
   acquire_credentials_with_retry
   wait_for_auth_ready
 }
 
 # --- Step 0: Clean up any stale containers from previous runs ---
-docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+compose down -v --remove-orphans 2>/dev/null || true
 
 # --- Step 1: Start Docker ---
 echo "=== Starting AFFiNE via Docker Compose ==="
@@ -284,112 +302,12 @@ echo "=== Building MCP server ==="
 cd "$PROJECT_DIR"
 npm run build
 
-# --- Step 4: Run MCP database creation test ---
+# --- Step 4: Run the manifest-defined release integration suite ---
 echo ""
-echo "=== Running MCP database creation test ==="
-node "$SCRIPT_DIR/test-database-creation.mjs"
+echo "=== Running release integration suite ==="
+node "$PROJECT_DIR/scripts/run-test-suite.mjs" e2e
 
-# --- Step 4b: Run MCP database linked-doc regression test ---
-echo ""
-echo "=== Running MCP database linked-doc regression test ==="
-node "$SCRIPT_DIR/test-database-linked-doc.mjs"
-
-# --- Step 5: Run MCP bearer token auth test ---
-echo ""
-echo "=== Running MCP bearer token auth test ==="
-node "$SCRIPT_DIR/test-bearer-auth.mjs"
-
-# --- Step 6: Run MCP HTTP email/password multi-session test ---
-echo ""
-echo "=== Running MCP HTTP email/password multi-session test ==="
-node "$SCRIPT_DIR/test-http-email-password.mjs"
-
-# --- Step 7: Run MCP HTTP bearer auth test ---
-echo ""
-echo "=== Running MCP HTTP bearer auth test ==="
-node "$SCRIPT_DIR/test-http-bearer.mjs"
-
-# --- Step 8: Run MCP OAuth HTTP auth test ---
-echo ""
-echo "=== Running MCP OAuth HTTP auth test ==="
-node "$SCRIPT_DIR/test-oauth-http.mjs"
-
-# --- Step 9: Run MCP tag visibility setup test ---
-echo ""
-echo "=== Running MCP tag visibility setup test ==="
-node "$SCRIPT_DIR/test-tag-visibility.mjs"
-
-# --- Step 9b: Run MCP tag deletion regression test ---
-echo ""
-echo "=== Running MCP tag deletion regression test ==="
-node "$SCRIPT_DIR/test-tag-deletion.mjs"
-
-# --- Step 10: Run MCP data-view setup test ---
-echo ""
-echo "=== Running MCP data-view setup test ==="
-node "$SCRIPT_DIR/test-data-view.mjs"
-
-# --- Step 11: Run MCP create-with-placement regression test ---
-echo ""
-echo "=== Running MCP create-with-placement regression test ==="
-node "$SCRIPT_DIR/test-create-placement.mjs"
-
-# --- Step 12: Run MCP doc discovery regression test ---
-echo ""
-echo "=== Running MCP doc discovery regression test ==="
-node "$SCRIPT_DIR/test-doc-discovery.mjs"
-
-# --- Step 12b: Run MCP find_doc_by_title regression test ---
-echo ""
-echo "=== Running MCP find_doc_by_title regression test ==="
-node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
-
-# --- Step 12c: Run MCP document custom-property regression test ---
-echo ""
-echo "=== Running MCP document custom-property regression test ==="
-node "$SCRIPT_DIR/test-doc-properties.mjs"
-
-# --- Step 12d: Run MCP read_doc LinkedPage reference regression test ---
-echo ""
-echo "=== Running MCP read_doc LinkedPage reference regression test ==="
-node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
-
-# --- Step 12e: Run MCP explorer-icon regression test ---
-echo ""
-echo "=== Running MCP explorer-icon regression test ==="
-node "$SCRIPT_DIR/test-icons.mjs"
-
-# --- Step 13: Run MCP surface-element CRUD + edgeless canvas test ---
-echo ""
-echo "=== Running MCP surface-element CRUD + edgeless canvas test ==="
-node "$SCRIPT_DIR/test-surface-elements.mjs"
-
-# --- Step 13b: Seed an edgeless-canvas doc for the Playwright verification ---
-echo ""
-echo "=== Seeding edgeless canvas doc for Playwright verification ==="
-node "$SCRIPT_DIR/test-edgeless-canvas-setup.mjs"
-
-# --- Step 13c: Canvas tool-map demo + layout-helper assertions ---
-echo ""
-echo "=== Running MCP canvas tool-map demo + layout-helper assertions ==="
-node "$SCRIPT_DIR/test-canvas-tool-map-demo.mjs"
-
-# --- Step 13c1: Cookbook auth-flow scene + per-claim assertions ---
-echo ""
-echo "=== Running MCP edgeless-canvas cookbook auth-flow scene ==="
-node "$SCRIPT_DIR/test-edgeless-canvas-cookbook.mjs"
-
-# --- Step 13c2: stackAfter direction coverage (4-way star) ---
-echo ""
-echo "=== Running MCP stackAfter direction assertions (4-way star) ==="
-node "$SCRIPT_DIR/test-stack-after-directions.mjs"
-
-# --- Step 13d: Theme-default CRDT assertions + state for Playwright ---
-echo ""
-echo "=== Seeding theme-defaults doc + asserting palette tokens ==="
-node "$SCRIPT_DIR/test-theme-defaults-setup.mjs"
-
-# --- Step 14: Run Playwright verification ---
+# --- Step 5: Run Playwright verification ---
 echo ""
 echo "=== Running Playwright UI verification ==="
 ensure_affine_ui_ready

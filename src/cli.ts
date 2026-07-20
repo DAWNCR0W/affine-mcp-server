@@ -2,8 +2,20 @@ import { fetch } from "undici";
 import * as fs from "fs";
 import * as readline from "readline";
 
-import { CONFIG_FILE, loadConfig, loadConfigFile, validateBaseUrl, VERSION, writeConfigFile } from "./config.js";
+import {
+  buildGraphqlEndpoint,
+  CONFIG_FILE,
+  loadConfig,
+  loadConfigFile,
+  type ServerConfig,
+  validateBaseUrl,
+  validateGraphqlPath,
+  VERSION,
+  writeConfigFile,
+} from "./config.js";
 import { loginWithPassword } from "./auth.js";
+import { probeOAuthReadiness, validateOAuthConfig } from "./oauth.js";
+import { parseBooleanFlag } from "./networkSecurity.js";
 
 const CLI_FETCH_TIMEOUT_MS = 30_000;
 
@@ -25,6 +37,18 @@ type ConnectionInspection = {
   userName: string;
   userEmail: string;
   workspaceCount: number;
+};
+
+type CliAuth = {
+  token?: string;
+  cookie?: string;
+  headers?: Record<string, string>;
+};
+
+type LoginResult = {
+  token?: string;
+  cookie?: string;
+  workspaceId: string;
 };
 
 function ask(prompt: string, hidden = false): Promise<string> {
@@ -82,10 +106,16 @@ function readHidden(prompt: string): Promise<string> {
   });
 }
 
-async function gql(baseUrl: string, auth: { token?: string; cookie?: string }, query: string, variables?: Record<string, any>): Promise<any> {
+async function gql(
+  graphqlEndpoint: string,
+  auth: CliAuth,
+  query: string,
+  variables?: Record<string, any>,
+): Promise<any> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "User-Agent": `affine-mcp-server/${VERSION}`,
+    ...(auth.headers || {}),
   };
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`;
   if (auth.cookie) headers.Cookie = auth.cookie;
@@ -96,7 +126,7 @@ async function gql(baseUrl: string, auth: { token?: string; cookie?: string }, q
   const timer = setTimeout(() => controller.abort(), CLI_FETCH_TIMEOUT_MS);
   let res;
   try {
-    res = await fetch(`${baseUrl}/graphql`, {
+    res = await fetch(graphqlEndpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -150,6 +180,16 @@ function ensureNoUnexpectedArgs(args: string[], command: string): void {
   }
 }
 
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
+
+function buildCodexEnvironmentArguments(environment: Record<string, string>): string {
+  return Object.entries(environment)
+    .map(([key, value]) => `--env ${quotePosixShellArgument(`${key}=${value}`)}`)
+    .join(" ");
+}
+
 function redactSecret(value: string | undefined): string | null {
   if (!value) return null;
   if (value.length <= 8) return "*".repeat(value.length);
@@ -163,9 +203,8 @@ function getConfigValueSource(name: string, file: Record<string, string>, fallba
   return "unset";
 }
 
-function buildEffectiveConfigSummary() {
+function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
   const stored = loadConfigFile();
-  const effective = loadConfig();
   const authKind = effective.apiToken
     ? "api-token"
     : effective.cookie
@@ -179,6 +218,8 @@ function buildEffectiveConfigSummary() {
     configFileExists: fs.existsSync(CONFIG_FILE),
     baseUrl: effective.baseUrl,
     graphqlPath: effective.graphqlPath,
+    graphqlEndpoint: effective.graphqlEndpoint,
+    additionalHeadersConfigured: Boolean(process.env.AFFINE_HEADERS_JSON || stored.AFFINE_HEADERS_JSON),
     workspaceId: effective.defaultWorkspaceId || null,
     authMode: effective.authMode,
     authKind,
@@ -188,8 +229,20 @@ function buildEffectiveConfigSummary() {
     publicBaseUrl: effective.publicBaseUrl || null,
     oauthIssuerUrl: effective.oauthIssuerUrl || null,
     oauthScopes: effective.oauthScopes,
+    oauthClockSkewSeconds: effective.oauthClockSkewSeconds,
+    transportMode: effective.transportMode,
+    loginAtStart: effective.loginAtStart,
+    http: {
+      host: effective.http.host,
+      port: effective.http.port,
+      authToken: effective.http.authToken ? redactSecret(effective.http.authToken) : null,
+      allowedOrigins: effective.http.allowedOrigins,
+      allowAllOrigins: effective.http.allowAllOrigins,
+    },
     sources: {
       baseUrl: getConfigValueSource("AFFINE_BASE_URL", stored, "http://localhost:3010"),
+      graphqlPath: getConfigValueSource("AFFINE_GRAPHQL_PATH", stored, "/graphql"),
+      additionalHeaders: getConfigValueSource("AFFINE_HEADERS_JSON", stored),
       apiToken: getConfigValueSource("AFFINE_API_TOKEN", stored),
       cookie: getConfigValueSource("AFFINE_COOKIE", stored),
       email: getConfigValueSource("AFFINE_EMAIL", stored),
@@ -199,28 +252,47 @@ function buildEffectiveConfigSummary() {
       publicBaseUrl: getConfigValueSource("AFFINE_MCP_PUBLIC_BASE_URL", stored),
       oauthIssuerUrl: getConfigValueSource("AFFINE_OAUTH_ISSUER_URL", stored),
       oauthScopes: getConfigValueSource("AFFINE_OAUTH_SCOPES", stored, "mcp"),
+      oauthClockSkewSeconds: getConfigValueSource("AFFINE_OAUTH_CLOCK_SKEW_SECONDS", stored, "60"),
+      transportMode: getConfigValueSource("MCP_TRANSPORT", stored, "stdio"),
+      loginAtStart: getConfigValueSource("AFFINE_LOGIN_AT_START", stored, "async"),
+      httpHost: getConfigValueSource("AFFINE_MCP_HTTP_HOST", stored, "127.0.0.1"),
+      httpPort: getConfigValueSource("PORT", stored, "3000"),
+      httpAuthToken: getConfigValueSource("AFFINE_MCP_HTTP_TOKEN", stored),
+      httpAllowedOrigins: getConfigValueSource("AFFINE_MCP_HTTP_ALLOWED_ORIGINS", stored),
+      httpAllowAllOrigins: getConfigValueSource("AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS", stored, "false"),
     },
   };
 }
 
-async function resolveCliAuth(baseUrl: string): Promise<{ auth: { token?: string; cookie?: string }; authKind: string }> {
-  const effective = loadConfig();
+async function resolveCliAuth(effective: ServerConfig): Promise<{ auth: CliAuth; authKind: string }> {
   if (effective.apiToken) {
-    return { auth: { token: effective.apiToken }, authKind: "api-token" };
+    return {
+      auth: { token: effective.apiToken, headers: effective.headers },
+      authKind: "api-token",
+    };
   }
   if (effective.cookie) {
-    return { auth: { cookie: effective.cookie }, authKind: "cookie" };
+    return {
+      auth: { cookie: effective.cookie, headers: effective.headers },
+      authKind: "cookie",
+    };
   }
   if (effective.email && effective.password) {
-    const { cookieHeader } = await loginWithPassword(baseUrl, effective.email, effective.password);
-    return { auth: { cookie: cookieHeader }, authKind: "email-password" };
+    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password);
+    return {
+      auth: { cookie: cookieHeader, headers: effective.headers },
+      authKind: "email-password",
+    };
   }
-  throw new CliError("No authentication configured. Run 'affine-mcp login' or set AFFINE_API_TOKEN.");
+  throw new CliError(
+    "No authentication configured. Run 'affine-mcp login' or set AFFINE_EMAIL and AFFINE_PASSWORD, " +
+    "AFFINE_COOKIE, or a compatible AFFINE_API_TOKEN.",
+  );
 }
 
-async function inspectConnection(baseUrl: string, auth: { token?: string; cookie?: string }): Promise<ConnectionInspection> {
+async function inspectConnection(graphqlEndpoint: string, auth: CliAuth): Promise<ConnectionInspection> {
   const data = await gql(
-    baseUrl,
+    graphqlEndpoint,
     auth,
     "query { currentUser { name email } workspaces { id } }",
   );
@@ -263,14 +335,18 @@ function printHelp(command?: string) {
   console.log("  affine-mcp --help");
 }
 
-async function detectWorkspace(baseUrl: string, auth: { token?: string; cookie?: string }, preferredWorkspaceId?: string): Promise<string> {
+async function detectWorkspace(
+  graphqlEndpoint: string,
+  auth: CliAuth,
+  preferredWorkspaceId?: string,
+): Promise<string> {
   if (preferredWorkspaceId) {
     console.error(`Using workspace override: ${preferredWorkspaceId}`);
     return preferredWorkspaceId;
   }
   console.error("Detecting workspaces...");
   try {
-    const data = await gql(baseUrl, auth, `query {
+    const data = await gql(graphqlEndpoint, auth, `query {
       workspaces {
         id createdAt memberCount
         owner { name }
@@ -308,7 +384,10 @@ async function detectWorkspace(baseUrl: string, auth: { token?: string; cookie?:
   }
 }
 
-async function loginWithEmail(baseUrl: string): Promise<{ token: string; workspaceId: string }> {
+async function loginWithEmail(
+  baseUrl: string,
+  graphqlEndpoint: string,
+): Promise<LoginResult> {
   const email = await ask("Email: ");
   const password = await ask("Password: ", true);
   if (!email || !password) {
@@ -325,72 +404,87 @@ async function loginWithEmail(baseUrl: string): Promise<{ token: string; workspa
 
   const auth = { cookie: cookieHeader };
   try {
-    const data = await gql(baseUrl, auth, "query { currentUser { name email } }");
+    const data = await gql(graphqlEndpoint, auth, "query { currentUser { name email } }");
     console.error(`✓ Signed in as: ${data.currentUser.name} <${data.currentUser.email}>\n`);
   } catch (err: any) {
     throw new CliError(`Session verification failed: ${err.message}`);
   }
 
-  console.error("Generating API token...");
-  let token: string;
-  try {
-    const data = await gql(
-      baseUrl,
-      auth,
-      `mutation($input: GenerateAccessTokenInput!) { generateUserAccessToken(input: $input) { id name token } }`,
-      { input: { name: `affine-mcp-${new Date().toISOString().slice(0, 10)}` } },
-    );
-    token = data.generateUserAccessToken.token;
-    console.error(`✓ Token created (name: ${data.generateUserAccessToken.name})\n`);
-  } catch (err: any) {
-    throw new CliError(
-      `Failed to generate token: ${err.message}\n` +
-      "You can create one manually in Affine Settings → Integrations → MCP Server",
-    );
-  }
-
-  const workspaceId = await detectWorkspace(baseUrl, { token });
-  return { token, workspaceId };
+  const workspaceId = await detectWorkspace(graphqlEndpoint, auth);
+  return { cookie: cookieHeader, workspaceId };
 }
 
-async function loginWithToken(baseUrl: string): Promise<{ token: string; workspaceId: string }> {
-  console.error("\nTo generate a token:");
-  console.error(`  1. Open ${baseUrl}/settings in your browser`);
-  console.error("  2. Account Settings → Integrations → MCP Server");
-  console.error("  3. Copy the Personal access token\n");
+async function loginWithToken(
+  graphqlEndpoint: string,
+): Promise<LoginResult> {
+  console.error(
+    "\nAFFiNE 0.27+ no longer provides legacy personal access tokens. " +
+    "Only use this option when your target deployment still accepts a compatible GraphQL bearer token.\n",
+  );
 
-  const token = await ask("API token: ", true);
+  const token = await ask("Compatible API token: ", true);
   if (!token) {
     throw new CliError("No token provided.");
   }
 
   console.error("Testing connection...");
   try {
-    const data = await gql(baseUrl, { token }, "query { currentUser { name email } }");
+    const data = await gql(graphqlEndpoint, { token }, "query { currentUser { name email } }");
     console.error(`✓ Authenticated as: ${data.currentUser.name} <${data.currentUser.email}>\n`);
   } catch (err: any) {
     throw new CliError(`Authentication failed: ${err.message}`);
   }
 
-  const workspaceId = await detectWorkspace(baseUrl, { token });
+  const workspaceId = await detectWorkspace(graphqlEndpoint, { token });
   return { token, workspaceId };
+}
+
+async function loginWithCookie(
+  baseUrl: string,
+  graphqlEndpoint: string,
+): Promise<LoginResult> {
+  console.error("\nTo use an existing browser session:");
+  console.error(`  1. Sign in to ${baseUrl}`);
+  console.error("  2. Open browser developer tools and inspect a request to /graphql");
+  console.error("  3. Copy the complete Cookie request header value\n");
+
+  const cookie = await ask("Session cookie: ", true);
+  if (!cookie) {
+    throw new CliError("No session cookie provided.");
+  }
+
+  console.error("Testing connection...");
+  try {
+    const data = await gql(graphqlEndpoint, { cookie }, "query { currentUser { name email } }");
+    console.error(`✓ Authenticated as: ${data.currentUser.name} <${data.currentUser.email}>\n`);
+  } catch (err: any) {
+    throw new CliError(`Authentication failed: ${err.message}`);
+  }
+
+  const workspaceId = await detectWorkspace(graphqlEndpoint, { cookie });
+  return { cookie, workspaceId };
 }
 
 async function login(args: string[]) {
   const parsedArgs = [...args];
   const providedUrl = consumeOption(parsedArgs, "--url");
+  const providedGraphqlPath = consumeOption(parsedArgs, "--graphql-path");
   const providedToken = consumeOption(parsedArgs, "--token");
+  const providedCookie = consumeOption(parsedArgs, "--cookie");
   const providedWorkspaceId = consumeOption(parsedArgs, "--workspace-id");
   const force = consumeFlags(parsedArgs, "--force", "-f");
   ensureNoUnexpectedArgs(parsedArgs, "login");
+  if (providedToken && providedCookie) {
+    throw new CliError("Use either --token or --cookie, not both.");
+  }
 
   console.error("Affine MCP Server — Login\n");
 
   const existing = loadConfigFile();
-  if (existing.AFFINE_API_TOKEN) {
+  if (existing.AFFINE_API_TOKEN || existing.AFFINE_COOKIE || (existing.AFFINE_EMAIL && existing.AFFINE_PASSWORD)) {
     console.error(`Existing config: ${CONFIG_FILE}`);
     console.error(`  URL:       ${existing.AFFINE_BASE_URL || "(default)"}`);
-    console.error("  Token:     (set)");
+    console.error("  Auth:      (set)");
     console.error(`  Workspace: ${existing.AFFINE_WORKSPACE_ID || "(none)"}\n`);
     if (!force) {
       const overwrite = await ask("Overwrite? [y/N] ");
@@ -406,33 +500,67 @@ async function login(args: string[]) {
 
   const defaultUrl = "https://app.affine.pro";
   const rawUrl = providedUrl ?? ((await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl);
-  const baseUrl = validateBaseUrl(rawUrl);
+  const baseUrl = validateBaseUrl(rawUrl, {
+    allowInsecureHttp: parseBooleanFlag(
+      "AFFINE_ALLOW_INSECURE_HTTP",
+      process.env.AFFINE_ALLOW_INSECURE_HTTP,
+    ),
+    insecureHttpOptInName: "AFFINE_ALLOW_INSECURE_HTTP",
+    label: "AFFINE URL",
+  });
+  const graphqlPath = validateGraphqlPath(
+    providedGraphqlPath || process.env.AFFINE_GRAPHQL_PATH || existing.AFFINE_GRAPHQL_PATH || "/graphql",
+  );
+  const graphqlEndpoint = buildGraphqlEndpoint(baseUrl, graphqlPath);
 
-  let result: { token: string; workspaceId: string };
+  let result: LoginResult;
 
   if (providedToken) {
     console.error("Testing provided token...");
     try {
-      const info = await inspectConnection(baseUrl, { token: providedToken });
+      const info = await inspectConnection(graphqlEndpoint, { token: providedToken });
       console.error(`✓ Authenticated as: ${info.userName} <${info.userEmail}>\n`);
     } catch (err: any) {
       throw new CliError(`Authentication failed: ${err.message}`);
     }
     result = {
       token: providedToken,
-      workspaceId: await detectWorkspace(baseUrl, { token: providedToken }, providedWorkspaceId),
+      workspaceId: await detectWorkspace(graphqlEndpoint, { token: providedToken }, providedWorkspaceId),
+    };
+  } else if (providedCookie) {
+    console.error("Testing provided session cookie...");
+    try {
+      const info = await inspectConnection(graphqlEndpoint, { cookie: providedCookie });
+      console.error(`✓ Authenticated as: ${info.userName} <${info.userEmail}>\n`);
+    } catch (err: any) {
+      throw new CliError(`Authentication failed: ${err.message}`);
+    }
+    result = {
+      cookie: providedCookie,
+      workspaceId: await detectWorkspace(graphqlEndpoint, { cookie: providedCookie }, providedWorkspaceId),
     };
   } else {
     const isSelfHosted = !baseUrl.includes("affine.pro");
     if (isSelfHosted) {
-      const method = await ask("\nAuth method — [1] Email/password (recommended)  [2] Paste API token: ");
-      const loginResult = method === "2" ? await loginWithToken(baseUrl) : await loginWithEmail(baseUrl);
+      const method = await ask(
+        "\nAuth method — [1] Email/password (recommended)  [2] Paste session cookie  [3] Compatible API token: ",
+      );
+      const loginResult = method === "2"
+        ? await loginWithCookie(baseUrl, graphqlEndpoint)
+        : method === "3"
+          ? await loginWithToken(graphqlEndpoint)
+          : await loginWithEmail(baseUrl, graphqlEndpoint);
       result = {
         ...loginResult,
         workspaceId: providedWorkspaceId || loginResult.workspaceId,
       };
     } else {
-      const loginResult = await loginWithToken(baseUrl);
+      const method = await ask(
+        "\nAuth method — [1] Paste session cookie (recommended)  [2] Compatible API token: ",
+      );
+      const loginResult = method === "2"
+        ? await loginWithToken(graphqlEndpoint)
+        : await loginWithCookie(baseUrl, graphqlEndpoint);
       result = {
         ...loginResult,
         workspaceId: providedWorkspaceId || loginResult.workspaceId,
@@ -441,33 +569,37 @@ async function login(args: string[]) {
   }
 
   writeConfigFile({
+    ...existing,
     AFFINE_BASE_URL: baseUrl,
-    AFFINE_API_TOKEN: result.token,
+    AFFINE_GRAPHQL_PATH: graphqlPath === "/graphql" ? "" : graphqlPath,
+    AFFINE_API_TOKEN: result.token || "",
+    AFFINE_COOKIE: result.cookie || "",
+    AFFINE_EMAIL: "",
+    AFFINE_PASSWORD: "",
     AFFINE_WORKSPACE_ID: result.workspaceId,
   });
 
   console.error(`\n✓ Saved to ${CONFIG_FILE} (mode 600)`);
-  console.error("The MCP server will use these credentials automatically.");
+  console.error("The MCP server will use these credentials automatically. Re-run login if the session expires.");
 }
 
 async function status(args: string[]) {
   const parsedArgs = [...args];
   const asJson = consumeFlags(parsedArgs, "--json");
   ensureNoUnexpectedArgs(parsedArgs, "status");
-  const config = loadConfigFile();
-  if (!config.AFFINE_API_TOKEN) {
-    throw new CliError("Not logged in. Run: affine-mcp login");
-  }
+  const effective = loadConfig();
+  const summary = buildEffectiveConfigSummary(effective);
   try {
-    const inspection = await inspectConnection(
-      config.AFFINE_BASE_URL || "https://app.affine.pro",
-      { token: config.AFFINE_API_TOKEN },
-    );
+    const { auth, authKind } = await resolveCliAuth(effective);
+    const inspection = await inspectConnection(effective.graphqlEndpoint, auth);
     if (asJson) {
       console.log(JSON.stringify({
         configFile: CONFIG_FILE,
-        baseUrl: config.AFFINE_BASE_URL || "https://app.affine.pro",
-        workspaceId: config.AFFINE_WORKSPACE_ID || null,
+        configFileExists: summary.configFileExists,
+        baseUrl: effective.baseUrl,
+        graphqlEndpoint: effective.graphqlEndpoint,
+        workspaceId: effective.defaultWorkspaceId || null,
+        authKind,
         userName: inspection.userName,
         userEmail: inspection.userEmail,
         workspaceCount: inspection.workspaceCount,
@@ -475,10 +607,11 @@ async function status(args: string[]) {
       return;
     }
 
-    console.error(`Config: ${CONFIG_FILE}`);
-    console.error(`URL:       ${config.AFFINE_BASE_URL || "(default)"}`);
-    console.error("Token:     (set)");
-    console.error(`Workspace: ${config.AFFINE_WORKSPACE_ID || "(none)"}\n`);
+    console.error(`Config: ${CONFIG_FILE} (${summary.configFileExists ? "found" : "not used"})`);
+    console.error(`URL:       ${effective.baseUrl}`);
+    console.error(`GraphQL:   ${effective.graphqlEndpoint}`);
+    console.error(`Auth:      ${authKind}`);
+    console.error(`Workspace: ${effective.defaultWorkspaceId || "(none)"}\n`);
     console.error(`User: ${inspection.userName} <${inspection.userEmail}>`);
     console.error(`Workspaces: ${inspection.workspaceCount}`);
   } catch (err: any) {
@@ -488,12 +621,50 @@ async function status(args: string[]) {
 
 function logout(args: string[]) {
   ensureNoUnexpectedArgs(args, "logout");
-  if (fs.existsSync(CONFIG_FILE)) {
-    fs.unlinkSync(CONFIG_FILE);
-    console.error(`Removed ${CONFIG_FILE}`);
-  } else {
+  if (!fs.existsSync(CONFIG_FILE)) {
     console.error("No config file found.");
+    return;
   }
+
+  const stored = loadConfigFile();
+  const credentialKeys = ["AFFINE_API_TOKEN", "AFFINE_COOKIE", "AFFINE_EMAIL", "AFFINE_PASSWORD"];
+  let removed = credentialKeys.some((key) => Boolean(stored[key]));
+  for (const key of credentialKeys) delete stored[key];
+
+  const rawHeaders = stored.AFFINE_HEADERS_JSON;
+  if (rawHeaders) {
+    try {
+      const parsedHeaders = JSON.parse(rawHeaders);
+      if (parsedHeaders && typeof parsedHeaders === "object" && !Array.isArray(parsedHeaders)) {
+        const headerEntries = Object.entries(parsedHeaders as Record<string, unknown>);
+        const retainedHeaders = headerEntries.filter(
+          ([name]) => !/^(authorization|cookie)$/i.test(name),
+        );
+        if (retainedHeaders.length !== headerEntries.length) {
+          removed = true;
+          if (retainedHeaders.length > 0) {
+            stored.AFFINE_HEADERS_JSON = JSON.stringify(Object.fromEntries(retainedHeaders));
+          } else {
+            delete stored.AFFINE_HEADERS_JSON;
+          }
+        }
+      }
+    } catch {
+      // Invalid header JSON is ignored by runtime config and is not an active credential source.
+    }
+  }
+
+  if (!removed) {
+    console.error("No saved credentials found.");
+    return;
+  }
+  if (Object.keys(stored).length > 0) {
+    writeConfigFile(stored);
+    console.error(`Removed saved credentials; preserved runtime settings in ${CONFIG_FILE}`);
+    return;
+  }
+  fs.unlinkSync(CONFIG_FILE);
+  console.error(`Removed ${CONFIG_FILE}`);
 }
 
 function configPath(args: string[]) {
@@ -514,7 +685,12 @@ function showConfig(args: string[]) {
 
   console.log(`Config file: ${summary.configFile} (${summary.configFileExists ? "found" : "missing"})`);
   console.log(`Base URL: ${summary.baseUrl} (${summary.sources.baseUrl})`);
-  console.log(`GraphQL path: ${summary.graphqlPath}`);
+  console.log(`GraphQL path: ${summary.graphqlPath} (${summary.sources.graphqlPath})`);
+  console.log(`GraphQL endpoint: ${summary.graphqlEndpoint}`);
+  console.log(
+    `Additional headers: ${summary.additionalHeadersConfigured ? "configured" : "(unset)"} ` +
+    `(${summary.sources.additionalHeaders})`,
+  );
   console.log(`Auth mode: ${summary.authMode} (${summary.sources.authMode})`);
   console.log(`Auth kind: ${summary.authKind}`);
   console.log(`Workspace: ${summary.workspaceId || "(none)"} (${summary.sources.workspaceId})`);
@@ -523,7 +699,23 @@ function showConfig(args: string[]) {
   if (summary.email) console.log(`Email: ${summary.email} (${summary.sources.email})`);
   if (summary.publicBaseUrl) console.log(`Public base URL: ${summary.publicBaseUrl} (${summary.sources.publicBaseUrl})`);
   if (summary.oauthIssuerUrl) console.log(`OAuth issuer URL: ${summary.oauthIssuerUrl} (${summary.sources.oauthIssuerUrl})`);
-  if (summary.authMode === "oauth") console.log(`OAuth scopes: ${summary.oauthScopes.join(", ")} (${summary.sources.oauthScopes})`);
+  if (summary.authMode === "oauth") {
+    console.log(`OAuth scopes: ${summary.oauthScopes.join(", ")} (${summary.sources.oauthScopes})`);
+    console.log(
+      `OAuth clock skew: ${summary.oauthClockSkewSeconds}s (${summary.sources.oauthClockSkewSeconds})`,
+    );
+  }
+  console.log(`Transport: ${summary.transportMode} (${summary.sources.transportMode})`);
+  console.log(`Login at start: ${summary.loginAtStart} (${summary.sources.loginAtStart})`);
+  console.log(`HTTP bind: ${summary.http.host}:${summary.http.port} (${summary.sources.httpHost}/${summary.sources.httpPort})`);
+  console.log(`HTTP auth token: ${summary.http.authToken || "(unset)"} (${summary.sources.httpAuthToken})`);
+  console.log(
+    `HTTP allowed origins: ${summary.http.allowedOrigins.join(", ") || "loopback only"} ` +
+    `(${summary.sources.httpAllowedOrigins})`,
+  );
+  console.log(
+    `HTTP allow all origins: ${summary.http.allowAllOrigins} (${summary.sources.httpAllowAllOrigins})`,
+  );
 }
 
 async function doctor(args: string[]) {
@@ -531,18 +723,40 @@ async function doctor(args: string[]) {
   const asJson = consumeFlags(parsedArgs, "--json");
   ensureNoUnexpectedArgs(parsedArgs, "doctor");
 
-  const summary = buildEffectiveConfigSummary();
+  const effective = loadConfig();
+  const summary = buildEffectiveConfigSummary(effective);
   const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
 
   checks.push({
-    name: "config-file",
-    ok: summary.configFileExists,
-    detail: summary.configFileExists ? summary.configFile : "No saved config file found",
+    name: "config-source",
+    ok: true,
+    detail: summary.configFileExists
+      ? `Environment overrides and ${summary.configFile}`
+      : "Environment variables and built-in defaults (saved config is optional)",
   });
+
+  const healthController = new AbortController();
+  const healthTimer = setTimeout(() => healthController.abort(), CLI_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(summary.baseUrl, { signal: healthController.signal });
+    checks.push({
+      name: "base-url",
+      ok: true,
+      detail: `Reachable (HTTP ${response.status})`,
+    });
+  } catch (err: any) {
+    checks.push({
+      name: "base-url",
+      ok: false,
+      detail: err?.message || "Could not reach base URL",
+    });
+  } finally {
+    clearTimeout(healthTimer);
+  }
 
   let authKind = "none";
   try {
-    const { auth, authKind: resolvedAuthKind } = await resolveCliAuth(summary.baseUrl);
+    const { auth, authKind: resolvedAuthKind } = await resolveCliAuth(effective);
     authKind = resolvedAuthKind;
     checks.push({
       name: "auth-configured",
@@ -550,27 +764,8 @@ async function doctor(args: string[]) {
       detail: `Using ${resolvedAuthKind}`,
     });
 
-    const healthController = new AbortController();
-    const healthTimer = setTimeout(() => healthController.abort(), CLI_FETCH_TIMEOUT_MS);
     try {
-      const response = await fetch(summary.baseUrl, { signal: healthController.signal });
-      checks.push({
-        name: "base-url",
-        ok: response.ok,
-        detail: `HTTP ${response.status}`,
-      });
-    } catch (err: any) {
-      checks.push({
-        name: "base-url",
-        ok: false,
-        detail: err?.message || "Could not reach base URL",
-      });
-    } finally {
-      clearTimeout(healthTimer);
-    }
-
-    try {
-      const data = await inspectConnection(summary.baseUrl, auth);
+      const data = await inspectConnection(effective.graphqlEndpoint, auth);
       checks.push({
         name: "graphql-auth",
         ok: true,
@@ -591,15 +786,74 @@ async function doctor(args: string[]) {
     });
   }
 
-  if (summary.authMode === "oauth") {
-    const oauthReady = Boolean(summary.publicBaseUrl && summary.oauthIssuerUrl && summary.oauthScopes.length > 0);
+  if (effective.transportMode === "http") {
+    const loopbackHost = ["localhost", "127.0.0.1", "::1"].includes(effective.http.host);
+    const protectedHttp = effective.authMode === "oauth" || Boolean(effective.http.authToken);
     checks.push({
-      name: "oauth-config",
-      ok: oauthReady,
-      detail: oauthReady
-        ? `${summary.publicBaseUrl} -> ${summary.oauthIssuerUrl}`
-        : "OAuth mode requires AFFINE_MCP_PUBLIC_BASE_URL and AFFINE_OAUTH_ISSUER_URL",
+      name: "http-exposure",
+      ok: loopbackHost || protectedHttp,
+      detail: loopbackHost
+        ? `Loopback bind on ${effective.http.host}:${effective.http.port}`
+        : protectedHttp
+          ? `Protected bind on ${effective.http.host}:${effective.http.port}`
+          : "Non-loopback bearer deployments require AFFINE_MCP_HTTP_TOKEN",
     });
+  }
+
+  if (summary.authMode === "oauth") {
+    checks.push({
+      name: "oauth-transport",
+      ok: effective.transportMode === "http",
+      detail: effective.transportMode === "http"
+        ? "HTTP transport enabled"
+        : "OAuth mode requires MCP_TRANSPORT=http",
+    });
+    const oauthReady = Boolean(summary.publicBaseUrl && summary.oauthIssuerUrl && summary.oauthScopes.length > 0);
+    if (!oauthReady || !effective.publicBaseUrl || !effective.oauthIssuerUrl) {
+      checks.push({
+        name: "oauth-config",
+        ok: false,
+        detail: "OAuth mode requires AFFINE_MCP_PUBLIC_BASE_URL and AFFINE_OAUTH_ISSUER_URL",
+      });
+    } else {
+      const oauthConfig = {
+        publicBaseUrl: effective.publicBaseUrl,
+        issuerUrl: effective.oauthIssuerUrl,
+        scopes: effective.oauthScopes,
+        clockSkewSeconds: effective.oauthClockSkewSeconds,
+      };
+      try {
+        validateOAuthConfig(oauthConfig, {
+          allowAnyOrigin: effective.http.allowAllOrigins,
+          httpAuthToken: effective.http.authToken,
+        });
+        checks.push({
+          name: "oauth-config",
+          ok: true,
+          detail: `${summary.publicBaseUrl} -> ${summary.oauthIssuerUrl}`,
+        });
+        try {
+          const readiness = await probeOAuthReadiness(oauthConfig);
+          checks.push({
+            name: "oauth-discovery",
+            ok: true,
+            detail: `${readiness.issuer} (${readiness.jwksUri})`,
+          });
+        } catch (err: any) {
+          checks.push({
+            name: "oauth-discovery",
+            ok: false,
+            detail: err?.message || "OAuth discovery or JWKS probe failed",
+          });
+        }
+      } catch (err: any) {
+        checks.push({
+          name: "oauth-config",
+          ok: false,
+          detail: err?.message || "OAuth configuration is invalid",
+        });
+      }
+    }
   }
 
   const ok = checks.every((check) => check.ok);
@@ -617,6 +871,7 @@ async function doctor(args: string[]) {
 
   console.log(`Doctor: ${ok ? "OK" : "FAILED"}`);
   console.log(`Base URL: ${summary.baseUrl}`);
+  console.log(`GraphQL endpoint: ${summary.graphqlEndpoint}`);
   console.log(`Auth mode: ${summary.authMode}`);
   for (const check of checks) {
     console.log(`${check.ok ? "✓" : "✗"} ${check.name}: ${check.detail}`);
@@ -628,9 +883,21 @@ async function doctor(args: string[]) {
 
 function getSnippetEnv(): Record<string, string> {
   const effective = loadConfig();
+  const stored = loadConfigFile();
   const env: Record<string, string> = {};
   if (effective.baseUrl) env.AFFINE_BASE_URL = effective.baseUrl;
-  if (effective.apiToken) env.AFFINE_API_TOKEN = effective.apiToken;
+  if (effective.graphqlPath !== "/graphql") env.AFFINE_GRAPHQL_PATH = effective.graphqlPath;
+  const headersJson = process.env.AFFINE_HEADERS_JSON || stored.AFFINE_HEADERS_JSON;
+  if (headersJson) env.AFFINE_HEADERS_JSON = headersJson;
+  if (effective.apiToken) {
+    env.AFFINE_API_TOKEN = effective.apiToken;
+  } else if (effective.cookie) {
+    env.AFFINE_COOKIE = effective.cookie;
+  } else if (effective.email && effective.password) {
+    env.AFFINE_EMAIL = effective.email;
+    env.AFFINE_PASSWORD = effective.password;
+    if (effective.loginAtStart !== "async") env.AFFINE_LOGIN_AT_START = effective.loginAtStart;
+  }
   if (effective.defaultWorkspaceId) env.AFFINE_WORKSPACE_ID = effective.defaultWorkspaceId;
   if (effective.authMode === "oauth") {
     env.AFFINE_MCP_AUTH_MODE = "oauth";
@@ -670,7 +937,7 @@ function snippet(args: string[]) {
         },
       },
       codex: env && Object.keys(env).length > 0
-        ? `codex mcp add affine ${Object.entries(env).map(([key, value]) => `--env ${key}=${JSON.stringify(value)}`).join(" ")} -- affine-mcp`
+        ? `codex mcp add affine ${buildCodexEnvironmentArguments(env)} -- affine-mcp`
         : "codex mcp add affine -- affine-mcp",
     };
     console.log(JSON.stringify(payload, null, 2));
@@ -695,9 +962,7 @@ function snippet(args: string[]) {
       console.log("codex mcp add affine -- affine-mcp");
       return;
     }
-    const envArgs = Object.entries(env)
-      .map(([key, value]) => `--env ${key}=${JSON.stringify(value)}`)
-      .join(" ");
+    const envArgs = buildCodexEnvironmentArguments(env);
     console.log(`codex mcp add affine ${envArgs} -- affine-mcp`);
     return;
   }
@@ -720,16 +985,16 @@ const COMMANDS: Record<string, CliCommandDefinition> = {
   },
   login: {
     summary: "Interactive login and config bootstrap",
-    usage: "affine-mcp login [--url <url>] [--token <token>] [--workspace-id <id>] [--force]",
+    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token> | --cookie <cookie>] [--workspace-id <id>] [--force]",
     handler: login,
   },
   status: {
-    summary: "Test the saved config and print current user info",
+    summary: "Test the effective config and print current user info",
     usage: "affine-mcp status [--json]",
     handler: status,
   },
   logout: {
-    summary: "Remove the saved config file",
+    summary: "Remove saved credentials and preserve runtime settings",
     usage: "affine-mcp logout",
     handler: logout,
   },
@@ -762,7 +1027,7 @@ export async function runCli(command: string, args: string[] = []): Promise<bool
   try {
     await definition.handler(args);
   } catch (err: any) {
-    if (err instanceof CliError) {
+    if (err instanceof Error) {
       console.error(`✗ ${err.message}`);
       process.exit(1);
     }

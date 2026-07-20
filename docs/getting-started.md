@@ -7,8 +7,8 @@ This guide is the fastest way to get AFFiNE MCP Server working and confirm that 
 | Scenario | Recommended path |
 | --- | --- |
 | Local MCP client on your machine | Use the saved-config flow with `affine-mcp login` |
-| AFFiNE Cloud | Use an API token |
-| Self-hosted AFFiNE | Use an API token, or email/password if your instance allows it |
+| AFFiNE Cloud | Use a signed-in browser session cookie |
+| Self-hosted AFFiNE | Use email/password or a signed-in session cookie |
 | Temporary usage without a global install | Use `npx` |
 | Run the server in Docker | Use the GHCR image and HTTP transport |
 | Remote MCP deployment | Skip to [configuration and deployment](configuration-and-deployment.md) |
@@ -33,9 +33,9 @@ affine-mcp login
 What happens:
 
 - The CLI asks for your AFFiNE base URL
-- For AFFiNE Cloud, it prompts for an API token
-- For self-hosted AFFiNE, it can sign in with email/password and generate a token automatically
-- The effective config is stored at `~/.config/affine-mcp/config`
+- For AFFiNE Cloud, it guides you to paste the Cookie request header from a signed-in browser session
+- For self-hosted AFFiNE, it signs in with email/password and saves the resulting session cookie
+- The effective config is stored at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise at `~/.config/affine-mcp/config`
 
 ### 3. Verify the saved config
 
@@ -68,15 +68,15 @@ Use this path when you prefer stateless or container-friendly setup instead of a
 
 - `AFFINE_BASE_URL`
 - One auth strategy:
-  - `AFFINE_API_TOKEN`
   - `AFFINE_COOKIE`
   - `AFFINE_EMAIL` and `AFFINE_PASSWORD`
+  - `AFFINE_API_TOKEN` only when the target deployment still accepts a compatible GraphQL bearer token
 
 ### Example: AFFiNE Cloud
 
 ```bash
 export AFFINE_BASE_URL="https://app.affine.pro"
-export AFFINE_API_TOKEN="ut_xxx"
+export AFFINE_COOKIE="your-complete-cookie-request-header"
 affine-mcp status
 ```
 
@@ -104,7 +104,8 @@ docker run -d \
   -p 3000:3000 \
   -e MCP_TRANSPORT=http \
   -e AFFINE_BASE_URL=https://your-affine-instance.com \
-  -e AFFINE_API_TOKEN=ut_your_token \
+  -e AFFINE_EMAIL=you@example.com \
+  -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
   ghcr.io/dawncr0w/affine-mcp-server:latest
@@ -132,6 +133,10 @@ Client-side MCP config:
   }
 }
 ```
+
+Remote bearer-mode listeners fail to start without
+`AFFINE_MCP_HTTP_TOKEN`. Send this token only in the `Authorization` header;
+query-string tokens are rejected by default.
 
 For OAuth mode, origin controls, and deployment hardening, continue with [configuration and deployment](configuration-and-deployment.md#docker).
 
@@ -176,7 +181,7 @@ Expected results:
 - `status` confirms the active base URL, auth source, and connection result
 - `show-config` prints the effective configuration with secrets redacted
 - `doctor` checks config shape and connectivity and points to the failing layer
-- `healthz` and `readyz` return successful probe responses when the HTTP server is healthy
+- `healthz` reports process liveness; `readyz` succeeds only when OAuth discovery (if enabled) and the configured AFFiNE GraphQL endpoint are reachable
 
 If you are onboarding another client, these helpers can generate snippets from the current config:
 
@@ -192,10 +197,7 @@ affine-mcp snippet all --env
 
 AFFiNE Cloud (`app.affine.pro`) is behind Cloudflare. Programmatic requests to `/api/auth/sign-in` are blocked.
 
-Use:
-
-- `AFFINE_API_TOKEN`
-- or `affine-mcp login`, which guides you toward the supported path
+Use `AFFINE_COOKIE`, or run `affine-mcp login` and paste the Cookie request header from a signed-in browser session.
 
 ### Saved config exists, but the client cannot connect
 
@@ -226,4 +228,4 @@ Confirm:
 - Cloudflare or another bot-protection layer is not blocking sign-in
 - the credentials are valid
 
-If in doubt, switch to an API token.
+If in doubt, re-run `affine-mcp login` or use a fresh signed-in session cookie.

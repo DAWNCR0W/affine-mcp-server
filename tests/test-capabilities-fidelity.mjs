@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for capability negotiation and fidelity reporting.
  *
@@ -66,7 +68,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: 'sync',
-      XDG_CONFIG_HOME: '/tmp/affine-mcp-capabilities-fidelity-noconfig',
+      XDG_CONFIG_HOME: testTempPath('capabilities-fidelity-config'),
     },
     stderr: 'pipe',
   });
@@ -112,7 +114,7 @@ async function main() {
     expectEqual(capabilities?.workspace?.workspaceBlueprints, true, 'workspaceBlueprints flag');
     expectEqual(capabilities?.collaboration?.replyCreation, false, 'replyCreation flag');
 
-    const workspace = await call('create_workspace', { name: `cap-fidelity-${Date.now()}` });
+    const workspace = await call('create_workspace', { name: testResourceName('cap-fidelity') });
     const workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'create_workspace id');
 

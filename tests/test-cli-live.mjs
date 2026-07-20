@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Live CLI integration test against a running AFFiNE instance.
  *
  * Covers:
- * - login --url --token --workspace-id --force
+ * - login --url --cookie --workspace-id --force
  * - status --json
  * - doctor --json
  * - snippet all --env
@@ -16,6 +18,7 @@ import { spawnSync } from "node:child_process";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { loginWithPassword } from "../dist/auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -43,8 +46,8 @@ function runCli(label, args, xdgConfigHome) {
   return { label, ...result };
 }
 
-async function generateAccessToken() {
-  const client = new Client({ name: "affine-cli-live-token", version: "1.0.0" });
+async function createRemoteArtifacts() {
+  const client = new Client({ name: "affine-cli-live", version: "1.0.0" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [DIST_ENTRY],
@@ -55,23 +58,52 @@ async function generateAccessToken() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-cli-live-token",
+      XDG_CONFIG_HOME: testTempPath('cli-live-token-config'),
     },
   });
 
   await client.connect(transport);
+  let workspaceId;
+  const cleanupTool = async (name, args) => {
+    const result = await client.callTool({ name, arguments: args });
+    if (result?.isError) throw new Error(`${name} failed: ${result.content?.[0]?.text || 'unknown error'}`);
+    const parsed = JSON.parse(result.content?.[0]?.text || '{}');
+    if (parsed?.error || parsed?.success !== true) {
+      throw new Error(`${name} cleanup failed: ${parsed?.error || 'success was not true'}`);
+    }
+  };
   try {
-    const workspace = JSON.parse((await client.callTool({
+    const workspaceResult = await client.callTool({
       name: "create_workspace",
-      arguments: { name: `cli-live-${Date.now()}` },
-    })).content[0].text);
-    const token = JSON.parse((await client.callTool({
-      name: "generate_access_token",
-      arguments: { name: `cli-live-token-${Date.now()}` },
-    })).content[0].text).token;
-    return { token, workspaceId: workspace.id };
-  } finally {
-    await transport.close();
+      arguments: { name: testResourceName('cli-live') },
+    });
+    if (workspaceResult?.isError) throw new Error(workspaceResult.content?.[0]?.text || 'create_workspace failed');
+    const workspace = JSON.parse(workspaceResult.content[0].text);
+    workspaceId = workspace.id;
+    expect(workspaceId, 'create_workspace did not return an id');
+
+    const { cookieHeader } = await loginWithPassword(BASE_URL, EMAIL, PASSWORD);
+
+    return {
+      cookie: cookieHeader,
+      workspaceId,
+      async cleanup() {
+        try {
+          await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
+        } finally {
+          await transport.close();
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      if (workspaceId) {
+        await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
+      }
+    } finally {
+      await transport.close();
+    }
+    throw error;
   }
 }
 
@@ -79,13 +111,15 @@ const tempDir = mkdtempSync(path.join(os.tmpdir(), "affine-mcp-cli-live-"));
 const xdgConfigHome = path.join(tempDir, "config-home");
 mkdirSync(xdgConfigHome, { recursive: true });
 
+let remoteArtifacts;
 try {
-  const { token, workspaceId } = await generateAccessToken();
+  remoteArtifacts = await createRemoteArtifacts();
+  const { cookie, workspaceId } = remoteArtifacts;
 
   const login = runCli("login", [
     "login",
     "--url", BASE_URL,
-    "--token", token,
+    "--cookie", cookie,
     "--workspace-id", workspaceId,
     "--force",
   ], xdgConfigHome);
@@ -111,17 +145,21 @@ try {
   expect(snippet.status === 0, `snippet all failed: ${snippet.stderr || snippet.stdout}`);
   const snippetJson = JSON.parse(snippet.stdout);
   expect(snippetJson.claude.mcpServers.affine.env.AFFINE_BASE_URL === BASE_URL, "snippet should include base URL");
-  expect(snippetJson.codex.includes("AFFINE_API_TOKEN"), "snippet codex should include API token env");
+  expect(snippetJson.codex.includes("AFFINE_COOKIE"), "snippet codex should include session cookie env");
 
   console.log(JSON.stringify({
     ok: true,
     cases: [
-      "login --url --token --workspace-id --force",
+      "login --url --cookie --workspace-id --force",
       "status --json",
       "doctor --json",
       "snippet all --env",
     ],
   }, null, 2));
 } finally {
-  rmSync(tempDir, { recursive: true, force: true });
+  try {
+    if (remoteArtifacts) await remoteArtifacts.cleanup();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }

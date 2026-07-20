@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * End-to-end regression guard for layout helpers: stackAfter (single + array form),
  * childElementIds frame ownership, y-omitted auto-stack-below, connector auto-snap,
@@ -20,7 +22,7 @@ if (!BASE || !EMAIL || !PASSWORD) {
   console.error("Set AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL, AFFINE_ADMIN_PASSWORD first.");
   console.error("Typical flow (from repo root):");
   console.error("  . tests/generate-test-env.sh");
-  console.error("  docker compose -f docker/docker-compose.yml up -d");
+  console.error('  docker compose --env-file "$AFFINE_TEST_ENV_FILE" -p "affine_mcp_manual_$$" -f docker/docker-compose.yml up -d');
   console.error("  node tests/acquire-credentials.mjs");
   console.error("  node tests/test-canvas-tool-map-demo.mjs");
   process.exit(1);
@@ -36,7 +38,7 @@ const transport = new StdioClientTransport({
     AFFINE_EMAIL: EMAIL,
     AFFINE_PASSWORD: PASSWORD,
     AFFINE_LOGIN_AT_START: "sync",
-    XDG_CONFIG_HOME: "/tmp/affine-mcp-tool-map-example",
+    XDG_CONFIG_HOME: testTempPath('tool-map-config'),
   },
   stderr: "pipe",
 });
@@ -58,7 +60,7 @@ async function call(name, args = {}) {
 
 await client.connect(transport);
 try {
-  const ws = await call("create_workspace", { name: `affine-mcp-tool-map-${Date.now()}` });
+  const ws = await call("create_workspace", { name: testResourceName('affine-mcp-tool-map') });
   const docId = (await call("create_doc", { workspaceId: ws.id, title: "AFFiNE MCP Server — Tool Map" })).docId;
   const W = ws.id;
   const D = docId;
@@ -229,7 +231,6 @@ try {
     markdown: [
       "# Auth, users, notifications",
       "- `current_user`, `update_profile`, `update_settings`",
-      "- `generate_access_token`, `list_access_tokens`, `revoke_access_token`",
       "- `list_comments`, `create_comment`, `resolve_comment`",
       "- `list_notifications`, `read_all_notifications`",
     ].join("\n"),

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { loadConfig, VERSION } from "./config.js";
+import { CONFIG_FILE, loadConfig, type ServerConfig, VERSION } from "./config.js";
 import { GraphQLClient } from "./graphqlClient.js";
 import { registerWorkspaceTools } from "./tools/workspaces.js";
 import { registerDocTools } from "./tools/docs.js";
@@ -9,10 +9,9 @@ import { registerCommentTools } from "./tools/comments.js";
 import { registerHistoryTools } from "./tools/history.js";
 import { registerUserTools } from "./tools/user.js";
 import { registerUserCRUDTools } from "./tools/userCRUD.js";
-import { registerAccessTokenTools } from "./tools/accessTokens.js";
 import { registerBlobTools } from "./tools/blobStorage.js";
 import { registerNotificationTools } from "./tools/notifications.js";
-import { loginWithPassword } from "./auth.js";
+import { AuthSession, parseLoginMode } from "./authSession.js";
 import { registerAuthTools } from "./tools/auth.js";
 import { registerOrganizeTools } from "./tools/organize.js";
 import { registerPropertyTools } from "./tools/properties.js";
@@ -20,8 +19,11 @@ import { registerIconTools } from "./tools/icons.js";
 import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
-import { CONFIG_FILE } from "./config.js";
-import { createToolFilter, toolAnnotationsFor, toolFilterRequiresRegisterTool } from "./toolSurface.js";
+import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
+import {
+  assertOAuthServiceWritePolicy,
+  createToolFilterEnvironment,
+} from "./oauthServicePolicy.js";
 
 // CLI commands: affine-mcp login|status|logout|version
 const rawArgs = process.argv.slice(2);
@@ -46,127 +48,136 @@ if (subcommand) {
 }
 
 // MCP server mode (default)
-const config = loadConfig();
-const transportMode = (process.env.MCP_TRANSPORT || "stdio").toLowerCase();
-const useHttpTransport =
-  transportMode === "sse" || transportMode === "http" || transportMode === "streamable";
+function loadServerConfig(): ServerConfig {
+  try {
+    return loadConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[affine-mcp] Invalid configuration: ${message}`);
+    process.exit(1);
+  }
+}
+const config = loadServerConfig();
+const useHttpTransport = config.transportMode === "http";
+
+// OAuth callers share one AFFiNE service credential. Default that deployment
+// model to read-only unless operators explicitly enable both a write-capable
+// profile and the service-write acknowledgement.
+const toolFilterEnvironment = createToolFilterEnvironment(config.authMode, process.env);
 
 // Tool filtering is parsed once at module load (not per-session in HTTP mode).
-const toolFilter = createToolFilter(process.env);
-
-// Startup diagnostics (visible in Claude Code MCP server logs via stderr)
-console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
-console.error(`[affine-mcp] Endpoint: ${config.baseUrl}${config.graphqlPath}`);
-const hasAuth = !!(config.apiToken || config.cookie || (config.email && config.password));
-console.error(`[affine-mcp] Auth: ${hasAuth ? 'configured' : 'not configured'}`);
-console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
-if (hasAuth && config.baseUrl.startsWith("http://")
-    && !config.baseUrl.includes("localhost")
-    && !config.baseUrl.includes("127.0.0.1")) {
-  console.error("WARNING: Credentials configured over plain HTTP. Use HTTPS for remote servers.");
-}
-console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
-
-for (const warning of toolFilter.warnings) {
-  console.error(`[affine-mcp] WARNING: ${warning}`);
-}
+const toolFilter = createToolFilter(toolFilterEnvironment);
 
 if (config.authMode === "oauth" && !useHttpTransport) {
   throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
+}
+if (config.authMode === "oauth" && process.env.AFFINE_LOGIN_AT_START) {
+  console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
+}
+
+const loginMode = config.authMode === "oauth"
+  ? "async"
+  : parseLoginMode(process.env.AFFINE_LOGIN_AT_START);
+
+function findConfiguredHeader(name: string): string | undefined {
+  let value: string | undefined;
+  for (const [headerName, headerValue] of Object.entries(config.headers || {})) {
+    if (headerName.toLowerCase() === name) value = headerValue;
+  }
+  return value;
+}
+
+const configuredAuthorization = findConfiguredHeader("authorization");
+const configuredCookie = findConfiguredHeader("cookie");
+let headerBearer: string | undefined;
+if (!config.apiToken && configuredAuthorization !== undefined) {
+  if (/[\r\n]/.test(configuredAuthorization)) {
+    throw new Error("Configured Authorization header contains illegal CR/LF characters.");
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(configuredAuthorization);
+  if (!match) {
+    throw new Error("Configured Authorization header must use the Bearer scheme.");
+  }
+  headerBearer = match[1];
+}
+
+const sessionBearer = config.apiToken || headerBearer;
+const sessionCookie = sessionBearer
+  ? undefined
+  : config.cookie || configuredCookie;
+const authSession = new AuthSession({
+  baseUrl: config.baseUrl,
+  bearer: sessionBearer,
+  cookie: sessionCookie,
+  email: sessionBearer || sessionCookie ? undefined : config.email,
+  password: sessionBearer || sessionCookie ? undefined : config.password,
+});
+
+if (config.authMode === "oauth" && !authSession.hasConfiguredAuth) {
+  throw new Error(
+    "AFFINE_MCP_AUTH_MODE=oauth requires AFFiNE backend service credentials. " +
+    "Set AFFINE_EMAIL and AFFINE_PASSWORD, AFFINE_COOKIE, or a compatible AFFINE_API_TOKEN.",
+  );
+}
+
+// The process-scoped AuthSession owns credentials after configuration is loaded.
+config.email = undefined;
+config.password = undefined;
+
+if (loginMode === "async" && authSession.requiresLogin) {
+  authSession.start();
+}
+
+// Startup diagnostics (visible in Claude Code MCP server logs via stderr)
+console.error(`[affine-mcp] Config: ${CONFIG_FILE} (${existsSync(CONFIG_FILE) ? 'found' : 'missing'})`);
+console.error(`[affine-mcp] Endpoint: ${config.graphqlEndpoint}`);
+const authSource = authSession.hasConfiguredAuth ? authSession.source : "not configured";
+console.error(`[affine-mcp] Auth: ${authSource}`);
+if (authSource === "not configured") {
+  console.error("[affine-mcp] WARNING: No authentication configured. Some operations may fail.");
+  console.error("[affine-mcp] Set AFFINE_EMAIL and AFFINE_PASSWORD, AFFINE_COOKIE, or run: affine-mcp login");
+}
+console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
+
+console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
+
+if (config.authMode === "oauth" && !useHttpTransport) {
+  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
+}
+assertOAuthServiceWritePolicy({
+  authMode: config.authMode,
+  allowServiceWrites: config.oauthAllowServiceWrites,
+  enabledWriteTools: toolFilter.enabledWriteTools,
+});
+if (
+  config.authMode === "oauth"
+  && config.oauthAllowServiceWrites
+  && toolFilter.enabledWriteTools.length > 0
+) {
+  console.error(
+    "[affine-mcp] WARNING: OAuth service-account writes are enabled. Every authorized OAuth caller " +
+    "can mutate AFFiNE with the shared backend service identity permissions.",
+  );
 }
 
 async function buildServer() {
   const server = new McpServer({ name: "affine-mcp", version: VERSION });
   const gqlHeaders = { ...(config.headers || {}) };
-  const gqlBearer = config.apiToken;
-
-  if (config.authMode === "oauth") {
-    if (!gqlBearer) {
-      throw new Error("AFFINE_API_TOKEN is required when AFFINE_MCP_AUTH_MODE=oauth.");
-    }
-    if (config.cookie || config.email || config.password) {
-      console.error(
-        "[affine-mcp] OAuth mode uses the configured AFFINE_API_TOKEN service credential. " +
-        "Ignoring AFFINE_COOKIE / AFFINE_EMAIL / AFFINE_PASSWORD.",
-      );
-    }
-    delete gqlHeaders.Cookie;
-    if (process.env.AFFINE_LOGIN_AT_START) {
-      console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
-    }
-  }
 
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
-    endpoint: `${config.baseUrl}${config.graphqlPath}`,
+    endpoint: config.graphqlEndpoint,
     headers: gqlHeaders,
-    bearer: gqlBearer
+    authProvider: () => authSession.ready(),
   });
 
-  // Try email/password authentication if no other auth method is configured.
-  // To avoid startup timeouts in MCP clients, default to async login after the stdio handshake.
-  if (config.authMode !== "oauth" && !gql.isAuthenticated() && config.email && config.password) {
-    const mode = (process.env.AFFINE_LOGIN_AT_START || "async").toLowerCase();
-    // In HTTP transport mode, buildServer() is called per session, so credentials
-    // must be retained for subsequent sessions. Only clear in stdio mode (single session).
-    const isHttpTransport = ["sse", "http", "streamable"].includes(
-      (process.env.MCP_TRANSPORT || "stdio").toLowerCase()
-    );
-    if (mode === "sync") {
-      console.error("No token/cookie; performing synchronous email/password authentication at startup...");
-      try {
-        const { cookieHeader } = await loginWithPassword(config.baseUrl, config.email, config.password);
-        gql.setCookie(cookieHeader);
-        console.error("Successfully authenticated with email/password");
-      } catch (e) {
-        console.error("Failed to authenticate with email/password:", e);
-        console.error("WARNING: Continuing without authentication - some operations may fail");
-      } finally {
-        if (!isHttpTransport) {
-          config.password = undefined;
-          config.email = undefined;
-        }
-      }
-    } else {
-      console.error("No token/cookie; deferring email/password authentication (async after connect)...");
-      // Capture credentials before clearing — async login needs them.
-      const loginEmail = config.email!;
-      const loginPassword = config.password!;
-      if (!isHttpTransport) {
-        config.password = undefined;
-        config.email = undefined;
-      }
-      // Fire-and-forget async login so stdio handshake is not delayed.
-      (async () => {
-        try {
-          const { cookieHeader } = await loginWithPassword(config.baseUrl, loginEmail, loginPassword);
-          gql.setCookie(cookieHeader);
-          console.error("Successfully authenticated with email/password (async)");
-        } catch (e) {
-          console.error("Failed to authenticate with email/password (async):", e);
-        }
-      })();
-    }
-  }
-
-  // Log authentication status
-  if (!gql.isAuthenticated()) {
-    console.error("WARNING: No authentication configured. Some operations may fail.");
-    console.error("Set AFFINE_API_TOKEN or run: affine-mcp login");
-  }
 
   const originalRegisterTool = (server as any).registerTool?.bind(server);
   if (typeof originalRegisterTool !== "function") {
     const message =
       "[affine-mcp] server.registerTool not found - tool filtering cannot be enforced. " +
       "The MCP SDK API may have changed.";
-    if (toolFilterRequiresRegisterTool(toolFilter)) {
-      throw new Error(
-        `${message} Refusing to start because AFFINE_TOOL_PROFILE is not "full" ` +
-        "or AFFINE_DISABLED_GROUPS/AFFINE_DISABLED_TOOLS is configured."
-      );
-    }
-    console.error(`[affine-mcp] WARNING: ${message} Continuing with the full tool surface.`);
+    throw new Error(`${message} Refusing to start because the canonical tool surface cannot be enforced.`);
   } else {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
@@ -180,8 +191,8 @@ async function buildServer() {
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
-  console.error(`[affine-mcp] Disabled groups: ${process.env.AFFINE_DISABLED_GROUPS || "(none)"}`);
-  console.error(`[affine-mcp] Disabled tools: ${process.env.AFFINE_DISABLED_TOOLS || "(none)"}`);
+  console.error(`[affine-mcp] Disabled groups: ${toolFilterEnvironment.AFFINE_DISABLED_GROUPS || "(none)"}`);
+  console.error(`[affine-mcp] Disabled tools: ${toolFilterEnvironment.AFFINE_DISABLED_TOOLS || "(none)"}`);
   console.error(`[affine-mcp] Enabled tools: ${toolFilter.enabledTools.length}/${toolFilter.totalToolCount}`);
 
   registerWorkspaceTools(server, gql);
@@ -196,33 +207,18 @@ async function buildServer() {
   if (config.authMode !== "oauth") {
     registerAuthTools(server, gql, config.baseUrl);
   }
-  registerAccessTokenTools(server, gql);
   registerBlobTools(server, gql);
   registerNotificationTools(server, gql);
   return server;
 }
 
 async function start() {
+  if (loginMode === "sync" && authSession.requiresLogin) {
+    await authSession.ready();
+  }
+
   if (useHttpTransport) {
-    const DEFAULT_PORT = 3000;
-    const portEnvValue = process.env.PORT;
-
-    let port = DEFAULT_PORT;
-
-    // Validate the HTTP server port if provided.
-    if (portEnvValue != null && portEnvValue.trim() !== "") {
-      const parsedPort = Number(portEnvValue);
-
-      if (Number.isInteger(parsedPort) && parsedPort >= 0 && parsedPort <= 65535) {
-        port = parsedPort;
-      } else {
-        console.warn(
-          `[affine-mcp] Invalid PORT "${portEnvValue}" (expected 0..65535 integer). Falling back to ${DEFAULT_PORT}.`
-        );
-      }
-    }
-
-    await startHttpMcpServer(buildServer, port, config);
+    await startHttpMcpServer(buildServer, config);
   } else {
     // stdio transport is the default for typical desktop MCP clients
     const server = await buildServer();

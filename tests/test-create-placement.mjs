@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Focused integration test for placement-first document creation.
  *
@@ -91,7 +93,7 @@ async function main() {
       AFFINE_EMAIL: EMAIL,
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-e2e-create-placement-noconfig",
+      XDG_CONFIG_HOME: testTempPath('create-placement-config'),
     },
     stderr: "pipe",
   });
@@ -123,14 +125,24 @@ async function main() {
 
   async function waitFor(label, fetchResult, predicate, attempts = 20, delayMs = 500) {
     let lastResult = null;
+    let lastError = null;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      lastResult = await fetchResult();
-      if (predicate(lastResult)) {
-        return lastResult;
+      try {
+        lastResult = await fetchResult();
+        lastError = null;
+        if (predicate(lastResult)) {
+          return lastResult;
+        }
+      } catch (error) {
+        lastError = error;
       }
       if (attempt < attempts) {
         await delay(delayMs);
       }
+    }
+    if (lastError) {
+      const detail = lastError instanceof Error ? lastError.message : String(lastError);
+      throw new Error(`${label}: timed out after transient failures. Last error: ${detail}`);
     }
     throw new Error(`${label}: timed out waiting for expected state. Last result: ${JSON.stringify(lastResult)}`);
   }
@@ -138,7 +150,7 @@ async function main() {
   await client.connect(transport);
 
   try {
-    const timestamp = Date.now();
+    const timestamp = testResourceName('run');
     const workspace = await call("create_workspace", { name: `create-placement-${timestamp}` });
     expectTruthy(workspace?.id, "create_workspace id");
     expectTruthy(workspace?.firstDocId, "create_workspace firstDocId");

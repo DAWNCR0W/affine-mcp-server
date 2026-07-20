@@ -14,26 +14,34 @@ on:
 
 jobs:
   validate:
+    name: Validate on Node.js ${{ matrix.node-version }}
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'develop' || (github.base_ref == 'main' && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Run CI quality gates
+        run: npm run ci
 
-      - name: Verify tool manifest
-        run: npm run test:tool-manifest
-
-      - name: Check package contents
-        run: npm run pack:check
+      - name: Smoke test packed package
+        run: |
+          ARTIFACT_DIR="$(mktemp -d)"
+          trap 'rm -rf "$ARTIFACT_DIR"' EXIT
+          PACK_RESULT="$ARTIFACT_DIR/npm-pack.json"
+          npm pack --json --pack-destination "$ARTIFACT_DIR" > "$PACK_RESULT"
+          TARBALL_NAME="$(node -e 'const fs = require("node:fs"); const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (result.length !== 1 || !result[0].filename) process.exit(1); process.stdout.write(result[0].filename);' "$PACK_RESULT")"
+          npm run test:package-smoke -- --tarball "$ARTIFACT_DIR/$TARBALL_NAME"

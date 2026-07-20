@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { testTempPath } from './require-destructive-test-safety.mjs';
+
 /**
  * Integration test for optional OAuth mode on the HTTP MCP server.
  *
@@ -18,7 +20,6 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,6 @@ const BASE_URL = process.env.AFFINE_BASE_URL || "http://localhost:3010";
 const EMAIL = process.env.AFFINE_ADMIN_EMAIL || process.env.AFFINE_EMAIL || "test@affine.local";
 const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWORD;
 if (!PASSWORD) throw new Error("AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh");
-const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || "60000");
 
 function parseContent(result) {
   const text = result?.content?.[0]?.text;
@@ -86,44 +86,6 @@ async function waitForSuccessfulFetch(url, timeoutMs = 15000) {
     await delay(250);
   }
   throw new Error(`Timed out waiting for ${url}`);
-}
-
-async function generateAffineApiToken() {
-  const client = new Client({ name: "affine-mcp-oauth-http-token", version: "1.0.0" });
-  const transport = new StdioClientTransport({
-    command: "node",
-    args: [MCP_SERVER_PATH],
-    cwd: PROJECT_DIR,
-    env: {
-      AFFINE_BASE_URL: BASE_URL,
-      AFFINE_EMAIL: EMAIL,
-      AFFINE_PASSWORD: PASSWORD,
-      AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-oauth-http-token-noconfig",
-    },
-    stderr: "pipe",
-  });
-
-  transport.stderr?.on("data", chunk => {
-    process.stderr.write(`[stdio-token] ${chunk}`);
-  });
-
-  await client.connect(transport);
-  try {
-    const tokenResult = await client.callTool(
-      { name: "generate_access_token", arguments: { name: `oauth-http-${Date.now()}` } },
-      undefined,
-      { timeout: TOOL_TIMEOUT_MS },
-    );
-    if (tokenResult?.isError) {
-      throw new Error(`generate_access_token MCP error: ${tokenResult?.content?.[0]?.text || "unknown"}`);
-    }
-    const parsed = parseContent(tokenResult);
-    expectTruthy(parsed?.token, "generate_access_token token");
-    return parsed.token;
-  } finally {
-    await transport.close();
-  }
 }
 
 async function startMockIssuer() {
@@ -199,7 +161,7 @@ async function startMockIssuer() {
   };
 }
 
-async function startOAuthHttpServer(affineApiToken, issuerBaseUrl) {
+async function startOAuthHttpServer(issuerBaseUrl) {
   const port = await findFreePort();
   const publicBaseUrl = `http://127.0.0.1:${port}`;
   const child = spawn("node", [MCP_SERVER_PATH], {
@@ -209,13 +171,16 @@ async function startOAuthHttpServer(affineApiToken, issuerBaseUrl) {
       MCP_TRANSPORT: "http",
       PORT: String(port),
       AFFINE_BASE_URL: BASE_URL,
-      AFFINE_API_TOKEN: affineApiToken,
+      AFFINE_API_TOKEN: "",
+      AFFINE_COOKIE: "",
+      AFFINE_EMAIL: EMAIL,
+      AFFINE_PASSWORD: PASSWORD,
       AFFINE_MCP_AUTH_MODE: "oauth",
       AFFINE_MCP_HTTP_HOST: "127.0.0.1",
       AFFINE_MCP_PUBLIC_BASE_URL: publicBaseUrl,
       AFFINE_OAUTH_ISSUER_URL: issuerBaseUrl,
       AFFINE_OAUTH_SCOPES: "mcp",
-      XDG_CONFIG_HOME: "/tmp/affine-mcp-oauth-http-server-noconfig",
+      XDG_CONFIG_HOME: testTempPath('oauth-http-server-config'),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -241,12 +206,12 @@ async function main() {
   console.log(`AFFiNE Base URL: ${BASE_URL}`);
   console.log();
 
-  const affineApiToken = await generateAffineApiToken();
-  const issuer = await startMockIssuer();
+  let issuer = null;
   let server = null;
 
   try {
-    server = await startOAuthHttpServer(affineApiToken, issuer.issuerBaseUrl);
+    issuer = await startMockIssuer();
+    server = await startOAuthHttpServer(issuer.issuerBaseUrl);
     issuer.setAudienceBase(server.publicBaseUrl);
 
     const healthz = await fetch(`${server.publicBaseUrl}/healthz`);
@@ -347,10 +312,11 @@ async function main() {
     console.log();
     console.log("=== OAuth HTTP integration test passed ===");
   } finally {
-    if (server) {
-      await server.close();
+    try {
+      if (server) await server.close();
+    } finally {
+      if (issuer) await issuer.close();
     }
-    await issuer.close();
   }
 }
 

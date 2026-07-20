@@ -4,8 +4,9 @@
 #   1. Start AFFiNE via Docker Compose
 #   2. Wait for health + verify credentials
 #   3. Build the MCP server
-#   4. Run the comprehensive MCP tool-surface test
-#   5. Tear down Docker on exit
+#   4. Run the manifest-defined focused tests
+#   5. Run the comprehensive MCP tool-surface test
+#   6. Tear down Docker on exit
 #
 set -euo pipefail
 
@@ -14,7 +15,12 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCKER_DIR="$PROJECT_DIR/docker"
 COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 
-export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:3010}"
+find_free_port() {
+  node -e 'const net=require("net");const server=net.createServer();server.listen(0,"127.0.0.1",()=>{const {port}=server.address();console.log(port);server.close();});'
+}
+
+export PORT="${PORT:-$(find_free_port)}"
+export AFFINE_BASE_URL="${AFFINE_BASE_URL:-http://localhost:${PORT}}"
 export AFFINE_HEALTH_MAX_RETRIES="${AFFINE_HEALTH_MAX_RETRIES:-90}"
 export AFFINE_HEALTH_INTERVAL_MS="${AFFINE_HEALTH_INTERVAL_MS:-5000}"
 export AFFINE_HEALTH_REQUEST_TIMEOUT_MS="${AFFINE_HEALTH_REQUEST_TIMEOUT_MS:-3000}"
@@ -24,52 +30,45 @@ export AFFINE_AUTH_READY_MAX_RETRIES="${AFFINE_AUTH_READY_MAX_RETRIES:-30}"
 export AFFINE_AUTH_READY_INTERVAL_SECONDS="${AFFINE_AUTH_READY_INTERVAL_SECONDS:-3}"
 export AFFINE_DOCKER_START_RETRIES="${AFFINE_DOCKER_START_RETRIES:-3}"
 export AFFINE_DOCKER_START_RETRY_DELAY_SECONDS="${AFFINE_DOCKER_START_RETRY_DELAY_SECONDS:-3}"
-export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/tmp/affine-mcp-comprehensive-noconfig}"
-export AFFINE_ADMIN_EMAIL="${AFFINE_ADMIN_EMAIL:-test@affine.local}"
-export AFFINE_ADMIN_PASSWORD="${AFFINE_ADMIN_PASSWORD:-comprehensivepass123}"
-export DB_USERNAME="${DB_USERNAME:-affine}"
-export DB_PASSWORD="${DB_PASSWORD:-affinecomprehensive123}"
-export DB_DATABASE="${DB_DATABASE:-affine}"
+
+# Fail before Docker setup or authentication if the selected target is unsafe.
+AFFINE_TEST_RUN_ID="$(node "$SCRIPT_DIR/assert-destructive-test-target.mjs" --print-run-id)"
+compose_run_id="$(printf '%s' "$AFFINE_TEST_RUN_ID" | tr '[:upper:].' '[:lower:]_')"
+export COMPOSE_PROJECT_NAME="affine_mcp_comprehensive_${compose_run_id}"
+AFFINE_TEST_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/affine-mcp-comprehensive.XXXXXX")"
+export AFFINE_TEST_RUN_ID AFFINE_TEST_TMP_DIR
+export XDG_CONFIG_HOME="$AFFINE_TEST_TMP_DIR/xdg"
+
+cleanup_test_files() {
+  if [[ "${AFFINE_TEST_ENV_FILE_OWNED:-0}" == "1" && -n "${AFFINE_TEST_ENV_FILE:-}" ]]; then
+    rm -f -- "$AFFINE_TEST_ENV_FILE"
+  fi
+  rm -rf -- "$AFFINE_TEST_TMP_DIR"
+}
+trap cleanup_test_files EXIT
 
 echo "=== Generating test credentials ==="
-# shellcheck source=generate-test-env.sh
+# shellcheck source=tests/generate-test-env.sh
 . "$SCRIPT_DIR/generate-test-env.sh"
+
+compose() {
+  docker compose --env-file "$AFFINE_TEST_ENV_FILE" -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+}
 
 cleanup() {
   echo ""
   echo "=== Tearing down Docker containers ==="
-  docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
-  force_remove_stack_artifacts
+  compose down -v --remove-orphans 2>/dev/null || true
+  cleanup_test_files
 }
 trap cleanup EXIT
 
 docker_diagnostics() {
   echo ""
   echo "=== Docker diagnostics (on failure) ==="
-  docker compose -f "$COMPOSE_FILE" ps || true
+  compose ps || true
   echo ""
-  docker compose -f "$COMPOSE_FILE" logs --no-color --tail=200 affine affine_migration postgres redis || true
-}
-
-force_remove_stack_artifacts() {
-  docker rm -f affine_test_app affine_test_migration affine_test_postgres affine_test_redis >/dev/null 2>&1 || true
-  docker volume rm docker_affine_postgres_data docker_affine_config docker_affine_storage >/dev/null 2>&1 || true
-  docker network rm docker_default >/dev/null 2>&1 || true
-}
-
-wait_for_stack_teardown() {
-  local attempt
-
-  for ((attempt = 1; attempt <= 15; attempt++)); do
-    if ! docker ps -a --format '{{.Names}}' | grep -q '^affine_test_'; then
-      return 0
-    fi
-    sleep 1
-  done
-
-  echo "[comprehensive] WARNING: AFFiNE test containers still appear to exist after teardown wait."
-  docker ps -a --format '{{.Names}}\t{{.Status}}' | grep '^affine_test_' || true
-  return 1
+  compose logs --no-color --tail=200 affine affine_migration postgres redis || true
 }
 
 wait_for_auth_ready() {
@@ -78,18 +77,20 @@ wait_for_auth_ready() {
   local sign_in_status
   local base_url="${AFFINE_BASE_URL%/}"
   local payload
-  payload=$(printf '{"email":"%s","password":"%s"}' "$AFFINE_ADMIN_EMAIL" "$AFFINE_ADMIN_PASSWORD")
+  local setup_response="$AFFINE_TEST_TMP_DIR/setup-response.txt"
+  local sign_in_response="$AFFINE_TEST_TMP_DIR/sign-in-response.txt"
+  payload="$(node -e 'process.stdout.write(JSON.stringify({email:process.env.AFFINE_ADMIN_EMAIL,password:process.env.AFFINE_ADMIN_PASSWORD}))')"
 
   for ((attempt = 1; attempt <= AFFINE_AUTH_READY_MAX_RETRIES; attempt++)); do
     setup_status="$(
-      curl -sS -o /tmp/affine-comprehensive-setup-response.txt -w "%{http_code}" \
+      curl -sS -o "$setup_response" -w "%{http_code}" \
         -H "Content-Type: application/json" \
         -X POST "$base_url/api/setup/create-admin-user" \
         -d "$payload" || true
     )"
 
     sign_in_status="$(
-      curl -sS -o /tmp/affine-comprehensive-signin-response.txt -w "%{http_code}" \
+      curl -sS -o "$sign_in_response" -w "%{http_code}" \
         -H "Content-Type: application/json" \
         -X POST "$base_url/api/auth/sign-in" \
         -d "$payload" || true
@@ -107,9 +108,9 @@ wait_for_auth_ready() {
   done
 
   echo "[comprehensive] ERROR: AFFiNE sign-in endpoint did not become ready in time"
-  if [[ -s /tmp/affine-comprehensive-signin-response.txt ]]; then
+  if [[ -s "$sign_in_response" ]]; then
     echo "[comprehensive] Last sign-in response body (first 500 bytes):"
-    head -c 500 /tmp/affine-comprehensive-signin-response.txt
+    head -c 500 "$sign_in_response"
     echo ""
   fi
   docker_diagnostics
@@ -123,7 +124,7 @@ start_docker_stack_with_retry() {
 
   for ((attempt = 1; attempt <= AFFINE_DOCKER_START_RETRIES; attempt++)); do
     set +e
-    docker compose -f "$COMPOSE_FILE" up -d
+    compose up -d
     status=$?
     set -e
     if ((status == 0)); then
@@ -133,9 +134,7 @@ start_docker_stack_with_retry() {
     exit_code=$status
     echo "[comprehensive] Docker bootstrap failed (attempt ${attempt}/${AFFINE_DOCKER_START_RETRIES}, exit ${exit_code})"
     docker_diagnostics
-    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
-    force_remove_stack_artifacts
-    wait_for_stack_teardown || true
+    compose down -v --remove-orphans 2>/dev/null || true
 
     if ((attempt < AFFINE_DOCKER_START_RETRIES)); then
       echo "[comprehensive] Retrying Docker bootstrap in ${AFFINE_DOCKER_START_RETRY_DELAY_SECONDS}s..."
@@ -150,9 +149,7 @@ export AFFINE_EMAIL="$AFFINE_ADMIN_EMAIL"
 export AFFINE_PASSWORD="$AFFINE_ADMIN_PASSWORD"
 export AFFINE_LOGIN_AT_START="${AFFINE_LOGIN_AT_START:-sync}"
 
-docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
-force_remove_stack_artifacts
-wait_for_stack_teardown || true
+compose down -v --remove-orphans 2>/dev/null || true
 
 echo "=== Starting AFFiNE via Docker Compose ==="
 start_docker_stack_with_retry
@@ -171,60 +168,8 @@ echo "=== Re-checking AFFiNE auth readiness ==="
 wait_for_auth_ready
 
 echo ""
-echo "=== Running tool filtering regression ==="
-npm run test:tool-filtering
-
-echo ""
-echo "=== Running capabilities and fidelity regression ==="
-node "$SCRIPT_DIR/test-capabilities-fidelity.mjs"
-
-echo ""
-echo "=== Running create-with-placement regression ==="
-node "$SCRIPT_DIR/test-create-placement.mjs"
-
-echo ""
-echo "=== Running document discovery regression ==="
-node "$SCRIPT_DIR/test-doc-discovery.mjs"
-
-echo ""
-echo "=== Running find_doc_by_title regression ==="
-node "$SCRIPT_DIR/test-find-doc-by-title.mjs"
-
-echo ""
-echo "=== Running document custom-property regression ==="
-node "$SCRIPT_DIR/test-doc-properties.mjs"
-
-echo ""
-echo "=== Running database linked-doc regression ==="
-node "$SCRIPT_DIR/test-database-linked-doc.mjs"
-
-echo ""
-echo "=== Running read_doc LinkedPage reference regression ==="
-node "$SCRIPT_DIR/test-read-doc-linked-refs.mjs"
-
-echo ""
-echo "=== Running semantic page composer regression ==="
-node "$SCRIPT_DIR/test-semantic-page-composer.mjs"
-
-echo ""
-echo "=== Running database intent regression ==="
-node "$SCRIPT_DIR/test-database-intent.mjs"
-
-echo ""
-echo "=== Running database cells regression ==="
-node "$SCRIPT_DIR/test-database-cells.mjs"
-
-echo ""
-echo "=== Running native template regression ==="
-node "$SCRIPT_DIR/test-native-template-instantiation.mjs"
-
-echo ""
-echo "=== Running organize tools regression ==="
-node "$SCRIPT_DIR/test-organize-tools.mjs"
-
-echo ""
-echo "=== Running supporting tools regression ==="
-node "$SCRIPT_DIR/test-supporting-tools.mjs"
+echo "=== Running focused comprehensive suite ==="
+node "$PROJECT_DIR/scripts/run-test-suite.mjs" comprehensive
 
 echo ""
 echo "=== Running comprehensive MCP regression ==="
