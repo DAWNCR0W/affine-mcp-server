@@ -5,7 +5,7 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * Live CLI integration test against a running AFFiNE instance.
  *
  * Covers:
- * - login --url --token --workspace-id --force
+ * - login --url --cookie --workspace-id --force
  * - status --json
  * - doctor --json
  * - snippet all --env
@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { loginWithPassword } from "../dist/auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -45,8 +46,8 @@ function runCli(label, args, xdgConfigHome) {
   return { label, ...result };
 }
 
-async function generateAccessToken() {
-  const client = new Client({ name: "affine-cli-live-token", version: "1.0.0" });
+async function createRemoteArtifacts() {
+  const client = new Client({ name: "affine-cli-live", version: "1.0.0" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [DIST_ENTRY],
@@ -63,7 +64,6 @@ async function generateAccessToken() {
 
   await client.connect(transport);
   let workspaceId;
-  let tokenId;
   const cleanupTool = async (name, args) => {
     const result = await client.callTool({ name, arguments: args });
     if (result?.isError) throw new Error(`${name} failed: ${result.content?.[0]?.text || 'unknown error'}`);
@@ -82,28 +82,16 @@ async function generateAccessToken() {
     workspaceId = workspace.id;
     expect(workspaceId, 'create_workspace did not return an id');
 
-    const tokenResult = await client.callTool({
-      name: "generate_access_token",
-      arguments: { name: testResourceName('cli-live-token') },
-    });
-    if (tokenResult?.isError) throw new Error(tokenResult.content?.[0]?.text || 'generate_access_token failed');
-    const tokenPayload = JSON.parse(tokenResult.content[0].text);
-    tokenId = tokenPayload.id;
-    expect(tokenPayload.token, 'generate_access_token did not return a token');
-    expect(tokenId, 'generate_access_token did not return an id');
+    const { cookieHeader } = await loginWithPassword(BASE_URL, EMAIL, PASSWORD);
 
     return {
-      token: tokenPayload.token,
+      cookie: cookieHeader,
       workspaceId,
       async cleanup() {
         try {
           await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
         } finally {
-          try {
-            await cleanupTool('revoke_access_token', { id: tokenId });
-          } finally {
-            await transport.close();
-          }
+          await transport.close();
         }
       },
     };
@@ -113,11 +101,7 @@ async function generateAccessToken() {
         await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
       }
     } finally {
-      try {
-        if (tokenId) await cleanupTool('revoke_access_token', { id: tokenId });
-      } finally {
-        await transport.close();
-      }
+      await transport.close();
     }
     throw error;
   }
@@ -129,13 +113,13 @@ mkdirSync(xdgConfigHome, { recursive: true });
 
 let remoteArtifacts;
 try {
-  remoteArtifacts = await generateAccessToken();
-  const { token, workspaceId } = remoteArtifacts;
+  remoteArtifacts = await createRemoteArtifacts();
+  const { cookie, workspaceId } = remoteArtifacts;
 
   const login = runCli("login", [
     "login",
     "--url", BASE_URL,
-    "--token", token,
+    "--cookie", cookie,
     "--workspace-id", workspaceId,
     "--force",
   ], xdgConfigHome);
@@ -161,12 +145,12 @@ try {
   expect(snippet.status === 0, `snippet all failed: ${snippet.stderr || snippet.stdout}`);
   const snippetJson = JSON.parse(snippet.stdout);
   expect(snippetJson.claude.mcpServers.affine.env.AFFINE_BASE_URL === BASE_URL, "snippet should include base URL");
-  expect(snippetJson.codex.includes("AFFINE_API_TOKEN"), "snippet codex should include API token env");
+  expect(snippetJson.codex.includes("AFFINE_COOKIE"), "snippet codex should include session cookie env");
 
   console.log(JSON.stringify({
     ok: true,
     cases: [
-      "login --url --token --workspace-id --force",
+      "login --url --cookie --workspace-id --force",
       "status --json",
       "doctor --json",
       "snippet all --env",

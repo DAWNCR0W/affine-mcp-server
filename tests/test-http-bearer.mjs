@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,7 +27,6 @@ const BASE_URL = process.env.AFFINE_BASE_URL || "http://localhost:3010";
 const EMAIL = process.env.AFFINE_ADMIN_EMAIL || process.env.AFFINE_EMAIL || "test@affine.local";
 const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD || process.env.AFFINE_PASSWORD;
 if (!PASSWORD) throw new Error("AFFINE_ADMIN_PASSWORD env var required — run: . tests/generate-test-env.sh");
-const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || "60000");
 
 function parseContent(result) {
   const text = result?.content?.[0]?.text;
@@ -37,12 +35,6 @@ function parseContent(result) {
     return JSON.parse(text);
   } catch {
     return text;
-  }
-}
-
-function expectTruthy(value, message) {
-  if (!value) {
-    throw new Error(`${message}: expected truthy value, got ${JSON.stringify(value)}`);
   }
 }
 
@@ -81,64 +73,7 @@ async function waitForSuccessfulFetch(url, timeoutMs = 15000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-async function generateAffineApiToken() {
-  const client = new Client({ name: "affine-mcp-http-bearer-token", version: "1.0.0" });
-  const transport = new StdioClientTransport({
-    command: "node",
-    args: [MCP_SERVER_PATH],
-    cwd: PROJECT_DIR,
-    env: {
-      AFFINE_BASE_URL: BASE_URL,
-      AFFINE_EMAIL: EMAIL,
-      AFFINE_PASSWORD: PASSWORD,
-      AFFINE_LOGIN_AT_START: "sync",
-      XDG_CONFIG_HOME: testTempPath('http-bearer-token-config'),
-    },
-    stderr: "pipe",
-  });
-
-  transport.stderr?.on("data", chunk => {
-    process.stderr.write(`[stdio-token] ${chunk}`);
-  });
-
-  await client.connect(transport);
-  try {
-    const tokenResult = await client.callTool(
-      { name: "generate_access_token", arguments: { name: testResourceName('http-bearer') } },
-      undefined,
-      { timeout: TOOL_TIMEOUT_MS },
-    );
-    const parsed = parseContent(tokenResult);
-    expectTruthy(parsed?.token, "generate_access_token token");
-    expectTruthy(parsed?.id, "generate_access_token id");
-    return {
-      token: parsed.token,
-      async cleanup() {
-        try {
-          const result = await client.callTool(
-            { name: "revoke_access_token", arguments: { id: parsed.id } },
-            undefined,
-            { timeout: TOOL_TIMEOUT_MS },
-          );
-          if (result?.isError) {
-            throw new Error(`revoke_access_token failed: ${result.content?.[0]?.text || 'unknown error'}`);
-          }
-          const revoked = parseContent(result);
-          if (revoked?.error || revoked?.success !== true) {
-            throw new Error(`revoke_access_token cleanup failed: ${revoked?.error || 'success was not true'}`);
-          }
-        } finally {
-          await transport.close();
-        }
-      },
-    };
-  } catch (error) {
-    await transport.close();
-    throw error;
-  }
-}
-
-async function startBearerHttpServer(affineApiToken, staticToken) {
+async function startBearerHttpServer(staticToken) {
   const port = await findFreePort();
   const publicBaseUrl = `http://127.0.0.1:${port}`;
   const child = spawn("node", [MCP_SERVER_PATH], {
@@ -148,7 +83,11 @@ async function startBearerHttpServer(affineApiToken, staticToken) {
       MCP_TRANSPORT: "http",
       PORT: String(port),
       AFFINE_BASE_URL: BASE_URL,
-      AFFINE_API_TOKEN: affineApiToken,
+      AFFINE_API_TOKEN: "",
+      AFFINE_COOKIE: "",
+      AFFINE_EMAIL: EMAIL,
+      AFFINE_PASSWORD: PASSWORD,
+      AFFINE_LOGIN_AT_START: "sync",
       AFFINE_MCP_AUTH_MODE: "bearer",
       AFFINE_MCP_HTTP_HOST: "127.0.0.1",
       AFFINE_MCP_HTTP_TOKEN: staticToken,
@@ -178,12 +117,11 @@ async function main() {
   console.log(`AFFiNE Base URL: ${BASE_URL}`);
   console.log();
 
-  const affineCredential = await generateAffineApiToken();
   const staticToken = testResourceName('http-bearer-static');
   let server;
 
   try {
-    server = await startBearerHttpServer(affineCredential.token, staticToken);
+    server = await startBearerHttpServer(staticToken);
     const healthz = await fetch(`${server.publicBaseUrl}/healthz`);
     expectEqual(healthz.status, 200, "healthz status");
     const readyz = await fetch(`${server.publicBaseUrl}/readyz`);
@@ -247,11 +185,7 @@ async function main() {
     console.log();
     console.log("=== HTTP bearer integration test passed ===");
   } finally {
-    try {
-      if (server) await server.close();
-    } finally {
-      await affineCredential.cleanup();
-    }
+    if (server) await server.close();
   }
 }
 

@@ -53,7 +53,6 @@ comprehensive-test-results-*.json
 tests/test-database-state.json
 tests/test-database-cells-state.json
 tests/test-data-view-state.json
-tests/test-bearer-state.json
 tests/test-tag-visibility-state.json
 tests/playwright-auth-state.json
 tests/playwright/test-results/

@@ -231,7 +231,6 @@ try {
     markdown: [
       "# Auth, users, notifications",
       "- `current_user`, `update_profile`, `update_settings`",
-      "- `generate_access_token`, `list_access_tokens`, `revoke_access_token`",
       "- `list_comments`, `create_comment`, `resolve_comment`",
       "- `list_notifications`, `read_all_notifications`",
     ].join("\n"),

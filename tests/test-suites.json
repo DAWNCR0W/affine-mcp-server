@@ -2,7 +2,6 @@
   "version": 1,
   "classifications": {
     "test-auth-session.mjs": "fast",
-    "test-bearer-auth.mjs": "integration",
     "test-blob-upload-contract.mjs": "fast",
     "test-canvas-tool-map-demo.mjs": "integration",
     "test-capabilities-fidelity.mjs": "integration",
@@ -91,7 +90,6 @@
     "e2e": [
       "test-database-creation.mjs",
       "test-database-linked-doc.mjs",
-      "test-bearer-auth.mjs",
       "test-http-email-password.mjs",
       "test-http-bearer.mjs",
       "test-oauth-http.mjs",
