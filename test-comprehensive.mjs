@@ -121,7 +121,6 @@ class ComprehensiveRunner {
     this.docId = null;
     this.markdownDocId = null;
     this.commentId = null;
-    this.tokenId = null;
     this.blobKey = null;
   }
 
@@ -407,6 +406,7 @@ class ComprehensiveRunner {
       }
     });
     await this.callTool('remove_tag_from_doc', { workspaceId, docId, tag: tagName });
+    await this.callTool('delete_tag', { workspaceId, tag: tagName });
 
     await this.callTool('list_comments', { workspaceId, docId, first: 20 });
     await this.callTool('create_comment', {
@@ -424,12 +424,6 @@ class ComprehensiveRunner {
     await this.callTool('delete_comment', { id: this.commentId || 'missing-comment-id' });
 
     await this.callTool('list_histories', { workspaceId, guid: docId, take: 20 });
-
-    await this.callTool('list_access_tokens');
-    await this.callTool('generate_access_token', { name: testResourceName('token-main') }, parsed => {
-      this.tokenId = parsed?.id || null;
-    });
-    await this.callTool('revoke_access_token', { id: this.tokenId || 'missing-token-id' });
 
     await this.callTool('list_notifications', { first: 20 });
     await this.callTool('read_all_notifications');

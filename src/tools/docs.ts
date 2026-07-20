@@ -63,6 +63,60 @@ export type DocumentMoveToolContext = {
   fromParentDocId: string | null;
 };
 
+type ListDocsVariables = {
+  workspaceId: string;
+  first?: number;
+  offset?: number;
+  after?: string;
+};
+
+type ListDocsResponse = {
+  workspace: any;
+};
+
+const LIST_DOCS_QUERY = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
+const LIST_DOCS_WITHOUT_PUBLIC_QUERY = `query ListDocsWithoutPublic($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary defaultRole createdAt updatedAt } } } } }`;
+
+export async function requestListDocsWithPublicFallback(
+  gql: Pick<GraphQLClient, "request">,
+  variables: ListDocsVariables,
+): Promise<ListDocsResponse> {
+  try {
+    return await gql.request<ListDocsResponse>(LIST_DOCS_QUERY, variables);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Cannot return null for non-nullable field DocType.public")) {
+      throw error;
+    }
+  }
+
+  const data = await gql.request<ListDocsResponse>(LIST_DOCS_WITHOUT_PUBLIC_QUERY, variables);
+  const docs = data.workspace?.docs;
+  if (!docs) {
+    return data;
+  }
+
+  const edges = Array.isArray(docs.edges)
+    ? docs.edges.map((edge: any) => edge?.node
+      ? { ...edge, node: { ...edge.node, public: null } }
+      : edge)
+    : docs.edges;
+  const warnings = Array.isArray(docs.warnings) ? [...docs.warnings] : [];
+  warnings.push("AFFiNE document visibility metadata was unavailable; affected public values are null.");
+
+  return {
+    ...data,
+    workspace: {
+      ...data.workspace,
+      docs: {
+        ...docs,
+        edges,
+        warnings,
+      },
+    },
+  };
+}
+
 /** Convert a move outcome into a truthful MCP success or failure response. */
 export function documentMoveToolResult(
   context: DocumentMoveToolContext,
@@ -4115,8 +4169,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (!workspaceId) {
         throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
       }
-      const query = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
-      const data = await gql.request<{ workspace: any }>(query, { workspaceId, first: parsed.first, offset: parsed.offset, after: parsed.after });
+      const data = await requestListDocsWithPublicFallback(gql, {
+        workspaceId,
+        first: parsed.first,
+        offset: parsed.offset,
+        after: parsed.after,
+      });
       const docs = data.workspace.docs;
 
       const tagsByDocId = new Map<string, string[]>();

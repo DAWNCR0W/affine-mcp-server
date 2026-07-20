@@ -175,7 +175,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | --- | --- | --- |
 | `list_histories` | List document history timestamps | |
 
-## Users and tokens
+## Users and authentication
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
@@ -183,9 +183,6 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | `sign_in` | Sign in with email and password | Self-hosted flows only for direct programmatic sign-in |
 | `update_profile` | Update current user profile data | |
 | `update_settings` | Update user notification preferences | |
-| `list_access_tokens` | List personal access tokens | |
-| `generate_access_token` | Create a personal access token | Sensitive operation |
-| `revoke_access_token` | Revoke a personal access token | Destructive |
 
 ## Notifications
 
