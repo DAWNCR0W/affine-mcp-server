@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- `list_docs` now falls back to a query without `public` visibility metadata when AFFiNE transiently violates that field's non-null contract; affected values are returned as `null` with an explicit warning instead of failing the whole document list.
 - Tool handlers now return MCP `isError: true` with stable error codes, retryability, and machine-readable context instead of reporting failures as successful text results.
 - Structured receipts derive `ok` from explicit `ok`, `success`, and failed status values rather than defaulting every operation to success.
 - Document moves now validate source and destination documents, reject hierarchy cycles, add the destination link before removing the source link, and report partial outcomes without orphaning the document.

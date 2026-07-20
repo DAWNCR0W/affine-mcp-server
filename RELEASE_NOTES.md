@@ -33,6 +33,7 @@
   - Pagination, search, history, tree depth, destructive confirmation, and random identifier inputs now fail closed at their boundaries.
 - Runtime and operations
   - CLI diagnostics and generated client snippets use the exact runtime configuration, including custom GraphQL paths and non-token credentials.
+  - Document listing degrades unavailable AFFiNE `public` metadata to `null` with a warning instead of failing the entire result.
   - `/readyz` verifies the configured AFFiNE GraphQL endpoint and OAuth discovery when enabled.
   - HTTP runtime limits, shutdown behavior, CORS, remote bind policy, and bearer-token transport rules are validated strictly.
   - Docker E2E runs use isolated Compose projects, private generated credentials, scoped cleanup, and collision-resistant resource names.
