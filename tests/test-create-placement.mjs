@@ -125,14 +125,24 @@ async function main() {
 
   async function waitFor(label, fetchResult, predicate, attempts = 20, delayMs = 500) {
     let lastResult = null;
+    let lastError = null;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      lastResult = await fetchResult();
-      if (predicate(lastResult)) {
-        return lastResult;
+      try {
+        lastResult = await fetchResult();
+        lastError = null;
+        if (predicate(lastResult)) {
+          return lastResult;
+        }
+      } catch (error) {
+        lastError = error;
       }
       if (attempt < attempts) {
         await delay(delayMs);
       }
+    }
+    if (lastError) {
+      const detail = lastError instanceof Error ? lastError.message : String(lastError);
+      throw new Error(`${label}: timed out after transient failures. Last error: ${detail}`);
     }
     throw new Error(`${label}: timed out waiting for expected state. Last result: ${JSON.stringify(lastResult)}`);
   }
