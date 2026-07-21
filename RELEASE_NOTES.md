@@ -1,5 +1,21 @@
 # Release Notes
 
+## Version 3.0.1 (2026-07-21)
+
+### Highlights
+- Markdown import and export now preserve AFFiNE inline LinkedPage references, allowing linked-page relationships to round-trip safely through Markdown.
+
+### What Changed
+- Valid `[label](LinkedPage:<docId>)` links import as native inline references instead of broken URL links.
+- Exported native references serialize back to the same `LinkedPage:` Markdown scheme.
+- Standalone LinkedPage links remain paragraphs rather than being converted into invalid bookmark blocks.
+- Added fast regression coverage for parsing, rendering, compatibility, and round-trip behavior.
+
+### Validation Evidence
+- `npm run ci`
+- `npm run test:e2e`
+- `npm run pack:check`
+
 ## Version 3.0.0 (2026-07-20)
 
 ### Highlights
