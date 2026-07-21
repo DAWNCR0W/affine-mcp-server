@@ -6,7 +6,6 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 
 import { deleteDoc } from "../dist/ws.js";
-import { registerAccessTokenTools } from "../dist/tools/accessTokens.js";
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
 import { deleteDocFromWorkspace } from "../dist/tools/docs.js";
@@ -413,21 +412,6 @@ async function testAdditionalMutationReceipts() {
   assert.equal(parseToolResult(await updateComment({ id: "comment-1", content: "updated" })).ok, true);
   assert.equal(parseToolResult(await deleteComment({ id: "comment-1" })).ok, true);
   assert.equal(parseToolResult(await resolveComment({ id: "comment-1", resolved: true })).ok, true);
-
-  const tokenRegistry = new ToolRegistry();
-  let tokenBehavior = "false";
-  registerAccessTokenTools(tokenRegistry, {
-    async request() {
-      if (tokenBehavior === "throw") throw new Error("token service unavailable");
-      return { revokeUserAccessToken: tokenBehavior === "true" };
-    },
-  });
-  const revokeAccessToken = tokenRegistry.tools.get("revoke_access_token");
-  assertStableFailure(await revokeAccessToken({ id: "token-1" }), "access_token_revoke_failed", "not_applied");
-  tokenBehavior = "throw";
-  assertStableFailure(await revokeAccessToken({ id: "token-1" }), "access_token_revoke_failed");
-  tokenBehavior = "true";
-  assert.equal(parseToolResult(await revokeAccessToken({ id: "token-1" })).ok, true);
 
   const notificationRegistry = new ToolRegistry();
   let notificationBehavior = "false";

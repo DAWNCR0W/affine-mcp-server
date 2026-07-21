@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "2.5.0",
+  "version": "3.0.0",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -78,7 +78,6 @@
     "test:capabilities-fidelity": "node tests/test-capabilities-fidelity.mjs",
     "test:native-template": "node tests/test-native-template-instantiation.mjs",
     "test:data-view-ui": "npx playwright test tests/playwright/verify-data-view.pw.ts --config tests/playwright/playwright.config.ts",
-    "test:bearer": "node tests/test-bearer-auth.mjs",
     "test:http-email-password": "node tests/test-http-email-password.mjs",
     "test:auth-session": "tsx tests/test-auth-session.mjs",
     "test:http-bearer": "node tests/test-http-bearer.mjs",
