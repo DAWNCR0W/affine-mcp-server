@@ -166,6 +166,32 @@ function stripFirstDeltaLine(deltas: TextDelta[]): TextDelta[] {
   return result;
 }
 
+const LINKED_PAGE_SCHEME = "LinkedPage:";
+
+/**
+ * Extract the target page id from a `LinkedPage:<docId>` link destination.
+ * Returns null for any other destination so regular links keep their
+ * existing behavior.
+ */
+function linkedPageIdFromHref(href: string): string | null {
+  if (!href.startsWith(LINKED_PAGE_SCHEME)) {
+    return null;
+  }
+  const pageId = href.slice(LINKED_PAGE_SCHEME.length).trim();
+  return pageId.length > 0 ? pageId : null;
+}
+
+/**
+ * Build the zero-width text delta AFFiNE uses for inline linked-doc
+ * references (same shape as database linked-doc rows).
+ */
+function linkedPageDelta(pageId: string): TextDelta {
+  return {
+    insert: "\u200B",
+    attributes: { reference: { type: "LinkedPage", pageId } },
+  };
+}
+
 function renderInline(children: TokenLike[]): TextDelta[] {
   function applyAttrs(deltas: TextDelta[], attrs: NonNullable<TextDelta["attributes"]>): TextDelta[] {
     return deltas.map(delta => ({
@@ -204,6 +230,12 @@ function renderInline(children: TokenLike[]): TextDelta[] {
             break;
           }
           const href = getAttr(token, "href");
+          const linkedPageId = linkedPageIdFromHref(href);
+          if (linkedPageId) {
+            output.push(linkedPageDelta(linkedPageId));
+            i = close;
+            break;
+          }
           const inner = renderRange(i + 1, close);
           output.push(...applyAttrs(inner.length > 0 ? inner : [{ insert: href }], { link: href }));
           i = close;
@@ -562,7 +594,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
 
         const children = inline.children ?? [];
         const singleLink = extractSingleLink(children);
-        if (singleLink) {
+        if (singleLink && linkedPageIdFromHref(singleLink.href) === null) {
           state.operations.push({
             type: "bookmark",
             url: singleLink.href,

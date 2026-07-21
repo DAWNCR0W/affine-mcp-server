@@ -43,6 +43,7 @@ type SupportedInlineAttributes = {
   strike: boolean;
   code: boolean;
   link: string | null;
+  linkedPage: string | null;
 };
 
 type RenderInlineOptions = {
@@ -82,6 +83,7 @@ function supportedInlineAttributes(
     strike: false,
     code: false,
     link: null,
+    linkedPage: null,
   };
   if (!attributes) {
     return supported;
@@ -101,6 +103,21 @@ function supportedInlineAttributes(
         supported.link = value;
       } else {
         recordInlineLoss(state, context, name, "expected a non-empty string URL");
+      }
+      continue;
+    }
+    if (name === "reference") {
+      const reference = value as { type?: unknown; pageId?: unknown } | null;
+      if (
+        reference !== null &&
+        typeof reference === "object" &&
+        reference.type === "LinkedPage" &&
+        typeof reference.pageId === "string" &&
+        reference.pageId.length > 0
+      ) {
+        supported.linkedPage = reference.pageId;
+      } else {
+        recordInlineLoss(state, context, name, "expected a LinkedPage reference with a page id");
       }
       continue;
     }
@@ -146,7 +163,8 @@ function sameSupportedInlineAttributes(
     left.italic === right.italic &&
     left.strike === right.strike &&
     left.code === right.code &&
-    left.link === right.link;
+    left.link === right.link &&
+    left.linkedPage === right.linkedPage;
 }
 
 function renderTextDelta(
@@ -158,6 +176,16 @@ function renderTextDelta(
 ): string {
   if (insert.length === 0) {
     return "";
+  }
+
+  if (attributes.linkedPage !== null) {
+    const destination = `LinkedPage:${attributes.linkedPage}`;
+    const link = renderMarkdownLinkWithSafeLabel(escapeMarkdownPlainText(attributes.linkedPage), destination);
+    if (link === null) {
+      recordInlineLoss(state, context, "reference", "unsafe URL scheme");
+      return "";
+    }
+    return link;
   }
 
   const codeCannotBePreserved = attributes.code && (
