@@ -325,10 +325,10 @@ function testYTextDeltaCollection() {
     text: value.toString(),
     textDeltas: deltas,
   }));
-  assert.ok(rendered.markdown.startsWith('Plain **bold**'));
-  assert.equal(rendered.lossy, true);
-  assert.equal(rendered.stats.unsupportedInlineAttributeCount, 1);
-  assert.match(rendered.warnings[0], /inline attribute 'reference'/);
+  assert.equal(rendered.markdown, 'Plain **bold**[doc\\-2](LinkedPage:doc-2)');
+  assert.equal(rendered.lossy, false);
+  assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0);
+  assert.deepEqual(rendered.warnings, []);
 }
 
 testRenderCalloutAsAdmonition();
