@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Markdown import now converts `[label](LinkedPage:<docId>)` links into native inline linked-doc references, and Markdown export serializes those references back to the same `LinkedPage:` scheme, making inline doc references round-trip safe.
+
 ## [3.0.0] - 2026-07-20
 
 ### Changed
