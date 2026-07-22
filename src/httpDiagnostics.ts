@@ -2,7 +2,7 @@ import type express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { fetch } from "undici";
 
-import { VERSION, type ServerConfig } from "./config.js";
+import { VERSION, AFFINE_CLIENT_VERSION, type ServerConfig } from "./config.js";
 import type { HttpAuthState } from "./httpAuth.js";
 import { getOAuthResourceUrl, probeOAuthReadiness } from "./oauth.js";
 
@@ -12,6 +12,7 @@ async function probeAffineGraphql(config: ServerConfig): Promise<void> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "User-Agent": `affine-mcp-server/${VERSION}`,
+    "x-affine-version": AFFINE_CLIENT_VERSION,
     ...(config.headers || {}),
   };
   if (config.apiToken) headers.Authorization = `Bearer ${config.apiToken}`;

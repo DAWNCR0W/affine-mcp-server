@@ -1,5 +1,7 @@
 import { fetch } from "undici";
 
+import { AFFINE_CLIENT_VERSION } from "./config.js";
+
 const AUTH_FETCH_TIMEOUT_MS = 30_000;
 
 function extractCookiePairs(setCookies: string[]): string {
@@ -26,7 +28,10 @@ export async function loginWithPassword(baseUrl: string, email: string, password
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-affine-version": AFFINE_CLIENT_VERSION,
+      },
       body: JSON.stringify({ email, password }),
       signal: controller.signal,
     });

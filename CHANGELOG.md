@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Email/password sign-in and all GraphQL/REST requests now send the `x-affine-version` header (configurable via the new `AFFINE_CLIENT_VERSION`, default `0.26.0`). AFFiNE servers that gate on a minimum web-client version previously rejected sign-in with `403 ACTION_FORBIDDEN` (`UNSUPPORTED_CLIENT_VERSION`), leaving the MCP server unable to connect. `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION` so a single variable can govern both the HTTP and realtime-socket client versions.
+
 ## [3.0.1] - 2026-07-21
 
 ### Added
