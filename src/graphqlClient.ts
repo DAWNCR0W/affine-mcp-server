@@ -1,7 +1,7 @@
 import { fetch } from "undici";
 
 import type { AuthSnapshot } from "./authSession.js";
-import { VERSION } from "./config.js";
+import { VERSION, AFFINE_CLIENT_VERSION } from "./config.js";
 
 const GQL_FETCH_TIMEOUT_MS = 30_000;
 
@@ -169,7 +169,14 @@ export class GraphQLClient {
   /** Await authentication and return one normalized credential set for HTTP or WebSocket consumers. */
   async getConnectionAuth(): Promise<ConnectionAuth> {
     const snapshot = this.authOverride || await this.resolveAuth();
-    const headers = { ...this.baseHeaders, ...authHeaders(snapshot) };
+    // `x-affine-version` first so an explicit AFFINE_HEADERS_JSON override (in
+    // baseHeaders) still wins. Injecting it here covers every consumer —
+    // request() below and the direct multipart/blob uploads in tools/.
+    const headers = {
+      "x-affine-version": AFFINE_CLIENT_VERSION,
+      ...this.baseHeaders,
+      ...authHeaders(snapshot),
+    };
     return {
       bearer: snapshot.kind === "bearer" ? snapshot.token : "",
       cookie: snapshot.kind === "cookie" ? snapshot.cookie : "",

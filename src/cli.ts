@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as readline from "readline";
 
 import {
+  AFFINE_CLIENT_VERSION,
   buildGraphqlEndpoint,
   CONFIG_FILE,
   loadConfig,
@@ -115,6 +116,7 @@ async function gql(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "User-Agent": `affine-mcp-server/${VERSION}`,
+    "x-affine-version": AFFINE_CLIENT_VERSION,
     ...(auth.headers || {}),
   };
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`;

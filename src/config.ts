@@ -12,6 +12,17 @@ const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 export const VERSION: string = pkg.version;
 
+/**
+ * AFFiNE gates GraphQL/REST requests behind a minimum web-client version,
+ * advertised via the `x-affine-version` request header. Newer / self-hosted
+ * servers reject sign-in with `403 ACTION_FORBIDDEN`
+ * (`UNSUPPORTED_CLIENT_VERSION`) when the header is missing. This is the
+ * HTTP counterpart to `AFFINE_WS_CLIENT_VERSION` (used for the realtime
+ * socket); override it if your deployment pins a different minimum.
+ */
+export const AFFINE_CLIENT_VERSION: string =
+  process.env.AFFINE_CLIENT_VERSION || "0.26.0";
+
 export type TransportMode = "stdio" | "http";
 export type LoginAtStartMode = "async" | "sync";
 
