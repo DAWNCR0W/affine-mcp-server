@@ -109,10 +109,24 @@ export class GraphQLClient {
     return this.opts.endpoint;
   }
 
+  /**
+   * Build the outgoing header set for a snapshot. `x-affine-version` goes first
+   * so an explicit override in `baseHeaders` (from `AFFINE_HEADERS_JSON`) wins,
+   * and auth headers last so they are never shadowed. Shared by the `headers`
+   * getter and `getConnectionAuth()` so every request path stays consistent.
+   */
+  private composeHeaders(snapshot: AuthSnapshot): Record<string, string> {
+    return {
+      "x-affine-version": AFFINE_CLIENT_VERSION,
+      ...this.baseHeaders,
+      ...authHeaders(snapshot),
+    };
+  }
+
   /** Synchronous snapshot for compatibility. Async consumers must use getConnectionAuth(). */
   get headers(): Record<string, string> {
     const snapshot = this.authOverride || this.resolvedAuth;
-    return { ...this.baseHeaders, ...authHeaders(snapshot) };
+    return this.composeHeaders(snapshot);
   }
 
   get cookie(): string {
@@ -169,14 +183,9 @@ export class GraphQLClient {
   /** Await authentication and return one normalized credential set for HTTP or WebSocket consumers. */
   async getConnectionAuth(): Promise<ConnectionAuth> {
     const snapshot = this.authOverride || await this.resolveAuth();
-    // `x-affine-version` first so an explicit AFFINE_HEADERS_JSON override (in
-    // baseHeaders) still wins. Injecting it here covers every consumer —
-    // request() below and the direct multipart/blob uploads in tools/.
-    const headers = {
-      "x-affine-version": AFFINE_CLIENT_VERSION,
-      ...this.baseHeaders,
-      ...authHeaders(snapshot),
-    };
+    // Injected here (not only in request()) so it also covers the direct
+    // multipart/blob uploads in tools/ that build their own fetch from this.
+    const headers = this.composeHeaders(snapshot);
     return {
       bearer: snapshot.kind === "bearer" ? snapshot.token : "",
       cookie: snapshot.kind === "cookie" ? snapshot.cookie : "",

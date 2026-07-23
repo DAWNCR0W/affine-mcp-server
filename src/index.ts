@@ -111,6 +111,7 @@ const authSession = new AuthSession({
   cookie: sessionCookie,
   email: sessionBearer || sessionCookie ? undefined : config.email,
   password: sessionBearer || sessionCookie ? undefined : config.password,
+  headers: config.headers,
 });
 
 if (config.authMode === "oauth" && !authSession.hasConfiguredAuth) {

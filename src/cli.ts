@@ -280,7 +280,7 @@ async function resolveCliAuth(effective: ServerConfig): Promise<{ auth: CliAuth;
     };
   }
   if (effective.email && effective.password) {
-    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password);
+    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password, effective.headers);
     return {
       auth: { cookie: cookieHeader, headers: effective.headers },
       authKind: "email-password",
