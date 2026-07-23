@@ -116,11 +116,14 @@ export class GraphQLClient {
    * getter and `getConnectionAuth()` so every request path stays consistent.
    */
   private composeHeaders(snapshot: AuthSnapshot): Record<string, string> {
-    return {
-      "x-affine-version": AFFINE_CLIENT_VERSION,
-      ...this.baseHeaders,
-      ...authHeaders(snapshot),
-    };
+    const headers: Record<string, string> = { ...this.baseHeaders };
+    // Only supply the default when baseHeaders (AFFINE_HEADERS_JSON) has no
+    // `x-affine-version` in any casing, so Fetch can't coalesce two casings
+    // into one comma-joined value.
+    if (findHeader(headers, "x-affine-version") === undefined) {
+      headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
+    }
+    return { ...headers, ...authHeaders(snapshot) };
   }
 
   /** Synchronous snapshot for compatibility. Async consumers must use getConnectionAuth(). */
