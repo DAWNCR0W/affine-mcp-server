@@ -115,6 +115,14 @@ class FakeWorkspaceSocket {
           ack?.({ data: { deleted: false } });
           return;
         }
+        if (this.deleteMode === "server-success-ack") {
+          ack?.({ data: { success: true } });
+          return;
+        }
+        if (this.deleteMode === "server-negative-ack") {
+          ack?.({ data: { success: false } });
+          return;
+        }
         if (this.deleteMode === "empty-ack-still-present") {
           ack?.({});
           return;
@@ -164,6 +172,13 @@ async function testDeleteDocProtocol() {
   });
   assert.deepEqual(acknowledged, { acknowledged: true, verifiedAbsent: false });
 
+  const serverAcknowledgedSocket = new FakeWorkspaceSocket({ deleteMode: "server-success-ack" });
+  const serverAcknowledged = await deleteDoc(serverAcknowledgedSocket, "workspace-1", "doc-1", {
+    timeoutMs: 100,
+    verificationIntervalMs: 5,
+  });
+  assert.deepEqual(serverAcknowledged, { acknowledged: true, verifiedAbsent: false });
+
   const voidSuccessSocket = new FakeWorkspaceSocket({ deleteMode: "void-success" });
   const verified = await deleteDoc(voidSuccessSocket, "workspace-1", "doc-1", {
     timeoutMs: 100,
@@ -185,6 +200,15 @@ async function testDeleteDocProtocol() {
   const negativeAcknowledgementSocket = new FakeWorkspaceSocket({ deleteMode: "negative-ack" });
   await assert.rejects(
     deleteDoc(negativeAcknowledgementSocket, "workspace-1", "doc-1", {
+      timeoutMs: 100,
+      verificationIntervalMs: 5,
+    }),
+    /did not confirm document deletion/,
+  );
+
+  const serverNegativeAcknowledgementSocket = new FakeWorkspaceSocket({ deleteMode: "server-negative-ack" });
+  await assert.rejects(
+    deleteDoc(serverNegativeAcknowledgementSocket, "workspace-1", "doc-1", {
       timeoutMs: 100,
       verificationIntervalMs: 5,
     }),
