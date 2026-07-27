@@ -205,6 +205,15 @@ function getConfigValueSource(name: string, file: Record<string, string>, fallba
   return "unset";
 }
 
+function getEffectiveAuthValueSource(
+  name: string,
+  value: string | undefined,
+  file: Record<string, string>,
+): "env" | "config" | "unset" {
+  if (!value) return "unset";
+  return process.env[name] ? "env" : file[name] ? "config" : "unset";
+}
+
 function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
   const stored = loadConfigFile();
   const authKind = effective.apiToken
@@ -245,10 +254,10 @@ function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
       baseUrl: getConfigValueSource("AFFINE_BASE_URL", stored, "http://localhost:3010"),
       graphqlPath: getConfigValueSource("AFFINE_GRAPHQL_PATH", stored, "/graphql"),
       additionalHeaders: getConfigValueSource("AFFINE_HEADERS_JSON", stored),
-      apiToken: getConfigValueSource("AFFINE_API_TOKEN", stored),
-      cookie: getConfigValueSource("AFFINE_COOKIE", stored),
-      email: getConfigValueSource("AFFINE_EMAIL", stored),
-      password: getConfigValueSource("AFFINE_PASSWORD", stored),
+      apiToken: getEffectiveAuthValueSource("AFFINE_API_TOKEN", effective.apiToken, stored),
+      cookie: getEffectiveAuthValueSource("AFFINE_COOKIE", effective.cookie, stored),
+      email: getEffectiveAuthValueSource("AFFINE_EMAIL", effective.email, stored),
+      password: getEffectiveAuthValueSource("AFFINE_PASSWORD", effective.password, stored),
       workspaceId: getConfigValueSource("AFFINE_WORKSPACE_ID", stored),
       authMode: getConfigValueSource("AFFINE_MCP_AUTH_MODE", stored, "bearer"),
       publicBaseUrl: getConfigValueSource("AFFINE_MCP_PUBLIC_BASE_URL", stored),
