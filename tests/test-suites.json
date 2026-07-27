@@ -59,7 +59,8 @@
     "test-test-suite-verifier.mjs": "fast",
     "test-theme-defaults-setup.mjs": "integration",
     "test-tool-filtering.mjs": "fast",
-    "test-url-safety.mjs": "fast"
+    "test-url-safety.mjs": "fast",
+    "test-workspace-discovery.mjs": "fast"
   },
   "suites": {
     "fast": [
@@ -87,7 +88,8 @@
       "test-secure-random.mjs",
       "test-test-suite-verifier.mjs",
       "test-tool-filtering.mjs",
-      "test-url-safety.mjs"
+      "test-url-safety.mjs",
+      "test-workspace-discovery.mjs"
     ],
     "e2e": [
       "test-database-creation.mjs",

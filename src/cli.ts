@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as readline from "readline";
 
 import {
+  AFFINE_CLIENT_VERSION,
   buildGraphqlEndpoint,
   CONFIG_FILE,
   loadConfig,
@@ -117,6 +118,9 @@ async function gql(
     "User-Agent": `affine-mcp-server/${VERSION}`,
     ...(auth.headers || {}),
   };
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === "x-affine-version")) {
+    headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
+  }
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`;
   if (auth.cookie) headers.Cookie = auth.cookie;
   const body: any = { query };
@@ -203,6 +207,15 @@ function getConfigValueSource(name: string, file: Record<string, string>, fallba
   return "unset";
 }
 
+function getEffectiveAuthValueSource(
+  name: string,
+  value: string | undefined,
+  file: Record<string, string>,
+): "env" | "config" | "unset" {
+  if (!value) return "unset";
+  return process.env[name] ? "env" : file[name] ? "config" : "unset";
+}
+
 function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
   const stored = loadConfigFile();
   const authKind = effective.apiToken
@@ -243,10 +256,10 @@ function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
       baseUrl: getConfigValueSource("AFFINE_BASE_URL", stored, "http://localhost:3010"),
       graphqlPath: getConfigValueSource("AFFINE_GRAPHQL_PATH", stored, "/graphql"),
       additionalHeaders: getConfigValueSource("AFFINE_HEADERS_JSON", stored),
-      apiToken: getConfigValueSource("AFFINE_API_TOKEN", stored),
-      cookie: getConfigValueSource("AFFINE_COOKIE", stored),
-      email: getConfigValueSource("AFFINE_EMAIL", stored),
-      password: getConfigValueSource("AFFINE_PASSWORD", stored),
+      apiToken: getEffectiveAuthValueSource("AFFINE_API_TOKEN", effective.apiToken, stored),
+      cookie: getEffectiveAuthValueSource("AFFINE_COOKIE", effective.cookie, stored),
+      email: getEffectiveAuthValueSource("AFFINE_EMAIL", effective.email, stored),
+      password: getEffectiveAuthValueSource("AFFINE_PASSWORD", effective.password, stored),
       workspaceId: getConfigValueSource("AFFINE_WORKSPACE_ID", stored),
       authMode: getConfigValueSource("AFFINE_MCP_AUTH_MODE", stored, "bearer"),
       publicBaseUrl: getConfigValueSource("AFFINE_MCP_PUBLIC_BASE_URL", stored),
@@ -278,7 +291,7 @@ async function resolveCliAuth(effective: ServerConfig): Promise<{ auth: CliAuth;
     };
   }
   if (effective.email && effective.password) {
-    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password);
+    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password, effective.headers);
     return {
       auth: { cookie: cookieHeader, headers: effective.headers },
       authKind: "email-password",

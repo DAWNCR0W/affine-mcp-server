@@ -127,12 +127,19 @@ async function main() {
 
     const listedWorkspacesAfter = await call('list_workspaces');
     expectArray(listedWorkspacesAfter, 'list_workspaces after create');
-    if (!listedWorkspacesAfter.some(entry => entry?.id === workspaceId)) {
+    const listedWorkspace = listedWorkspacesAfter.find(entry => entry?.id === workspaceId);
+    if (!listedWorkspace) {
       throw new Error('list_workspaces did not include created workspace');
     }
+    expectEqual(listedWorkspace.name, workspaceName, 'list_workspaces workspace name');
+    expectEqual(listedWorkspace.profileStatus, 'available', 'list_workspaces profileStatus');
+    expectTruthy(listedWorkspace.url, 'list_workspaces workspace URL');
 
     const fetchedWorkspace = await call('get_workspace', { id: workspaceId });
     expectEqual(fetchedWorkspace?.id, workspaceId, 'get_workspace id');
+    expectEqual(fetchedWorkspace?.name, workspaceName, 'get_workspace workspace name');
+    expectEqual(fetchedWorkspace?.profileStatus, 'available', 'get_workspace profileStatus');
+    expectTruthy(fetchedWorkspace?.url, 'get_workspace workspace URL');
 
     const updatedWorkspace = await call('update_workspace', {
       id: workspaceId,

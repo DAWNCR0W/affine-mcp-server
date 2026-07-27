@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -90,6 +90,7 @@
     "test:tag-visibility": "node tests/test-tag-visibility.mjs",
     "test:tag-deletion": "node tests/test-tag-deletion.mjs",
     "test:url-safety": "node tests/test-url-safety.mjs",
+    "test:workspace-discovery": "node tests/test-workspace-discovery.mjs",
     "test:markdown-roundtrip": "node tests/test-markdown-roundtrip.mjs",
     "test:document-mutation-safety": "node tests/test-document-mutation-safety.mjs",
     "test:markdown-output-safety": "node tests/test-markdown-output-safety.mjs",

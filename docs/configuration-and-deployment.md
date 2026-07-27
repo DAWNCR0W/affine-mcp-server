@@ -12,11 +12,24 @@ The server resolves configuration in this order:
 
 The saved config file uses the same `KEY=value` names shown below. Environment variables always override saved values, and the CLI diagnostics report the source selected for each runtime option.
 
+Authentication credentials are resolved as one source-scoped group. If the
+environment provides any of `AFFINE_API_TOKEN`, `AFFINE_COOKIE`,
+`AFFINE_EMAIL`, or `AFFINE_PASSWORD`, saved authentication credentials are not
+mixed into that environment configuration. An `Authorization` or `Cookie`
+entry in an environment-provided `AFFINE_HEADERS_JSON` also selects the
+environment authentication group. Non-authentication headers from saved
+configuration remain available when no environment `AFFINE_HEADERS_JSON`
+replaces them.
+
 Auth priority within the active configuration:
 
 1. `AFFINE_API_TOKEN`
 2. `AFFINE_COOKIE`
 3. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
+
+This priority is applied only within the selected environment or saved-config
+group. For example, environment email/password credentials take precedence
+over an older saved API token or session cookie.
 
 Email/password authentication is process-scoped. Concurrent HTTP MCP sessions
 share one sign-in attempt and the resulting cookie. In the default `async`
@@ -40,6 +53,7 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
 | `AFFINE_LOGIN_AT_START` | No | `async` | `async` starts one shared login without blocking transport startup; `sync` requires login before startup |
+| `AFFINE_CLIENT_VERSION` | No | `0.26.0` | AFFiNE web-client version sent as the `x-affine-version` header on GraphQL/REST requests. Servers that gate on client version reject sign-in with `403 UNSUPPORTED_CLIENT_VERSION` when it is too low; raise this if your deployment pins a higher minimum. Also used as the fallback default for `AFFINE_WS_CLIENT_VERSION` |
 | `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
 
 ### Blob upload safeguards
@@ -96,7 +110,7 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AFFINE_WS_CLIENT_VERSION` | No | `0.26.0` | Environment-only AFFiNE client version sent during workspace socket connection |
+| `AFFINE_WS_CLIENT_VERSION` | No | `AFFINE_CLIENT_VERSION` (else `0.26.0`) | Environment-only AFFiNE client version sent during workspace socket connection; falls back to `AFFINE_CLIENT_VERSION` when unset |
 | `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
 | `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement |
 

@@ -6,11 +6,14 @@ import { testTempPath } from './require-destructive-test-safety.mjs';
  *
  * Reproduces the multi-session flow where buildServer() is invoked for each
  * Streamable HTTP session. Credentials must remain available so each new
- * session can authenticate successfully.
+ * session can authenticate successfully. The saved config deliberately holds
+ * stale token, cookie, and authentication-header credentials to verify that
+ * environment email/password credentials select the active auth source.
  */
+import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -74,10 +77,31 @@ async function waitForSuccessfulFetch(url, timeoutMs = 15000) {
 async function startEmailPasswordHttpServer() {
   const port = await findFreePort();
   const publicBaseUrl = `http://127.0.0.1:${port}`;
+  const configHome = testTempPath("http-email-password-server-config");
+  const configDirectory = path.join(configHome, "affine-mcp");
+  mkdirSync(configDirectory, { recursive: true });
+  writeFileSync(
+    path.join(configDirectory, "config"),
+    [
+      "AFFINE_API_TOKEN=stale-saved-token",
+      "AFFINE_COOKIE=affine_session=stale-saved-cookie",
+      `AFFINE_HEADERS_JSON=${JSON.stringify({
+        Authorization: "Bearer stale-saved-header-token",
+        Cookie: "affine_session=stale-saved-header-cookie",
+        "X-Affine-Mcp-Test": "saved-non-auth-header",
+      })}`,
+      "",
+    ].join("\n"),
+  );
+
+  const childEnvironment = { ...process.env };
+  delete childEnvironment.AFFINE_API_TOKEN;
+  delete childEnvironment.AFFINE_COOKIE;
+  delete childEnvironment.AFFINE_HEADERS_JSON;
   const child = spawn("node", [MCP_SERVER_PATH], {
     cwd: PROJECT_DIR,
     env: {
-      ...process.env,
+      ...childEnvironment,
       MCP_TRANSPORT: "http",
       PORT: String(port),
       AFFINE_BASE_URL: BASE_URL,
@@ -85,7 +109,7 @@ async function startEmailPasswordHttpServer() {
       AFFINE_PASSWORD: PASSWORD,
       AFFINE_LOGIN_AT_START: "sync",
       AFFINE_MCP_HTTP_HOST: "127.0.0.1",
-      XDG_CONFIG_HOME: testTempPath('http-email-password-server-config'),
+      XDG_CONFIG_HOME: configHome,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
