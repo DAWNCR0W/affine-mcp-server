@@ -651,6 +651,8 @@ export async function deleteDocFromWorkspace(
 }
 
 export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
+  const acknowledgedDeletedDocIds = new Map<string, Set<string>>();
+
   // helpers
   function generateId(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
@@ -4182,7 +4184,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const inTrashByDocId = new Map<string, boolean>();
       let workspacePageCount: number | null = null;
       let workspacePageIds: Set<string> | null = null;
-      const deletedDocIds = new Set<string>();
+      const deletedDocIds = new Set(acknowledgedDeletedDocIds.get(workspaceId) || []);
       try {
         const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
@@ -4197,6 +4199,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             const pages = getWorkspacePageEntries(meta);
             workspacePageCount = pages.length;
             workspacePageIds = new Set(pages.map(page => page.id));
+            for (const docId of deletedDocIds) {
+              if (workspacePageIds.has(docId)) {
+                deletedDocIds.delete(docId);
+                acknowledgedDeletedDocIds.get(workspaceId)?.delete(docId);
+              }
+            }
             const { byId } = getWorkspaceTagOptionMaps(meta);
             for (const page of pages) {
               if (page.title) {
@@ -6330,7 +6338,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      return await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
+      const result = await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
+      const deletion = result.structuredContent as { ok?: boolean; status?: string } | undefined;
+      if (deletion?.ok === true && (deletion.status === "deleted" || deletion.status === "already_absent")) {
+        const deletedIds = acknowledgedDeletedDocIds.get(workspaceId) || new Set<string>();
+        deletedIds.add(parsed.docId);
+        acknowledgedDeletedDocIds.set(workspaceId, deletedIds);
+      }
+      return result;
     } finally {
       socket.disconnect();
     }
