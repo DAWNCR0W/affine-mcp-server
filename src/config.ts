@@ -245,6 +245,20 @@ function resolveAuthenticationConfig(file: Record<string, string>) {
   const environmentProvidesAuthentication = AUTH_CREDENTIAL_VARIABLES.some(
     (name) => Boolean(process.env[name]),
   ) || (headersSource === "env" && hasAuthenticationHeader(headers));
+
+  const environmentHasEmail = Boolean(process.env.AFFINE_EMAIL);
+  const environmentHasPassword = Boolean(process.env.AFFINE_PASSWORD);
+  if (
+    environmentProvidesAuthentication &&
+    environmentHasEmail !== environmentHasPassword &&
+    Boolean(file.AFFINE_EMAIL || file.AFFINE_PASSWORD)
+  ) {
+    console.warn(
+      "[affine-mcp] WARNING: Environment provides only one of AFFINE_EMAIL or AFFINE_PASSWORD. " +
+        "Saved email/password credentials are ignored; set both environment variables to use email/password authentication.",
+    );
+  }
+
   const credentials = environmentProvidesAuthentication ? process.env : file;
 
   const apiToken = credentials.AFFINE_API_TOKEN || undefined;
