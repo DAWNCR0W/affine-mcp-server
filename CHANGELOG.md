@@ -7,16 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-07-27
+
 ### Added
 - `list_workspaces` and `get_workspace` now include best-effort workspace profile names, avatar references, direct URLs, and an explicit profile status while preserving the existing GraphQL fields and list response shape.
 
 ### Fixed
 - Email/password sign-in and all GraphQL/REST requests now send the `x-affine-version` header (configurable via the new `AFFINE_CLIENT_VERSION`, default `0.26.0`). AFFiNE servers that gate on a minimum web-client version previously rejected sign-in with `403 ACTION_FORBIDDEN` (`UNSUPPORTED_CLIENT_VERSION`), leaving the MCP server unable to connect. `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION` so a single variable can govern both the HTTP and realtime-socket client versions.
 - Environment authentication now overrides saved token, cookie, and authentication-header credentials as one source-scoped group, so client-provided email/password credentials cannot be masked by stale local auth state.
+- Document deletion now recognizes AFFiNE 0.27.3 success acknowledgements and filters only locally acknowledged deletions from stale `list_docs` edges while upstream indexing converges.
 - Documented how to launch MCP Inspector with a named Claude Desktop server configuration instead of starting an unauthenticated standalone process.
 
 ### Tests
 - Added CLI, mock-AFFiNE, and live integration regression coverage for environment email/password authentication overriding saved API tokens, cookies, and authentication headers while retaining unrelated saved headers.
+- Added deterministic and live integration coverage for workspace profile enrichment, failure isolation, and the GraphQL-only `includeProfile: false` fast path.
+
+### Dependencies
+- Updated `jose` from 6.2.3 to 6.2.4.
+- Refreshed locked HTTP and URI parser dependencies, including `hono`, `body-parser`, `type-is`, and `fast-uri`, clearing the current high-severity audit finding.
 
 ## [3.0.1] - 2026-07-21
 
@@ -620,8 +628,9 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
-[3.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.0.0
+[3.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.1.0
 [3.0.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.0.1
+[3.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.0.0
 [2.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.5.0
 [2.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.4.0
 [2.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.3.0
@@ -649,4 +658,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.1.0...HEAD

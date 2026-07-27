@@ -1,5 +1,41 @@
 # Release Notes
 
+## Version 3.1.0 (2026-07-27)
+
+### Highlights
+- Workspace discovery now returns best-effort profile names, avatar references, direct URLs, and explicit profile status without changing the existing top-level result shape.
+- Self-hosted email/password authentication is more reliable on AFFiNE 0.27.3 because environment credentials override stale saved authentication and every HTTP path sends the required client-version header.
+- Document deletion now recognizes AFFiNE 0.27.3 success acknowledgements and hides only confirmed deletions while upstream indexes converge.
+
+### What Changed
+- Workspace discovery
+  - `list_workspaces` and `get_workspace` enrich GraphQL results with profile metadata when available.
+  - `list_workspaces` accepts `includeProfile: false` for a faster GraphQL-only response.
+  - Profile lookup failures are isolated per workspace instead of failing the entire result.
+- Authentication and compatibility
+  - Added `AFFINE_CLIENT_VERSION` with a default of `0.26.0` and send `x-affine-version` on sign-in, GraphQL, REST, CLI, and readiness requests.
+  - `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION`, while explicit case-insensitive header overrides remain supported.
+  - Environment authentication is resolved as one credential group, preventing saved tokens, cookies, or authentication headers from masking client-provided email/password credentials.
+  - MCP Inspector setup guidance now explains how to load a named Claude Desktop server configuration.
+- Document lifecycle
+  - `delete_doc` accepts top-level and nested success acknowledgements returned by current AFFiNE servers.
+  - Successfully acknowledged deletions are filtered from stale document listings without hiding unrelated orphan documents.
+- Dependencies and security
+  - Updated `jose` from 6.2.3 to 6.2.4.
+  - Refreshed locked HTTP and URI parser dependencies and cleared the current high-severity `fast-uri` audit finding.
+
+### Compatibility
+- No tools were removed and no existing input is required to change.
+- Node.js 20 or newer remains required.
+- Operators can override `AFFINE_CLIENT_VERSION` when an AFFiNE deployment requires a newer minimum client version.
+
+### Validation Evidence
+- `npm run ci`
+- `npm audit --audit-level=high`
+- `npm run test:comprehensive`
+- `AFFINE_REVISION=0.27.3 npm run test:e2e`
+- package smoke test and `npm publish --dry-run --access public --ignore-scripts`
+
 ## Version 3.0.1 (2026-07-21)
 
 ### Highlights
