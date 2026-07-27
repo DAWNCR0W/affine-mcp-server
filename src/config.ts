@@ -213,6 +213,60 @@ function removeHeadersCaseInsensitive(
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
+const AUTH_CREDENTIAL_VARIABLES = [
+  "AFFINE_API_TOKEN",
+  "AFFINE_COOKIE",
+  "AFFINE_EMAIL",
+  "AFFINE_PASSWORD",
+] as const;
+
+function hasAuthenticationHeader(headers: Record<string, string> | undefined): boolean {
+  return Object.keys(headers || {}).some((name) => /^(authorization|cookie)$/i.test(name));
+}
+
+/**
+ * Resolve authentication as one source-scoped group.
+ *
+ * Mixing individual keys first and choosing an auth method afterwards lets a
+ * saved token or cookie outrank environment email/password credentials. Once
+ * the environment provides any authentication value, all saved authentication
+ * values are ignored while unrelated saved headers remain available.
+ */
+function resolveAuthenticationConfig(file: Record<string, string>) {
+  const environmentHeadersJson = process.env.AFFINE_HEADERS_JSON;
+  const savedHeadersJson = file.AFFINE_HEADERS_JSON;
+  const headersSource = environmentHeadersJson
+    ? "env"
+    : savedHeadersJson
+      ? "config"
+      : "unset";
+  let headers = parseHeadersJson(environmentHeadersJson || savedHeadersJson);
+
+  const environmentProvidesAuthentication = AUTH_CREDENTIAL_VARIABLES.some(
+    (name) => Boolean(process.env[name]),
+  ) || (headersSource === "env" && hasAuthenticationHeader(headers));
+  const credentials = environmentProvidesAuthentication ? process.env : file;
+
+  const apiToken = credentials.AFFINE_API_TOKEN || undefined;
+  const cookie = credentials.AFFINE_COOKIE || undefined;
+  const email = credentials.AFFINE_EMAIL || undefined;
+  const password = credentials.AFFINE_PASSWORD || undefined;
+
+  if (environmentProvidesAuthentication && headersSource === "config") {
+    headers = removeHeadersCaseInsensitive(headers, ["authorization", "cookie"]);
+  }
+  if (apiToken) {
+    headers = removeHeadersCaseInsensitive(headers, ["authorization", "cookie"]);
+  } else if (cookie) {
+    headers = {
+      ...(removeHeadersCaseInsensitive(headers, ["authorization", "cookie"]) || {}),
+      Cookie: cookie,
+    };
+  }
+
+  return { apiToken, cookie, email, password, headers };
+}
+
 function parseAuthMode(raw: string | undefined): "bearer" | "oauth" {
   if (!raw) return "bearer";
   const normalized = raw.trim().toLowerCase();
@@ -323,19 +377,7 @@ export function loadConfig(): ServerConfig {
     },
   );
   const authMode = parseAuthMode(env("AFFINE_MCP_AUTH_MODE", file, "bearer"));
-  const apiToken = env("AFFINE_API_TOKEN", file);
-  const cookie = env("AFFINE_COOKIE", file);
-  const email = env("AFFINE_EMAIL", file);
-  const password = env("AFFINE_PASSWORD", file);
-  let headers: Record<string, string> | undefined = parseHeadersJson(env("AFFINE_HEADERS_JSON", file));
-  if (apiToken) {
-    headers = removeHeadersCaseInsensitive(headers, ["authorization", "cookie"]);
-  } else if (cookie) {
-    headers = {
-      ...(removeHeadersCaseInsensitive(headers, ["authorization", "cookie"]) || {}),
-      Cookie: cookie,
-    };
-  }
+  const { apiToken, cookie, email, password, headers } = resolveAuthenticationConfig(file);
   const graphqlPath = validateGraphqlPath(env("AFFINE_GRAPHQL_PATH", file, "/graphql")!);
   const graphqlEndpoint = `${baseUrl}${graphqlPath}`;
   const defaultWorkspaceId = env("AFFINE_WORKSPACE_ID", file);
