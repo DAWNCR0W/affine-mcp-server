@@ -14,12 +14,15 @@
   - Profile lookup failures are isolated per workspace instead of failing the entire result.
 - Authentication and compatibility
   - Added `AFFINE_CLIENT_VERSION` with a default of `0.26.0` and send `x-affine-version` on sign-in, GraphQL, REST, CLI, and readiness requests.
-  - `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION`, while explicit case-insensitive header overrides remain supported.
+  - `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION`, while explicit case-insensitive header overrides replace the default without duplicate values.
   - Environment authentication is resolved as one credential group, preventing saved tokens, cookies, or authentication headers from masking client-provided email/password credentials.
   - MCP Inspector setup guidance now explains how to load a named Claude Desktop server configuration.
 - Document lifecycle
   - `delete_doc` accepts top-level and nested success acknowledgements returned by current AFFiNE servers.
   - Successfully acknowledged deletions are filtered from stale document listings without hiding unrelated orphan documents.
+  - Acknowledged deletion tombstones expire after ten minutes and retain at most 10,000 entries.
+- Workspace URLs
+  - Newly created workspaces use the same canonical AFFiNE origin resolver as workspace discovery, including deployments with custom GraphQL paths.
 - Dependencies and security
   - Updated `jose` from 6.2.3 to 6.2.4.
   - Refreshed locked HTTP and URI parser dependencies and cleared the current high-severity `fast-uri` audit finding.

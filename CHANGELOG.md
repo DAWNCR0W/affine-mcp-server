@@ -16,11 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Email/password sign-in and all GraphQL/REST requests now send the `x-affine-version` header (configurable via the new `AFFINE_CLIENT_VERSION`, default `0.26.0`). AFFiNE servers that gate on a minimum web-client version previously rejected sign-in with `403 ACTION_FORBIDDEN` (`UNSUPPORTED_CLIENT_VERSION`), leaving the MCP server unable to connect. `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION` so a single variable can govern both the HTTP and realtime-socket client versions.
 - Environment authentication now overrides saved token, cookie, and authentication-header credentials as one source-scoped group, so client-provided email/password credentials cannot be masked by stale local auth state.
 - Document deletion now recognizes AFFiNE 0.27.3 success acknowledgements and filters only locally acknowledged deletions from stale `list_docs` edges while upstream indexing converges.
+- Acknowledged deletion tombstones now expire after ten minutes and retain at most 10,000 entries, bounding process memory while preserving the index-convergence window.
+- Case-insensitive `x-affine-version` overrides now replace the default cleanly in CLI and readiness requests instead of producing duplicate header values.
+- Created-workspace URLs now derive from the same canonical AFFiNE origin resolver used by workspace discovery, including custom GraphQL paths.
 - Documented how to launch MCP Inspector with a named Claude Desktop server configuration instead of starting an unauthenticated standalone process.
 
 ### Tests
 - Added CLI, mock-AFFiNE, and live integration regression coverage for environment email/password authentication overriding saved API tokens, cookies, and authentication headers while retaining unrelated saved headers.
 - Added deterministic and live integration coverage for workspace profile enrichment, failure isolation, and the GraphQL-only `includeProfile: false` fast path.
+- Hardened Playwright sign-in setup against clicks that occur before the self-hosted AFFiNE page finishes hydrating.
 
 ### Dependencies
 - Updated `jose` from 6.2.3 to 6.2.4.
