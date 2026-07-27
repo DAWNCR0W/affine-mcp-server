@@ -6,8 +6,123 @@ import FormData from "form-data";
 import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
 import { secureRandomString } from "../util/random.js";
-import { connectWorkspaceSocket, joinWorkspace, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
+import {
+  connectWorkspaceSocket,
+  joinWorkspace,
+  loadDoc,
+  pushDocUpdate,
+  wsUrlFromGraphQLEndpoint,
+  type WorkspaceSocket,
+} from "../ws.js";
 import { requireMatchingConfirmation } from "../util/inputSchemas.js";
+
+type WorkspaceRecord = Record<string, unknown> & { id: string };
+type WorkspaceProfileStatus = "available" | "unavailable" | "skipped";
+
+type WorkspaceSummary = WorkspaceRecord & {
+  name: string | null;
+  avatar: string | null;
+  url: string;
+  profileStatus: WorkspaceProfileStatus;
+};
+
+type WorkspaceToolDependencies = {
+  connectWorkspaceSocket: typeof connectWorkspaceSocket;
+  joinWorkspace: typeof joinWorkspace;
+  loadDoc: typeof loadDoc;
+};
+
+const DEFAULT_WORKSPACE_TOOL_DEPENDENCIES: WorkspaceToolDependencies = {
+  connectWorkspaceSocket,
+  joinWorkspace,
+  loadDoc,
+};
+
+function affineBaseUrl(endpoint: string): string {
+  const configuredBaseUrl = process.env.AFFINE_BASE_URL?.trim();
+  return (configuredBaseUrl || new URL(endpoint).origin).replace(/\/+$/, "");
+}
+
+function summarizeWorkspace(
+  workspace: WorkspaceRecord,
+  endpoint: string,
+  profileStatus: WorkspaceProfileStatus,
+  profile?: { name: string | null; avatar: string | null },
+): WorkspaceSummary {
+  const existingName = typeof workspace.name === "string" ? workspace.name : null;
+  const existingAvatar = typeof workspace.avatar === "string" ? workspace.avatar : null;
+  return {
+    ...workspace,
+    name: profile?.name ?? existingName,
+    avatar: profile?.avatar ?? existingAvatar,
+    url: `${affineBaseUrl(endpoint)}/workspace/${encodeURIComponent(workspace.id)}`,
+    profileStatus,
+  };
+}
+
+async function readWorkspaceProfile(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  dependencies: WorkspaceToolDependencies,
+): Promise<{ name: string | null; avatar: string | null }> {
+  await dependencies.joinWorkspace(socket, workspaceId);
+  const snapshot = await dependencies.loadDoc(socket, workspaceId, workspaceId);
+  if (!snapshot.missing) {
+    throw new Error(`Workspace profile metadata is unavailable for ${workspaceId}.`);
+  }
+
+  const workspaceDoc = new Y.Doc();
+  Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
+  const meta = workspaceDoc.getMap("meta");
+  const name = meta.get("name");
+  const avatar = meta.get("avatar");
+  return {
+    name: typeof name === "string" ? name : null,
+    avatar: typeof avatar === "string" ? avatar : null,
+  };
+}
+
+async function enrichWorkspaceProfiles(
+  gql: GraphQLClient,
+  workspaces: WorkspaceRecord[],
+  includeProfile: boolean,
+  dependencies: WorkspaceToolDependencies,
+): Promise<WorkspaceSummary[]> {
+  const endpoint = gql.endpoint;
+  if (!includeProfile) {
+    return workspaces.map(workspace => summarizeWorkspace(workspace, endpoint, "skipped"));
+  }
+  if (workspaces.length === 0) {
+    return [];
+  }
+
+  let socket: WorkspaceSocket;
+  try {
+    const { endpoint: connectionEndpoint, cookie, bearer } = await gql.getConnectionAuth();
+    socket = await dependencies.connectWorkspaceSocket(
+      wsUrlFromGraphQLEndpoint(connectionEndpoint),
+      cookie,
+      bearer,
+    );
+  } catch {
+    return workspaces.map(workspace => summarizeWorkspace(workspace, endpoint, "unavailable"));
+  }
+
+  try {
+    const enriched: WorkspaceSummary[] = [];
+    for (const workspace of workspaces) {
+      try {
+        const profile = await readWorkspaceProfile(socket, workspace.id, dependencies);
+        enriched.push(summarizeWorkspace(workspace, endpoint, "available", profile));
+      } catch {
+        enriched.push(summarizeWorkspace(workspace, endpoint, "unavailable"));
+      }
+    }
+    return enriched;
+  } finally {
+    socket.disconnect();
+  }
+}
 
 // Generate AFFiNE-style document ID
 function generateDocId(): string {
@@ -129,13 +244,28 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace', ava
   };
 }
 
-export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
+export function registerWorkspaceTools(
+  server: McpServer,
+  gql: GraphQLClient,
+  dependencyOverrides: Partial<WorkspaceToolDependencies> = {},
+) {
+  const dependencies = {
+    ...DEFAULT_WORKSPACE_TOOL_DEPENDENCIES,
+    ...dependencyOverrides,
+  };
+
   // LIST WORKSPACES
-  const listWorkspacesHandler = async () => {
+  const listWorkspacesHandler = async ({ includeProfile = true }: { includeProfile?: boolean } = {}) => {
     try {
       const query = `query { workspaces { id public enableAi createdAt } }`;
-      const data = await gql.request<{ workspaces: any[] }>(query);
-      return text(data.workspaces || []);
+      const data = await gql.request<{ workspaces: WorkspaceRecord[] }>(query);
+      const workspaces = await enrichWorkspaceProfiles(
+        gql,
+        data.workspaces || [],
+        includeProfile,
+        dependencies,
+      );
+      return text(workspaces);
     } catch (error: any) {
       return toolError(error, { code: "workspace_list_failed" });
     }
@@ -145,7 +275,12 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
     "list_workspaces",
     {
       title: "List Workspaces",
-      description: "List all available AFFiNE workspaces"
+      description: "List available AFFiNE workspaces with best-effort profile metadata and direct URLs",
+      inputSchema: {
+        includeProfile: z.boolean().optional().default(true).describe(
+          "Load workspace names and avatar references from realtime metadata. Set false for a faster GraphQL-only response.",
+        ),
+      },
     },
     listWorkspacesHandler as any
   );
@@ -165,8 +300,12 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
           } 
         } 
       }`;
-      const data = await gql.request<{ workspace: any }>(query, { id });
-      return text(data.workspace);
+      const data = await gql.request<{ workspace: WorkspaceRecord }>(query, { id });
+      if (!data.workspace || typeof data.workspace !== "object") {
+        return text(data.workspace);
+      }
+      const [workspace] = await enrichWorkspaceProfiles(gql, [data.workspace], true, dependencies);
+      return text(workspace);
     } catch (error: any) {
       return toolError(error, { code: "workspace_get_failed" });
     }
@@ -176,7 +315,7 @@ export function registerWorkspaceTools(server: McpServer, gql: GraphQLClient) {
     "get_workspace",
     {
       title: "Get Workspace",
-      description: "Get details of a specific workspace",
+      description: "Get workspace details with best-effort profile metadata and a direct URL",
       inputSchema: { 
         id: z.string().describe("Workspace ID") 
       }
