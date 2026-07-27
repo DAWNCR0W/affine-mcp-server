@@ -81,6 +81,30 @@ Self-hosted email/password example:
 }
 ```
 
+## MCP Inspector
+
+MCP Inspector does not automatically read Claude Desktop's server
+configuration. Starting it with only `affine-mcp` launches a separate process
+without the `AFFINE_*` environment variables from
+`claude_desktop_config.json`.
+
+To inspect the same `affine` server configuration on macOS, pass the Claude
+Desktop config file explicitly:
+
+```bash
+npx @modelcontextprotocol/inspector \
+  --config "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
+  --server affine
+```
+
+On Linux, use `~/.config/Claude/claude_desktop_config.json`. On Windows, use
+`%APPDATA%\Claude\claude_desktop_config.json`. The value passed to `--server`
+must match the key under `mcpServers`.
+
+Inspector also accepts individual server environment variables through
+repeated `-e KEY=value` arguments. Prefer the config-file form for passwords
+and other secrets so they are not copied into shell history.
+
 ## Codex CLI
 
 With saved config:
@@ -176,4 +200,5 @@ browser history.
 - Use a dedicated least-privilege account for automated self-hosted environments
 - Use `AFFINE_API_TOKEN` only when the target deployment still accepts a compatible GraphQL bearer token
 - If your shell treats `!` specially, wrap passwords in single quotes
+- When using MCP Inspector, pass `--config` and `--server` or supply the required `AFFINE_*` values with `-e`
 - Use `affine-mcp doctor` whenever a client config looks correct but the connection still fails

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `list_workspaces` and `get_workspace` now include best-effort workspace profile names, avatar references, direct URLs, and an explicit profile status while preserving the existing GraphQL fields and list response shape.
+
+### Fixed
+- Email/password sign-in and all GraphQL/REST requests now send the `x-affine-version` header (configurable via the new `AFFINE_CLIENT_VERSION`, default `0.26.0`). AFFiNE servers that gate on a minimum web-client version previously rejected sign-in with `403 ACTION_FORBIDDEN` (`UNSUPPORTED_CLIENT_VERSION`), leaving the MCP server unable to connect. `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION` so a single variable can govern both the HTTP and realtime-socket client versions.
+- Environment authentication now overrides saved token, cookie, and authentication-header credentials as one source-scoped group, so client-provided email/password credentials cannot be masked by stale local auth state.
+- Documented how to launch MCP Inspector with a named Claude Desktop server configuration instead of starting an unauthenticated standalone process.
+
+### Tests
+- Added CLI, mock-AFFiNE, and live integration regression coverage for environment email/password authentication overriding saved API tokens, cookies, and authentication headers while retaining unrelated saved headers.
+
 ## [3.0.1] - 2026-07-21
 
 ### Added

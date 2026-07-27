@@ -204,6 +204,132 @@ try {
   expect(summary.sources.graphqlPath === "env", "GraphQL path source should be env");
   expect(summary.apiToken !== "env-token", "show-config exposed the API token");
 
+  const staleSavedAuthHome = path.join(TEMP_ROOT, "stale-saved-auth");
+  writeConfig(staleSavedAuthHome, {
+    AFFINE_BASE_URL: baseUrl,
+    AFFINE_API_TOKEN: "stale-saved-token",
+    AFFINE_COOKIE: "affine_session=stale-saved-cookie",
+    AFFINE_EMAIL: "saved@example.test",
+    AFFINE_PASSWORD: "saved-password",
+    AFFINE_HEADERS_JSON: JSON.stringify({
+      Authorization: "Bearer stale-saved-header-token",
+      Cookie: "affine_session=stale-saved-header-cookie",
+      "X-Tenant": "saved-tenant",
+    }),
+  });
+  const environmentCredentials = cleanEnvironment({
+    XDG_CONFIG_HOME: staleSavedAuthHome,
+    AFFINE_EMAIL: "environment@example.test",
+    AFFINE_PASSWORD: "environment-password",
+  });
+  const environmentAuthConfig = await runNode(
+    [DIST_ENTRY, "show-config", "--json"],
+    environmentCredentials,
+  );
+  expect(
+    environmentAuthConfig.code === 0,
+    `environment auth config failed: ${environmentAuthConfig.stderr}`,
+  );
+  const environmentAuthSummary = JSON.parse(environmentAuthConfig.stdout);
+  expect(
+    environmentAuthSummary.authKind === "email-password",
+    "saved token or cookie overrode environment email/password credentials",
+  );
+  expect(environmentAuthSummary.apiToken === null, "ignored saved API token remained effective");
+  expect(environmentAuthSummary.cookie === null, "ignored saved cookie remained effective");
+  expect(
+    environmentAuthSummary.email === "environment@example.test",
+    "environment email was not selected",
+  );
+  expect(
+    environmentAuthSummary.sources.apiToken === "unset",
+    "ignored saved API token source remained active",
+  );
+  expect(
+    environmentAuthSummary.sources.cookie === "unset",
+    "ignored saved cookie source remained active",
+  );
+  expect(
+    environmentAuthSummary.sources.email === "env",
+    "environment email source was not reported",
+  );
+  expect(
+    environmentAuthSummary.sources.password === "env",
+    "environment password source was not reported",
+  );
+
+  const partialCredentialWarning =
+    "Environment provides only one of AFFINE_EMAIL or AFFINE_PASSWORD";
+  expect(
+    !environmentAuthConfig.stderr.includes(partialCredentialWarning),
+    "complete environment email/password credentials produced a partial-credential warning",
+  );
+
+  const environmentEmailOnlyConfig = await runNode(
+    [DIST_ENTRY, "show-config", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: staleSavedAuthHome,
+      AFFINE_EMAIL: "environment@example.test",
+    }),
+  );
+  expect(
+    environmentEmailOnlyConfig.code === 0,
+    `partial environment email config failed: ${environmentEmailOnlyConfig.stderr}`,
+  );
+  expect(
+    environmentEmailOnlyConfig.stderr.includes(partialCredentialWarning),
+    "environment email without a password did not warn that saved credentials were ignored",
+  );
+  const environmentEmailOnlySummary = JSON.parse(environmentEmailOnlyConfig.stdout);
+  expect(
+    environmentEmailOnlySummary.sources.email === "env" &&
+      environmentEmailOnlySummary.sources.password === "unset",
+    "environment email was combined with the saved password",
+  );
+
+  const environmentPasswordOnlyConfig = await runNode(
+    [DIST_ENTRY, "show-config", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: staleSavedAuthHome,
+      AFFINE_PASSWORD: "environment-password",
+    }),
+  );
+  expect(
+    environmentPasswordOnlyConfig.code === 0,
+    `partial environment password config failed: ${environmentPasswordOnlyConfig.stderr}`,
+  );
+  expect(
+    environmentPasswordOnlyConfig.stderr.includes(partialCredentialWarning),
+    "environment password without an email did not warn that saved credentials were ignored",
+  );
+  const environmentPasswordOnlySummary = JSON.parse(environmentPasswordOnlyConfig.stdout);
+  expect(
+    environmentPasswordOnlySummary.sources.email === "unset" &&
+      environmentPasswordOnlySummary.sources.password === "env",
+    "environment password was combined with the saved email",
+  );
+
+  const nonAuthEnvironmentHeaders = await runNode(
+    [DIST_ENTRY, "show-config", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: staleSavedAuthHome,
+      AFFINE_HEADERS_JSON: JSON.stringify({ "X-Tenant": "environment-tenant" }),
+    }),
+  );
+  expect(
+    nonAuthEnvironmentHeaders.code === 0,
+    `non-auth environment headers config failed: ${nonAuthEnvironmentHeaders.stderr}`,
+  );
+  const savedAuthSummary = JSON.parse(nonAuthEnvironmentHeaders.stdout);
+  expect(
+    savedAuthSummary.authKind === "api-token",
+    "non-auth environment headers incorrectly disabled saved authentication",
+  );
+  expect(
+    savedAuthSummary.sources.apiToken === "config",
+    "saved API token source was not reported after non-auth environment headers",
+  );
+
   const status = await runNode([DIST_ENTRY, "status", "--json"], effectiveEnv);
   expect(status.code === 0, `status failed: ${status.stderr}`);
   const statusPayload = JSON.parse(status.stdout);
@@ -427,6 +553,7 @@ try {
     ok: true,
     cases: [
       "environment precedence",
+      "authentication source precedence",
       "custom GraphQL path",
       "custom-path workspace socket origin",
       "effective status auth",

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -106,6 +107,7 @@ async function startMockAffine(options = {}) {
         state.graphqlHeaders.push({
           authorization: req.headers.authorization || "",
           cookie: req.headers.cookie || "",
+          tenant: req.headers["x-tenant"] || "",
           receivedAt: Date.now(),
         });
         await readRequestBody(req);
@@ -156,7 +158,7 @@ async function startMockAffine(options = {}) {
   };
 }
 
-function cleanServerEnvironment(port, baseUrl) {
+function cleanServerEnvironment(port, baseUrl, configHome) {
   const env = { ...process.env };
   for (const key of [
     "AFFINE_API_TOKEN",
@@ -179,7 +181,7 @@ function cleanServerEnvironment(port, baseUrl) {
     AFFINE_LOGIN_AT_START: "async",
     AFFINE_MCP_AUTH_MODE: "bearer",
     AFFINE_MCP_HTTP_HOST: "127.0.0.1",
-    XDG_CONFIG_HOME: `/tmp/affine-mcp-auth-session-${process.pid}-${port}`,
+    XDG_CONFIG_HOME: configHome || `/tmp/affine-mcp-auth-session-${process.pid}-${port}`,
   };
 }
 
@@ -204,11 +206,11 @@ async function waitForHealth(child, url, logs, timeoutMs = 8_000) {
   throw new Error(`Timed out waiting for ${url}: ${JSON.stringify(logs())}`);
 }
 
-async function startMcpServer(baseUrl) {
+async function startMcpServer(baseUrl, options = {}) {
   const port = await findFreePort();
   const child = spawn("node", [MCP_SERVER_PATH], {
     cwd: PROJECT_DIR,
-    env: cleanServerEnvironment(port, baseUrl),
+    env: cleanServerEnvironment(port, baseUrl, options.configHome),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -235,6 +237,15 @@ async function startMcpServer(baseUrl) {
       }
     },
   };
+}
+
+function writeSavedConfig(configHome, values) {
+  const directory = path.join(configHome, "affine-mcp");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    path.join(directory, "config"),
+    `${Object.entries(values).map(([key, value]) => `${key}=${value}`).join("\n")}\n`,
+  );
 }
 
 async function createMcpClient(mcpUrl, name) {
@@ -359,6 +370,68 @@ async function testFailureNeverFallsBack() {
   }
 }
 
+async function testEnvironmentCredentialsOverrideSavedAuthentication() {
+  const scenarios = [
+    {
+      label: "saved API token",
+      values: { AFFINE_API_TOKEN: "stale-saved-token" },
+    },
+    {
+      label: "saved cookie",
+      values: { AFFINE_COOKIE: "affine_session=stale-saved-cookie" },
+    },
+    {
+      label: "saved authentication headers",
+      values: {
+        AFFINE_HEADERS_JSON: JSON.stringify({
+          Authorization: "Bearer stale-saved-header-token",
+          Cookie: "affine_session=stale-saved-header-cookie",
+        }),
+      },
+    },
+  ];
+
+  for (const [index, scenario] of scenarios.entries()) {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), "affine-mcp-env-auth-"));
+    const tenant = `saved-tenant-${index}`;
+    const existingHeaders = scenario.values.AFFINE_HEADERS_JSON
+      ? JSON.parse(scenario.values.AFFINE_HEADERS_JSON)
+      : {};
+    writeSavedConfig(configHome, {
+      ...scenario.values,
+      AFFINE_HEADERS_JSON: JSON.stringify({ ...existingHeaders, "X-Tenant": tenant }),
+    });
+
+    const mock = await startMockAffine();
+    const mcp = await startMcpServer(mock.baseUrl, { configHome });
+    let client;
+    try {
+      client = await createMcpClient(mcp.mcpUrl, `environment-auth-${index}`);
+      const result = await client.client.callTool({ name: "current_user", arguments: {} });
+
+      assertEqual(parseToolContent(result)?.email, EMAIL, `${scenario.label} current_user email`);
+      assertEqual(mock.state.signInCalls, 1, `${scenario.label} did not trigger environment login`);
+      assertEqual(mock.state.graphqlCalls, 1, `${scenario.label} GraphQL request count`);
+      assertEqual(
+        mock.state.unauthenticatedGraphqlCalls,
+        0,
+        `${scenario.label} reached AFFiNE with stale authentication`,
+      );
+      assertEqual(mock.state.graphqlHeaders[0]?.cookie, COOKIE, `${scenario.label} session cookie`);
+      assertEqual(mock.state.graphqlHeaders[0]?.authorization, "", `${scenario.label} bearer header`);
+      assertEqual(mock.state.graphqlHeaders[0]?.tenant, tenant, `${scenario.label} non-auth header`);
+    } finally {
+      if (client) {
+        try { await client.client.close(); } catch {}
+        try { await client.transport.close(); } catch {}
+      }
+      await mcp.close();
+      await mock.close();
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  }
+}
+
 async function testConcurrentHttpSessionsAndDirectMultipart() {
   const mock = await startMockAffine({ blockLogin: true });
   const mcp = await startMcpServer(mock.baseUrl);
@@ -425,6 +498,7 @@ async function main() {
   await testSingleFlightPrimitive();
   await testExclusiveAuthState();
   await testFailureNeverFallsBack();
+  await testEnvironmentCredentialsOverrideSavedAuthentication();
   await testConcurrentHttpSessionsAndDirectMultipart();
   console.log("Authentication session regression tests passed.");
 }

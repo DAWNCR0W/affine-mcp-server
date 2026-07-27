@@ -1,7 +1,7 @@
 import { fetch } from "undici";
 
 import type { AuthSnapshot } from "./authSession.js";
-import { VERSION } from "./config.js";
+import { VERSION, AFFINE_CLIENT_VERSION } from "./config.js";
 
 const GQL_FETCH_TIMEOUT_MS = 30_000;
 
@@ -109,10 +109,27 @@ export class GraphQLClient {
     return this.opts.endpoint;
   }
 
+  /**
+   * Build the outgoing header set for a snapshot. `x-affine-version` goes first
+   * so an explicit override in `baseHeaders` (from `AFFINE_HEADERS_JSON`) wins,
+   * and auth headers last so they are never shadowed. Shared by the `headers`
+   * getter and `getConnectionAuth()` so every request path stays consistent.
+   */
+  private composeHeaders(snapshot: AuthSnapshot): Record<string, string> {
+    const headers: Record<string, string> = { ...this.baseHeaders };
+    // Only supply the default when baseHeaders (AFFINE_HEADERS_JSON) has no
+    // `x-affine-version` in any casing, so Fetch can't coalesce two casings
+    // into one comma-joined value.
+    if (findHeader(headers, "x-affine-version") === undefined) {
+      headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
+    }
+    return { ...headers, ...authHeaders(snapshot) };
+  }
+
   /** Synchronous snapshot for compatibility. Async consumers must use getConnectionAuth(). */
   get headers(): Record<string, string> {
     const snapshot = this.authOverride || this.resolvedAuth;
-    return { ...this.baseHeaders, ...authHeaders(snapshot) };
+    return this.composeHeaders(snapshot);
   }
 
   get cookie(): string {
@@ -169,7 +186,9 @@ export class GraphQLClient {
   /** Await authentication and return one normalized credential set for HTTP or WebSocket consumers. */
   async getConnectionAuth(): Promise<ConnectionAuth> {
     const snapshot = this.authOverride || await this.resolveAuth();
-    const headers = { ...this.baseHeaders, ...authHeaders(snapshot) };
+    // Injected here (not only in request()) so it also covers the direct
+    // multipart/blob uploads in tools/ that build their own fetch from this.
+    const headers = this.composeHeaders(snapshot);
     return {
       bearer: snapshot.kind === "bearer" ? snapshot.token : "",
       cookie: snapshot.kind === "cookie" ? snapshot.cookie : "",
