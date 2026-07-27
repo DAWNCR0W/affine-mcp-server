@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signInToAffine } from './sign-in.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,28 +83,8 @@ async function openDocInEdgelessMode(page: Page) {
 
 test.describe.serial('AFFiNE Edgeless Canvas Verification', () => {
   test('login to AFFiNE', async ({ page, context }) => {
-    await page.goto(`${state.baseUrl}/sign-in`);
-    await page.waitForLoadState('domcontentloaded');
-
-    const emailInput = page.locator('input[type="email"], input[name="email"], input[placeholder*="email"]');
-    await emailInput.waitFor({ timeout: 30_000 });
-    await emailInput.fill(state.email);
-
-    const continueBtn = page.locator(
-      'button:has-text("Continue with email"), button:has-text("Continue"), button[type="submit"]',
-    );
-    await continueBtn.first().click();
-
-    const passwordInput = page.locator('input[type="password"], input[name="password"]');
-    await passwordInput.waitFor({ timeout: 15_000 });
-    await passwordInput.fill(password);
-
-    const signInBtn = page.locator(
-      'button:has-text("Sign in"), button:has-text("Log in"), button[type="submit"]',
-    );
-    await signInBtn.first().click();
-
-    await page.waitForURL(url => !url.toString().includes('/sign-in'), { timeout: 30_000 });
+    test.setTimeout(180_000);
+    await signInToAffine(page, { baseUrl: state.baseUrl, email: state.email, password });
 
     for (let i = 0; i < 5; i++) {
       await page.waitForTimeout(1_000);

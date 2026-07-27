@@ -141,6 +141,7 @@ const upstream = createServer(async (request, response) => {
     authorization: request.headers.authorization || null,
     cookie: request.headers.cookie || null,
     tenant: request.headers["x-tenant"] || null,
+    affineVersion: request.headers["x-affine-version"] || null,
     query: body.query,
     url: request.url,
   });
@@ -187,6 +188,7 @@ try {
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: "/custom/graphql",
     AFFINE_API_TOKEN: "env-token",
+    AFFINE_HEADERS_JSON: JSON.stringify({ "X-Affine-Version": "cli-override-version" }),
     AFFINE_WORKSPACE_ID: "workspace-env",
     MCP_TRANSPORT: "streamable",
     PORT: "4321",
@@ -337,8 +339,11 @@ try {
   expect(statusPayload.authKind === "api-token", "status did not use effective token auth");
   expect(statusPayload.userEmail === "config@example.test", "status did not inspect the fake upstream");
   expect(
-    graphqlRequests.some((entry) => entry.authorization === "Bearer env-token"),
-    "status did not send the environment API token",
+    graphqlRequests.some(
+      (entry) => entry.authorization === "Bearer env-token"
+        && entry.affineVersion === "cli-override-version",
+    ),
+    "status did not send the environment API token and exact client-version override",
   );
 
   const noConfigHome = path.join(TEMP_ROOT, "no-config");
@@ -507,6 +512,7 @@ try {
       "X-Tenant": "saved-tenant",
       Authorization: "Basic stale",
       Cookie: "stale-header-cookie",
+      "X-Affine-Version": "readyz-override-version",
     }),
     MCP_TRANSPORT: "http",
     PORT: String(httpPort),
@@ -538,9 +544,10 @@ try {
       (entry) => entry.query.includes("AffineMcpReadiness")
         && entry.authorization === "Bearer runtime-token"
         && entry.cookie === null
-        && entry.tenant === "saved-tenant",
+        && entry.tenant === "saved-tenant"
+        && entry.affineVersion === "readyz-override-version",
     ),
-    "readyz did not use the configured endpoint, custom headers, and service token",
+    "readyz did not use the configured endpoint, exact client-version override, custom headers, and service token",
   );
 
   upstreamReady = false;
@@ -566,6 +573,7 @@ try {
       "strict transport validation",
       "saved HTTP runtime flags",
       "upstream-aware readiness",
+      "case-insensitive client-version overrides",
     ],
   }, null, 2));
 } finally {

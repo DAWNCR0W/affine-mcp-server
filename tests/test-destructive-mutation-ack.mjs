@@ -8,7 +8,10 @@ import * as Y from "yjs";
 import { deleteDoc } from "../dist/ws.js";
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
-import { deleteDocFromWorkspace } from "../dist/tools/docs.js";
+import {
+  createAcknowledgedDeletedDocTracker,
+  deleteDocFromWorkspace,
+} from "../dist/tools/docs.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
 
@@ -162,6 +165,32 @@ class ToolRegistry {
   registerTool(name, _definition, handler) {
     this.tools.set(name, handler);
   }
+}
+
+function testAcknowledgedDeleteTrackerBounds() {
+  let currentTime = 0;
+  const tracker = createAcknowledgedDeletedDocTracker({
+    ttlMs: 100,
+    maxEntries: 2,
+    now: () => currentTime,
+  });
+
+  tracker.remember("workspace-1", "doc-1");
+  currentTime = 50;
+  tracker.remember("workspace-1", "doc-2");
+  assert.deepEqual([...tracker.idsFor("workspace-1")], ["doc-1", "doc-2"]);
+
+  currentTime = 75;
+  tracker.remember("workspace-2", "doc-3");
+  assert.deepEqual([...tracker.idsFor("workspace-1")], ["doc-2"]);
+  assert.deepEqual([...tracker.idsFor("workspace-2")], ["doc-3"]);
+
+  currentTime = 151;
+  assert.deepEqual([...tracker.idsFor("workspace-1")], []);
+  assert.deepEqual([...tracker.idsFor("workspace-2")], ["doc-3"]);
+
+  tracker.forget("workspace-2", "doc-3");
+  assert.deepEqual([...tracker.idsFor("workspace-2")], []);
 }
 
 async function testDeleteDocProtocol() {
@@ -484,6 +513,7 @@ async function testAdditionalMutationReceipts() {
   assert.equal(parseToolResult(await updateWorkspace({ id: "workspace-1", public: true })).ok, true);
 }
 
+testAcknowledgedDeleteTrackerBounds();
 await testDeleteDocProtocol();
 await testDocumentReceipts();
 await testWorkspaceReceipts();

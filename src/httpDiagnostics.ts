@@ -12,9 +12,11 @@ async function probeAffineGraphql(config: ServerConfig): Promise<void> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "User-Agent": `affine-mcp-server/${VERSION}`,
-    "x-affine-version": AFFINE_CLIENT_VERSION,
     ...(config.headers || {}),
   };
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === "x-affine-version")) {
+    headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
+  }
   if (config.apiToken) headers.Authorization = `Bearer ${config.apiToken}`;
 
   const controller = new AbortController();

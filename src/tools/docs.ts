@@ -650,8 +650,70 @@ export async function deleteDocFromWorkspace(
   }
 }
 
+type AcknowledgedDeletedDocTrackerOptions = {
+  ttlMs?: number;
+  maxEntries?: number;
+  now?: () => number;
+};
+
+export function createAcknowledgedDeletedDocTracker({
+  ttlMs = 10 * 60_000,
+  maxEntries = 10_000,
+  now = Date.now,
+}: AcknowledgedDeletedDocTrackerOptions = {}) {
+  const entries = new Map<string, Map<string, number>>();
+
+  const forget = (workspaceId: string, docId: string) => {
+    const workspaceEntries = entries.get(workspaceId);
+    workspaceEntries?.delete(docId);
+    if (workspaceEntries?.size === 0) {
+      entries.delete(workspaceId);
+    }
+  };
+
+  const prune = (currentTime: number) => {
+    const retained: Array<{ workspaceId: string; docId: string; acknowledgedAt: number }> = [];
+    for (const [workspaceId, workspaceEntries] of entries) {
+      for (const [docId, acknowledgedAt] of workspaceEntries) {
+        if (currentTime - acknowledgedAt >= ttlMs) {
+          workspaceEntries.delete(docId);
+        } else {
+          retained.push({ workspaceId, docId, acknowledgedAt });
+        }
+      }
+      if (workspaceEntries.size === 0) {
+        entries.delete(workspaceId);
+      }
+    }
+
+    const overflow = retained.length - maxEntries;
+    if (overflow > 0) {
+      retained.sort((left, right) => left.acknowledgedAt - right.acknowledgedAt);
+      for (const entry of retained.slice(0, overflow)) {
+        forget(entry.workspaceId, entry.docId);
+      }
+    }
+  };
+
+  return {
+    remember(workspaceId: string, docId: string) {
+      const currentTime = now();
+      prune(currentTime);
+      const workspaceEntries = entries.get(workspaceId) || new Map<string, number>();
+      workspaceEntries.set(docId, currentTime);
+      entries.set(workspaceId, workspaceEntries);
+      prune(currentTime);
+    },
+    forget,
+    idsFor(workspaceId: string): Set<string> {
+      prune(now());
+      return new Set(entries.get(workspaceId)?.keys() || []);
+    },
+  };
+}
+
 export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
-  const acknowledgedDeletedDocIds = new Map<string, Set<string>>();
+  const acknowledgedDeletedDocs = createAcknowledgedDeletedDocTracker();
 
   // helpers
   function generateId(): string {
@@ -4184,7 +4246,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const inTrashByDocId = new Map<string, boolean>();
       let workspacePageCount: number | null = null;
       let workspacePageIds: Set<string> | null = null;
-      const deletedDocIds = new Set(acknowledgedDeletedDocIds.get(workspaceId) || []);
+      const deletedDocIds = acknowledgedDeletedDocs.idsFor(workspaceId);
       try {
         const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
@@ -4202,7 +4264,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             for (const docId of deletedDocIds) {
               if (workspacePageIds.has(docId)) {
                 deletedDocIds.delete(docId);
-                acknowledgedDeletedDocIds.get(workspaceId)?.delete(docId);
+                acknowledgedDeletedDocs.forget(workspaceId, docId);
               }
             }
             const { byId } = getWorkspaceTagOptionMaps(meta);
@@ -6341,9 +6403,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const result = await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
       const deletion = result.structuredContent as { ok?: boolean; status?: string } | undefined;
       if (deletion?.ok === true && (deletion.status === "deleted" || deletion.status === "already_absent")) {
-        const deletedIds = acknowledgedDeletedDocIds.get(workspaceId) || new Set<string>();
-        deletedIds.add(parsed.docId);
-        acknowledgedDeletedDocIds.set(workspaceId, deletedIds);
+        acknowledgedDeletedDocs.remember(workspaceId, parsed.docId);
       }
       return result;
     } finally {

@@ -379,7 +379,7 @@ export function registerWorkspaceTools(
         
         const workspace = result.data.createWorkspace;
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-        const baseUrl = process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '');
+        const baseUrl = affineBaseUrl(endpoint);
 
         try {
           const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
