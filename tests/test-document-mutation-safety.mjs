@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 
 import {
+  buildWorkspaceListDocsFallbackConnection,
   collectLinkedChildIds,
   documentMoveToolResult,
+  isWorkspaceListDocsPermissionDenied,
   requestListDocsWithPublicFallback,
   removeEmbeddedLinkedDocumentBlocks,
 } from "../dist/tools/docs.js";
@@ -58,6 +60,56 @@ import {
     /forbidden/,
   );
   assert.equal(requestCount, 1, "unrelated GraphQL errors must not use the fallback query");
+}
+
+{
+  assert.equal(
+    isWorkspaceListDocsPermissionDenied(new Error("You do not have permission to access Space workspace-1")),
+    true,
+  );
+  assert.equal(isWorkspaceListDocsPermissionDenied(new Error("GraphQL error: forbidden")), false);
+}
+
+{
+  const pages = Array.from({ length: 205 }, (_, index) => ({
+    id: `doc-${index}`,
+    title: `Document ${index}`,
+    createdAt: 1_700_000_000_000 + index,
+    updatedAt: null,
+    tags: index === 2 ? ["important"] : [],
+    inTrash: index === 3,
+  }));
+  const firstPage = buildWorkspaceListDocsFallbackConnection("workspace-1", pages, {
+    first: 999,
+    offset: 2,
+  });
+  assert.equal(firstPage.totalCount, 205);
+  assert.equal(firstPage.edges.length, 200, "fallback results are bounded to 200 entries");
+  assert.equal(firstPage.edges[0].node.id, "doc-2");
+  assert.equal(firstPage.edges[0].node.summary, null);
+  assert.equal(firstPage.edges[0].node.public, null);
+  assert.equal(firstPage.edges[0].node.defaultRole, null);
+  assert.deepEqual(firstPage.edges[0].node.tags, ["important"]);
+  assert.equal(firstPage.pageInfo.hasNextPage, true);
+
+  const secondPage = buildWorkspaceListDocsFallbackConnection("workspace-1", pages, {
+    first: 5,
+    after: firstPage.pageInfo.endCursor,
+  });
+  assert.deepEqual(secondPage.edges.map((edge) => edge.node.id), ["doc-202", "doc-203", "doc-204"]);
+  assert.equal(secondPage.pageInfo.hasNextPage, false);
+  assert.equal(secondPage.pageInfo.endCursor, secondPage.edges.at(-1).cursor);
+
+  assert.throws(
+    () => buildWorkspaceListDocsFallbackConnection("workspace-1", pages, { after: "invalid-cursor" }),
+    /Invalid list_docs cursor/,
+  );
+  const foreignCursor = buildWorkspaceListDocsFallbackConnection("workspace-2", pages, { first: 1 })
+    .pageInfo.endCursor;
+  assert.throws(
+    () => buildWorkspaceListDocsFallbackConnection("workspace-1", pages, { after: foreignCursor }),
+    /Invalid list_docs cursor/,
+  );
 }
 
 function dependencies(overrides = {}) {
