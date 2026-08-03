@@ -86,6 +86,22 @@ assert.equal(toolOutputSchemaFor("get_doc").safeParse({ id: "doc-1" }).success, 
 assert.equal(toolOutputSchemaFor("get_doc").safeParse({ value: null }).success, true);
 assert.equal(toolOutputSchemaFor("get_doc").safeParse({ value: "missing" }).success, false);
 
+const frameChildrenOutput = {
+  updated: true,
+  blockId: "frame-1",
+  flavour: "affine:frame",
+  ownedIds: ["shape-1"],
+  missing: [],
+  resized: true,
+  xywh: { x: 10, y: 20, width: 300, height: 200 },
+};
+assert.equal(toolOutputSchemaFor("update_frame_children").safeParse(frameChildrenOutput).success, true);
+assert.equal(
+  toolOutputSchemaFor("update_frame_children").safeParse({ ...frameChildrenOutput, xywh: "[10,20,300,200]" }).success,
+  false,
+  "update_frame_children must advertise the parsed frame bounds returned by its handler",
+);
+
 const server = new McpServer({ name: "output-schema-test", version: "1.0.0" });
 installOutputSchemaRegistration(server);
 server.registerTool(

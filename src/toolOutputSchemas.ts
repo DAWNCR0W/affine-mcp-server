@@ -125,7 +125,7 @@ const OUTPUT_SPECS = {
   update_doc_title: receipt({ workspaceId: "string", updated: "boolean", docId: "string", title: "string" }),
   update_edgeless_block: spec({ updated: "boolean", blockId: "string", flavour: "string", changed: "stringArray", ignored: "stringArray" }),
   update_folder_icon: receipt({ workspaceId: "string", folderId: "string", icon: "icon", cleared: "boolean" }),
-  update_frame_children: spec({ updated: "boolean", blockId: "string", flavour: "string", ownedIds: "stringArray", missing: "stringArray", resized: "boolean", xywh: "string" }, true),
+  update_frame_children: spec({ updated: "boolean", blockId: "string", flavour: "string", ownedIds: "stringArray", missing: "stringArray", resized: "boolean", xywh: "object" }, true),
   update_profile: fallible(spec({ id: "string", name: "string", avatarUrl: "nullableString", error: "string" }, true)),
   update_settings: fallible(spec({ success: "boolean", error: "string" }, true)),
   update_surface_element: spec({ updated: "boolean", elementId: "string", type: "nullableString", changed: "stringArray", ignored: "stringArray" }),
