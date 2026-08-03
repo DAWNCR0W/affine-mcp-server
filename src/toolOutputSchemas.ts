@@ -92,7 +92,7 @@ const OUTPUT_SPECS = {
   list_collections: spec({ items: "unknownArray" }),
   list_comments: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
   list_doc_properties: spec({ workspaceId: "string", docId: "string", definitions: "unknownArray", properties: "unknownArray", orphanValues: "unknownArray" }),
-  list_docs: spec({ items: "unknownArray" }),
+  list_docs: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
   list_docs_by_tag: spec({ workspaceId: "string", tag: "string", ignoreCase: "boolean", totalDocs: "number", docs: "unknownArray" }),
   list_histories: spec({ items: "unknownArray" }),
   list_notifications: fallible(spec({ items: "unknownArray", error: "string" }, true)),

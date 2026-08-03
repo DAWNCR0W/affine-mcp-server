@@ -97,14 +97,6 @@ server.registerTool(
   async () => text({ added: true, columnId: "col-1", name: "Status", type: "select" }),
 );
 server.registerTool(
-  "list_docs",
-  {
-    inputSchema: {},
-    outputSchema: toolOutputSchemaFor("list_docs"),
-  },
-  async () => text([{ id: "doc-1", title: "Example" }]),
-);
-server.registerTool(
   "list_collections",
   {
     inputSchema: {},
@@ -165,13 +157,6 @@ assert.deepEqual(columnResult.structuredContent, {
   name: "Status",
   type: "select",
 });
-
-const listResult = await client.callTool({ name: "list_docs", arguments: {} });
-assert.deepEqual(listResult.content, [{
-  type: "text",
-  text: '[{"id":"doc-1","title":"Example"}]',
-}]);
-assert.deepEqual(listResult.structuredContent, { items: [{ id: "doc-1", title: "Example" }] });
 
 const collectionListResult = await client.callTool({ name: "list_collections", arguments: {} });
 assert.deepEqual(collectionListResult.content, [{
@@ -253,18 +238,29 @@ await server.close();
 
 const docServer = new McpServer({ name: "get-doc-output-schema-test", version: "1.0.0" });
 installOutputSchemaRegistration(docServer);
+const listDocsPayload = {
+  totalCount: 1,
+  pageInfo: { hasNextPage: false, endCursor: "cursor-1" },
+  edges: [{
+    cursor: "cursor-1",
+    node: { id: "doc-1", workspaceId: "workspace-1", title: "Example" },
+  }],
+};
 const docGql = {
   async request(query, variables) {
-    if (!query.includes("query GetDoc")) {
-      throw new Error("Unexpected GraphQL request in get_doc output-schema test");
+    if (query.includes("query ListDocs")) {
+      return { workspace: { docs: listDocsPayload } };
     }
-    return {
-      workspace: {
-        doc: variables.docId === "missing-doc"
-          ? null
-          : { id: variables.docId, workspaceId: variables.workspaceId, title: "Example" },
-      },
-    };
+    if (query.includes("query GetDoc")) {
+      return {
+        workspace: {
+          doc: variables.docId === "missing-doc"
+            ? null
+            : { id: variables.docId, workspaceId: variables.workspaceId, title: "Example" },
+        },
+      };
+    }
+    throw new Error("Unexpected GraphQL request in document output-schema test");
   },
 };
 registerDocTools(docServer, docGql, { workspaceId: "workspace-1" });
@@ -274,6 +270,27 @@ const listedDocTools = await docClient.listTools();
 const getDocDefinition = listedDocTools.tools.find(tool => tool.name === "get_doc");
 assert.equal(getDocDefinition.outputSchema?.type, "object");
 assert.equal(getDocDefinition.outputSchema?.properties?.value?.type, "null");
+const listDocsDefinition = listedDocTools.tools.find(tool => tool.name === "list_docs");
+assert.deepEqual(Object.keys(listDocsDefinition.outputSchema.properties).sort(), [
+  "edges",
+  "pageInfo",
+  "totalCount",
+]);
+
+const listDocsResult = await docClient.callTool({ name: "list_docs", arguments: {} });
+assert.deepEqual(listDocsResult.structuredContent, {
+  ...listDocsPayload,
+  edges: [{
+    cursor: "cursor-1",
+    node: {
+      id: "doc-1",
+      workspaceId: "workspace-1",
+      title: "Example",
+      tags: [],
+      inTrash: false,
+    },
+  }],
+});
 
 const existingDocResult = await docClient.callTool({
   name: "get_doc",
