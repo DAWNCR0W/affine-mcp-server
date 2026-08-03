@@ -20,6 +20,7 @@ import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
+import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
 import {
   assertOAuthServiceWritePolicy,
   createToolFilterEnvironment,
@@ -142,9 +143,6 @@ console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
 
 console.error(`[affine-mcp] Workspace: ${config.defaultWorkspaceId ? 'set' : '(none)'}`);
 
-if (config.authMode === "oauth" && !useHttpTransport) {
-  throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
-}
 assertOAuthServiceWritePolicy({
   authMode: config.authMode,
   allowServiceWrites: config.oauthAllowServiceWrites,
@@ -182,8 +180,10 @@ async function buildServer() {
   } else {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
+      const outputSchema = options?.outputSchema ?? toolOutputSchemaFor(name);
       return originalRegisterTool(name, {
         ...options,
+        ...(outputSchema ? { outputSchema } : {}),
         annotations: {
           ...toolAnnotationsFor(name),
           ...(options?.annotations || {}),

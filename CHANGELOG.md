@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added declared MCP `outputSchema` metadata for all 92 canonical tools so ChatGPT and other clients can validate structured results and reason about follow-up calls.
+
+### Tests
+- Added output-schema coverage and MCP round-trip validation, and included it in the default test and CI gates.
+
 ## [3.1.0] - 2026-07-27
 
 ### Added
@@ -48,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `unreadOnly` now reports that it filters only the fetched page and leaves server totals and page info unchanged.
 - `read_all_notifications` now returns `applied` and `status`; false and exception outcomes use stable MCP error envelopes instead of success-shaped responses.
 - Raised the supported Node.js runtime floor to 20 to match the installed dependency graph and added CI coverage for Node.js 20 and 24.
+- Array and scalar tool results now include a stable object-shaped `structuredContent` envelope (`items`, `text`, or `value`) while preserving the existing text content for compatibility.
 - Centralized GraphQL endpoint, transport, login, port, host, CORS, and HTTP bearer settings under one `environment > saved config > defaults` resolver with strict validation.
 - Updated `status`, `doctor`, `show-config`, login, and generated client snippets to use the same effective configuration as the MCP runtime, including custom GraphQL paths and non-token authentication.
 - Made `/readyz` verify the exact configured AFFiNE GraphQL endpoint in addition to OAuth discovery.

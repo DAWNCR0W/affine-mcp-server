@@ -171,6 +171,8 @@ Node.js 20 is the minimum supported runtime. CI validates the minimum runtime an
 
 `tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`; tool definitions returned by `tools/list` include MCP annotations that mark read-only, destructive, idempotent, and external-world behavior for client-side tool selection.
 
+Every canonical tool also declares an MCP `outputSchema` for its `structuredContent`. Object results retain their existing top-level fields, while array and scalar results use stable `{ items }`, `{ text }`, or `{ value }` envelopes. The existing text `content` remains unchanged for compatibility with clients that do not consume structured results.
+
 Domains:
 
 - Workspace: create, inspect, update, delete, and traverse workspaces
