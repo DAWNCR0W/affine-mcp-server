@@ -13,6 +13,7 @@ type FieldKind =
   | "object"
   | "nullableObject"
   | "icon"
+  | "null"
   | "unknown";
 
 type OutputSpec = {
@@ -48,7 +49,7 @@ const OUTPUT_SPECS = {
   append_block: receipt({ workspaceId: "nullableString", docId: "string", appended: "boolean", blockId: "string", flavour: "string", type: "nullableString", blockType: "nullableString", normalizedType: "string", legacyType: "nullableString" }),
   append_markdown: receipt({ workspaceId: "string", docId: "string", appended: "boolean", appendedCount: "number", blockIds: "stringArray", warnings: "stringArray", lossy: "boolean", stats: "object" }),
   append_semantic_section: spec({ workspaceId: "string", docId: "string", noteId: "string", sectionTitle: "string", sectionHeadingId: "string", afterSectionTitle: "nullableString", blockIds: "stringArray", appendedCount: "number" }),
-  cleanup_blobs: fallible(spec({ success: "boolean", workspaceId: "string", blobsReleased: "boolean", error: "string" }, true)),
+  cleanup_blobs: fallible(receipt({ status: "string", success: "boolean", workspaceId: "string", blobsReleased: "boolean" }, true)),
   clear_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", cleared: "boolean" }),
   compose_database_from_intent: spec({ workspaceId: "string", docId: "string", intent: "string", title: "string", databaseBlockId: "string", primaryViewId: "nullableString", viewIds: "stringArray", columnIds: "stringArray", rowBlockIds: "stringArray", columns: "unknownArray", views: "unknownArray", warnings: "stringArray", lossy: "boolean", stats: "object" }),
   create_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
@@ -62,7 +63,7 @@ const OUTPUT_SPECS = {
   create_workspace: fallible(receipt({ workspaceId: "string", id: "string", name: "string", avatar: "string", firstDocId: "string", syncStatus: "string", status: "string", message: "string", url: "string", error: "string" }, true)),
   create_workspace_blueprint: spec({ workspaceId: "string", rootFolderId: "string", rootFolderName: "string", childFolders: "unknownArray", childFolderCount: "number", storageDocId: "string" }),
   current_user: spec({ id: "string", name: "string", email: "string", emailVerified: "boolean", avatarUrl: "nullableString", disabled: "boolean" }),
-  delete_blob: fallible(spec({ success: "boolean", key: "string", workspaceId: "string", permanently: "boolean", error: "string" }, true)),
+  delete_blob: fallible(receipt({ status: "string", success: "boolean", key: "string", workspaceId: "string", permanently: "boolean", deleted: "boolean" }, true)),
   delete_block: spec({ deleted: "boolean", blockId: "string", reason: "string", deletedIds: "stringArray", prunedConnectors: "stringArray" }, true),
   delete_collection: spec({ success: "boolean", collectionId: "string" }),
   delete_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
@@ -72,14 +73,14 @@ const OUTPUT_SPECS = {
   delete_folder: spec({ success: "boolean", deletedIds: "stringArray" }),
   delete_organize_link: spec({ success: "boolean", nodeId: "string" }),
   delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", prunedConnectors: "stringArray" }, true),
-  delete_tag: spec({ workspaceId: "string", tag: "string", tagId: "string", value: "string", deleted: "boolean", affectedDocs: "number", docMetaSynced: "boolean", warnings: "stringArray" }),
+  delete_tag: spec({ workspaceId: "string", tag: "string", tagId: "string", value: "string", deleted: "boolean", affectedDocs: "number", docMetaSynced: "number", warnings: "stringArray" }),
   delete_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", deleted: "boolean", success: "boolean", message: "string", error: "string" }, true)),
   export_doc_markdown: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", markdown: "string", warnings: "stringArray", lossy: "boolean", stats: "object" }),
   export_with_fidelity_report: spec({ docId: "string", exists: "boolean", markdown: "string", fidelity: "object" }),
   find_doc_by_title: spec({ query: "string", caseInsensitive: "boolean", matches: "unknownArray", workspaceDocCount: "number", truncated: "boolean" }),
   get_capabilities: spec({ server: "object", docs: "object" }),
   get_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
-  get_doc: spec({ id: "string" }),
+  get_doc: spec({ id: "string", value: "null" }, true),
   get_doc_icon: receipt({ workspaceId: "string", docId: "string", icon: "icon", hasIcon: "boolean" }),
   get_edgeless_canvas: spec({ docId: "string", exists: "boolean", surfaceBlockId: "nullableString", edgelessBlocks: "unknownArray", surfaceElements: "unknownArray", bounds: "nullableObject", elementCounts: "object" }),
   get_folder_icon: receipt({ workspaceId: "string", folderId: "string", icon: "icon", hasIcon: "boolean" }),
@@ -129,7 +130,7 @@ const OUTPUT_SPECS = {
   update_settings: fallible(spec({ success: "boolean", error: "string" }, true)),
   update_surface_element: spec({ updated: "boolean", elementId: "string", type: "nullableString", changed: "stringArray", ignored: "stringArray" }),
   update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true)),
-  upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", size: "number", uploadedAt: "string", error: "string" }, true)),
+  upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true)),
 } satisfies Record<ToolName, OutputSpec>;
 
 /** Canonical tools whose handlers can return the shared structured error envelope. */
@@ -157,6 +158,7 @@ function fieldSchema(kind: FieldKind): ZodTypeAny {
       z.object({ type: z.literal("icon"), name: z.string() }),
       z.null(),
     ]);
+    case "null": return z.null();
     case "unknown": return z.unknown();
     default: {
       const exhaustive: never = kind;

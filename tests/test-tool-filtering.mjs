@@ -2,6 +2,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = path.resolve(__dirname, "..", "src", "index.ts");
 const REPO_ROOT = path.resolve(__dirname, "..");
 const TSX_CLI_PATH = path.resolve(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+const MANIFEST_TOOLS = JSON.parse(
+  fs.readFileSync(path.resolve(REPO_ROOT, "tool-manifest.json"), "utf8"),
+).tools;
 const execFileAsync = promisify(execFile);
 
 async function listToolEntries(env = {}) {
@@ -111,17 +115,28 @@ async function run() {
       "create_doc_from_template",
       "duplicate_doc",
       "find_and_replace",
+      "generate_access_token",
       "get_doc_by_title",
       "get_docs_by_tag",
       "list_backlinks",
+      "list_access_tokens",
       "list_unresolved_threads",
+      "revoke_access_token",
       "update_database_cell",
     ];
     const stillRegistered = removedTools.filter(t => allTools.includes(t));
-    if (allTools.length === 92 && stillRegistered.length === 0) {
-      console.log("✅ Success: Default tool surface exposes 92 tools.");
+    const actualTools = [...allTools].sort();
+    const expectedTools = [...MANIFEST_TOOLS].sort();
+    const exactManifestMatch = JSON.stringify(actualTools) === JSON.stringify(expectedTools);
+    if (exactManifestMatch && stillRegistered.length === 0) {
+      console.log(`✅ Success: Default tool surface exactly matches all ${MANIFEST_TOOLS.length} manifest tools.`);
     } else {
-      console.error(`❌ Failed: Default tool surface mismatch. count=${allTools.length} stillRegistered=${stillRegistered.join(", ")}`);
+      const missing = expectedTools.filter(tool => !actualTools.includes(tool));
+      const extra = actualTools.filter(tool => !expectedTools.includes(tool));
+      console.error(
+        `❌ Failed: Default tool surface mismatch. count=${allTools.length} ` +
+        `missing=${missing.join(", ")} extra=${extra.join(", ")} stillRegistered=${stillRegistered.join(", ")}`,
+      );
       hasFailures = true;
     }
 
