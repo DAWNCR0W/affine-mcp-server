@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import {
   collectLinkedChildIds,
   documentMoveToolResult,
+  requestListDocsWithPublicFallback,
   removeEmbeddedLinkedDocumentBlocks,
 } from "../dist/tools/docs.js";
 
@@ -15,6 +16,49 @@ import {
   isDocumentMoveSuccessful,
   toDocumentMoveResult,
 } from "../dist/util/mutationSafety.js";
+
+{
+  const queries = [];
+  const result = await requestListDocsWithPublicFallback({
+    async request(query) {
+      queries.push(query);
+      if (queries.length === 1) {
+        throw new Error("GraphQL error: Cannot return null for non-nullable field DocType.public.");
+      }
+      return {
+        workspace: {
+          docs: {
+            totalCount: 1,
+            pageInfo: { hasNextPage: false, endCursor: "cursor-1" },
+            edges: [{ cursor: "cursor-1", node: { id: "doc-1", title: "New doc" } }],
+          },
+        },
+      };
+    },
+  }, { workspaceId: "workspace-1", first: 50 });
+
+  assert.equal(queries.length, 2);
+  assert.match(queries[0], /\bpublic\b/);
+  assert.doesNotMatch(queries[1], /\bpublic\b/);
+  assert.equal(result.workspace.docs.edges[0].node.public, null);
+  assert.deepEqual(result.workspace.docs.warnings, [
+    "AFFiNE document visibility metadata was unavailable; affected public values are null.",
+  ]);
+}
+
+{
+  let requestCount = 0;
+  await assert.rejects(
+    requestListDocsWithPublicFallback({
+      async request() {
+        requestCount += 1;
+        throw new Error("GraphQL error: forbidden");
+      },
+    }, { workspaceId: "workspace-1" }),
+    /forbidden/,
+  );
+  assert.equal(requestCount, 1, "unrelated GraphQL errors must not use the fallback query");
+}
 
 function dependencies(overrides = {}) {
   const events = [];

@@ -4,7 +4,6 @@ import "./require-destructive-test-safety.mjs";
 import assert from "node:assert/strict";
 
 import { receipt, text, toolError } from "../dist/util/mcp.js";
-import { registerAccessTokenTools } from "../dist/tools/accessTokens.js";
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
@@ -70,14 +69,12 @@ const falseResultClient = {
       readAllNotifications: false,
       releaseDeletedBlobs: false,
       resolveComment: false,
-      revokeUserAccessToken: false,
       updateComment: false,
       updateSettings: false,
     };
   },
 };
 const registry = new ToolRegistry();
-registerAccessTokenTools(registry, falseResultClient);
 registerBlobTools(registry, falseResultClient);
 registerCommentTools(registry, falseResultClient, {});
 registerNotificationTools(registry, falseResultClient);
@@ -85,7 +82,6 @@ registerUserCRUDTools(registry, falseResultClient);
 registerWorkspaceTools(registry, falseResultClient);
 
 const falseMutationCases = [
-  ["revoke_access_token", { id: "token-1" }, "access_token_revoke_failed"],
   ["delete_blob", { workspaceId: "workspace-1", key: "blob-1" }, "blob_delete_failed"],
   [
     "cleanup_blobs",

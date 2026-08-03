@@ -98,7 +98,7 @@ assert.throws(
   /AFFINE_TEST_RUN_ID must be 8-96 characters/,
 );
 
-const mutationPattern = /\b(create_workspace|delete_workspace|create_doc|delete_doc|generate_access_token|append_block|update_profile|ensureAdminUser)\b/;
+const mutationPattern = /\b(create_workspace|delete_workspace|create_doc|delete_doc|append_block|update_profile|ensureAdminUser)\b/;
 const staticOnlyFiles = new Set(['test-tool-filtering.mjs', 'test-oauth-service-policy.mjs']);
 const liveTestFiles = fs.readdirSync(testDirectory)
   .filter(name => name.endsWith('.mjs'))

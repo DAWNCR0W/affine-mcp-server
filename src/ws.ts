@@ -1,7 +1,7 @@
 import { io, Socket } from "socket.io-client";
 
 export type WorkspaceSocket = Socket<any, any>;
-const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || '0.26.0';
+const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
 const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS || 10000);
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
 
@@ -14,15 +14,19 @@ function ackErrorMessage(ack: any, fallback: string): string | null {
 function deleteAcknowledged(ack: any): boolean {
   return ack === true
     || ack?.deleted === true
+    || ack?.success === true
     || ack?.data === true
-    || ack?.data?.deleted === true;
+    || ack?.data?.deleted === true
+    || ack?.data?.success === true;
 }
 
 function deleteRejected(ack: any): boolean {
   return ack === false
     || ack?.deleted === false
+    || ack?.success === false
     || ack?.data === false
-    || ack?.data?.deleted === false;
+    || ack?.data?.deleted === false
+    || ack?.data?.success === false;
 }
 
 function emitWithAck<T>(
@@ -164,11 +168,10 @@ export type DeleteDocOptions = {
 /**
  * Delete a document and wait for a trustworthy completion signal.
  *
- * AFFiNE 0.26 returns an error acknowledgement, but its successful
- * `space:delete-doc` handler returns void. NestJS filters that void response and
- * therefore sends no success acknowledgement. To remain compatible, this
- * helper accepts a future success acknowledgement and otherwise verifies that
- * `space:load-doc` returns DOC_NOT_FOUND before resolving.
+ * AFFiNE versions may return no successful acknowledgement, `{ deleted: true }`,
+ * or `{ data: { success: true } }`. AFFiNE 0.27.3 also retains the underlying
+ * snapshot for garbage collection, so a successful acknowledgement must be
+ * recognized instead of relying exclusively on a follow-up DOC_NOT_FOUND.
  */
 export function deleteDoc(
   socket: WorkspaceSocket,

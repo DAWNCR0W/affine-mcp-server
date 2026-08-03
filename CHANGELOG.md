@@ -8,9 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Added declared MCP `outputSchema` metadata for all 95 tools so ChatGPT and other clients can validate structured results and reason about follow-up calls.
+- Added declared MCP `outputSchema` metadata for all 92 canonical tools so ChatGPT and other clients can validate structured results and reason about follow-up calls.
+
+### Tests
+- Added output-schema coverage and MCP round-trip validation, and included it in the default test and CI gates.
+
+## [3.1.0] - 2026-07-27
+
+### Added
+- `list_workspaces` and `get_workspace` now include best-effort workspace profile names, avatar references, direct URLs, and an explicit profile status while preserving the existing GraphQL fields and list response shape.
+
+### Fixed
+- Email/password sign-in and all GraphQL/REST requests now send the `x-affine-version` header (configurable via the new `AFFINE_CLIENT_VERSION`, default `0.26.0`). AFFiNE servers that gate on a minimum web-client version previously rejected sign-in with `403 ACTION_FORBIDDEN` (`UNSUPPORTED_CLIENT_VERSION`), leaving the MCP server unable to connect. `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION` so a single variable can govern both the HTTP and realtime-socket client versions.
+- Environment authentication now overrides saved token, cookie, and authentication-header credentials as one source-scoped group, so client-provided email/password credentials cannot be masked by stale local auth state.
+- Document deletion now recognizes AFFiNE 0.27.3 success acknowledgements and filters only locally acknowledged deletions from stale `list_docs` edges while upstream indexing converges.
+- Acknowledged deletion tombstones now expire after ten minutes and retain at most 10,000 entries, bounding process memory while preserving the index-convergence window.
+- Case-insensitive `x-affine-version` overrides now replace the default cleanly in CLI and readiness requests instead of producing duplicate header values.
+- Created-workspace URLs now derive from the same canonical AFFiNE origin resolver used by workspace discovery, including custom GraphQL paths.
+- Documented how to launch MCP Inspector with a named Claude Desktop server configuration instead of starting an unauthenticated standalone process.
+
+### Tests
+- Added CLI, mock-AFFiNE, and live integration regression coverage for environment email/password authentication overriding saved API tokens, cookies, and authentication headers while retaining unrelated saved headers.
+- Added deterministic and live integration coverage for workspace profile enrichment, failure isolation, and the GraphQL-only `includeProfile: false` fast path.
+- Hardened Playwright sign-in setup against clicks that occur before the self-hosted AFFiNE page finishes hydrating.
+
+### Dependencies
+- Updated `jose` from 6.2.3 to 6.2.4.
+- Refreshed locked HTTP and URI parser dependencies, including `hono`, `body-parser`, `type-is`, and `fast-uri`, clearing the current high-severity audit finding.
+
+## [3.0.1] - 2026-07-21
+
+### Added
+- Markdown import now converts `[label](LinkedPage:<docId>)` links into native inline linked-doc references, and Markdown export serializes those references back to the same `LinkedPage:` scheme, making inline doc references round-trip safe.
+
+## [3.0.0] - 2026-07-20
 
 ### Changed
+- Breaking: aligned authentication with AFFiNE 0.27+ by making email/password and session cookies the supported current-stable paths; compatible GraphQL bearer tokens remain accepted for older deployments.
+- `affine-mcp login` now saves the authenticated session cookie instead of calling the removed personal-access-token mutation, and can accept a browser session through `--cookie`.
+- OAuth-protected MCP deployments can now use email/password or a session cookie for the shared AFFiNE backend service identity instead of requiring `AFFINE_API_TOKEN`.
 - Empty Markdown replacements require explicit `allowEmpty: true` confirmation, and document creation responses expose repair status when a follow-up placement step fails.
 - Added bounded integer schemas for pagination, search limits, history size, and tree depth.
 - Permanent document, workspace, and blob cleanup operations now require an exact identifier confirmation before any AFFiNE request is sent.
@@ -32,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth deployment guidance now distinguishes MCP caller authentication from AFFiNE backend identity delegation.
 
 ### Fixed
+- `list_docs` now falls back to a query without `public` visibility metadata when AFFiNE transiently violates that field's non-null contract; affected values are returned as `null` with an explicit warning instead of failing the whole document list.
 - Tool handlers now return MCP `isError: true` with stable error codes, retryability, and machine-readable context instead of reporting failures as successful text results.
 - Structured receipts derive `ok` from explicit `ok`, `success`, and failed status values rather than defaulting every operation to success.
 - Document moves now validate source and destination documents, reject hierarchy cycles, add the destination link before removing the source link, and report partial outcomes without orphaning the document.
@@ -56,8 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bearer, cookie, custom-header, and email/password credentials now follow one exclusive priority order across GraphQL, multipart, and WebSocket consumers.
 - Failed asynchronous login state is shared by every consumer while an explicit later `sign_in` can safely establish a new cookie session.
 
+### Removed
+- Breaking: removed `list_access_tokens`, `generate_access_token`, and `revoke_access_token` because AFFiNE 0.27 removed the legacy personal-access-token GraphQL API; the canonical public tool surface is now 92 tools.
+
 ### Tests
-- Added output-schema coverage and MCP round-trip validation, and included it in the default test and CI gates.
 - Added self-contained coverage for success, error, and partial receipt contracts.
 - Added self-contained regression coverage for safe document move ordering, cycle rejection, partial failures, idempotent destination links, and Markdown batch failure policy.
 - Added self-contained external URL safety regressions and included them in the package CI gate.
@@ -72,6 +111,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added self-contained regression coverage for config precedence, custom GraphQL paths, environment-only diagnostics, HTTP runtime flags, CORS, and upstream-aware readiness.
 - Added a self-contained mock AFFiNE regression suite for concurrent authentication, async request gating, credential exclusivity, failure propagation, and explicit recovery.
 - Added regression coverage for OAuth read-only defaults, explicit write acknowledgement, profile handling, and fully disabled write surfaces.
+
+### Dependencies
+- Updated GitHub Actions setup-node usage to v7.
+- Refreshed locked TypeScript, Node.js type, and `tsx` development dependencies.
 
 ## [2.5.0] - 2026-07-06
 
@@ -596,6 +639,9 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.1.0
+[3.0.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.0.1
+[3.0.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.0.0
 [2.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.5.0
 [2.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.4.0
 [2.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v2.3.0
@@ -623,4 +669,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.1.0...HEAD

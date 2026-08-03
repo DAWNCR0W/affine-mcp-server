@@ -16,13 +16,15 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_workspaces` | List all available workspaces | Good first discovery step |
-| `get_workspace` | Read workspace details | Includes settings and metadata |
+| `list_workspaces` | List all available workspaces | Includes best-effort profile names, avatar references, and direct URLs; set `includeProfile: false` for a faster GraphQL-only response |
+| `get_workspace` | Read workspace details | Includes permissions plus best-effort profile metadata and a direct URL |
 | `create_workspace` | Create a workspace with an initial document | Destructive in the sense that it creates new server state |
 | `update_workspace` | Update workspace settings | Use carefully in shared workspaces |
 | `delete_workspace` | Permanently delete a workspace | Destructive; `confirmWorkspaceId` must exactly match `id`; unconfirmed outcomes return an MCP error instead of a success receipt |
 | `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs; depth is limited to 0-20 |
 | `get_orphan_docs` | Find documents that are not linked from a parent doc | Useful for cleanup and audits |
+
+`list_workspaces` and `get_workspace` add `name`, `avatar`, `url`, and `profileStatus` to the existing GraphQL fields. `profileStatus` is `available`, `unavailable`, or `skipped`. Profile loading is best effort, so a realtime metadata failure leaves the GraphQL workspace visible with nullable profile fields. The `avatar` value is AFFiNE's stored avatar reference and is not guaranteed to be an external URL.
 
 ## Organization
 
@@ -76,7 +78,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `create_doc` | Create a new document | WebSocket-backed |
-| `create_doc_from_markdown` | Create a document from Markdown content | |
+| `create_doc_from_markdown` | Create a document from Markdown content | `[label](LinkedPage:<docId>)` links become native inline linked-doc references |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
@@ -175,7 +177,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | --- | --- | --- |
 | `list_histories` | List document history timestamps | |
 
-## Users and tokens
+## Users and authentication
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
@@ -183,9 +185,6 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | `sign_in` | Sign in with email and password | Self-hosted flows only for direct programmatic sign-in |
 | `update_profile` | Update current user profile data | |
 | `update_settings` | Update user notification preferences | |
-| `list_access_tokens` | List personal access tokens | |
-| `generate_access_token` | Create a personal access token | Sensitive operation |
-| `revoke_access_token` | Revoke a personal access token | Destructive |
 
 ## Notifications
 

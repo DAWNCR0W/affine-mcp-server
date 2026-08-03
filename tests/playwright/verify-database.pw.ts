@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signInToAffine } from './sign-in.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,36 +45,10 @@ if (!password) throw new Error('AFFINE_ADMIN_PASSWORD env var required');
 
 test.describe.serial('AFFiNE Database Verification', () => {
   test('login to AFFiNE', async ({ page, context }) => {
+    test.setTimeout(180_000);
     const baseUrl = state.baseUrl;
 
-    // Navigate directly to the sign-in page
-    await page.goto(`${baseUrl}/sign-in`);
-    await page.waitForLoadState('domcontentloaded');
-
-    // Fill email — the placeholder is "Enter your email address"
-    const emailInput = page.locator('input[type="email"], input[name="email"], input[placeholder*="email"]');
-    await emailInput.waitFor({ timeout: 30_000 });
-    await emailInput.fill(state.email);
-
-    // Click "Continue with email"
-    const continueBtn = page.locator(
-      'button:has-text("Continue with email"), button:has-text("Continue"), button[type="submit"]',
-    );
-    await continueBtn.first().click();
-
-    // Fill password
-    const passwordInput = page.locator('input[type="password"], input[name="password"]');
-    await passwordInput.waitFor({ timeout: 15_000 });
-    await passwordInput.fill(password);
-
-    // Click sign in / submit
-    const signInBtn = page.locator(
-      'button:has-text("Sign in"), button:has-text("Log in"), button[type="submit"]',
-    );
-    await signInBtn.first().click();
-
-    // Wait for redirect away from sign-in page
-    await page.waitForURL(url => !url.toString().includes('/sign-in'), { timeout: 30_000 });
+    await signInToAffine(page, { baseUrl, email: state.email, password });
 
     // Dismiss any onboarding modals/dialogs that may appear
     for (let i = 0; i < 5; i++) {

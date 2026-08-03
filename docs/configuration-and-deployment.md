@@ -12,11 +12,24 @@ The server resolves configuration in this order:
 
 The saved config file uses the same `KEY=value` names shown below. Environment variables always override saved values, and the CLI diagnostics report the source selected for each runtime option.
 
+Authentication credentials are resolved as one source-scoped group. If the
+environment provides any of `AFFINE_API_TOKEN`, `AFFINE_COOKIE`,
+`AFFINE_EMAIL`, or `AFFINE_PASSWORD`, saved authentication credentials are not
+mixed into that environment configuration. An `Authorization` or `Cookie`
+entry in an environment-provided `AFFINE_HEADERS_JSON` also selects the
+environment authentication group. Non-authentication headers from saved
+configuration remain available when no environment `AFFINE_HEADERS_JSON`
+replaces them.
+
 Auth priority within the active configuration:
 
 1. `AFFINE_API_TOKEN`
 2. `AFFINE_COOKIE`
 3. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
+
+This priority is applied only within the selected environment or saved-config
+group. For example, environment email/password credentials take precedence
+over an older saved API token or session cookie.
 
 Email/password authentication is process-scoped. Concurrent HTTP MCP sessions
 share one sign-in attempt and the resulting cookie. In the default `async`
@@ -40,6 +53,7 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
 | `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
 | `AFFINE_LOGIN_AT_START` | No | `async` | `async` starts one shared login without blocking transport startup; `sync` requires login before startup |
+| `AFFINE_CLIENT_VERSION` | No | `0.26.0` | AFFiNE web-client version sent as the `x-affine-version` header on GraphQL/REST requests. Servers that gate on client version reject sign-in with `403 UNSUPPORTED_CLIENT_VERSION` when it is too low; raise this if your deployment pins a higher minimum. Also used as the fallback default for `AFFINE_WS_CLIENT_VERSION` |
 | `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
 
 ### Blob upload safeguards
@@ -56,10 +70,10 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Variable | Use when | Notes |
 | --- | --- | --- |
-| `AFFINE_API_TOKEN` | Preferred for cloud and automation | Recommended default for stable operation |
-| `AFFINE_COOKIE` | You must reuse browser-authenticated state | Copy only from a trusted local browser session |
-| `AFFINE_EMAIL` | Self-hosted email/password sign-in | Must be paired with `AFFINE_PASSWORD` |
-| `AFFINE_PASSWORD` | Self-hosted email/password sign-in | Avoid for automated public deployments |
+| `AFFINE_API_TOKEN` | A legacy or compatible AFFiNE deployment accepts GraphQL bearer tokens | AFFiNE 0.27+ removed the legacy personal-access-token API; this server cannot generate one |
+| `AFFINE_COOKIE` | Reuse browser-authenticated state, including AFFiNE Cloud | Copy the complete Cookie request header only from a trusted local browser session |
+| `AFFINE_EMAIL` | Self-hosted email/password sign-in | Recommended for current self-hosted AFFiNE; must be paired with `AFFINE_PASSWORD` |
+| `AFFINE_PASSWORD` | Self-hosted email/password sign-in | Use a dedicated least-privilege account for unattended deployments |
 
 ### Tool filtering
 
@@ -96,7 +110,7 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AFFINE_WS_CLIENT_VERSION` | No | `0.26.0` | Environment-only AFFiNE client version sent during workspace socket connection |
+| `AFFINE_WS_CLIENT_VERSION` | No | `AFFINE_CLIENT_VERSION` (else `0.26.0`) | Environment-only AFFiNE client version sent during workspace socket connection; falls back to `AFFINE_CLIENT_VERSION` when unset |
 | `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
 | `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement |
 
@@ -104,21 +118,22 @@ cookie, while setting a bearer credential removes any cookie header.
 
 | Environment | Recommended auth | Why |
 | --- | --- | --- |
-| AFFiNE Cloud + stdio | `AFFINE_API_TOKEN` or saved config from `affine-mcp login` | Cloud sign-in is blocked by Cloudflare |
-| AFFiNE Cloud + HTTP | `AFFINE_API_TOKEN` + bearer or OAuth at the MCP layer | Stable and automation-friendly |
-| Self-hosted + stdio | API token first, email/password second | Token reduces startup and sign-in failure modes |
-| Self-hosted + HTTP | API token first, cookie or email/password only if necessary | Better for unattended deployments |
+| AFFiNE Cloud + stdio | Browser session cookie or saved config from `affine-mcp login` | Cloud programmatic sign-in is blocked by Cloudflare |
+| AFFiNE Cloud + HTTP | Browser session cookie plus bearer or OAuth at the MCP layer | MCP caller auth and AFFiNE backend auth remain separate |
+| Self-hosted + stdio | Email/password or a session cookie | Supported by current AFFiNE without the removed token API |
+| Self-hosted + HTTP | Dedicated-account email/password or a session cookie | Suitable for shared backend service identity deployments |
 
 Important note for AFFiNE Cloud:
 
 - Programmatic email/password sign-in to `/api/auth/sign-in` is not supported because Cloudflare blocks those requests
+- AFFiNE's built-in MCP credentials authenticate its own workspace-scoped MCP endpoint and are not interchangeable with this external server's GraphQL credentials
 
 ## Docker
 
 Prebuilt images are published to GHCR:
 
 - `ghcr.io/dawncr0w/affine-mcp-server:latest`
-- `ghcr.io/dawncr0w/affine-mcp-server:2.5.0`
+- `ghcr.io/dawncr0w/affine-mcp-server:3.0.0`
 
 Example:
 
@@ -127,7 +142,8 @@ docker run -d \
   -p 3000:3000 \
   -e MCP_TRANSPORT=http \
   -e AFFINE_BASE_URL=https://your-affine-instance.com \
-  -e AFFINE_API_TOKEN=ut_your_token \
+  -e AFFINE_EMAIL=you@example.com \
+  -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
   ghcr.io/dawncr0w/affine-mcp-server:latest
@@ -170,8 +186,9 @@ instead of leaving a partially running process.
 ```bash
 export MCP_TRANSPORT=http
 export AFFINE_MCP_AUTH_MODE=bearer
-export AFFINE_BASE_URL="https://app.affine.pro"
-export AFFINE_API_TOKEN="ut_xxx"
+export AFFINE_BASE_URL="https://your-self-hosted-affine.example.com"
+export AFFINE_EMAIL="service-account@example.com"
+export AFFINE_PASSWORD="your-service-account-password"
 export AFFINE_MCP_HTTP_HOST="0.0.0.0"
 export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
 export PORT=3000
@@ -202,8 +219,9 @@ authentication for local development.
 ```bash
 export MCP_TRANSPORT=http
 export AFFINE_MCP_AUTH_MODE=oauth
-export AFFINE_BASE_URL="https://app.affine.pro"
-export AFFINE_API_TOKEN="your-affine-service-token"
+export AFFINE_BASE_URL="https://your-self-hosted-affine.example.com"
+export AFFINE_EMAIL="service-account@example.com"
+export AFFINE_PASSWORD="your-service-account-password"
 export AFFINE_MCP_HTTP_HOST="0.0.0.0"
 export AFFINE_MCP_PUBLIC_BASE_URL="https://mcp.yourdomain.com"
 export AFFINE_OAUTH_ISSUER_URL="https://auth.yourdomain.com"
@@ -219,8 +237,8 @@ OAuth mode behavior:
 - returns `401` + `WWW-Authenticate` challenge for unauthenticated `/mcp` requests
 - disables `AFFINE_MCP_HTTP_TOKEN` and `?token=`
 - does not register `sign_in`
-- still requires `AFFINE_API_TOKEN` so the server can call AFFiNE
-- authenticates callers at the MCP boundary but does not delegate their identity to AFFiNE; every request uses the same `AFFINE_API_TOKEN` service identity
+- still requires backend service credentials so the server can call AFFiNE: email/password, a session cookie, or a compatible bearer token
+- authenticates callers at the MCP boundary but does not delegate their identity to AFFiNE; every request uses the same configured backend service identity
 - defaults `AFFINE_TOOL_PROFILE` to `read_only` when no profile is configured
 - refuses any write-capable tool surface unless `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true` is also set
 
@@ -299,9 +317,6 @@ Current group names:
 - `users.read`
 - `users.write`
 - `users.auth`
-- `access_tokens`
-- `access_tokens.read`
-- `access_tokens.write`
 - `blobs`
 - `blobs.write`
 - `notifications`
@@ -325,7 +340,7 @@ Example:
 }
 ```
 
-Use tool-level filtering when you want a mostly complete tool surface but need to remove specific operations such as destructive actions or administrative access-token tools.
+Use tool-level filtering when you want a mostly complete tool surface but need to remove specific destructive or administrative operations.
 
 Every registered tool must also be present in the canonical tool surface and `tool-manifest.json`. The server refuses to start when a tool is registered without that metadata, including when the `full` profile is selected.
 
@@ -334,7 +349,7 @@ Every registered tool must also be present in the canonical tool surface and `to
 Before exposing the server remotely, confirm:
 
 - `AFFINE_BASE_URL` is reachable from the MCP host
-- `AFFINE_API_TOKEN` works through `affine-mcp status` or an equivalent health path
+- the configured AFFiNE backend credentials work through `affine-mcp status` or an equivalent health path
 - `MCP_TRANSPORT=http` is set
 - `AFFINE_MCP_AUTH_MODE` is correct for your client model
 - `AFFINE_MCP_HTTP_HOST=0.0.0.0` is set in containerized deployments
@@ -349,7 +364,7 @@ Before exposing the server remotely, confirm:
 
 ## Troubleshooting pointers
 
-- Cloudflare / sign-in failures: switch to an API token
+- Cloudflare / sign-in failures: use a signed-in browser session cookie
 - Startup timeouts: avoid `AFFINE_LOGIN_AT_START=sync` unless required
 - Missing tools: confirm filtering variables are not removing them
 - Browser CORS failures: verify `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`

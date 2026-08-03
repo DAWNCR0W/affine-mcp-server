@@ -1,5 +1,114 @@
 # Release Notes
 
+## Version 3.1.0 (2026-07-27)
+
+### Highlights
+- Workspace discovery now returns best-effort profile names, avatar references, direct URLs, and explicit profile status without changing the existing top-level result shape.
+- Self-hosted email/password authentication is more reliable on AFFiNE 0.27.3 because environment credentials override stale saved authentication and every HTTP path sends the required client-version header.
+- Document deletion now recognizes AFFiNE 0.27.3 success acknowledgements and hides only confirmed deletions while upstream indexes converge.
+
+### What Changed
+- Workspace discovery
+  - `list_workspaces` and `get_workspace` enrich GraphQL results with profile metadata when available.
+  - `list_workspaces` accepts `includeProfile: false` for a faster GraphQL-only response.
+  - Profile lookup failures are isolated per workspace instead of failing the entire result.
+- Authentication and compatibility
+  - Added `AFFINE_CLIENT_VERSION` with a default of `0.26.0` and send `x-affine-version` on sign-in, GraphQL, REST, CLI, and readiness requests.
+  - `AFFINE_WS_CLIENT_VERSION` now falls back to `AFFINE_CLIENT_VERSION`, while explicit case-insensitive header overrides replace the default without duplicate values.
+  - Environment authentication is resolved as one credential group, preventing saved tokens, cookies, or authentication headers from masking client-provided email/password credentials.
+  - MCP Inspector setup guidance now explains how to load a named Claude Desktop server configuration.
+- Document lifecycle
+  - `delete_doc` accepts top-level and nested success acknowledgements returned by current AFFiNE servers.
+  - Successfully acknowledged deletions are filtered from stale document listings without hiding unrelated orphan documents.
+  - Acknowledged deletion tombstones expire after ten minutes and retain at most 10,000 entries.
+- Workspace URLs
+  - Newly created workspaces use the same canonical AFFiNE origin resolver as workspace discovery, including deployments with custom GraphQL paths.
+- Dependencies and security
+  - Updated `jose` from 6.2.3 to 6.2.4.
+  - Refreshed locked HTTP and URI parser dependencies and cleared the current high-severity `fast-uri` audit finding.
+
+### Compatibility
+- No tools were removed and no existing input is required to change.
+- Node.js 20 or newer remains required.
+- Operators can override `AFFINE_CLIENT_VERSION` when an AFFiNE deployment requires a newer minimum client version.
+
+### Validation Evidence
+- `npm run ci`
+- `npm audit --audit-level=high`
+- `npm run test:comprehensive`
+- `AFFINE_REVISION=0.27.3 npm run test:e2e`
+- package smoke test and `npm publish --dry-run --access public --ignore-scripts`
+
+## Version 3.0.1 (2026-07-21)
+
+### Highlights
+- Markdown import and export now preserve AFFiNE inline LinkedPage references, allowing linked-page relationships to round-trip safely through Markdown.
+
+### What Changed
+- Valid `[label](LinkedPage:<docId>)` links import as native inline references instead of broken URL links.
+- Exported native references serialize back to the same `LinkedPage:` Markdown scheme.
+- Standalone LinkedPage links remain paragraphs rather than being converted into invalid bookmark blocks.
+- Added fast regression coverage for parsing, rendering, compatibility, and round-trip behavior.
+
+### Validation Evidence
+- `npm run ci`
+- `npm run test:e2e`
+- `npm run pack:check`
+
+## Version 3.0.0 (2026-07-20)
+
+### Highlights
+- Updated the server for AFFiNE 0.27+ authentication and removed the obsolete personal-access-token tool family.
+- Raised the minimum runtime to Node.js 20 and expanded CI coverage across the supported runtime range.
+- Made tool failures, structured receipts, notification pagination, document moves, and destructive mutations fail closed with stable machine-readable contracts.
+- Hardened Markdown import/export, external URL handling, blob uploads, HTTP exposure, OAuth service-account policy, and destructive live tests.
+- Unified runtime, CLI, Docker, and HTTP configuration under one strict `environment > saved config > defaults` resolver.
+
+### Breaking Changes and Migration
+- The public surface is now 92 tools. `list_access_tokens`, `generate_access_token`, and `revoke_access_token` were removed because AFFiNE 0.27 removed the legacy GraphQL API behind them.
+- For current self-hosted AFFiNE, configure `AFFINE_EMAIL` with `AFFINE_PASSWORD` or use `AFFINE_COOKIE`. For AFFiNE Cloud, use a Cookie request header from a signed-in browser session.
+- `AFFINE_API_TOKEN` remains supported only when the target deployment accepts a compatible GraphQL bearer token.
+- `affine-mcp login` now saves the authenticated session cookie and accepts an existing session through `--cookie`.
+- Node.js 20 or newer is required.
+- Permanent document, workspace, and blob cleanup operations require exact identifier confirmation, and several mutation and notification responses now use stricter structured contracts.
+
+### What Changed
+- Authentication and OAuth
+  - Email/password authentication is process-scoped and single-flight across concurrent MCP sessions.
+  - OAuth mode accepts email/password, session-cookie, or compatible bearer-token backend service credentials while keeping MCP caller identity separate.
+  - OAuth deployments default to `read_only`; write-capable profiles require `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true`.
+- Mutation and result safety
+  - Tool errors now set MCP `isError: true` and include stable codes, retryability, and machine-readable context.
+  - Document moves validate both ends, prevent cycles, preserve destination-first ordering, and report partial outcomes.
+  - Document, workspace, blob, notification, and Markdown mutations no longer return success-shaped results for rejected or partial operations.
+- Content and input hardening
+  - Markdown export preserves supported rich-text attributes and escapes untrusted structure, destinations, frontmatter, fences, and table content.
+  - URL-bearing blocks reject unsafe schemes, parser differentials, embedded credentials, and provider-host lookalikes before writing AFFiNE state.
+  - Blob uploads enforce explicit binary encoding, decoded-size, timeout, response-size, and HTTP-status contracts.
+  - Pagination, search, history, tree depth, destructive confirmation, and random identifier inputs now fail closed at their boundaries.
+- Runtime and operations
+  - CLI diagnostics and generated client snippets use the exact runtime configuration, including custom GraphQL paths and non-token credentials.
+  - Document listing degrades unavailable AFFiNE `public` metadata to `null` with a warning instead of failing the entire result.
+  - `/readyz` verifies the configured AFFiNE GraphQL endpoint and OAuth discovery when enabled.
+  - HTTP runtime limits, shutdown behavior, CORS, remote bind policy, and bearer-token transport rules are validated strictly.
+  - Docker E2E runs use isolated Compose projects, private generated credentials, scoped cleanup, and collision-resistant resource names.
+- Release and dependency maintenance
+  - Added manifest-driven test classification, package-smoke validation, release metadata and ancestry verification, and safe PR-route enforcement.
+  - Updated GitHub Actions setup-node usage and refreshed locked TypeScript, Node.js type, and `tsx` development dependencies.
+
+### Validation Evidence
+- Release sanity gate:
+  - `npm run ci`
+- Security audit:
+  - `npm audit --audit-level=high`
+- Package smoke and publish dry run:
+  - `npm pack`
+  - `npm run test:package-smoke -- --tarball <tarball>`
+  - `npm publish --dry-run --access public`
+- Docker-backed end-to-end validation:
+  - `npm run test:e2e`
+  - `npm run test:comprehensive`
+
 ## Version 2.5.0 (2026-07-06)
 
 ### Highlights

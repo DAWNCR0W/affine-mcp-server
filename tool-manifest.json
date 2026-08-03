@@ -1,5 +1,5 @@
 {
-  "version": "2.5.0",
+  "version": "3.1.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -40,7 +40,6 @@
     "export_doc_markdown",
     "export_with_fidelity_report",
     "find_doc_by_title",
-    "generate_access_token",
     "get_capabilities",
     "get_collection",
     "get_doc",
@@ -51,7 +50,6 @@
     "get_workspace",
     "inspect_template_structure",
     "instantiate_template_native",
-    "list_access_tokens",
     "list_children",
     "list_collections",
     "list_comments",
@@ -77,7 +75,6 @@
     "rename_folder",
     "replace_doc_with_markdown",
     "resolve_comment",
-    "revoke_access_token",
     "revoke_doc",
     "search_docs",
     "set_doc_property",

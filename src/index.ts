@@ -9,7 +9,6 @@ import { registerCommentTools } from "./tools/comments.js";
 import { registerHistoryTools } from "./tools/history.js";
 import { registerUserTools } from "./tools/user.js";
 import { registerUserCRUDTools } from "./tools/userCRUD.js";
-import { registerAccessTokenTools } from "./tools/accessTokens.js";
 import { registerBlobTools } from "./tools/blobStorage.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { AuthSession, parseLoginMode } from "./authSession.js";
@@ -73,15 +72,6 @@ const toolFilter = createToolFilter(toolFilterEnvironment);
 if (config.authMode === "oauth" && !useHttpTransport) {
   throw new Error("AFFINE_MCP_AUTH_MODE=oauth requires MCP_TRANSPORT=http (or streamable/sse).");
 }
-if (config.authMode === "oauth" && !config.apiToken) {
-  throw new Error("AFFINE_API_TOKEN is required when AFFINE_MCP_AUTH_MODE=oauth.");
-}
-if (config.authMode === "oauth" && (config.cookie || config.email || config.password)) {
-  console.error(
-    "[affine-mcp] OAuth mode uses the configured AFFINE_API_TOKEN service credential. " +
-    "Ignoring AFFINE_COOKIE / AFFINE_EMAIL / AFFINE_PASSWORD.",
-  );
-}
 if (config.authMode === "oauth" && process.env.AFFINE_LOGIN_AT_START) {
   console.error("[affine-mcp] AFFINE_LOGIN_AT_START is ignored when AFFINE_MCP_AUTH_MODE=oauth.");
 }
@@ -113,16 +103,24 @@ if (!config.apiToken && configuredAuthorization !== undefined) {
 }
 
 const sessionBearer = config.apiToken || headerBearer;
-const sessionCookie = config.authMode === "oauth" || sessionBearer
+const sessionCookie = sessionBearer
   ? undefined
   : config.cookie || configuredCookie;
 const authSession = new AuthSession({
   baseUrl: config.baseUrl,
   bearer: sessionBearer,
   cookie: sessionCookie,
-  email: config.authMode === "oauth" || sessionBearer || sessionCookie ? undefined : config.email,
-  password: config.authMode === "oauth" || sessionBearer || sessionCookie ? undefined : config.password,
+  email: sessionBearer || sessionCookie ? undefined : config.email,
+  password: sessionBearer || sessionCookie ? undefined : config.password,
+  headers: config.headers,
 });
+
+if (config.authMode === "oauth" && !authSession.hasConfiguredAuth) {
+  throw new Error(
+    "AFFINE_MCP_AUTH_MODE=oauth requires AFFiNE backend service credentials. " +
+    "Set AFFINE_EMAIL and AFFINE_PASSWORD, AFFINE_COOKIE, or a compatible AFFINE_API_TOKEN.",
+  );
+}
 
 // The process-scoped AuthSession owns credentials after configuration is loaded.
 config.email = undefined;
@@ -139,7 +137,7 @@ const authSource = authSession.hasConfiguredAuth ? authSession.source : "not con
 console.error(`[affine-mcp] Auth: ${authSource}`);
 if (authSource === "not configured") {
   console.error("[affine-mcp] WARNING: No authentication configured. Some operations may fail.");
-  console.error("[affine-mcp] Set AFFINE_API_TOKEN or run: affine-mcp login");
+  console.error("[affine-mcp] Set AFFINE_EMAIL and AFFINE_PASSWORD, AFFINE_COOKIE, or run: affine-mcp login");
 }
 console.error(`[affine-mcp] HTTP auth mode: ${config.authMode}`);
 
@@ -157,7 +155,7 @@ if (
 ) {
   console.error(
     "[affine-mcp] WARNING: OAuth service-account writes are enabled. Every authorized OAuth caller " +
-    "can mutate AFFiNE with the shared AFFINE_API_TOKEN permissions.",
+    "can mutate AFFiNE with the shared backend service identity permissions.",
   );
 }
 
@@ -210,7 +208,6 @@ async function buildServer() {
   if (config.authMode !== "oauth") {
     registerAuthTools(server, gql, config.baseUrl);
   }
-  registerAccessTokenTools(server, gql);
   registerBlobTools(server, gql);
   registerNotificationTools(server, gql);
   return server;

@@ -118,8 +118,8 @@ async function run() {
       "update_database_cell",
     ];
     const stillRegistered = removedTools.filter(t => allTools.includes(t));
-    if (allTools.length === 95 && stillRegistered.length === 0) {
-      console.log("✅ Success: Default tool surface exposes 95 tools.");
+    if (allTools.length === 92 && stillRegistered.length === 0) {
+      console.log("✅ Success: Default tool surface exposes 92 tools.");
     } else {
       console.error(`❌ Failed: Default tool surface mismatch. count=${allTools.length} stillRegistered=${stillRegistered.join(", ")}`);
       hasFailures = true;
@@ -261,7 +261,6 @@ async function run() {
     });
     const trimmed = [
       "delete_workspace",
-      "generate_access_token",
       "cleanup_blobs",
       "create_workspace_blueprint",
       "add_organize_link",
@@ -285,7 +284,6 @@ async function run() {
       "delete_doc",
       "delete_surface_element",
       "cleanup_blobs",
-      "generate_access_token",
       "update_profile",
     ];
     const visibleRestricted = hiddenAuthoring.filter(t => tools8.includes(t));

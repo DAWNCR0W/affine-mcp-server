@@ -6,10 +6,10 @@ This guide provides copy-paste configuration for the most common MCP clients.
 
 | Client | Transport | Recommended auth | Best starting point |
 | --- | --- | --- | --- |
-| Claude Code | stdio | Saved config or API token | `affine-mcp login` + `command: "affine-mcp"` |
-| Claude Desktop | stdio | Saved config or API token | Config JSON with `command: "affine-mcp"` |
-| Codex CLI | stdio | Saved config or API token | `codex mcp add affine -- affine-mcp` |
-| Cursor | stdio | Saved config or API token | `.cursor/mcp.json` |
+| Claude Code | stdio | Saved config | `affine-mcp login` + `command: "affine-mcp"` |
+| Claude Desktop | stdio | Saved config or session cookie | Config JSON with `command: "affine-mcp"` |
+| Codex CLI | stdio | Saved config or self-hosted email/password | `codex mcp add affine -- affine-mcp` |
+| Cursor | stdio | Saved config or session cookie | `.cursor/mcp.json` |
 | Remote HTTP MCP clients | HTTP | Bearer token or OAuth | See [configuration and deployment](configuration-and-deployment.md#http-mode) |
 
 ## Claude Code
@@ -35,7 +35,7 @@ Explicit environment variables:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "your-complete-cookie-request-header"
       }
     }
   }
@@ -57,7 +57,7 @@ Typical config paths:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "your-complete-cookie-request-header"
       }
     }
   }
@@ -81,6 +81,30 @@ Self-hosted email/password example:
 }
 ```
 
+## MCP Inspector
+
+MCP Inspector does not automatically read Claude Desktop's server
+configuration. Starting it with only `affine-mcp` launches a separate process
+without the `AFFINE_*` environment variables from
+`claude_desktop_config.json`.
+
+To inspect the same `affine` server configuration on macOS, pass the Claude
+Desktop config file explicitly:
+
+```bash
+npx @modelcontextprotocol/inspector \
+  --config "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
+  --server affine
+```
+
+On Linux, use `~/.config/Claude/claude_desktop_config.json`. On Windows, use
+`%APPDATA%\Claude\claude_desktop_config.json`. The value passed to `--server`
+must match the key under `mcpServers`.
+
+Inspector also accepts individual server environment variables through
+repeated `-e KEY=value` arguments. Prefer the config-file form for passwords
+and other secrets so they are not copied into shell history.
+
 ## Codex CLI
 
 With saved config:
@@ -89,12 +113,12 @@ With saved config:
 codex mcp add affine -- affine-mcp
 ```
 
-With an API token:
+With an AFFiNE Cloud browser session:
 
 ```bash
 codex mcp add affine \
   --env AFFINE_BASE_URL=https://app.affine.pro \
-  --env AFFINE_API_TOKEN=ut_xxx \
+  --env 'AFFINE_COOKIE=your-complete-cookie-request-header' \
   -- affine-mcp
 ```
 
@@ -119,7 +143,7 @@ Project-local `.cursor/mcp.json`:
       "command": "affine-mcp",
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "your-complete-cookie-request-header"
       }
     }
   }
@@ -136,7 +160,7 @@ Project-local `.cursor/mcp.json`:
       "args": ["-y", "-p", "affine-mcp-server", "affine-mcp"],
       "env": {
         "AFFINE_BASE_URL": "https://app.affine.pro",
-        "AFFINE_API_TOKEN": "ut_xxx"
+        "AFFINE_COOKIE": "your-complete-cookie-request-header"
       }
     }
   }
@@ -172,7 +196,9 @@ browser history.
 ## Setup tips
 
 - Prefer `affine-mcp login` for local development
-- Prefer `AFFINE_API_TOKEN` for AFFiNE Cloud
-- Prefer tokens over passwords for automated environments
+- Use a signed-in browser session cookie for AFFiNE Cloud
+- Use a dedicated least-privilege account for automated self-hosted environments
+- Use `AFFINE_API_TOKEN` only when the target deployment still accepts a compatible GraphQL bearer token
 - If your shell treats `!` specially, wrap passwords in single quotes
+- When using MCP Inspector, pass `--config` and `--server` or supply the required `AFFINE_*` values with `-e`
 - Use `affine-mcp doctor` whenever a client config looks correct but the connection still fails

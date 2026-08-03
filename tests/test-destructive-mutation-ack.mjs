@@ -6,10 +6,12 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 
 import { deleteDoc } from "../dist/ws.js";
-import { registerAccessTokenTools } from "../dist/tools/accessTokens.js";
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
-import { deleteDocFromWorkspace } from "../dist/tools/docs.js";
+import {
+  createAcknowledgedDeletedDocTracker,
+  deleteDocFromWorkspace,
+} from "../dist/tools/docs.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
 
@@ -116,6 +118,14 @@ class FakeWorkspaceSocket {
           ack?.({ data: { deleted: false } });
           return;
         }
+        if (this.deleteMode === "server-success-ack") {
+          ack?.({ data: { success: true } });
+          return;
+        }
+        if (this.deleteMode === "server-negative-ack") {
+          ack?.({ data: { success: false } });
+          return;
+        }
         if (this.deleteMode === "empty-ack-still-present") {
           ack?.({});
           return;
@@ -157,6 +167,32 @@ class ToolRegistry {
   }
 }
 
+function testAcknowledgedDeleteTrackerBounds() {
+  let currentTime = 0;
+  const tracker = createAcknowledgedDeletedDocTracker({
+    ttlMs: 100,
+    maxEntries: 2,
+    now: () => currentTime,
+  });
+
+  tracker.remember("workspace-1", "doc-1");
+  currentTime = 50;
+  tracker.remember("workspace-1", "doc-2");
+  assert.deepEqual([...tracker.idsFor("workspace-1")], ["doc-1", "doc-2"]);
+
+  currentTime = 75;
+  tracker.remember("workspace-2", "doc-3");
+  assert.deepEqual([...tracker.idsFor("workspace-1")], ["doc-2"]);
+  assert.deepEqual([...tracker.idsFor("workspace-2")], ["doc-3"]);
+
+  currentTime = 151;
+  assert.deepEqual([...tracker.idsFor("workspace-1")], []);
+  assert.deepEqual([...tracker.idsFor("workspace-2")], ["doc-3"]);
+
+  tracker.forget("workspace-2", "doc-3");
+  assert.deepEqual([...tracker.idsFor("workspace-2")], []);
+}
+
 async function testDeleteDocProtocol() {
   const acknowledgedSocket = new FakeWorkspaceSocket({ deleteMode: "ack-success" });
   const acknowledged = await deleteDoc(acknowledgedSocket, "workspace-1", "doc-1", {
@@ -164,6 +200,13 @@ async function testDeleteDocProtocol() {
     verificationIntervalMs: 5,
   });
   assert.deepEqual(acknowledged, { acknowledged: true, verifiedAbsent: false });
+
+  const serverAcknowledgedSocket = new FakeWorkspaceSocket({ deleteMode: "server-success-ack" });
+  const serverAcknowledged = await deleteDoc(serverAcknowledgedSocket, "workspace-1", "doc-1", {
+    timeoutMs: 100,
+    verificationIntervalMs: 5,
+  });
+  assert.deepEqual(serverAcknowledged, { acknowledged: true, verifiedAbsent: false });
 
   const voidSuccessSocket = new FakeWorkspaceSocket({ deleteMode: "void-success" });
   const verified = await deleteDoc(voidSuccessSocket, "workspace-1", "doc-1", {
@@ -186,6 +229,15 @@ async function testDeleteDocProtocol() {
   const negativeAcknowledgementSocket = new FakeWorkspaceSocket({ deleteMode: "negative-ack" });
   await assert.rejects(
     deleteDoc(negativeAcknowledgementSocket, "workspace-1", "doc-1", {
+      timeoutMs: 100,
+      verificationIntervalMs: 5,
+    }),
+    /did not confirm document deletion/,
+  );
+
+  const serverNegativeAcknowledgementSocket = new FakeWorkspaceSocket({ deleteMode: "server-negative-ack" });
+  await assert.rejects(
+    deleteDoc(serverNegativeAcknowledgementSocket, "workspace-1", "doc-1", {
       timeoutMs: 100,
       verificationIntervalMs: 5,
     }),
@@ -414,21 +466,6 @@ async function testAdditionalMutationReceipts() {
   assert.equal(parseToolResult(await deleteComment({ id: "comment-1" })).ok, true);
   assert.equal(parseToolResult(await resolveComment({ id: "comment-1", resolved: true })).ok, true);
 
-  const tokenRegistry = new ToolRegistry();
-  let tokenBehavior = "false";
-  registerAccessTokenTools(tokenRegistry, {
-    async request() {
-      if (tokenBehavior === "throw") throw new Error("token service unavailable");
-      return { revokeUserAccessToken: tokenBehavior === "true" };
-    },
-  });
-  const revokeAccessToken = tokenRegistry.tools.get("revoke_access_token");
-  assertStableFailure(await revokeAccessToken({ id: "token-1" }), "access_token_revoke_failed", "not_applied");
-  tokenBehavior = "throw";
-  assertStableFailure(await revokeAccessToken({ id: "token-1" }), "access_token_revoke_failed");
-  tokenBehavior = "true";
-  assert.equal(parseToolResult(await revokeAccessToken({ id: "token-1" })).ok, true);
-
   const notificationRegistry = new ToolRegistry();
   let notificationBehavior = "false";
   registerNotificationTools(notificationRegistry, {
@@ -476,6 +513,7 @@ async function testAdditionalMutationReceipts() {
   assert.equal(parseToolResult(await updateWorkspace({ id: "workspace-1", public: true })).ok, true);
 }
 
+testAcknowledgedDeleteTrackerBounds();
 await testDeleteDocProtocol();
 await testDocumentReceipts();
 await testWorkspaceReceipts();

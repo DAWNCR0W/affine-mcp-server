@@ -15,6 +15,8 @@ type AuthSessionOptions = {
   cookie?: string;
   email?: string;
   password?: string;
+  /** Extra headers (e.g. from AFFINE_HEADERS_JSON) forwarded to email/password sign-in. */
+  headers?: Record<string, string>;
   login?: LoginFunction;
 };
 
@@ -29,6 +31,7 @@ export function parseLoginMode(raw: string | undefined): LoginMode {
 export class AuthSession {
   private readonly baseUrl: string;
   private readonly login: LoginFunction;
+  private readonly headers?: Record<string, string>;
   private email?: string;
   private password?: string;
   private immediate: AuthSnapshot;
@@ -42,6 +45,7 @@ export class AuthSession {
 
     this.baseUrl = options.baseUrl;
     this.login = options.login || loginWithPassword;
+    this.headers = options.headers;
     this.email = hasImmediateAuth ? undefined : options.email;
     this.password = hasImmediateAuth ? undefined : options.password;
 
@@ -89,7 +93,7 @@ export class AuthSession {
     console.error("[affine-mcp] Authenticating with email/password...");
 
     this.pending = Promise.resolve()
-      .then(() => this.login(this.baseUrl, email, password))
+      .then(() => this.login(this.baseUrl, email, password, this.headers))
       .then(({ cookieHeader }) => {
         this.immediate = { kind: "cookie", cookie: cookieHeader };
         console.error("[affine-mcp] Email/password authentication succeeded");

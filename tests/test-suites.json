@@ -2,7 +2,6 @@
   "version": 1,
   "classifications": {
     "test-auth-session.mjs": "fast",
-    "test-bearer-auth.mjs": "integration",
     "test-blob-upload-contract.mjs": "fast",
     "test-canvas-tool-map-demo.mjs": "integration",
     "test-capabilities-fidelity.mjs": "integration",
@@ -35,6 +34,7 @@
     "test-icons.mjs": "integration",
     "test-input-contracts.mjs": "fast",
     "test-live-test-safety.mjs": "fast",
+    "test-markdown-linked-page.mjs": "fast",
     "test-markdown-output-safety.mjs": "fast",
     "test-markdown-rich-text-import.mjs": "integration",
     "test-markdown-roundtrip.mjs": "fast",
@@ -60,7 +60,8 @@
     "test-test-suite-verifier.mjs": "fast",
     "test-theme-defaults-setup.mjs": "integration",
     "test-tool-filtering.mjs": "fast",
-    "test-url-safety.mjs": "fast"
+    "test-url-safety.mjs": "fast",
+    "test-workspace-discovery.mjs": "fast"
   },
   "suites": {
     "fast": [
@@ -77,6 +78,7 @@
       "test-http-security.mjs",
       "test-input-contracts.mjs",
       "test-live-test-safety.mjs",
+      "test-markdown-linked-page.mjs",
       "test-markdown-output-safety.mjs",
       "test-markdown-roundtrip.mjs",
       "test-mcp-result-contract.mjs",
@@ -88,12 +90,12 @@
       "test-secure-random.mjs",
       "test-test-suite-verifier.mjs",
       "test-tool-filtering.mjs",
-      "test-url-safety.mjs"
+      "test-url-safety.mjs",
+      "test-workspace-discovery.mjs"
     ],
     "e2e": [
       "test-database-creation.mjs",
       "test-database-linked-doc.mjs",
-      "test-bearer-auth.mjs",
       "test-http-email-password.mjs",
       "test-http-bearer.mjs",
       "test-oauth-http.mjs",

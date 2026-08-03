@@ -5,7 +5,6 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { ALL_TOOLS } from "../src/toolSurface.ts";
-import { registerAccessTokenTools } from "../src/tools/accessTokens.ts";
 import { registerBlobTools } from "../src/tools/blobStorage.ts";
 import { TOOLS_WITH_ERROR_OUTPUT, toolOutputSchemaFor } from "../src/toolOutputSchemas.ts";
 import { text } from "../src/util/mcp.ts";
@@ -56,7 +55,6 @@ server.registerTool(
   async () => text([{ id: "doc-1", title: "Example" }])
 );
 const backendResults = {
-  revokeUserAccessToken: false,
   deleteBlob: true,
   releaseDeletedBlobs: true,
 };
@@ -65,9 +63,6 @@ const gql = {
   headers: {},
   cookie: undefined,
   async request(query) {
-    if (query.includes("revokeUserAccessToken")) {
-      return { revokeUserAccessToken: backendResults.revokeUserAccessToken };
-    }
     if (query.includes("deleteBlob")) {
       return { deleteBlob: backendResults.deleteBlob };
     }
@@ -77,7 +72,6 @@ const gql = {
     throw new Error("Unexpected GraphQL request in output-schema test");
   },
 };
-registerAccessTokenTools(server, gql);
 registerBlobTools(server, gql);
 
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -108,38 +102,6 @@ assert.deepEqual(listResult.content, [{
   text: '[{"id":"doc-1","title":"Example"}]',
 }]);
 assert.deepEqual(listResult.structuredContent, { items: [{ id: "doc-1", title: "Example" }] });
-
-const revokeResult = await client.callTool({
-  name: "revoke_access_token",
-  arguments: { id: "token-1" },
-});
-assert.equal(revokeResult.isError, true);
-assert.deepEqual(revokeResult.structuredContent, {
-  kind: "access_token.revoke",
-  status: "not_applied",
-  tokenId: "token-1",
-  id: "token-1",
-  ok: false,
-  error: "AFFiNE did not confirm access token revocation.",
-  code: "access_token_revoke_failed",
-  retryable: false,
-});
-
-backendResults.revokeUserAccessToken = true;
-const successfulRevokeResult = await client.callTool({
-  name: "revoke_access_token",
-  arguments: { id: "token-1" },
-});
-assert.equal(successfulRevokeResult.isError, undefined);
-assert.deepEqual(successfulRevokeResult.structuredContent, {
-  kind: "access_token.revoke",
-  status: "revoked",
-  tokenId: "token-1",
-  id: "token-1",
-  revoked: true,
-  success: true,
-  ok: true,
-});
 
 const successfulDeleteBlobResult = await client.callTool({
   name: "delete_blob",

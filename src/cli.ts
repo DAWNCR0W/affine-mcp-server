@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as readline from "readline";
 
 import {
+  AFFINE_CLIENT_VERSION,
   buildGraphqlEndpoint,
   CONFIG_FILE,
   loadConfig,
@@ -43,6 +44,12 @@ type CliAuth = {
   token?: string;
   cookie?: string;
   headers?: Record<string, string>;
+};
+
+type LoginResult = {
+  token?: string;
+  cookie?: string;
+  workspaceId: string;
 };
 
 function ask(prompt: string, hidden = false): Promise<string> {
@@ -111,6 +118,9 @@ async function gql(
     "User-Agent": `affine-mcp-server/${VERSION}`,
     ...(auth.headers || {}),
   };
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === "x-affine-version")) {
+    headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
+  }
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`;
   if (auth.cookie) headers.Cookie = auth.cookie;
   const body: any = { query };
@@ -197,6 +207,15 @@ function getConfigValueSource(name: string, file: Record<string, string>, fallba
   return "unset";
 }
 
+function getEffectiveAuthValueSource(
+  name: string,
+  value: string | undefined,
+  file: Record<string, string>,
+): "env" | "config" | "unset" {
+  if (!value) return "unset";
+  return process.env[name] ? "env" : file[name] ? "config" : "unset";
+}
+
 function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
   const stored = loadConfigFile();
   const authKind = effective.apiToken
@@ -237,10 +256,10 @@ function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
       baseUrl: getConfigValueSource("AFFINE_BASE_URL", stored, "http://localhost:3010"),
       graphqlPath: getConfigValueSource("AFFINE_GRAPHQL_PATH", stored, "/graphql"),
       additionalHeaders: getConfigValueSource("AFFINE_HEADERS_JSON", stored),
-      apiToken: getConfigValueSource("AFFINE_API_TOKEN", stored),
-      cookie: getConfigValueSource("AFFINE_COOKIE", stored),
-      email: getConfigValueSource("AFFINE_EMAIL", stored),
-      password: getConfigValueSource("AFFINE_PASSWORD", stored),
+      apiToken: getEffectiveAuthValueSource("AFFINE_API_TOKEN", effective.apiToken, stored),
+      cookie: getEffectiveAuthValueSource("AFFINE_COOKIE", effective.cookie, stored),
+      email: getEffectiveAuthValueSource("AFFINE_EMAIL", effective.email, stored),
+      password: getEffectiveAuthValueSource("AFFINE_PASSWORD", effective.password, stored),
       workspaceId: getConfigValueSource("AFFINE_WORKSPACE_ID", stored),
       authMode: getConfigValueSource("AFFINE_MCP_AUTH_MODE", stored, "bearer"),
       publicBaseUrl: getConfigValueSource("AFFINE_MCP_PUBLIC_BASE_URL", stored),
@@ -272,13 +291,16 @@ async function resolveCliAuth(effective: ServerConfig): Promise<{ auth: CliAuth;
     };
   }
   if (effective.email && effective.password) {
-    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password);
+    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password, effective.headers);
     return {
       auth: { cookie: cookieHeader, headers: effective.headers },
       authKind: "email-password",
     };
   }
-  throw new CliError("No authentication configured. Run 'affine-mcp login' or set AFFINE_API_TOKEN.");
+  throw new CliError(
+    "No authentication configured. Run 'affine-mcp login' or set AFFINE_EMAIL and AFFINE_PASSWORD, " +
+    "AFFINE_COOKIE, or a compatible AFFINE_API_TOKEN.",
+  );
 }
 
 async function inspectConnection(graphqlEndpoint: string, auth: CliAuth): Promise<ConnectionInspection> {
@@ -378,7 +400,7 @@ async function detectWorkspace(
 async function loginWithEmail(
   baseUrl: string,
   graphqlEndpoint: string,
-): Promise<{ token: string; workspaceId: string }> {
+): Promise<LoginResult> {
   const email = await ask("Email: ");
   const password = await ask("Password: ", true);
   if (!email || !password) {
@@ -401,38 +423,19 @@ async function loginWithEmail(
     throw new CliError(`Session verification failed: ${err.message}`);
   }
 
-  console.error("Generating API token...");
-  let token: string;
-  try {
-    const data = await gql(
-      graphqlEndpoint,
-      auth,
-      `mutation($input: GenerateAccessTokenInput!) { generateUserAccessToken(input: $input) { id name token } }`,
-      { input: { name: `affine-mcp-${new Date().toISOString().slice(0, 10)}` } },
-    );
-    token = data.generateUserAccessToken.token;
-    console.error(`✓ Token created (name: ${data.generateUserAccessToken.name})\n`);
-  } catch (err: any) {
-    throw new CliError(
-      `Failed to generate token: ${err.message}\n` +
-      "You can create one manually in Affine Settings → Integrations → MCP Server",
-    );
-  }
-
-  const workspaceId = await detectWorkspace(graphqlEndpoint, { token });
-  return { token, workspaceId };
+  const workspaceId = await detectWorkspace(graphqlEndpoint, auth);
+  return { cookie: cookieHeader, workspaceId };
 }
 
 async function loginWithToken(
-  baseUrl: string,
   graphqlEndpoint: string,
-): Promise<{ token: string; workspaceId: string }> {
-  console.error("\nTo generate a token:");
-  console.error(`  1. Open ${baseUrl}/settings in your browser`);
-  console.error("  2. Account Settings → Integrations → MCP Server");
-  console.error("  3. Copy the Personal access token\n");
+): Promise<LoginResult> {
+  console.error(
+    "\nAFFiNE 0.27+ no longer provides legacy personal access tokens. " +
+    "Only use this option when your target deployment still accepts a compatible GraphQL bearer token.\n",
+  );
 
-  const token = await ask("API token: ", true);
+  const token = await ask("Compatible API token: ", true);
   if (!token) {
     throw new CliError("No token provided.");
   }
@@ -449,22 +452,52 @@ async function loginWithToken(
   return { token, workspaceId };
 }
 
+async function loginWithCookie(
+  baseUrl: string,
+  graphqlEndpoint: string,
+): Promise<LoginResult> {
+  console.error("\nTo use an existing browser session:");
+  console.error(`  1. Sign in to ${baseUrl}`);
+  console.error("  2. Open browser developer tools and inspect a request to /graphql");
+  console.error("  3. Copy the complete Cookie request header value\n");
+
+  const cookie = await ask("Session cookie: ", true);
+  if (!cookie) {
+    throw new CliError("No session cookie provided.");
+  }
+
+  console.error("Testing connection...");
+  try {
+    const data = await gql(graphqlEndpoint, { cookie }, "query { currentUser { name email } }");
+    console.error(`✓ Authenticated as: ${data.currentUser.name} <${data.currentUser.email}>\n`);
+  } catch (err: any) {
+    throw new CliError(`Authentication failed: ${err.message}`);
+  }
+
+  const workspaceId = await detectWorkspace(graphqlEndpoint, { cookie });
+  return { cookie, workspaceId };
+}
+
 async function login(args: string[]) {
   const parsedArgs = [...args];
   const providedUrl = consumeOption(parsedArgs, "--url");
   const providedGraphqlPath = consumeOption(parsedArgs, "--graphql-path");
   const providedToken = consumeOption(parsedArgs, "--token");
+  const providedCookie = consumeOption(parsedArgs, "--cookie");
   const providedWorkspaceId = consumeOption(parsedArgs, "--workspace-id");
   const force = consumeFlags(parsedArgs, "--force", "-f");
   ensureNoUnexpectedArgs(parsedArgs, "login");
+  if (providedToken && providedCookie) {
+    throw new CliError("Use either --token or --cookie, not both.");
+  }
 
   console.error("Affine MCP Server — Login\n");
 
   const existing = loadConfigFile();
-  if (existing.AFFINE_API_TOKEN) {
+  if (existing.AFFINE_API_TOKEN || existing.AFFINE_COOKIE || (existing.AFFINE_EMAIL && existing.AFFINE_PASSWORD)) {
     console.error(`Existing config: ${CONFIG_FILE}`);
     console.error(`  URL:       ${existing.AFFINE_BASE_URL || "(default)"}`);
-    console.error("  Token:     (set)");
+    console.error("  Auth:      (set)");
     console.error(`  Workspace: ${existing.AFFINE_WORKSPACE_ID || "(none)"}\n`);
     if (!force) {
       const overwrite = await ask("Overwrite? [y/N] ");
@@ -493,7 +526,7 @@ async function login(args: string[]) {
   );
   const graphqlEndpoint = buildGraphqlEndpoint(baseUrl, graphqlPath);
 
-  let result: { token: string; workspaceId: string };
+  let result: LoginResult;
 
   if (providedToken) {
     console.error("Testing provided token...");
@@ -507,19 +540,40 @@ async function login(args: string[]) {
       token: providedToken,
       workspaceId: await detectWorkspace(graphqlEndpoint, { token: providedToken }, providedWorkspaceId),
     };
+  } else if (providedCookie) {
+    console.error("Testing provided session cookie...");
+    try {
+      const info = await inspectConnection(graphqlEndpoint, { cookie: providedCookie });
+      console.error(`✓ Authenticated as: ${info.userName} <${info.userEmail}>\n`);
+    } catch (err: any) {
+      throw new CliError(`Authentication failed: ${err.message}`);
+    }
+    result = {
+      cookie: providedCookie,
+      workspaceId: await detectWorkspace(graphqlEndpoint, { cookie: providedCookie }, providedWorkspaceId),
+    };
   } else {
     const isSelfHosted = !baseUrl.includes("affine.pro");
     if (isSelfHosted) {
-      const method = await ask("\nAuth method — [1] Email/password (recommended)  [2] Paste API token: ");
+      const method = await ask(
+        "\nAuth method — [1] Email/password (recommended)  [2] Paste session cookie  [3] Compatible API token: ",
+      );
       const loginResult = method === "2"
-        ? await loginWithToken(baseUrl, graphqlEndpoint)
-        : await loginWithEmail(baseUrl, graphqlEndpoint);
+        ? await loginWithCookie(baseUrl, graphqlEndpoint)
+        : method === "3"
+          ? await loginWithToken(graphqlEndpoint)
+          : await loginWithEmail(baseUrl, graphqlEndpoint);
       result = {
         ...loginResult,
         workspaceId: providedWorkspaceId || loginResult.workspaceId,
       };
     } else {
-      const loginResult = await loginWithToken(baseUrl, graphqlEndpoint);
+      const method = await ask(
+        "\nAuth method — [1] Paste session cookie (recommended)  [2] Compatible API token: ",
+      );
+      const loginResult = method === "2"
+        ? await loginWithToken(graphqlEndpoint)
+        : await loginWithCookie(baseUrl, graphqlEndpoint);
       result = {
         ...loginResult,
         workspaceId: providedWorkspaceId || loginResult.workspaceId,
@@ -531,15 +585,15 @@ async function login(args: string[]) {
     ...existing,
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: graphqlPath === "/graphql" ? "" : graphqlPath,
-    AFFINE_API_TOKEN: result.token,
-    AFFINE_COOKIE: "",
+    AFFINE_API_TOKEN: result.token || "",
+    AFFINE_COOKIE: result.cookie || "",
     AFFINE_EMAIL: "",
     AFFINE_PASSWORD: "",
     AFFINE_WORKSPACE_ID: result.workspaceId,
   });
 
   console.error(`\n✓ Saved to ${CONFIG_FILE} (mode 600)`);
-  console.error("The MCP server will use these credentials automatically.");
+  console.error("The MCP server will use these credentials automatically. Re-run login if the session expires.");
 }
 
 async function status(args: string[]) {
@@ -944,7 +998,7 @@ const COMMANDS: Record<string, CliCommandDefinition> = {
   },
   login: {
     summary: "Interactive login and config bootstrap",
-    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token>] [--workspace-id <id>] [--force]",
+    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token> | --cookie <cookie>] [--workspace-id <id>] [--force]",
     handler: login,
   },
   status: {
