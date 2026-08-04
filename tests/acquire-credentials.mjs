@@ -72,12 +72,13 @@ export async function ensureAdminUser(baseUrl, email, password) {
  * Sign in to AFFiNE and return session cookie.
  * Pattern matches src/auth.ts (getSetCookie / fallback).
  */
-export async function acquireCredentials(baseUrl, email, password) {
+export async function acquireCredentials(baseUrl, email, password, { signal } = {}) {
   const url = `${baseUrl.replace(/\/$/, '')}/api/auth/sign-in`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
+    signal,
   });
 
   if (!res.ok) {

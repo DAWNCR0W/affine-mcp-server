@@ -168,6 +168,10 @@ echo "=== Re-checking AFFiNE auth readiness ==="
 wait_for_auth_ready
 
 echo ""
+echo "=== Configuring isolated AFFiNE test instance ==="
+node "$SCRIPT_DIR/configure-comprehensive-instance.mjs"
+
+echo ""
 echo "=== Running focused comprehensive suite ==="
 node "$PROJECT_DIR/scripts/run-test-suite.mjs" comprehensive
 
