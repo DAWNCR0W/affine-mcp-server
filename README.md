@@ -1,5 +1,7 @@
 # AFFiNE MCP Server
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FDAWNCR0W%2Faffine-mcp-server.svg)](https://mcptoplist.com/server/glama%2FDAWNCR0W%2Faffine-mcp-server)
+
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
 [![Version](https://img.shields.io/badge/version-3.2.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
