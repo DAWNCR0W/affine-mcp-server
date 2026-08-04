@@ -2,6 +2,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,10 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = path.resolve(__dirname, "..", "src", "index.ts");
 const REPO_ROOT = path.resolve(__dirname, "..");
+const TSX_CLI_PATH = path.resolve(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+const MANIFEST_TOOLS = JSON.parse(
+  fs.readFileSync(path.resolve(REPO_ROOT, "tool-manifest.json"), "utf8"),
+).tools;
 const execFileAsync = promisify(execFile);
 
 async function listToolEntries(env = {}) {
@@ -17,10 +22,10 @@ async function listToolEntries(env = {}) {
     { capabilities: {} }
   );
 
-  // Use npx tsx to avoid having to run tsc
+  // Use the installed tsx CLI directly to avoid shell-specific npx launchers.
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["tsx", SRC_PATH],
+    command: process.execPath,
+    args: [TSX_CLI_PATH, SRC_PATH],
     env: {
       ...process.env,
       ...env,
@@ -64,7 +69,7 @@ async function inspectToolSurfacePolicy() {
       disabledRejectsUnknown: rejectsUnknown(disabled)
     }));
   `;
-  const { stdout } = await execFileAsync("npx", ["tsx", "--eval", script], {
+  const { stdout } = await execFileAsync(process.execPath, [TSX_CLI_PATH, "--eval", script], {
     cwd: REPO_ROOT,
     env: process.env,
   });
@@ -73,7 +78,7 @@ async function inspectToolSurfacePolicy() {
 
 async function expectInvalidConfiguration(env, expectedMessages) {
   try {
-    await execFileAsync("npx", ["tsx", SRC_PATH], {
+    await execFileAsync(process.execPath, [TSX_CLI_PATH, SRC_PATH], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
@@ -110,17 +115,28 @@ async function run() {
       "create_doc_from_template",
       "duplicate_doc",
       "find_and_replace",
+      "generate_access_token",
       "get_doc_by_title",
       "get_docs_by_tag",
       "list_backlinks",
+      "list_access_tokens",
       "list_unresolved_threads",
+      "revoke_access_token",
       "update_database_cell",
     ];
     const stillRegistered = removedTools.filter(t => allTools.includes(t));
-    if (allTools.length === 92 && stillRegistered.length === 0) {
-      console.log("✅ Success: Default tool surface exposes 92 tools.");
+    const actualTools = [...allTools].sort();
+    const expectedTools = [...MANIFEST_TOOLS].sort();
+    const exactManifestMatch = JSON.stringify(actualTools) === JSON.stringify(expectedTools);
+    if (exactManifestMatch && stillRegistered.length === 0) {
+      console.log(`✅ Success: Default tool surface exactly matches all ${MANIFEST_TOOLS.length} manifest tools.`);
     } else {
-      console.error(`❌ Failed: Default tool surface mismatch. count=${allTools.length} stillRegistered=${stillRegistered.join(", ")}`);
+      const missing = expectedTools.filter(tool => !actualTools.includes(tool));
+      const extra = actualTools.filter(tool => !expectedTools.includes(tool));
+      console.error(
+        `❌ Failed: Default tool surface mismatch. count=${allTools.length} ` +
+        `missing=${missing.join(", ")} extra=${extra.join(", ")} stillRegistered=${stillRegistered.join(", ")}`,
+      );
       hasFailures = true;
     }
 
@@ -144,6 +160,18 @@ async function run() {
       console.log("✅ Success: Tool annotations are populated and match representative read/write/destructive tools.");
     } else {
       console.error(`❌ Failed: Tool annotations missing or mismatched. missing=${missingAnnotations.map(t => t.name).join(", ")}`);
+      hasFailures = true;
+    }
+
+    // 0b. Every advertised tool declares an object-shaped result contract.
+    console.log("\nCase 0b: Default tools expose MCP output schemas");
+    const missingOutputSchemas = defaultToolEntries.filter(tool =>
+      !tool.outputSchema || tool.outputSchema.type !== "object"
+    );
+    if (missingOutputSchemas.length === 0) {
+      console.log("✅ Success: All default tools expose object-shaped output schemas.");
+    } else {
+      console.error(`❌ Failed: Output schemas missing or invalid. tools=${missingOutputSchemas.map(t => t.name).join(", ")}`);
       hasFailures = true;
     }
 
