@@ -12,7 +12,9 @@ if (!baseUrl || !email || !password) {
   );
 }
 
-const { cookie } = await acquireCredentials(baseUrl, email, password);
+const { cookie } = await acquireCredentials(baseUrl, email, password, {
+  signal: AbortSignal.timeout(30_000),
+});
 const response = await fetch(`${baseUrl.replace(/\/$/, '')}/graphql`, {
   method: 'POST',
   headers: {
@@ -34,6 +36,7 @@ const response = await fetch(`${baseUrl.replace(/\/$/, '')}/graphql`, {
       }
     `,
   }),
+  signal: AbortSignal.timeout(30_000),
 });
 
 const body = await response.json().catch(() => null);
