@@ -123,7 +123,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "form-data": "^4.0.4",
@@ -132,7 +132,7 @@
     "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "socket.io-client": "^4.8.1",
-    "undici": "^6.27.0",
+    "undici": "^6.28.0",
     "yjs": "^13.6.27",
     "zod": "^3.23.8"
   },

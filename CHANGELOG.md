@@ -10,8 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added declared MCP `outputSchema` metadata for all 92 canonical tools so ChatGPT and other clients can validate structured results and reason about follow-up calls.
 
+### Security
+- Raised the minimum MCP SDK and `undici` versions and refreshed transitive dependency locks to remediate current `@hono/node-server`, `fast-uri`, `hono`, `ip-address`, `socket.io-parser`, and `undici` advisories.
+
 ### Tests
 - Added output-schema coverage and MCP round-trip validation, and included it in the default test and CI gates.
+- Configured isolated comprehensive-test instances to disable AFFiNE's new-account share delay so document publish and revoke coverage runs deterministically.
 
 ## [3.1.0] - 2026-07-27
 
