@@ -1,5 +1,38 @@
 # Release Notes
 
+## Version 3.2.0 (2026-08-04)
+
+### Highlights
+- All 92 canonical tools now declare MCP output schemas, allowing ChatGPT and other clients to validate structured results and plan safer follow-up calls.
+- Runtime dependency minimums and transitive locks were refreshed to clear the current security advisories.
+- Release validation now exercises document publish and revoke deterministically against AFFiNE 0.27.3 without waiting for the upstream new-account sharing delay.
+
+### What Changed
+- Structured MCP results
+  - Added object-shaped `outputSchema` metadata to every canonical tool.
+  - Aligned document, frame, list, and fallible receipt schemas with actual runtime results.
+  - Added metadata, round-trip, and success/failure contract coverage.
+- Dependencies and security
+  - Raised `@modelcontextprotocol/sdk` to `^1.30.0` and `undici` to `^6.28.0`.
+  - Refreshed locked `@hono/node-server`, `fast-uri`, `hono`, `ip-address`, and `socket.io-parser` versions.
+  - `npm audit --audit-level=low` reports zero vulnerabilities.
+- Release validation
+  - Configures only the isolated comprehensive-test AFFiNE instance with a zero new-account share delay.
+  - Adds 30-second bounds to the isolated sign-in and GraphQL configuration requests.
+
+### Compatibility
+- No tools were removed and no existing input is required to change.
+- Node.js 20 or newer remains required.
+- Text content remains available alongside the structured result contracts.
+
+### Validation Evidence
+- Node.js 20 and 24: `npm ci && npm run ci`
+- `npm audit --audit-level=low`
+- `AFFINE_REVISION=0.27.3 npm run test:comprehensive` (15/15 focused tests; 107/107 regression checks)
+- `AFFINE_REVISION=0.27.3 npm run test:e2e` (21/21 integration tests; 14/14 Playwright tests)
+- Packed-tarball smoke on Node.js 20 and 24
+- `npm publish --dry-run --access public --ignore-scripts`
+
 ## Version 3.1.0 (2026-07-27)
 
 ### Highlights
