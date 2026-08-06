@@ -7,7 +7,10 @@ function cloneJsonValue<T>(data: T): T {
 
 export function text(data: unknown) {
   if (typeof data === "string") {
-    return { content: [{ type: "text" as const, text: data }] };
+    return {
+      content: [{ type: "text" as const, text: data }],
+      structuredContent: { text: data },
+    };
   }
 
   if (data !== null && typeof data === "object" && !Array.isArray(data)) {
@@ -18,8 +21,17 @@ export function text(data: unknown) {
     };
   }
 
+  if (Array.isArray(data)) {
+    const items = cloneJsonValue(data);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(items) }],
+      structuredContent: { items },
+    };
+  }
+
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data) }],
+    structuredContent: { value: cloneJsonValue(data) },
   };
 }
 

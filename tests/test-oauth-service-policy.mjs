@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   assertOAuthServiceWritePolicy,
@@ -77,7 +78,7 @@ const resolvedEnvironment = createToolFilterEnvironment("oauth", inputEnvironmen
 assert.notEqual(resolvedEnvironment, inputEnvironment);
 assert.equal(inputEnvironment.AFFINE_TOOL_PROFILE, undefined, "input environment must not be mutated");
 
-const projectDirectory = path.resolve(new URL("..", import.meta.url).pathname);
+const projectDirectory = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const isolatedEnvironment = {
   ...process.env,
   XDG_CONFIG_HOME: path.join(os.tmpdir(), `affine-oauth-policy-${process.pid}`),
