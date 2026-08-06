@@ -4426,7 +4426,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             id: page.id,
             title: page.title,
             createdAt: page.createDate,
-            updatedAt: page.updatedDate,
+            updatedAt: page.updatedDate ?? page.createDate,
             tags: tagsByDocId.get(page.id) || [],
             inTrash: inTrashByDocId.get(page.id) ?? page.inTrash,
           })),
@@ -4492,7 +4492,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs",
     {
       title: "List Documents",
-      description: "List documents in a workspace (GraphQL), falling back to bounded workspace metadata when GraphQL document access is denied. Each doc includes an inTrash flag; fallback summary, public, and defaultRole values are null.",
+      description: "List documents in a workspace (GraphQL), falling back to bounded workspace metadata when GraphQL document access is denied. Each doc includes an inTrash flag; fallback summary, public, and defaultRole values are null. GraphQL and fallback cursors are not interchangeable; restart pagination without after if a cursor is rejected.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         first: PageSize.optional(),
