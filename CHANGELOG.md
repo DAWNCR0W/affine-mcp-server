@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `affine-mcp login --workspace-id` now verifies that the requested workspace is available to the authenticated account before saving the configuration.
+- `list_docs` now falls back to bounded workspace metadata pagination when AFFiNE denies ordinary workspace members access to the GraphQL document connection.
 
 ### Tests
 - Added CLI regressions for stdin cookie authentication, legacy cookie redaction, inaccessible workspace rejection, and live workspace validation.
