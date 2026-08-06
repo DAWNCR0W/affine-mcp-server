@@ -5,7 +5,7 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * Live CLI integration test against a running AFFiNE instance.
  *
  * Covers:
- * - login --url --cookie --workspace-id --force
+ * - login --url --cookie-stdin --workspace-id --force
  * - status --json
  * - doctor --json
  * - snippet all --env
@@ -34,10 +34,11 @@ function expect(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function runCli(label, args, xdgConfigHome) {
+function runCli(label, args, xdgConfigHome, input) {
   const result = spawnSync("node", [BIN_ENTRY, ...args], {
     cwd: ROOT,
     encoding: "utf8",
+    input,
     env: {
       ...process.env,
       XDG_CONFIG_HOME: xdgConfigHome,
@@ -119,10 +120,10 @@ try {
   const login = runCli("login", [
     "login",
     "--url", BASE_URL,
-    "--cookie", cookie,
+    "--cookie-stdin",
     "--workspace-id", workspaceId,
     "--force",
-  ], xdgConfigHome);
+  ], xdgConfigHome, `${cookie}\n`);
   expect(login.status === 0, `login failed: ${login.stderr || login.stdout}`);
 
   const configPath = path.join(xdgConfigHome, "affine-mcp", "config");
@@ -150,7 +151,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     cases: [
-      "login --url --cookie --workspace-id --force",
+      "login --url --cookie-stdin --workspace-id --force",
       "status --json",
       "doctor --json",
       "snippet all --env",

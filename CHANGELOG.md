@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Replaced the `affine-mcp login --cookie <value>` process-argument path with `--cookie-stdin` so browser session cookies do not appear in shell history or process listings.
+
+### Fixed
+- `affine-mcp login --workspace-id` now verifies that the requested workspace is available to the authenticated account before saving the configuration.
+
+### Tests
+- Added CLI regressions for stdin cookie authentication, legacy cookie redaction, inaccessible workspace rejection, and live workspace validation.
+
 ## [3.2.0] - 2026-08-04
 
 ### Added
