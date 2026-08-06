@@ -64,10 +64,24 @@ import {
 
 {
   assert.equal(
-    isWorkspaceListDocsPermissionDenied(new Error("You do not have permission to access Space workspace-1")),
+    isWorkspaceListDocsPermissionDenied(
+      new Error("GraphQL error: You do not have permission to access Space workspace-1."),
+    ),
     true,
   );
   assert.equal(isWorkspaceListDocsPermissionDenied(new Error("GraphQL error: forbidden")), false);
+  assert.equal(
+    isWorkspaceListDocsPermissionDenied(
+      new Error("Workspace access was denied while another operation was in progress."),
+    ),
+    false,
+  );
+  assert.equal(
+    isWorkspaceListDocsPermissionDenied(
+      new Error("You do not have permission to perform read action on doc doc-1."),
+    ),
+    false,
+  );
 }
 
 {
@@ -109,6 +123,19 @@ import {
   assert.throws(
     () => buildWorkspaceListDocsFallbackConnection("workspace-1", pages, { after: foreignCursor }),
     /Invalid list_docs cursor/,
+  );
+
+  const withoutAcknowledgedDeletions = buildWorkspaceListDocsFallbackConnection(
+    "workspace-1",
+    pages,
+    { first: 3 },
+    new Set(["doc-1", "doc-3"]),
+  );
+  assert.equal(withoutAcknowledgedDeletions.totalCount, 203);
+  assert.deepEqual(
+    withoutAcknowledgedDeletions.edges.map((edge) => edge.node.id),
+    ["doc-0", "doc-2", "doc-4"],
+    "permission fallback must exclude locally acknowledged deletions before pagination",
   );
 }
 

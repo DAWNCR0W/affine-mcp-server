@@ -93,6 +93,8 @@ const MAX_WORKSPACE_LIST_DOCS_PAGE_SIZE = 200;
 const DEFAULT_WORKSPACE_LIST_DOCS_PAGE_SIZE = 50;
 const MAX_WORKSPACE_LIST_DOCS_OFFSET = 1_000_000;
 const WORKSPACE_LIST_DOCS_CURSOR_PREFIX = "affine-mcp:list-docs:v1:";
+const WORKSPACE_LIST_DOCS_PERMISSION_DENIED_MESSAGE =
+  /(?:^|:\s*)You do not have permission to access Space \S+\.?(?:\s|$)/i;
 
 const LIST_DOCS_QUERY = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
 const LIST_DOCS_WITHOUT_PUBLIC_QUERY = `query ListDocsWithoutPublic($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary defaultRole createdAt updatedAt } } } } }`;
@@ -100,9 +102,7 @@ const LIST_DOCS_WITHOUT_PUBLIC_QUERY = `query ListDocsWithoutPublic($workspaceId
 /** True only for a workspace/space authorization denial, not a generic GraphQL failure. */
 export function isWorkspaceListDocsPermissionDenied(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  const workspace = "(?:workspace|space)";
-  const denied = "(?:permission|access|forbidden|unauthorized|denied|not\\s+allowed|not\\s+permitted)";
-  return new RegExp(`\\b${workspace}\\b[\\s\\S]{0,160}\\b${denied}\\b|\\b${denied}\\b[\\s\\S]{0,160}\\b${workspace}\\b`, "i").test(message);
+  return WORKSPACE_LIST_DOCS_PERMISSION_DENIED_MESSAGE.test(message);
 }
 
 function workspaceListDocsCursor(workspaceId: string, index: number): string {
@@ -132,7 +132,11 @@ export function buildWorkspaceListDocsFallbackConnection(
   workspaceId: string,
   pages: WorkspaceListDocMetadata[],
   variables: Pick<ListDocsVariables, "first" | "offset" | "after">,
+  excludedDocIds?: ReadonlySet<string>,
 ): WorkspaceListDocsConnection {
+  const visiblePages = excludedDocIds?.size
+    ? pages.filter((page) => !excludedDocIds.has(page.id))
+    : pages;
   const first = Math.max(1, boundedWorkspaceListDocsNumber(
     variables.first,
     DEFAULT_WORKSPACE_LIST_DOCS_PAGE_SIZE,
@@ -146,7 +150,7 @@ export function buildWorkspaceListDocsFallbackConnection(
     throw new Error("Invalid list_docs cursor: use pageInfo.endCursor from the same workspace.");
   }
   const start = afterIndex === null ? offset : Math.max(offset, afterIndex + 1);
-  const page = pages.slice(start, start + first);
+  const page = visiblePages.slice(start, start + first);
   const edges = page.map((entry, pageIndex) => {
     const index = start + pageIndex;
     return {
@@ -166,9 +170,9 @@ export function buildWorkspaceListDocsFallbackConnection(
     };
   });
   return {
-    totalCount: pages.length,
+    totalCount: visiblePages.length,
     pageInfo: {
-      hasNextPage: start + page.length < pages.length,
+      hasNextPage: start + page.length < visiblePages.length,
       endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
     },
     edges,
@@ -4427,6 +4431,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             inTrash: inTrashByDocId.get(page.id) ?? page.inTrash,
           })),
           parsed,
+          deletedDocIds,
         ));
       }
 
@@ -4487,7 +4492,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs",
     {
       title: "List Documents",
-      description: "List documents in a workspace (GraphQL). Each doc includes an inTrash flag.",
+      description: "List documents in a workspace (GraphQL), falling back to bounded workspace metadata when GraphQL document access is denied. Each doc includes an inTrash flag; fallback summary, public, and defaultRole values are null.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         first: PageSize.optional(),
