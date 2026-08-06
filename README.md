@@ -127,7 +127,7 @@ For scripted session-cookie setup, keep the cookie out of process arguments:
 affine-mcp login --url https://app.affine.pro --cookie-stdin --workspace-id your-workspace-id --force
 ```
 
-Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The CLI verifies `--workspace-id` against the authenticated account before saving it.
+Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The CLI verifies `--workspace-id` against the authenticated account before saving it. Piped input requires `--force` when existing credentials would be replaced.
 
 ### 4. Register the server with your client
 

@@ -43,7 +43,7 @@ For automation, pass browser-session cookies through stdin instead of process ar
 affine-mcp login --url https://app.affine.pro --cookie-stdin --workspace-id your-workspace-id --force
 ```
 
-Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The requested workspace must be available to the authenticated account.
+Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The requested workspace must be available to the authenticated account. Piped input requires `--force` when existing credentials would be replaced.
 
 ### 3. Verify the saved config
 

@@ -457,6 +457,42 @@ try {
     "stdin cookie was not used to authenticate and validate the workspace",
   );
 
+  const configuredUrlHome = path.join(TEMP_ROOT, "configured-url-cookie");
+  writeConfig(configuredUrlHome, {
+    AFFINE_BASE_URL: baseUrl,
+    AFFINE_GRAPHQL_PATH: "/custom/graphql",
+    MCP_TRANSPORT: "stdio",
+  });
+  const configuredUrlLogin = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--cookie-stdin",
+    "--workspace-id",
+    "workspace-env",
+    "--force",
+  ], cleanEnvironment({ XDG_CONFIG_HOME: configuredUrlHome }), {
+    input: `${cookieFromStdin}\n`,
+  });
+  expect(
+    configuredUrlLogin.code === 0,
+    `piped cookie was consumed by a URL prompt: ${configuredUrlLogin.stderr}`,
+  );
+  expect(
+    configuredUrlLogin.stderr.includes("Verified workspace: workspace-env"),
+    "non-TTY cookie login did not use the configured URL before validating the workspace",
+  );
+
+  const missingForce = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--cookie-stdin",
+  ], savedOnlyEnv);
+  expect(missingForce.code !== 0, "piped cookie login prompted before requiring overwrite confirmation");
+  expect(
+    missingForce.stderr.includes("--force is required"),
+    `non-TTY overwrite failure was unclear: ${missingForce.stderr}`,
+  );
+
   const rejectedWorkspaceHome = path.join(TEMP_ROOT, "rejected-workspace");
   const rejectedWorkspace = await runNode([
     DIST_ENTRY,
@@ -615,6 +651,7 @@ try {
       "POSIX-safe Codex snippet quoting",
       "login and logout setting preservation",
       "stdin cookie authentication",
+      "non-TTY cookie prompt isolation",
       "workspace override validation",
       "legacy cookie argument redaction",
       "header-only credential logout",

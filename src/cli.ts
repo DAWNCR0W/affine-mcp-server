@@ -513,16 +513,25 @@ async function login(args: string[]) {
   if (providedToken && useCookieStdin) {
     throw new CliError("Use either --token or --cookie-stdin, not both.");
   }
+  const nonInteractiveCookieStdin = useCookieStdin && process.stdin.isTTY !== true;
 
   console.error("Affine MCP Server — Login\n");
 
   const existing = loadConfigFile();
-  if (existing.AFFINE_API_TOKEN || existing.AFFINE_COOKIE || (existing.AFFINE_EMAIL && existing.AFFINE_PASSWORD)) {
+  const hasExistingAuth = Boolean(
+    existing.AFFINE_API_TOKEN ||
+    existing.AFFINE_COOKIE ||
+    (existing.AFFINE_EMAIL && existing.AFFINE_PASSWORD),
+  );
+  if (hasExistingAuth) {
     console.error(`Existing config: ${CONFIG_FILE}`);
     console.error(`  URL:       ${existing.AFFINE_BASE_URL || "(default)"}`);
     console.error("  Auth:      (set)");
     console.error(`  Workspace: ${existing.AFFINE_WORKSPACE_ID || "(none)"}\n`);
     if (!force) {
+      if (nonInteractiveCookieStdin) {
+        throw new CliError("--force is required when --cookie-stdin would overwrite existing credentials.");
+      }
       const overwrite = await ask("Overwrite? [y/N] ");
       if (!/^[yY]$/.test(overwrite)) {
         console.error("Keeping existing config.");
@@ -534,8 +543,14 @@ async function login(args: string[]) {
     }
   }
 
+  const pipedCookie = nonInteractiveCookieStdin ? await ask("", true) : undefined;
   const defaultUrl = "https://app.affine.pro";
-  const rawUrl = providedUrl ?? ((await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl);
+  const configuredUrl = process.env.AFFINE_BASE_URL || existing.AFFINE_BASE_URL || defaultUrl;
+  const rawUrl = providedUrl ?? (
+    nonInteractiveCookieStdin
+      ? configuredUrl
+      : (await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl
+  );
   const baseUrl = validateBaseUrl(rawUrl, {
     allowInsecureHttp: parseBooleanFlag(
       "AFFINE_ALLOW_INSECURE_HTTP",
@@ -548,9 +563,11 @@ async function login(args: string[]) {
     providedGraphqlPath || process.env.AFFINE_GRAPHQL_PATH || existing.AFFINE_GRAPHQL_PATH || "/graphql",
   );
   const graphqlEndpoint = buildGraphqlEndpoint(baseUrl, graphqlPath);
-  const providedCookie = useCookieStdin
-    ? await ask(process.stdin.isTTY ? "Session cookie: " : "", true)
-    : undefined;
+  const providedCookie = nonInteractiveCookieStdin
+    ? pipedCookie
+    : useCookieStdin
+      ? await ask("Session cookie: ", true)
+      : undefined;
   if (useCookieStdin && !providedCookie) {
     throw new CliError("No session cookie received on stdin.");
   }
