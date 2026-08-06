@@ -1,5 +1,42 @@
 # Release Notes
 
+## Version 3.2.1 (2026-08-06)
+
+### Highlights
+- Scripted session-cookie login now reads secrets from stdin instead of exposing them in shell history or process listings.
+- Explicit workspace selections are verified against the authenticated account before the CLI saves them.
+- Ordinary workspace members can paginate documents even when AFFiNE denies access to the primary GraphQL document connection.
+
+### Security Migration
+- `affine-mcp login --cookie <value>` is no longer accepted. Automation must pass the cookie through `--cookie-stdin` instead.
+- Existing saved cookie configurations and interactive login remain compatible; only command-line cookie ingestion changed.
+- Piped cookie input requires `--force` when it replaces existing credentials, preventing an overwrite prompt from consuming the secret.
+
+### What Changed
+- CLI authentication
+  - Added `--cookie-stdin` for hidden or piped session-cookie input.
+  - Rejects legacy `--cookie` and `--cookie=<value>` arguments without echoing their values.
+  - Validates `--workspace-id` for cookie, compatible-token, and email/password login paths.
+- Document discovery
+  - Falls back to bounded workspace metadata pagination when ordinary members cannot query the primary document connection.
+  - Preserves workspace-scoped cursors, pagination bounds, and acknowledged-deletion filtering in fallback results.
+- Regression coverage
+  - Covers legacy-cookie redaction, non-TTY stdin isolation, overwrite protection, inaccessible workspace rejection, and deletion-aware fallback pagination.
+
+### Compatibility
+- The canonical MCP tool surface remains at 92 tools with no input or output contract removals.
+- Scripts that passed a cookie in `--cookie` must migrate to `--cookie-stdin`.
+- Existing saved credentials, interactive login, and Node.js 20-or-newer support remain unchanged.
+
+### Validation Evidence
+- Node.js 20 and 24: clean `npm ci && npm run ci`
+- `npm audit --audit-level=low` (zero vulnerabilities)
+- `AFFINE_REVISION=0.27.3 npm run test:comprehensive` (15/15 focused tests; 107/107 regression checks)
+- `AFFINE_REVISION=0.27.3 npm run test:e2e` (21/21 integration tests; 14/14 Playwright tests)
+- Packed-tarball smoke on Node.js 20 and 24
+- `npm publish --dry-run --access public --ignore-scripts`
+- Linux/amd64 Docker build and non-root runtime smoke
+
 ## Version 3.2.0 (2026-08-04)
 
 ### Highlights
