@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `list_docs` now falls back to bounded workspace metadata pagination when AFFiNE denies ordinary workspace members access to the GraphQL document connection.
+
 ## [3.2.0] - 2026-08-04
 
 ### Added
