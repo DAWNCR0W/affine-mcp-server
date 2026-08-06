@@ -121,6 +121,14 @@ This stores credentials in `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG
 - For self-hosted AFFiNE, use email/password (recommended) or a signed-in session cookie
 - `AFFINE_API_TOKEN` remains available only for deployments that still accept a compatible GraphQL bearer token
 
+For scripted session-cookie setup, keep the cookie out of process arguments:
+
+```bash
+affine-mcp login --url https://app.affine.pro --cookie-stdin --workspace-id your-workspace-id --force
+```
+
+Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The CLI verifies `--workspace-id` against the authenticated account before saving it. Piped input requires `--force` when existing credentials would be replaced.
+
 ### 4. Register the server with your client
 
 Claude Code project config:

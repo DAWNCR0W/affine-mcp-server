@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -26,13 +26,15 @@ function cleanEnvironment(extra = {}) {
   return { ...environment, ...extra };
 }
 
-function runNode(args, env, timeoutMs = 10_000) {
+function runNode(args, env, options = {}) {
+  const { input = "", timeoutMs = 10_000 } = options;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: ROOT,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    child.stdin.end(input);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -430,6 +432,7 @@ try {
   );
 
   const savedOnlyEnv = cleanEnvironment({ XDG_CONFIG_HOME: savedConfigHome });
+  const cookieFromStdin = "affine_session=stdin-cookie-value";
   const login = await runNode([
     DIST_ENTRY,
     "login",
@@ -437,22 +440,100 @@ try {
     baseUrl,
     "--graphql-path",
     "/custom/graphql",
-    "--token",
-    "replacement-token",
+    "--cookie-stdin",
     "--workspace-id",
-    "workspace-login",
+    "workspace-env",
     "--force",
-  ], savedOnlyEnv);
+  ], savedOnlyEnv, { input: `${cookieFromStdin}\n` });
   expect(login.code === 0, `non-interactive login failed: ${login.stderr}`);
   const configAfterLogin = readFileSync(path.join(savedConfigHome, "affine-mcp", "config"), "utf8");
   expect(configAfterLogin.includes("MCP_TRANSPORT=stdio"), "login erased a saved runtime setting");
   expect(configAfterLogin.includes("PORT=3001"), "login erased the saved HTTP port");
   expect(configAfterLogin.includes("AFFINE_GRAPHQL_PATH=/custom/graphql"), "login did not save the GraphQL path");
+  expect(configAfterLogin.includes(`AFFINE_COOKIE=${cookieFromStdin}`), "login did not save the stdin cookie");
+  expect(configAfterLogin.includes("AFFINE_WORKSPACE_ID=workspace-env"), "login did not save the validated workspace");
+  expect(
+    graphqlRequests.some((entry) => entry.cookie === cookieFromStdin),
+    "stdin cookie was not used to authenticate and validate the workspace",
+  );
+
+  const configuredUrlHome = path.join(TEMP_ROOT, "configured-url-cookie");
+  writeConfig(configuredUrlHome, {
+    AFFINE_BASE_URL: baseUrl,
+    AFFINE_GRAPHQL_PATH: "/custom/graphql",
+    MCP_TRANSPORT: "stdio",
+  });
+  const configuredUrlLogin = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--cookie-stdin",
+    "--workspace-id",
+    "workspace-env",
+    "--force",
+  ], cleanEnvironment({ XDG_CONFIG_HOME: configuredUrlHome }), {
+    input: `${cookieFromStdin}\n`,
+  });
+  expect(
+    configuredUrlLogin.code === 0,
+    `piped cookie was consumed by a URL prompt: ${configuredUrlLogin.stderr}`,
+  );
+  expect(
+    configuredUrlLogin.stderr.includes("Verified workspace: workspace-env"),
+    "non-TTY cookie login did not use the configured URL before validating the workspace",
+  );
+
+  const missingForce = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--cookie-stdin",
+  ], savedOnlyEnv);
+  expect(missingForce.code !== 0, "piped cookie login prompted before requiring overwrite confirmation");
+  expect(
+    missingForce.stderr.includes("--force is required"),
+    `non-TTY overwrite failure was unclear: ${missingForce.stderr}`,
+  );
+
+  const rejectedWorkspaceHome = path.join(TEMP_ROOT, "rejected-workspace");
+  const rejectedWorkspace = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--url",
+    baseUrl,
+    "--graphql-path",
+    "/custom/graphql",
+    "--cookie-stdin",
+    "--workspace-id",
+    "workspace-unavailable",
+    "--force",
+  ], cleanEnvironment({ XDG_CONFIG_HOME: rejectedWorkspaceHome }), {
+    input: `${cookieFromStdin}\n`,
+  });
+  expect(rejectedWorkspace.code !== 0, "login accepted a workspace outside the authenticated account");
+  expect(
+    rejectedWorkspace.stderr.includes("Workspace 'workspace-unavailable' is not available"),
+    `invalid workspace failure was unclear: ${rejectedWorkspace.stderr}`,
+  );
+  expect(
+    !existsSync(path.join(rejectedWorkspaceHome, "affine-mcp", "config")),
+    "login saved config after workspace validation failed",
+  );
+
+  const legacyCookieSecret = "affine_session=must-not-appear-in-errors";
+  const legacyCookie = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--cookie",
+    legacyCookieSecret,
+  ], cleanEnvironment({ XDG_CONFIG_HOME: path.join(TEMP_ROOT, "legacy-cookie") }));
+  expect(legacyCookie.code !== 0, "login accepted a cookie in process arguments");
+  expect(legacyCookie.stderr.includes("--cookie-stdin"), "legacy cookie error did not explain the safe replacement");
+  expect(!legacyCookie.stderr.includes(legacyCookieSecret), "legacy cookie secret leaked to stderr");
+  expect(!legacyCookie.stdout.includes(legacyCookieSecret), "legacy cookie secret leaked to stdout");
 
   const logout = await runNode([DIST_ENTRY, "logout"], savedOnlyEnv);
   expect(logout.code === 0, `logout failed: ${logout.stderr}`);
   const configAfterLogout = readFileSync(path.join(savedConfigHome, "affine-mcp", "config"), "utf8");
-  expect(!configAfterLogout.includes("AFFINE_API_TOKEN="), "logout left the saved API token behind");
+  expect(!configAfterLogout.includes("AFFINE_COOKIE="), "logout left the saved session cookie behind");
   expect(configAfterLogout.includes("MCP_TRANSPORT=stdio"), "logout erased a saved runtime setting");
 
   const headerOnlyConfigHome = path.join(TEMP_ROOT, "header-only-auth");
@@ -569,6 +650,10 @@ try {
       "snippet propagation",
       "POSIX-safe Codex snippet quoting",
       "login and logout setting preservation",
+      "stdin cookie authentication",
+      "non-TTY cookie prompt isolation",
+      "workspace override validation",
+      "legacy cookie argument redaction",
       "header-only credential logout",
       "strict transport validation",
       "saved HTTP runtime flags",
