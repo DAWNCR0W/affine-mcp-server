@@ -74,8 +74,110 @@ type ListDocsResponse = {
   workspace: any;
 };
 
+export type WorkspaceListDocMetadata = {
+  id: string;
+  title: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+  tags: string[];
+  inTrash: boolean;
+};
+
+export type WorkspaceListDocsConnection = {
+  totalCount: number;
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  edges: Array<{ cursor: string; node: Record<string, unknown> }>;
+};
+
+const MAX_WORKSPACE_LIST_DOCS_PAGE_SIZE = 200;
+const DEFAULT_WORKSPACE_LIST_DOCS_PAGE_SIZE = 50;
+const MAX_WORKSPACE_LIST_DOCS_OFFSET = 1_000_000;
+const WORKSPACE_LIST_DOCS_CURSOR_PREFIX = "affine-mcp:list-docs:v1:";
+const WORKSPACE_LIST_DOCS_PERMISSION_DENIED_MESSAGE =
+  /(?:^|:\s*)You do not have permission to access Space \S+\.?(?:\s|$)/i;
+
 const LIST_DOCS_QUERY = `query ListDocs($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary public defaultRole createdAt updatedAt } } } } }`;
 const LIST_DOCS_WITHOUT_PUBLIC_QUERY = `query ListDocsWithoutPublic($workspaceId: String!, $first: Int, $offset: Int, $after: String){ workspace(id:$workspaceId){ docs(pagination:{first:$first, offset:$offset, after:$after}){ totalCount pageInfo{ hasNextPage endCursor } edges{ cursor node{ id workspaceId title summary defaultRole createdAt updatedAt } } } } }`;
+
+/** True only for a workspace/space authorization denial, not a generic GraphQL failure. */
+export function isWorkspaceListDocsPermissionDenied(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return WORKSPACE_LIST_DOCS_PERMISSION_DENIED_MESSAGE.test(message);
+}
+
+function workspaceListDocsCursor(workspaceId: string, index: number): string {
+  return Buffer.from(`${WORKSPACE_LIST_DOCS_CURSOR_PREFIX}${workspaceId}:${index}`, "utf8").toString("base64url");
+}
+
+function workspaceListDocsCursorIndex(workspaceId: string, cursor: string): number | null {
+  if (cursor.length > 2048) return null;
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const prefix = `${WORKSPACE_LIST_DOCS_CURSOR_PREFIX}${workspaceId}:`;
+    if (!decoded.startsWith(prefix)) return null;
+    const index = Number(decoded.slice(prefix.length));
+    return Number.isSafeInteger(index) && index >= 0 ? index : null;
+  } catch {
+    return null;
+  }
+}
+
+function boundedWorkspaceListDocsNumber(value: number | undefined, fallback: number, maximum: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(0, Math.trunc(value as number)), maximum);
+}
+
+/** Build a bounded Relay-like connection from already-authorized workspace metadata. */
+export function buildWorkspaceListDocsFallbackConnection(
+  workspaceId: string,
+  pages: WorkspaceListDocMetadata[],
+  variables: Pick<ListDocsVariables, "first" | "offset" | "after">,
+  excludedDocIds?: ReadonlySet<string>,
+): WorkspaceListDocsConnection {
+  const visiblePages = excludedDocIds?.size
+    ? pages.filter((page) => !excludedDocIds.has(page.id))
+    : pages;
+  const first = Math.max(1, boundedWorkspaceListDocsNumber(
+    variables.first,
+    DEFAULT_WORKSPACE_LIST_DOCS_PAGE_SIZE,
+    MAX_WORKSPACE_LIST_DOCS_PAGE_SIZE,
+  ));
+  const offset = boundedWorkspaceListDocsNumber(variables.offset, 0, MAX_WORKSPACE_LIST_DOCS_OFFSET);
+  const afterIndex = variables.after === undefined
+    ? null
+    : workspaceListDocsCursorIndex(workspaceId, variables.after);
+  if (variables.after !== undefined && afterIndex === null) {
+    throw new Error("Invalid list_docs cursor: use pageInfo.endCursor from the same workspace.");
+  }
+  const start = afterIndex === null ? offset : Math.max(offset, afterIndex + 1);
+  const page = visiblePages.slice(start, start + first);
+  const edges = page.map((entry, pageIndex) => {
+    const index = start + pageIndex;
+    return {
+      cursor: workspaceListDocsCursor(workspaceId, index),
+      node: {
+        id: entry.id,
+        workspaceId,
+        title: entry.title,
+        summary: null,
+        public: null,
+        defaultRole: null,
+        createdAt: entry.createdAt && entry.createdAt > 0 ? new Date(entry.createdAt).toISOString() : null,
+        updatedAt: entry.updatedAt && entry.updatedAt > 0 ? new Date(entry.updatedAt).toISOString() : null,
+        tags: [...entry.tags],
+        inTrash: entry.inTrash,
+      },
+    };
+  });
+  return {
+    totalCount: visiblePages.length,
+    pageInfo: {
+      hasNextPage: start + page.length < visiblePages.length,
+      endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
+    },
+    edges,
+  };
+}
 
 export async function requestListDocsWithPublicFallback(
   gql: Pick<GraphQLClient, "request">,
@@ -4233,19 +4335,29 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (!workspaceId) {
         throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
       }
-      const data = await requestListDocsWithPublicFallback(gql, {
-        workspaceId,
-        first: parsed.first,
-        offset: parsed.offset,
-        after: parsed.after,
-      });
-      const docs = data.workspace.docs;
+      let data: ListDocsResponse | null = null;
+      let workspacePermissionError: unknown = null;
+      try {
+        data = await requestListDocsWithPublicFallback(gql, {
+          workspaceId,
+          first: parsed.first,
+          offset: parsed.offset,
+          after: parsed.after,
+        });
+      } catch (error) {
+        if (!isWorkspaceListDocsPermissionDenied(error)) {
+          throw error;
+        }
+        workspacePermissionError = error;
+      }
+      const docs = data ? data.workspace.docs : undefined;
 
       const tagsByDocId = new Map<string, string[]>();
       const titlesByDocId = new Map<string, string>();
       const inTrashByDocId = new Map<string, boolean>();
       let workspacePageCount: number | null = null;
       let workspacePageIds: Set<string> | null = null;
+      let workspacePages: WorkspacePageEntry[] | null = null;
       const deletedDocIds = acknowledgedDeletedDocs.idsFor(workspaceId);
       try {
         const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
@@ -4259,6 +4371,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
             const meta = wsDoc.getMap("meta");
             const pages = getWorkspacePageEntries(meta);
+            workspacePages = pages;
             workspacePageCount = pages.length;
             workspacePageIds = new Set(pages.map(page => page.id));
             for (const docId of deletedDocIds) {
@@ -4296,8 +4409,30 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         } finally {
           socket.disconnect();
         }
-      } catch {
+      } catch (error) {
+        if (workspacePermissionError) {
+          throw workspacePermissionError;
+        }
         // Keep list_docs available even when workspace snapshot fetch fails.
+      }
+
+      if (workspacePermissionError) {
+        if (!workspacePages) {
+          throw workspacePermissionError;
+        }
+        return text(buildWorkspaceListDocsFallbackConnection(
+          workspaceId,
+          workspacePages.map((page) => ({
+            id: page.id,
+            title: page.title,
+            createdAt: page.createDate,
+            updatedAt: page.updatedDate ?? page.createDate,
+            tags: tagsByDocId.get(page.id) || [],
+            inTrash: inTrashByDocId.get(page.id) ?? page.inTrash,
+          })),
+          parsed,
+          deletedDocIds,
+        ));
       }
 
       const mergedEdges = Array.isArray(docs?.edges)
@@ -4357,7 +4492,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "list_docs",
     {
       title: "List Documents",
-      description: "List documents in a workspace (GraphQL). Each doc includes an inTrash flag.",
+      description: "List documents in a workspace (GraphQL), falling back to bounded workspace metadata when GraphQL document access is denied. Each doc includes an inTrash flag; fallback summary, public, and defaultRole values are null. GraphQL and fallback cursors are not interchangeable; restart pagination without after if a cursor is rejected.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         first: PageSize.optional(),

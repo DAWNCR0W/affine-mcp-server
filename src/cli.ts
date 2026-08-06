@@ -353,19 +353,34 @@ async function detectWorkspace(
   auth: CliAuth,
   preferredWorkspaceId?: string,
 ): Promise<string> {
-  if (preferredWorkspaceId) {
-    console.error(`Using workspace override: ${preferredWorkspaceId}`);
-    return preferredWorkspaceId;
-  }
-  console.error("Detecting workspaces...");
+  console.error(preferredWorkspaceId ? "Validating workspace override..." : "Detecting workspaces...");
+  let data: any;
   try {
-    const data = await gql(graphqlEndpoint, auth, `query {
+    data = await gql(graphqlEndpoint, auth, `query {
       workspaces {
         id createdAt memberCount
         owner { name }
       }
     }`);
-    const workspaces: any[] = data.workspaces;
+  } catch (err: any) {
+    if (preferredWorkspaceId) {
+      throw new CliError(`Could not validate workspace '${preferredWorkspaceId}': ${err.message}`);
+    }
+    console.error(`  Could not list workspaces: ${err.message}`);
+    return "";
+  }
+
+  const workspaces: any[] = Array.isArray(data?.workspaces) ? data.workspaces : [];
+  if (preferredWorkspaceId) {
+    const preferredWorkspace = workspaces.find((workspace) => workspace?.id === preferredWorkspaceId);
+    if (!preferredWorkspace) {
+      throw new CliError(`Workspace '${preferredWorkspaceId}' is not available to the authenticated account.`);
+    }
+    console.error(`  Verified workspace: ${preferredWorkspaceId}`);
+    return preferredWorkspaceId;
+  }
+
+  try {
     if (workspaces.length === 0) {
       console.error("  No workspaces found.");
       return "";
@@ -400,6 +415,7 @@ async function detectWorkspace(
 async function loginWithEmail(
   baseUrl: string,
   graphqlEndpoint: string,
+  preferredWorkspaceId?: string,
 ): Promise<LoginResult> {
   const email = await ask("Email: ");
   const password = await ask("Password: ", true);
@@ -423,12 +439,13 @@ async function loginWithEmail(
     throw new CliError(`Session verification failed: ${err.message}`);
   }
 
-  const workspaceId = await detectWorkspace(graphqlEndpoint, auth);
+  const workspaceId = await detectWorkspace(graphqlEndpoint, auth, preferredWorkspaceId);
   return { cookie: cookieHeader, workspaceId };
 }
 
 async function loginWithToken(
   graphqlEndpoint: string,
+  preferredWorkspaceId?: string,
 ): Promise<LoginResult> {
   console.error(
     "\nAFFiNE 0.27+ no longer provides legacy personal access tokens. " +
@@ -448,13 +465,14 @@ async function loginWithToken(
     throw new CliError(`Authentication failed: ${err.message}`);
   }
 
-  const workspaceId = await detectWorkspace(graphqlEndpoint, { token });
+  const workspaceId = await detectWorkspace(graphqlEndpoint, { token }, preferredWorkspaceId);
   return { token, workspaceId };
 }
 
 async function loginWithCookie(
   baseUrl: string,
   graphqlEndpoint: string,
+  preferredWorkspaceId?: string,
 ): Promise<LoginResult> {
   console.error("\nTo use an existing browser session:");
   console.error(`  1. Sign in to ${baseUrl}`);
@@ -474,32 +492,46 @@ async function loginWithCookie(
     throw new CliError(`Authentication failed: ${err.message}`);
   }
 
-  const workspaceId = await detectWorkspace(graphqlEndpoint, { cookie });
+  const workspaceId = await detectWorkspace(graphqlEndpoint, { cookie }, preferredWorkspaceId);
   return { cookie, workspaceId };
 }
 
 async function login(args: string[]) {
+  if (args.some((arg) => arg === "--cookie" || arg.startsWith("--cookie="))) {
+    throw new CliError(
+      "The --cookie option is not accepted because command-line arguments may be visible to other processes. Use --cookie-stdin instead.",
+    );
+  }
   const parsedArgs = [...args];
   const providedUrl = consumeOption(parsedArgs, "--url");
   const providedGraphqlPath = consumeOption(parsedArgs, "--graphql-path");
   const providedToken = consumeOption(parsedArgs, "--token");
-  const providedCookie = consumeOption(parsedArgs, "--cookie");
+  const useCookieStdin = consumeFlags(parsedArgs, "--cookie-stdin");
   const providedWorkspaceId = consumeOption(parsedArgs, "--workspace-id");
   const force = consumeFlags(parsedArgs, "--force", "-f");
   ensureNoUnexpectedArgs(parsedArgs, "login");
-  if (providedToken && providedCookie) {
-    throw new CliError("Use either --token or --cookie, not both.");
+  if (providedToken && useCookieStdin) {
+    throw new CliError("Use either --token or --cookie-stdin, not both.");
   }
+  const nonInteractiveCookieStdin = useCookieStdin && process.stdin.isTTY !== true;
 
   console.error("Affine MCP Server — Login\n");
 
   const existing = loadConfigFile();
-  if (existing.AFFINE_API_TOKEN || existing.AFFINE_COOKIE || (existing.AFFINE_EMAIL && existing.AFFINE_PASSWORD)) {
+  const hasExistingAuth = Boolean(
+    existing.AFFINE_API_TOKEN ||
+    existing.AFFINE_COOKIE ||
+    (existing.AFFINE_EMAIL && existing.AFFINE_PASSWORD),
+  );
+  if (hasExistingAuth) {
     console.error(`Existing config: ${CONFIG_FILE}`);
     console.error(`  URL:       ${existing.AFFINE_BASE_URL || "(default)"}`);
     console.error("  Auth:      (set)");
     console.error(`  Workspace: ${existing.AFFINE_WORKSPACE_ID || "(none)"}\n`);
     if (!force) {
+      if (nonInteractiveCookieStdin) {
+        throw new CliError("--force is required when --cookie-stdin would overwrite existing credentials.");
+      }
       const overwrite = await ask("Overwrite? [y/N] ");
       if (!/^[yY]$/.test(overwrite)) {
         console.error("Keeping existing config.");
@@ -511,8 +543,14 @@ async function login(args: string[]) {
     }
   }
 
+  const pipedCookie = nonInteractiveCookieStdin ? await ask("", true) : undefined;
   const defaultUrl = "https://app.affine.pro";
-  const rawUrl = providedUrl ?? ((await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl);
+  const configuredUrl = process.env.AFFINE_BASE_URL || existing.AFFINE_BASE_URL || defaultUrl;
+  const rawUrl = providedUrl ?? (
+    nonInteractiveCookieStdin
+      ? configuredUrl
+      : (await ask(`Affine URL [${defaultUrl}]: `)) || defaultUrl
+  );
   const baseUrl = validateBaseUrl(rawUrl, {
     allowInsecureHttp: parseBooleanFlag(
       "AFFINE_ALLOW_INSECURE_HTTP",
@@ -525,6 +563,14 @@ async function login(args: string[]) {
     providedGraphqlPath || process.env.AFFINE_GRAPHQL_PATH || existing.AFFINE_GRAPHQL_PATH || "/graphql",
   );
   const graphqlEndpoint = buildGraphqlEndpoint(baseUrl, graphqlPath);
+  const providedCookie = nonInteractiveCookieStdin
+    ? pipedCookie
+    : useCookieStdin
+      ? await ask("Session cookie: ", true)
+      : undefined;
+  if (useCookieStdin && !providedCookie) {
+    throw new CliError("No session cookie received on stdin.");
+  }
 
   let result: LoginResult;
 
@@ -559,25 +605,19 @@ async function login(args: string[]) {
         "\nAuth method — [1] Email/password (recommended)  [2] Paste session cookie  [3] Compatible API token: ",
       );
       const loginResult = method === "2"
-        ? await loginWithCookie(baseUrl, graphqlEndpoint)
+        ? await loginWithCookie(baseUrl, graphqlEndpoint, providedWorkspaceId)
         : method === "3"
-          ? await loginWithToken(graphqlEndpoint)
-          : await loginWithEmail(baseUrl, graphqlEndpoint);
-      result = {
-        ...loginResult,
-        workspaceId: providedWorkspaceId || loginResult.workspaceId,
-      };
+          ? await loginWithToken(graphqlEndpoint, providedWorkspaceId)
+          : await loginWithEmail(baseUrl, graphqlEndpoint, providedWorkspaceId);
+      result = loginResult;
     } else {
       const method = await ask(
         "\nAuth method — [1] Paste session cookie (recommended)  [2] Compatible API token: ",
       );
       const loginResult = method === "2"
-        ? await loginWithToken(graphqlEndpoint)
-        : await loginWithCookie(baseUrl, graphqlEndpoint);
-      result = {
-        ...loginResult,
-        workspaceId: providedWorkspaceId || loginResult.workspaceId,
-      };
+        ? await loginWithToken(graphqlEndpoint, providedWorkspaceId)
+        : await loginWithCookie(baseUrl, graphqlEndpoint, providedWorkspaceId);
+      result = loginResult;
     }
   }
 
@@ -998,7 +1038,7 @@ const COMMANDS: Record<string, CliCommandDefinition> = {
   },
   login: {
     summary: "Interactive login and config bootstrap",
-    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token> | --cookie <cookie>] [--workspace-id <id>] [--force]",
+    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token> | --cookie-stdin] [--workspace-id <id>] [--force]",
     handler: login,
   },
   status: {

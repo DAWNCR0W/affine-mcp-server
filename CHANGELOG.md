@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-08-06
+
+### Security
+- Replaced the `affine-mcp login --cookie <value>` process-argument path with `--cookie-stdin` so browser session cookies do not appear in shell history or process listings.
+
+### Fixed
+- `affine-mcp login --workspace-id` now verifies that the requested workspace is available to the authenticated account before saving the configuration.
+- `list_docs` now falls back to bounded workspace metadata pagination when AFFiNE denies ordinary workspace members access to the GraphQL document connection.
+
+### Tests
+- Added CLI regressions for stdin cookie authentication, legacy cookie redaction, inaccessible workspace rejection, and live workspace validation.
+
 ## [3.2.0] - 2026-08-04
 
 ### Added
@@ -646,6 +658,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.1
 [3.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.0
 [3.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.1.0
 [3.0.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.0.1
@@ -677,4 +690,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.2.1...HEAD
