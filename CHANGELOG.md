@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The container `HEALTHCHECK` now probes `127.0.0.1` instead of `localhost`, which can resolve to `::1` while the server listens on IPv4 only.
+
 ## [3.2.1] - 2026-08-06
 
 ### Security
