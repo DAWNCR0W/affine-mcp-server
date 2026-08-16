@@ -35,6 +35,34 @@ export function text(data: unknown) {
   };
 }
 
+/**
+ * The MCP SDK converts Zod v3 schemas with zod-to-json-schema, which stamps every
+ * advertised tool schema with `"$schema": "http://json-schema.org/draft-07/schema#"`.
+ * Clients that validate 2020-12 only (Claude) reject those tools outright. Without a
+ * `$schema` the dialect defaults to 2020-12, which these object schemas already satisfy.
+ */
+export function stripSchemaDialect(server: { server?: unknown }): void {
+  const handlers = (server.server as { _requestHandlers?: Map<string, Function> } | undefined)?._requestHandlers;
+  if (!(handlers instanceof Map)) {
+    throw new Error(
+      "[affine-mcp] Server request handlers not found - the advertised JSON Schema dialect cannot be " +
+      "normalized. The MCP SDK API may have changed. Refusing to start because clients that support " +
+      "JSON Schema 2020-12 only would reject every tool.",
+    );
+  }
+  // No handler until the first tool is registered; a fully filtered surface has nothing to fix.
+  const listTools = handlers.get("tools/list");
+  if (!listTools) return;
+  handlers.set("tools/list", async (...args: unknown[]) => {
+    const result = await listTools(...args);
+    for (const tool of (result as { tools?: Array<Record<string, any>> })?.tools ?? []) {
+      delete tool.inputSchema?.$schema;
+      delete tool.outputSchema?.$schema;
+    }
+    return result;
+  });
+}
+
 export type ToolErrorOptions = {
   code?: string;
   retryable?: boolean;
