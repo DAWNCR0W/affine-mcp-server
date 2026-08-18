@@ -38,8 +38,8 @@ export function text(data: unknown) {
 /**
  * The MCP SDK converts Zod v3 schemas with zod-to-json-schema, which stamps every
  * advertised tool schema with `"$schema": "http://json-schema.org/draft-07/schema#"`.
- * Clients that validate 2020-12 only (Claude) reject those tools outright. Without a
- * `$schema` the dialect defaults to 2020-12, which these object schemas already satisfy.
+ * Clients that reject an explicitly declared draft-07 dialect cannot discover those tools.
+ * Removing the marker leaves schema interpretation to the client context.
  */
 export function stripSchemaDialect(server: { server?: unknown }): void {
   const handlers = (server.server as { _requestHandlers?: Map<string, Function> } | undefined)?._requestHandlers;

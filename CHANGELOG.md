@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.2] - 2026-08-18
+
 ### Fixed
 - The container `HEALTHCHECK` now probes `127.0.0.1` instead of `localhost`, which can resolve to `::1` while the server listens on IPv4 only.
 - Tool schemas are no longer advertised with the draft-07 JSON Schema dialect. The MCP SDK stamps `"$schema": "http://json-schema.org/draft-07/schema#"` onto every schema converted from Zod v3, which made clients that support JSON Schema 2020-12 only (Claude) reject every tool with `Tool has an invalid outputSchema`.
+
+### Dependencies
+- Raised `undici` from `^6.28.0` to `^7.29.0`, raised the supported Node.js floor to 20.18.1, and refreshed the locked `jose` and `yjs` releases.
+- Refreshed the locked Node.js types, `tsx`, Playwright, and Docker login action releases.
 
 ## [3.2.1] - 2026-08-06
 
@@ -662,6 +668,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.2
 [3.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.1
 [3.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.0
 [3.1.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.1.0
@@ -694,4 +701,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.2.2...HEAD
