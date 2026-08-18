@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.2.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.2.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -162,7 +162,7 @@ If you want to expose the server remotely over HTTP instead of stdio, start with
 
 ## Compatibility Matrix
 
-Node.js 20 is the minimum supported runtime. CI validates the minimum runtime and the current Node.js release used by the npm publish workflow.
+Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20 and 24 release lines.
 
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |
@@ -180,6 +180,8 @@ Node.js 20 is the minimum supported runtime. CI validates the minimum runtime an
 `tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`; tool definitions returned by `tools/list` include MCP annotations that mark read-only, destructive, idempotent, and external-world behavior for client-side tool selection.
 
 Every canonical tool also declares an MCP `outputSchema` for its `structuredContent`. Object results retain their existing top-level fields, while array and scalar results use stable `{ items }`, `{ text }`, or `{ value }` envelopes. The existing text `content` remains unchanged for compatibility with clients that do not consume structured results.
+
+Advertised input and output schemas omit the SDK-generated draft-07 `$schema` marker. Schema interpretation follows the client context, allowing clients that reject an explicit draft-07 declaration to consume the tool surface.
 
 Domains:
 
