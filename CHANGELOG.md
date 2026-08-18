@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool schemas are no longer advertised with the draft-07 JSON Schema dialect. The MCP SDK stamps `"$schema": "http://json-schema.org/draft-07/schema#"` onto every schema converted from Zod v3, which made clients that support JSON Schema 2020-12 only (Claude) reject every tool with `Tool has an invalid outputSchema`.
 
 ### Dependencies
-- Raised `undici` from `^6.28.0` to `^7.29.0` and refreshed the locked `jose` and `yjs` releases.
+- Raised `undici` from `^6.28.0` to `^7.29.0`, raised the supported Node.js floor to 20.18.1, and refreshed the locked `jose` and `yjs` releases.
 - Refreshed the locked Node.js types, `tsx`, Playwright, and Docker login action releases.
 
 ## [3.2.1] - 2026-08-06

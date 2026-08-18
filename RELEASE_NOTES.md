@@ -21,13 +21,13 @@
 
 ### Compatibility
 - No tools were added or removed, and no existing input or output contract changed.
-- Node.js 20 or newer remains required.
+- Node.js 20.18.1 or newer is required.
 - Docker deployments keep the same HTTP port and health endpoint.
 
 ### Validation Evidence
-- Node.js 20.20.2 and 24.19.0: clean `npm ci && npm run ci` (27/27 fast tests on each runtime)
+- Node.js 20.18.1 and 24.19.0: clean `npm ci && npm run ci` (27/27 fast tests on each runtime)
 - `npm audit --audit-level=low` (zero vulnerabilities)
-- Node.js 20.20.2: `npm run test:e2e` (21/21 integration tests; 14/14 Playwright tests)
+- Node.js 20.18.1: `npm run test:e2e` (21/21 integration tests; 14/14 Playwright tests)
 - Packed-tarball install, CLI, and 92-tool discovery smoke
 - `npm publish --dry-run --access public --ignore-scripts`
 - Linux/amd64 Docker build, version check, non-root UID check, and IPv4 healthcheck smoke

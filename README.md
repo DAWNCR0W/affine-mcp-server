@@ -162,7 +162,7 @@ If you want to expose the server remotely over HTTP instead of stdio, start with
 
 ## Compatibility Matrix
 
-Node.js 20 is the minimum supported runtime. CI validates the minimum runtime and the current Node.js release used by the npm publish workflow.
+Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20 and 24 release lines.
 
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |
