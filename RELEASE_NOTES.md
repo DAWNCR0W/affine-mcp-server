@@ -1,5 +1,37 @@
 # Release Notes
 
+## Version 3.2.2 (2026-08-18)
+
+### Highlights
+- Tool discovery now works with clients that accept JSON Schema 2020-12 but reject schemas declaring the draft-07 dialect.
+- Container health checks now use IPv4 loopback, avoiding false unhealthy states when `localhost` resolves to IPv6.
+- Runtime, development, browser-test, and container-publish dependencies were refreshed.
+
+### What Changed
+- MCP schema compatibility
+  - Removes the SDK-injected draft-07 `$schema` marker from advertised input and output schemas.
+  - Preserves the existing tool names, parameters, output structures, and 92-tool canonical surface.
+  - Fails closed at startup if an incompatible MCP SDK change prevents schema normalization.
+- Container reliability
+  - Probes `127.0.0.1` in the Docker `HEALTHCHECK`, matching the server's IPv4 listener.
+- Dependencies
+  - Raised `undici` from `^6.28.0` to `^7.29.0`.
+  - Refreshed locked `jose`, `yjs`, Node.js types, `tsx`, and Playwright releases.
+  - Updated the Docker login action from `4.5.2` to `4.6.0`.
+
+### Compatibility
+- No tools were added or removed, and no existing input or output contract changed.
+- Node.js 20 or newer remains required.
+- Docker deployments keep the same HTTP port and health endpoint.
+
+### Validation Evidence
+- Node.js 20.20.2 and 24.19.0: clean `npm ci && npm run ci` (27/27 fast tests on each runtime)
+- `npm audit --audit-level=low` (zero vulnerabilities)
+- Node.js 20.20.2: `npm run test:e2e` (21/21 integration tests; 14/14 Playwright tests)
+- Packed-tarball install, CLI, and 92-tool discovery smoke
+- `npm publish --dry-run --access public --ignore-scripts`
+- Linux/amd64 Docker build, version check, non-root UID check, and IPv4 healthcheck smoke
+
 ## Version 3.2.1 (2026-08-06)
 
 ### Highlights
