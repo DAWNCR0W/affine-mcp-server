@@ -181,6 +181,8 @@ Node.js 20 is the minimum supported runtime. CI validates the minimum runtime an
 
 Every canonical tool also declares an MCP `outputSchema` for its `structuredContent`. Object results retain their existing top-level fields, while array and scalar results use stable `{ items }`, `{ text }`, or `{ value }` envelopes. The existing text `content` remains unchanged for compatibility with clients that do not consume structured results.
 
+Advertised input and output schemas carry no `$schema` keyword, so they are read as JSON Schema 2020-12. Clients that validate 2020-12 only reject any schema that declares an older dialect.
+
 Domains:
 
 - Workspace: create, inspect, update, delete, and traverse workspaces
