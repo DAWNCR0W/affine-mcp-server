@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The container `HEALTHCHECK` now probes `127.0.0.1` instead of `localhost`, which can resolve to `::1` while the server listens on IPv4 only.
+- Tool schemas are no longer advertised with the draft-07 JSON Schema dialect. The MCP SDK stamps `"$schema": "http://json-schema.org/draft-07/schema#"` onto every schema converted from Zod v3, which made clients that support JSON Schema 2020-12 only (Claude) reject every tool with `Tool has an invalid outputSchema`.
 
 ## [3.2.1] - 2026-08-06
 

@@ -21,6 +21,7 @@ import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
+import { stripSchemaDialect } from "./util/mcp.js";
 import {
   assertOAuthServiceWritePolicy,
   createToolFilterEnvironment,
@@ -210,6 +211,7 @@ async function buildServer() {
   }
   registerBlobTools(server, gql);
   registerNotificationTools(server, gql);
+  stripSchemaDialect(server);
   return server;
 }
 

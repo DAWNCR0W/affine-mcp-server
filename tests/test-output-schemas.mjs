@@ -8,7 +8,7 @@ import { ALL_TOOLS } from "../src/toolSurface.ts";
 import { registerBlobTools } from "../src/tools/blobStorage.ts";
 import { registerDocTools } from "../src/tools/docs.ts";
 import { TOOLS_WITH_ERROR_OUTPUT, toolOutputSchemaFor } from "../src/toolOutputSchemas.ts";
-import { text } from "../src/util/mcp.ts";
+import { stripSchemaDialect, text } from "../src/util/mcp.ts";
 
 function installOutputSchemaRegistration(server) {
   const registerTool = server.registerTool.bind(server);
@@ -140,12 +140,16 @@ const gql = {
   },
 };
 registerBlobTools(server, gql);
+stripSchemaDialect(server);
 
 const client = await connectInMemory(server, "output-schema-test");
 
 const listed = await client.listTools();
 for (const tool of listed.tools) {
   assert.equal(tool.outputSchema?.type, "object", `${tool.name} did not advertise an object output schema`);
+  // Clients that only support JSON Schema 2020-12 reject any declared dialect.
+  assert.equal(tool.inputSchema.$schema, undefined, `${tool.name} advertised a JSON Schema dialect on its input schema`);
+  assert.equal(tool.outputSchema.$schema, undefined, `${tool.name} advertised a JSON Schema dialect on its output schema`);
 }
 const listedByName = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
 assert.equal(listedByName.upload_blob.outputSchema.properties.encoding.type, "string");
