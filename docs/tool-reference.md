@@ -82,6 +82,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
+| `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
+| `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
 | `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
 
 ### Content editing

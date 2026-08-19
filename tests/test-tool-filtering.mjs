@@ -154,6 +154,10 @@ async function run() {
       toolsByName.list_docs?.annotations?.readOnlyHint === true &&
       toolsByName.list_docs?.annotations?.idempotentHint === true &&
       toolsByName.delete_doc?.annotations?.destructiveHint === true &&
+      toolsByName.trash_doc?.annotations?.destructiveHint === false &&
+      toolsByName.trash_doc?.annotations?.idempotentHint === true &&
+      toolsByName.restore_doc?.annotations?.destructiveHint === false &&
+      toolsByName.restore_doc?.annotations?.idempotentHint === true &&
       toolsByName.create_doc?.annotations?.readOnlyHint === false &&
       toolsByName.create_doc?.annotations?.destructiveHint === false;
     if (missingAnnotations.length === 0 && annotationExpectations) {
@@ -255,6 +259,8 @@ async function run() {
       "create_doc",
       "append_block",
       "delete_doc",
+      "trash_doc",
+      "restore_doc",
       "update_database_row",
       "add_surface_element",
       "read_all_notifications",
@@ -281,7 +287,7 @@ async function run() {
       "add_organize_link",
     ];
     const unexpectedlyVisible = trimmed.filter(t => tools7.includes(t));
-    const coreExpected = ["create_doc", "append_block", "read_doc", "update_database_row"];
+    const coreExpected = ["create_doc", "append_block", "read_doc", "trash_doc", "restore_doc", "update_database_row"];
     const coreMissing = coreExpected.filter(t => !tools7.includes(t));
     if (unexpectedlyVisible.length === 0 && coreMissing.length === 0) {
       console.log("✅ Success: Core profile exposes the compact everyday surface.");
@@ -302,7 +308,7 @@ async function run() {
       "update_profile",
     ];
     const visibleRestricted = hiddenAuthoring.filter(t => tools8.includes(t));
-    const expectedAuthoring = ["create_semantic_page", "instantiate_template_native", "add_surface_element", "update_surface_element"];
+    const expectedAuthoring = ["create_semantic_page", "instantiate_template_native", "add_surface_element", "trash_doc", "restore_doc", "update_surface_element"];
     const missingAuthoring = expectedAuthoring.filter(t => !tools8.includes(t));
     if (visibleRestricted.length === 0 && missingAuthoring.length === 0) {
       console.log("✅ Success: Authoring profile keeps editing tools while hiding restricted tools.");
