@@ -11,6 +11,8 @@ Permanent destructive tools require callers to repeat the target identifier so a
 
 Read or list the target immediately before deletion and never reuse a confirmation value for a different resource.
 
+Prefer `trash_doc` for ordinary cleanup because it is recoverable with `restore_doc`. Use `delete_doc` only when permanent deletion is explicitly required.
+
 This guide shows practical tool sequences for common AFFiNE workflows.
 
 The exact JSON schema for each tool is discoverable from MCP `tools/list`. The recipes below focus on tool selection and ordering.

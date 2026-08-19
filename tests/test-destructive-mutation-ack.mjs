@@ -11,6 +11,7 @@ import { registerCommentTools } from "../dist/tools/comments.js";
 import {
   createAcknowledgedDeletedDocTracker,
   deleteDocFromWorkspace,
+  setDocTrashState,
 } from "../dist/tools/docs.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
@@ -62,6 +63,7 @@ class FakeWorkspaceSocket {
     contentExists = true,
     deleteMode = "void-success",
     pushMode = "success",
+    staleWorkspaceReadsAfterPush = 0,
   } = {}) {
     this.workspaceId = workspaceId;
     this.docId = docId;
@@ -69,6 +71,8 @@ class FakeWorkspaceSocket {
     this.contentExists = contentExists;
     this.deleteMode = deleteMode;
     this.pushMode = pushMode;
+    this.staleWorkspaceReadsAfterPush = staleWorkspaceReadsAfterPush;
+    this.staleWorkspaceUpdate = null;
     this.events = [];
     this.listeners = new Map();
   }
@@ -78,6 +82,11 @@ class FakeWorkspaceSocket {
     queueMicrotask(() => {
       if (event === "space:load-doc") {
         if (payload.docId === this.workspaceId) {
+          if (this.staleWorkspaceReadsAfterPush > 0 && this.staleWorkspaceUpdate) {
+            this.staleWorkspaceReadsAfterPush -= 1;
+            ack?.({ data: { missing: this.staleWorkspaceUpdate, timestamp: 1 } });
+            return;
+          }
           ack?.({
             data: {
               missing: Buffer.from(Y.encodeStateAsUpdate(this.workspaceDoc)).toString("base64"),
@@ -100,6 +109,7 @@ class FakeWorkspaceSocket {
           return;
         }
         if (payload.docId === this.workspaceId) {
+          this.staleWorkspaceUpdate = Buffer.from(Y.encodeStateAsUpdate(this.workspaceDoc)).toString("base64");
           Y.applyUpdate(this.workspaceDoc, Buffer.from(payload.update, "base64"));
         }
         ack?.({ data: { timestamp: 2 } });
@@ -156,6 +166,12 @@ class FakeWorkspaceSocket {
   pageIds() {
     const pages = this.workspaceDoc.getMap("meta").get("pages");
     return pages instanceof Y.Array ? pages.toArray().map(page => page.get("id")) : [];
+  }
+
+  page() {
+    const pages = this.workspaceDoc.getMap("meta").get("pages");
+    if (!(pages instanceof Y.Array)) return null;
+    return pages.toArray().find(page => page.get("id") === this.docId) ?? null;
   }
 }
 
@@ -332,6 +348,85 @@ async function testDocumentReceipts() {
   await assert.rejects(
     deleteDocFromWorkspace(new FakeWorkspaceSocket(), "workspace-1", "workspace-1"),
     /cannot delete the workspace metadata document/,
+  );
+}
+
+async function testDocumentTrashReceipts() {
+  const socket = new FakeWorkspaceSocket();
+
+  const trashed = parseToolResult(
+    await setDocTrashState(socket, "workspace-1", "doc-1", true),
+  );
+  assert.equal(trashed.ok, true);
+  assert.equal(trashed.status, "trashed");
+  assert.equal(trashed.changed, true);
+  assert.equal(trashed.previouslyInTrash, false);
+  assert.equal(trashed.inTrash, true);
+  assert.equal(typeof trashed.trashDate, "number");
+  assert.equal(trashed.readBackVerified, true);
+  assert.equal(socket.page().get("trash"), true);
+  assert.equal(socket.page().has("trashDate"), true);
+
+  const trashedAgain = parseToolResult(
+    await setDocTrashState(socket, "workspace-1", "doc-1", true),
+  );
+  assert.equal(trashedAgain.status, "already_trashed");
+  assert.equal(trashedAgain.changed, false);
+  assert.equal(
+    socket.events.filter(event => event.event === "space:push-doc-update").length,
+    1,
+    "an idempotent trash retry must not push another workspace update",
+  );
+
+  const restored = parseToolResult(
+    await setDocTrashState(socket, "workspace-1", "doc-1", false),
+  );
+  assert.equal(restored.ok, true);
+  assert.equal(restored.status, "restored");
+  assert.equal(restored.changed, true);
+  assert.equal(restored.previouslyInTrash, true);
+  assert.equal(restored.inTrash, false);
+  assert.equal(restored.trashDate, null);
+  assert.equal(restored.readBackVerified, true);
+  assert.equal(socket.page().get("trash"), false);
+  assert.equal(socket.page().has("trashDate"), false);
+  assert.equal(socket.page().has("inTrash"), false);
+
+  const restoredAgain = parseToolResult(
+    await setDocTrashState(socket, "workspace-1", "doc-1", false),
+  );
+  assert.equal(restoredAgain.status, "already_active");
+  assert.equal(restoredAgain.changed, false);
+
+  const legacySocket = new FakeWorkspaceSocket();
+  legacySocket.page().set("inTrash", true);
+  const normalized = parseToolResult(
+    await setDocTrashState(legacySocket, "workspace-1", "doc-1", true),
+  );
+  assert.equal(normalized.status, "trashed");
+  assert.equal(normalized.changed, true);
+  assert.equal(legacySocket.page().has("inTrash"), false);
+  assert.equal(legacySocket.page().get("trash"), true);
+  assert.equal(legacySocket.page().has("trashDate"), true);
+
+  const eventuallyConsistentSocket = new FakeWorkspaceSocket({ staleWorkspaceReadsAfterPush: 1 });
+  const eventuallyConsistent = parseToolResult(
+    await setDocTrashState(eventuallyConsistentSocket, "workspace-1", "doc-1", true),
+  );
+  assert.equal(eventuallyConsistent.status, "trashed");
+  assert.equal(eventuallyConsistent.readBackVerified, true);
+
+  await assert.rejects(
+    setDocTrashState(new FakeWorkspaceSocket({ metadataExists: false }), "workspace-1", "doc-1", true),
+    /not present in workspace/,
+  );
+  await assert.rejects(
+    setDocTrashState(new FakeWorkspaceSocket(), "workspace-1", "workspace-1", true),
+    /metadata document cannot be moved to trash/,
+  );
+  await assert.rejects(
+    setDocTrashState(new FakeWorkspaceSocket({ pushMode: "error" }), "workspace-1", "doc-1", true),
+    /workspace metadata sync failed/,
   );
 }
 
@@ -516,6 +611,7 @@ async function testAdditionalMutationReceipts() {
 testAcknowledgedDeleteTrackerBounds();
 await testDeleteDocProtocol();
 await testDocumentReceipts();
+await testDocumentTrashReceipts();
 await testWorkspaceReceipts();
 await testBlobReceipts();
 await testAdditionalMutationReceipts();

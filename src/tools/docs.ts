@@ -752,6 +752,133 @@ export async function deleteDocFromWorkspace(
   }
 }
 
+function workspacePageIsTrashed(page: Y.Map<any>): boolean {
+  const inTrash = page.get("inTrash");
+  const trash = page.get("trash");
+  const trashDate = page.get("trashDate");
+  return typeof inTrash === "boolean"
+    ? inTrash
+    : typeof trash === "boolean"
+      ? trash
+      : typeof trashDate === "number" && trashDate > 0;
+}
+
+function workspacePageById(workspaceDoc: Y.Doc, docId: string): Y.Map<any> | null {
+  const pages = workspaceDoc.getMap("meta").get("pages");
+  if (!(pages instanceof Y.Array)) return null;
+  let match: Y.Map<any> | null = null;
+  pages.forEach((page: unknown) => {
+    if (!match && page instanceof Y.Map && page.get("id") === docId) {
+      match = page;
+    }
+  });
+  return match;
+}
+
+async function loadWorkspaceMetadataDoc(socket: WorkspaceSocket, workspaceId: string): Promise<Y.Doc> {
+  const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+  if (typeof snapshot.missing !== "string") {
+    throw new Error(`Workspace metadata document ${workspaceId} was not found.`);
+  }
+  const workspaceDoc = new Y.Doc();
+  Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
+  return workspaceDoc;
+}
+
+const TRASH_READBACK_ATTEMPTS = 10;
+const TRASH_READBACK_DELAY_MS = 200;
+
+async function waitForWorkspacePageTrashState(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  expectedInTrash: boolean,
+): Promise<Y.Map<any>> {
+  for (let attempt = 0; attempt < TRASH_READBACK_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, TRASH_READBACK_DELAY_MS));
+    }
+    const workspaceDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
+    const page = workspacePageById(workspaceDoc, docId);
+    if (page && workspacePageIsTrashed(page) === expectedInTrash) {
+      return page;
+    }
+  }
+  throw new Error(`Document ${docId} trash state could not be verified after update.`);
+}
+
+/**
+ * Apply AFFiNE's native recoverable document trash metadata and verify it by
+ * reloading the workspace metadata document. This never deletes doc content.
+ */
+export async function setDocTrashState(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  inTrash: boolean,
+) {
+  if (docId === workspaceId) {
+    throw new Error("The workspace metadata document cannot be moved to trash.");
+  }
+
+  const workspaceDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
+  const page = workspacePageById(workspaceDoc, docId);
+  if (!page) {
+    throw new Error(`Document ${docId} is not present in workspace ${workspaceId}.`);
+  }
+
+  const title = typeof page.get("title") === "string" ? page.get("title") : null;
+  const previouslyInTrash = workspacePageIsTrashed(page);
+  const existingTrashDate = page.get("trashDate");
+  const hasCanonicalTrashDate = typeof existingTrashDate === "number" && existingTrashDate > 0;
+  const changed = inTrash
+    ? !previouslyInTrash || page.get("trash") !== true || page.has("inTrash") || !hasCanonicalTrashDate
+    : previouslyInTrash || page.has("inTrash") || page.get("trash") === true || page.has("trashDate");
+
+  if (changed) {
+    const previousState = Y.encodeStateVector(workspaceDoc);
+    workspaceDoc.transact(() => {
+      page.delete("inTrash");
+      page.set("trash", inTrash);
+      if (inTrash) {
+        page.set("trashDate", hasCanonicalTrashDate ? existingTrashDate : Date.now());
+      } else {
+        page.delete("trashDate");
+      }
+    });
+    const delta = Y.encodeStateAsUpdate(workspaceDoc, previousState);
+    await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+  }
+
+  const verifiedPage = changed
+    ? await waitForWorkspacePageTrashState(socket, workspaceId, docId, inTrash)
+    : workspacePageById(workspaceDoc, docId);
+  if (!verifiedPage) {
+    throw new Error(`Document ${docId} disappeared from workspace metadata during trash update.`);
+  }
+  const verifiedInTrash = workspacePageIsTrashed(verifiedPage);
+  if (verifiedInTrash !== inTrash) {
+    throw new Error(`Document ${docId} trash state could not be verified after update.`);
+  }
+  const verifiedTrashDate = verifiedPage.get("trashDate");
+
+  return receipt(inTrash ? "doc.trash" : "doc.restore", {
+    status: inTrash
+      ? changed ? "trashed" : "already_trashed"
+      : changed ? "restored" : "already_active",
+    workspaceId,
+    docId,
+    title,
+    changed,
+    previouslyInTrash,
+    inTrash: verifiedInTrash,
+    trashDate: typeof verifiedTrashDate === "number" && verifiedTrashDate > 0
+      ? verifiedTrashDate
+      : null,
+    readBackVerified: true,
+  });
+}
+
 type AcknowledgedDeletedDocTrackerOptions = {
   ttlMs?: number;
   maxEntries?: number;
@@ -6523,6 +6650,59 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     replaceDocWithMarkdownHandler as any
+  );
+
+  const setTrashStateHandler = (inTrash: boolean) => async (parsed: { workspaceId?: string; docId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      try {
+        return await setDocTrashState(socket, workspaceId, parsed.docId, inTrash);
+      } catch (error) {
+        return toolError(error, {
+          code: inTrash ? "doc_trash_failed" : "doc_restore_failed",
+          retryable: true,
+          data: {
+            kind: inTrash ? "doc.trash" : "doc.restore",
+            status: "failed",
+            workspaceId,
+            docId: parsed.docId,
+          },
+        });
+      }
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "trash_doc",
+    {
+      title: "Move Document to Trash",
+      description: "Move a document to the AFFiNE trash without deleting its content. This is recoverable with restore_doc and safe to retry.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    setTrashStateHandler(true) as any,
+  );
+
+  server.registerTool(
+    "restore_doc",
+    {
+      title: "Restore Document from Trash",
+      description: "Restore a document from the AFFiNE trash without changing its content. This is safe to retry.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    setTrashStateHandler(false) as any,
   );
 
   // DELETE DOC
