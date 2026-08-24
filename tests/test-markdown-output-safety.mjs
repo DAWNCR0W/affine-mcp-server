@@ -224,6 +224,58 @@ function testPlainAndDeltaTextCannotInjectBlocks() {
   }
 }
 
+function testSentencePunctuationIsNotOverEscaped() {
+  const samples = [
+    'second item (appended)',
+    'Call the bank about a refund. notes are elsewhere',
+    'Cancel the card; try to get the $95 annual fee waived',
+    'Unlock the spare phone, then check email',
+    "Check the bank's reply",
+  ];
+
+  for (const text of samples) {
+    const rendered = renderSingleBlock(markdownBlock({
+      flavour: 'affine:list',
+      type: 'todo',
+      checked: false,
+      text,
+    }));
+
+    assert.equal(rendered.markdown, `- [ ] ${text}`);
+    const parsed = parseMarkdownToOperations(rendered.markdown);
+    assert.equal(parsed.operations.length, 1);
+    assert.equal(parsed.operations[0]?.type, 'list');
+    assert.equal(parsed.operations[0]?.text, text);
+  }
+}
+
+function testStructuralMarkdownStillRoundTripsAsText() {
+  const samples = [
+    '# heading',
+    '> quote',
+    '- item',
+    '+ item',
+    '1. item',
+    '1) item',
+    '---',
+    '*emphasis*',
+    '_emphasis_',
+    '[link](https://example.com)',
+    '<script>alert(1)</script>',
+    '&copy;',
+    '`code`',
+    '~~strike~~',
+  ];
+
+  for (const text of samples) {
+    const rendered = renderSingleBlock(markdownBlock({ text }));
+    const parsed = parseMarkdownToOperations(rendered.markdown);
+    assert.equal(parsed.operations.length, 1, rendered.markdown);
+    assert.equal(parsed.operations[0]?.type, 'paragraph', rendered.markdown);
+    assert.equal(parsed.operations[0]?.text, text, rendered.markdown);
+  }
+}
+
 function testFormattedRichTextCannotInjectStructure() {
   const payload = '# heading\n- item\n](javascript:alert(1))\n<script>';
   const rendered = renderSingleBlock(markdownBlock({
@@ -352,6 +404,8 @@ testExportedFrontmatterDoesNotBecomeImportedBody();
 testCodeFenceSelectionAndRoundTrip();
 testLinkEscapingAndUnsafeSchemes();
 testPlainAndDeltaTextCannotInjectBlocks();
+testSentencePunctuationIsNotOverEscaped();
+testStructuralMarkdownStillRoundTripsAsText();
 testFormattedRichTextCannotInjectStructure();
 testUnsafeRichTextLinkDowngradesWithoutLosingText();
 testBookmarkBlockEscapingAndDowngrade();
