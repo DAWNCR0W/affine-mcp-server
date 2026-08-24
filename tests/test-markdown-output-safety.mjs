@@ -232,6 +232,7 @@ function testSentencePunctuationIsNotOverEscaped() {
     'Unlock the spare phone, then check email',
     "Check the bank's reply",
     'AT&T account review',
+    'Preserve &MadeUpEntity; literally',
   ];
 
   for (const text of samples) {
