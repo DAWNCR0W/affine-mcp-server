@@ -412,7 +412,7 @@ type DatabaseIntentPreset = {
   extraColumns: DatabaseIntentColumnSpec[];
   starterRows: DatabaseIntentSeedRow[];
 };
-const DATABASE_COLUMN_TYPE_VALUES = ["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
+const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
   "Nested markdown lists are flattened during import.",
@@ -8417,6 +8417,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (existingDefs.some(c => c.name === parsed.name)) {
         throw new Error(`Column '${parsed.name}' already exists`);
       }
+      if (parsed.type === "title" && existingDefs.some(c => c.type === "title")) {
+        throw new Error("Database already has a title column");
+      }
 
       const columnId = generateId();
       const column = new Y.Map<any>();
@@ -8455,6 +8458,17 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
               viewCol.set("width", parsed.width || 200);
               viewColumns.push([viewCol]);
             }
+            if (parsed.type === "title") {
+              const header = view.get("header");
+              if (header instanceof Y.Map) {
+                header.set("titleColumn", columnId);
+              } else {
+                view.set("header", {
+                  ...(header && typeof header === "object" ? header : {}),
+                  titleColumn: columnId,
+                });
+              }
+            }
           }
         });
       }
@@ -8476,13 +8490,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "add_database_column",
     {
       title: "Add Database Column",
-      description: "Add a column to an existing AFFiNE database block. Supports rich-text, select, multi-select, number, checkbox, link, date types.",
+      description: "Add a column to an existing AFFiNE database block. Supports title, rich-text, select, multi-select, number, checkbox, link, and date types. A database can have at most one title column.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         name: z.string().min(1).describe("Column display name"),
-        type: z.enum(["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"]).default("rich-text").describe("Column type"),
+        type: z.enum(DATABASE_COLUMN_TYPE_VALUES).default("rich-text").describe("Column type"),
         options: z.array(z.string()).optional().describe("Predefined options for select/multi-select columns"),
         width: z.number().optional().describe("Column width in pixels (default 200)"),
       },

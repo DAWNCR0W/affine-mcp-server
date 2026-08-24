@@ -207,10 +207,8 @@ async function main() {
 
     // 4. Add columns
     const columnDefs = [
-      { name: 'Name', type: 'rich-text' },
+      { name: 'Title', type: 'title' },
       { name: 'Status', type: 'select', options: ['Active', 'Inactive', 'Pending'] },
-      { name: 'Priority', type: 'number' },
-      { name: 'Done', type: 'checkbox' },
     ];
 
     for (const colDef of columnDefs) {
@@ -233,11 +231,49 @@ async function main() {
       await settle();
     }
 
+    let duplicateTitleRejected = false;
+    try {
+      await call('add_database_column', {
+        workspaceId: state.workspaceId,
+        docId: state.docId,
+        databaseBlockId: state.databaseBlockId,
+        name: 'Another Title',
+        type: 'title',
+      });
+    } catch (err) {
+      if (!String(err?.message || err).includes('already has a title column')) {
+        throw err;
+      }
+      duplicateTitleRejected = true;
+    }
+    if (!duplicateTitleRejected) {
+      throw new Error('add_database_column accepted a second title column');
+    }
+
+    const schema = await call('read_database_columns', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+    });
+    const titleColumn = schema?.columns?.find(column => column.type === 'title');
+    if (!titleColumn?.id) throw new Error('read_database_columns did not return a title column');
+    if (schema.titleColumnId !== titleColumn.id) {
+      throw new Error(`titleColumnId mismatch: expected ${titleColumn.id}, got ${schema.titleColumnId}`);
+    }
+    if (schema.columnCount !== 2) {
+      throw new Error(`expected a minimal two-column database, got ${schema.columnCount} columns`);
+    }
+    for (const view of schema.views || []) {
+      if (view.header?.titleColumn !== titleColumn.id) {
+        throw new Error(`view ${view.id} is not bound to title column ${titleColumn.id}`);
+      }
+    }
+
     // 5. Add rows
     const rowDefs = [
-      { Name: 'Build feature', Status: 'Active', Priority: 1, Done: true },
-      { Name: 'Write tests', Status: 'Pending', Priority: 2, Done: false },
-      { Name: 'Deploy release', Status: 'Inactive', Priority: 3, Done: false },
+      { Title: 'Build feature', Status: 'Active' },
+      { Title: 'Write tests', Status: 'Pending' },
+      { Title: 'Deploy release', Status: 'Inactive' },
     ];
 
     for (const rowDef of rowDefs) {
