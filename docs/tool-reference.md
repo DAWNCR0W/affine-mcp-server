@@ -61,7 +61,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include hierarchy-derived `parentId` values and `linkedDocIds` for inline LinkedPage references |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |

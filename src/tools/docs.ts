@@ -5477,7 +5477,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         if (!(raw instanceof Y.Map)) return;
 
         const flavour = raw.get("sys:flavour");
-        const parentId = raw.get("sys:parent");
+        const parentId = resolveBlockParentId(blocks, blockId);
         const type = raw.get("prop:type");
         const propText = raw.get("prop:text");
         const textValue = asText(propText);
@@ -5495,7 +5495,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
         blockRows.push({
           id: blockId,
-          parentId: typeof parentId === "string" ? parentId : null,
+          parentId,
           flavour: typeof flavour === "string" ? flavour : null,
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
