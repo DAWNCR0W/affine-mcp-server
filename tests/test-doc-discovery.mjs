@@ -7,6 +7,7 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * Covers:
  * - list_docs should return titles from workspace metadata when GraphQL omits them
  * - search_docs should support exact/prefix matching, tag filtering, and updatedAt sorting
+ * - trash_doc and restore_doc should preserve content and update discovery metadata
  * - list_docs should correct stale count metadata after delete_doc removes a document
  */
 import path from "node:path";
@@ -144,6 +145,37 @@ async function main() {
     }
 
     const expectedTitlesAfterCreate = ["Workspace Home", ...createdDocs.map(doc => doc.title)];
+
+    const trashed = await call("trash_doc", {
+      workspaceId: workspace.id,
+      docId: createdDocs[1].docId,
+    });
+    expectEqual(trashed?.status, "trashed", "trash_doc status");
+    expectEqual(trashed?.inTrash, true, "trash_doc inTrash");
+    expectEqual(trashed?.readBackVerified, true, "trash_doc readBackVerified");
+    await waitForListDocs(
+      workspace.id,
+      result => result?.edges?.some(edge => edge?.node?.id === createdDocs[1].docId && edge?.node?.inTrash === true),
+      "list_docs trashed state sync",
+    );
+    const trashedDoc = await call("read_doc", {
+      workspaceId: workspace.id,
+      docId: createdDocs[1].docId,
+    });
+    expectEqual(trashedDoc?.exists, true, "trash_doc preserves content");
+
+    const restored = await call("restore_doc", {
+      workspaceId: workspace.id,
+      docId: createdDocs[1].docId,
+    });
+    expectEqual(restored?.status, "restored", "restore_doc status");
+    expectEqual(restored?.inTrash, false, "restore_doc inTrash");
+    expectEqual(restored?.readBackVerified, true, "restore_doc readBackVerified");
+    await waitForListDocs(
+      workspace.id,
+      result => result?.edges?.some(edge => edge?.node?.id === createdDocs[1].docId && edge?.node?.inTrash === false),
+      "list_docs restored state sync",
+    );
 
     await call("create_tag", { workspaceId: workspace.id, tag: "urgent" });
     await call("add_tag_to_doc", {
