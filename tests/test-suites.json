@@ -95,6 +95,7 @@
     ],
     "e2e": [
       "test-database-creation.mjs",
+      "test-database-cells.mjs",
       "test-database-linked-doc.mjs",
       "test-http-email-password.mjs",
       "test-http-bearer.mjs",
