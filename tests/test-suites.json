@@ -3,6 +3,7 @@
   "classifications": {
     "test-auth-session.mjs": "fast",
     "test-blob-upload-contract.mjs": "fast",
+    "test-block-editing.mjs": "integration",
     "test-canvas-tool-map-demo.mjs": "integration",
     "test-capabilities-fidelity.mjs": "integration",
     "test-cli-commands.mjs": "fast",
@@ -94,6 +95,7 @@
       "test-workspace-discovery.mjs"
     ],
     "e2e": [
+      "test-block-editing.mjs",
       "test-database-creation.mjs",
       "test-capabilities-fidelity.mjs",
       "test-database-cells.mjs",
@@ -120,6 +122,7 @@
     ],
     "comprehensive": [
       "test-tool-filtering.mjs",
+      "test-block-editing.mjs",
       "test-capabilities-fidelity.mjs",
       "test-create-placement.mjs",
       "test-doc-discovery.mjs",

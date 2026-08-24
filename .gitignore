@@ -50,6 +50,7 @@ temp/
 comprehensive-test-results-*.json
 
 # E2E test artifacts
+tests/test-block-editing-state.json
 tests/test-database-state.json
 tests/test-database-cells-state.json
 tests/test-data-view-state.json

@@ -203,16 +203,19 @@ async function main() {
     return parsed;
   }
 
-  function assertParentIdsAreNull(readDocPayload, context) {
+  function assertDerivedParentIds(readDocPayload, context) {
     const blocks = Array.isArray(readDocPayload?.blocks) ? readDocPayload.blocks : [];
-    const trackedFlavours = new Set(["affine:page", "affine:surface", "affine:note", "affine:paragraph"]);
-    for (const block of blocks) {
-      if (!trackedFlavours.has(block?.flavour)) {
-        continue;
+    const expectedParents = new Map();
+    for (const parent of blocks) {
+      for (const childId of parent?.childIds || []) {
+        expectedParents.set(childId, parent.id);
       }
-      if (block.parentId !== null) {
+    }
+    for (const block of blocks) {
+      const expectedParentId = expectedParents.get(block.id) ?? null;
+      if (block.parentId !== expectedParentId) {
         throw new Error(
-          `${context}: expected parentId=null for ${block.flavour} block ${block.id}, got ${JSON.stringify(block.parentId)}`
+          `${context}: expected parentId=${JSON.stringify(expectedParentId)} for ${block.flavour} block ${block.id}, got ${JSON.stringify(block.parentId)}`
         );
       }
     }
@@ -242,12 +245,12 @@ async function main() {
     if (!state.docId) throw new Error('create_doc did not return docId');
     console.log(`  Doc ID: ${state.docId}`);
 
-    // Regression guard: keep AFFiNE-compatible parentId (null) shape.
+    // read_doc should expose the hierarchy represented by each block's childIds.
     const readAfterCreate = await call('read_doc', {
       workspaceId: state.workspaceId,
       docId: state.docId,
     });
-    assertParentIdsAreNull(readAfterCreate, 'after create_doc');
+    assertDerivedParentIds(readAfterCreate, 'after create_doc');
 
     const appendedParagraph = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -261,7 +264,7 @@ async function main() {
       workspaceId: state.workspaceId,
       docId: state.docId,
     });
-    assertParentIdsAreNull(readAfterAppendParagraph, 'after append_block paragraph');
+    assertDerivedParentIds(readAfterAppendParagraph, 'after append_block paragraph');
 
     const punctuationMarkdown = [
       '- [ ] second item (appended)',
@@ -281,7 +284,7 @@ async function main() {
       docId: markdownDoc.docId,
       includeMarkdown: true,
     });
-    assertParentIdsAreNull(readMarkdownDoc, 'after create_doc_from_markdown');
+    assertDerivedParentIds(readMarkdownDoc, 'after create_doc_from_markdown');
     if (!readMarkdownDoc?.markdown?.includes(punctuationMarkdown)) {
       throw new Error(`read_doc over-escaped sentence punctuation: ${JSON.stringify(readMarkdownDoc?.markdown)}`);
     }

@@ -383,6 +383,9 @@ type AppendBlockLegacyType = keyof typeof APPEND_BLOCK_LEGACY_ALIAS_MAP;
 const APPEND_BLOCK_LIST_STYLE_VALUES = ["bulleted", "numbered", "todo"] as const;
 type AppendBlockListStyle = typeof APPEND_BLOCK_LIST_STYLE_VALUES[number];
 const AppendBlockListStyle = z.enum(APPEND_BLOCK_LIST_STYLE_VALUES);
+const BLOCK_EDIT_TYPE_VALUES = ["paragraph", "heading", "quote", "list", "code"] as const;
+type BlockEditType = typeof BLOCK_EDIT_TYPE_VALUES[number];
+const BlockEditType = z.enum(BLOCK_EDIT_TYPE_VALUES);
 const APPEND_BLOCK_BOOKMARK_STYLE_VALUES = [
   "vertical",
   "horizontal",
@@ -1995,7 +1998,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return findParentIdByChild(blocks, blockId);
   }
 
-  function resolveInsertContext(blocks: Y.Map<any>, normalized: NormalizedAppendBlockInput): {
+  function resolveInsertContext(
+    blocks: Y.Map<any>,
+    normalized: Pick<NormalizedAppendBlockInput, "placement" | "strict" | "type">,
+  ): {
     parentId: string;
     parentBlock: Y.Map<any>;
     children: Y.Array<any>;
@@ -2087,6 +2093,53 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     return { parentId, parentBlock, children, insertIndex };
+  }
+
+  function blockSnapshot(blocks: Y.Map<any>, blockId: string): Record<string, unknown> | null {
+    const block = findBlockById(blocks, blockId);
+    if (!block) return null;
+
+    const rawText = block.get("prop:text");
+    const rawType = block.get("prop:type");
+    const rawChecked = block.get("prop:checked");
+    const rawLanguage = block.get("prop:language");
+    const rawFlavour = block.get("sys:flavour");
+    return {
+      id: blockId,
+      parentId: resolveBlockParentId(blocks, blockId),
+      flavour: typeof rawFlavour === "string" ? rawFlavour : null,
+      type: typeof rawType === "string" ? rawType : null,
+      text: rawText instanceof Y.Text || typeof rawText === "string" ? asText(rawText) : null,
+      checked: typeof rawChecked === "boolean" ? rawChecked : null,
+      language: typeof rawLanguage === "string" ? rawLanguage : null,
+      childIds: childIdsFrom(block.get("sys:children")),
+    };
+  }
+
+  function editableBlockType(block: Y.Map<any>): BlockEditType | null {
+    const flavour = block.get("sys:flavour");
+    if (flavour === "affine:list") return "list";
+    if (flavour === "affine:code") return "code";
+    if (flavour !== "affine:paragraph") return null;
+
+    const type = block.get("prop:type");
+    if (type === "quote") return "quote";
+    if (typeof type === "string" && /^h[1-6]$/.test(type)) return "heading";
+    return "paragraph";
+  }
+
+  function removeBlockFromParents(blocks: Y.Map<any>, blockId: string): void {
+    for (const [, candidate] of blocks) {
+      if (!(candidate instanceof Y.Map)) continue;
+      const children = candidate.get("sys:children");
+      if (!(children instanceof Y.Array)) continue;
+      const values = children.toArray();
+      for (let index = values.length - 1; index >= 0; index -= 1) {
+        if (values[index] === blockId) {
+          children.delete(index, 1);
+        }
+      }
+    }
   }
 
   function createDatabaseViewColumn(columnId: string, width: number = 200, hide: boolean = false): Y.Map<any> {
@@ -5477,7 +5530,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         if (!(raw instanceof Y.Map)) return;
 
         const flavour = raw.get("sys:flavour");
-        const parentId = raw.get("sys:parent");
+        const parentId = resolveBlockParentId(blocks, blockId);
         const type = raw.get("prop:type");
         const propText = raw.get("prop:text");
         const textValue = asText(propText);
@@ -5495,7 +5548,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
         blockRows.push({
           id: blockId,
-          parentId: typeof parentId === "string" ? parentId : null,
+          parentId,
           flavour: typeof flavour === "string" ? flavour : null,
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
@@ -9497,6 +9550,247 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   };
 
+  const updateBlockHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    text?: string;
+    checked?: boolean;
+    type?: BlockEditType;
+    style?: AppendBlockListStyle;
+    level?: number;
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+    if (
+      params.text === undefined &&
+      params.checked === undefined &&
+      params.type === undefined &&
+      params.style === undefined &&
+      params.level === undefined
+    ) {
+      throw new Error("update_block requires at least one of text, checked, type, style, or level.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+
+      const currentType = editableBlockType(block);
+      if (!currentType) {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(block.get("sys:flavour"))}' — update_block supports paragraph, heading, quote, list, and code blocks.`
+        );
+      }
+      const requestedType = params.type ?? currentType;
+      const paragraphTypes = new Set<BlockEditType>(["paragraph", "heading", "quote"]);
+      const sameFlavour =
+        (paragraphTypes.has(currentType) && paragraphTypes.has(requestedType)) ||
+        currentType === requestedType;
+      if (!sameFlavour) {
+        throw new Error(
+          `Cannot change block '${params.blockId}' from '${currentType}' to '${requestedType}' while preserving its id. Only paragraph/heading/quote conversions share one AFFiNE block flavour.`
+        );
+      }
+
+      if (params.style !== undefined && requestedType !== "list") {
+        throw new Error("The 'style' field can only be used with type='list'.");
+      }
+      if (params.level !== undefined && requestedType !== "heading") {
+        throw new Error("The 'level' field can only be used with type='heading'.");
+      }
+      if (params.checked !== undefined && requestedType !== "list") {
+        throw new Error("The 'checked' field can only be used with a todo list block.");
+      }
+
+      const previous = blockSnapshot(blocks, params.blockId);
+      const changed: string[] = [];
+      const markChanged = (field: string) => {
+        if (!changed.includes(field)) changed.push(field);
+      };
+
+      if (paragraphTypes.has(requestedType)) {
+        const rawType = block.get("prop:type");
+        const currentHeadingLevel =
+          typeof rawType === "string" && /^h([1-6])$/.test(rawType)
+            ? Number(rawType.slice(1))
+            : 1;
+        const nextRawType = requestedType === "heading"
+          ? `h${params.level ?? currentHeadingLevel}`
+          : requestedType === "quote"
+            ? "quote"
+            : "text";
+        if (rawType !== nextRawType) {
+          block.set("prop:type", nextRawType);
+          markChanged(params.level !== undefined && requestedType === currentType ? "level" : "type");
+        }
+      } else if (requestedType === "list") {
+        const rawStyle = block.get("prop:type");
+        const currentStyle = (APPEND_BLOCK_LIST_STYLE_VALUES as readonly string[]).includes(rawStyle)
+          ? rawStyle as AppendBlockListStyle
+          : "bulleted";
+        const nextStyle = params.style ?? currentStyle;
+        if (rawStyle !== nextStyle) {
+          block.set("prop:type", nextStyle);
+          markChanged("style");
+        }
+        if (params.checked !== undefined) {
+          if (nextStyle !== "todo") {
+            throw new Error("The 'checked' field can only be used when list style is 'todo'.");
+          }
+          if (block.get("prop:checked") !== params.checked) {
+            block.set("prop:checked", params.checked);
+            markChanged("checked");
+          }
+        }
+      }
+
+      if (params.text !== undefined && asText(block.get("prop:text")) !== params.text) {
+        block.set("prop:text", makeText(params.text));
+        markChanged("text");
+      }
+
+      if (changed.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
+
+      return text({
+        updated: changed.length > 0,
+        blockId: params.blockId,
+        changed,
+        previous,
+        block: blockSnapshot(blocks, params.blockId),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const moveBlockHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    placement: AppendPlacement;
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+    const placement = normalizePlacement(params.placement);
+    if (!placement) {
+      throw new Error("move_block requires a placement target.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+
+      const flavour = block.get("sys:flavour");
+      if (flavour === "affine:page" || flavour === "affine:surface") {
+        throw new Error(`Refusing to move document root block '${params.blockId}'.`);
+      }
+
+      const descendants = new Set(collectDescendantBlockIds(blocks, [params.blockId]));
+      const targetIds = [placement.parentId, placement.afterBlockId, placement.beforeBlockId]
+        .filter((value): value is string => typeof value === "string");
+      const cyclicTarget = targetIds.find(id => descendants.has(id));
+      if (cyclicTarget) {
+        throw new Error(`Cannot move block '${params.blockId}' into or relative to its own descendant '${cyclicTarget}'.`);
+      }
+
+      const fromParentId = resolveBlockParentId(blocks, params.blockId);
+      const fromParent = fromParentId ? findBlockById(blocks, fromParentId) : null;
+      const fromChildren = fromParent?.get("sys:children");
+      const fromIndex = fromChildren instanceof Y.Array
+        ? indexOfChild(fromChildren, params.blockId)
+        : -1;
+      const resolvedPlacement: AppendPlacement =
+        placement.index !== undefined && !placement.parentId
+          ? { ...placement, parentId: fromParentId ?? undefined }
+          : placement;
+      if (placement.index !== undefined && !resolvedPlacement.parentId) {
+        throw new Error(
+          `Block '${params.blockId}' has no parent; supply placement.parentId with placement.index.`
+        );
+      }
+
+      removeBlockFromParents(blocks, params.blockId);
+      const moveType: AppendBlockCanonicalType = flavour === "affine:note"
+        ? "note"
+        : flavour === "affine:frame"
+          ? "frame"
+          : flavour === "affine:edgeless-text"
+            ? "edgeless_text"
+            : "paragraph";
+      const target = resolveInsertContext(blocks, {
+        placement: resolvedPlacement,
+        strict: true,
+        type: moveType,
+      });
+      target.children.insert(target.insertIndex, [params.blockId]);
+      block.set("sys:parent", null);
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({
+        moved: true,
+        blockId: params.blockId,
+        fromParentId,
+        toParentId: target.parentId,
+        fromIndex,
+        toIndex: target.insertIndex,
+        block: blockSnapshot(blocks, params.blockId),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
   const deleteBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -9526,7 +9820,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = blocks.get(params.blockId);
       if (!(block instanceof Y.Map)) {
-        return text({ deleted: false, blockId: params.blockId, reason: "not-found" });
+        return text({
+          deleted: false,
+          blockId: params.blockId,
+          reason: "not-found",
+          deletedIds: [],
+          deletedBlock: null,
+          deletedBlocks: [],
+          prunedConnectors: [],
+        });
       }
 
       const flavour = block.get("sys:flavour");
@@ -9534,8 +9836,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         throw new Error(`Refusing to delete page-root block '${params.blockId}' — use delete_doc for whole-doc removal.`);
       }
 
-      const deletedIds: string[] = [];
       const deleteRecursive = params.deleteChildren !== false;
+      const candidateIds = deleteRecursive
+        ? collectDescendantBlockIds(blocks, [params.blockId])
+        : [params.blockId];
+      const deletedBlocks = candidateIds
+        .map(id => blockSnapshot(blocks, id))
+        .filter((entry): entry is Record<string, unknown> => entry !== null);
+      const deletedBlock = deletedBlocks.find(entry => entry.id === params.blockId) ?? null;
+      const deletedIds: string[] = [];
       const walk = (id: string) => {
         const b = blocks.get(id);
         if (!(b instanceof Y.Map)) return;
@@ -9600,7 +9909,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
-      return text({ deleted: true, blockId: params.blockId, deletedIds, prunedConnectors });
+      return text({
+        deleted: true,
+        blockId: params.blockId,
+        deletedIds,
+        deletedBlock,
+        deletedBlocks,
+        prunedConnectors,
+      });
     } finally {
       socket.disconnect();
     }
@@ -9986,11 +10302,52 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   server.registerTool(
+    "update_block",
+    {
+      title: "Update Block",
+      description:
+        "Partially update one paragraph, heading, quote, list, or code block while preserving its block id. Omitted fields remain unchanged. Paragraph/heading/quote conversions preserve ids; cross-flavour conversions are rejected.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Block id to update."),
+        text: z.string().optional().describe("Replacement block text. Omit to preserve the current text."),
+        checked: z.boolean().optional().describe("Todo checked state. Only valid for a list whose resulting style is todo."),
+        type: BlockEditType.optional().describe("Resulting logical block type."),
+        style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),
+        level: z.number().int().min(1).max(6).optional().describe("Heading level. Only valid when the resulting type is heading."),
+      },
+    },
+    updateBlockHandler as any
+  );
+
+  server.registerTool(
+    "move_block",
+    {
+      title: "Move Block",
+      description:
+        "Move an existing block without changing its id. Reuses append_block placement semantics and rejects document-root moves and cycles.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Block id to move."),
+        placement: z.object({
+          parentId: z.string().optional(),
+          afterBlockId: z.string().optional(),
+          beforeBlockId: z.string().optional(),
+          index: z.number().int().min(0).optional(),
+        }).describe("Destination parent or position, using append_block placement semantics."),
+      },
+    },
+    moveBlockHandler as any
+  );
+
+  server.registerTool(
     "delete_block",
     {
       title: "Delete Block",
       description:
-        "Delete a block by id. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs.",
+        "Delete a block by id and return snapshots of the removed content. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
