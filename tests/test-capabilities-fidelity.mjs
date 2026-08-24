@@ -114,7 +114,9 @@ async function main() {
     expectEqual(capabilities?.docs?.edgelessCanvas?.surfaceElementMutation, true, 'surface element mutation flag');
     expectEqual(capabilities?.docs?.edgelessCanvas?.canvasReadback, true, 'edgeless canvas readback flag');
     expectEqual(capabilities?.database?.intentDrivenComposition, true, 'intentDrivenComposition flag');
-    expectEqual(capabilities?.database?.advancedViewMutation, true, 'advancedViewMutation flag');
+    expectArray(capabilities?.database?.columnTypes, 'database column types');
+    expectTruthy(capabilities.database.columnTypes.includes('title'), 'database title column advertised');
+    expectEqual(capabilities?.database?.advancedViewMutation, false, 'advancedViewMutation flag');
     expectEqual(capabilities?.workspace?.ruleBackedCollections, true, 'ruleBackedCollections flag');
     expectEqual(capabilities?.workspace?.workspaceBlueprints, true, 'workspaceBlueprints flag');
     expectEqual(capabilities?.collaboration?.replyCreation, false, 'replyCreation flag');

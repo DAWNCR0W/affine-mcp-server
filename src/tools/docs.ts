@@ -412,7 +412,7 @@ type DatabaseIntentPreset = {
   extraColumns: DatabaseIntentColumnSpec[];
   starterRows: DatabaseIntentSeedRow[];
 };
-const DATABASE_COLUMN_TYPE_VALUES = ["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
+const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
   "Nested markdown lists are flattened during import.",
@@ -5599,7 +5599,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         supported: true,
         columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
         initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
-        advancedViewMutation: true,
+        advancedViewMutation: false,
         intentDrivenComposition: true,
         linkedDocRows: true,
       },
@@ -7503,6 +7503,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const columnsRaw = view instanceof Y.Map ? view.get("columns") : view?.columns;
       const headerRaw = view instanceof Y.Map ? view.get("header") : view?.header;
       const groupByRaw = view instanceof Y.Map ? view.get("groupBy") : view?.groupBy;
+      const titleColumn = databaseRecordValue(headerRaw, "titleColumn");
+      const iconColumn = databaseRecordValue(headerRaw, "iconColumn");
+      const groupByColumnId = databaseRecordValue(groupByRaw, "columnId");
+      const groupByName = databaseRecordValue(groupByRaw, "name");
+      const groupByType = databaseRecordValue(groupByRaw, "type");
       const columns: DatabaseViewColumnDef[] = databaseArrayValues(columnsRaw)
         .map((entry: any) => {
           const columnId = entry instanceof Y.Map ? entry.get("id") : entry?.id;
@@ -7531,14 +7536,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         columnIds: columns.map(column => column.id),
         groupBy: groupByRaw
           ? {
-              columnId: typeof (groupByRaw as any)?.columnId === "string" ? (groupByRaw as any).columnId : null,
-              name: typeof (groupByRaw as any)?.name === "string" ? (groupByRaw as any).name : null,
-              type: typeof (groupByRaw as any)?.type === "string" ? (groupByRaw as any).type : null,
+              columnId: typeof groupByColumnId === "string" ? groupByColumnId : null,
+              name: typeof groupByName === "string" ? groupByName : null,
+              type: typeof groupByType === "string" ? groupByType : null,
             }
           : null,
         header: {
-          titleColumn: typeof (headerRaw as any)?.titleColumn === "string" ? (headerRaw as any).titleColumn : null,
-          iconColumn: typeof (headerRaw as any)?.iconColumn === "string" ? (headerRaw as any).iconColumn : null,
+          titleColumn: typeof titleColumn === "string" ? titleColumn : null,
+          iconColumn: typeof iconColumn === "string" ? iconColumn : null,
         },
       });
     });
@@ -7709,6 +7714,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       return value;
     }
     return [];
+  }
+
+  function databaseRecordValue(value: unknown, key: string): unknown {
+    if (value instanceof Y.Map) {
+      return value.get(key);
+    }
+    if (value && typeof value === "object") {
+      return (value as Record<string, unknown>)[key];
+    }
+    return undefined;
   }
 
   /** Find or create a select option for a column, mutating the column's data in place */
@@ -8417,6 +8432,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (existingDefs.some(c => c.name === parsed.name)) {
         throw new Error(`Column '${parsed.name}' already exists`);
       }
+      if (parsed.type === "title" && existingDefs.some(c => c.type === "title")) {
+        throw new Error("Database already has a title column");
+      }
 
       const columnId = generateId();
       const column = new Y.Map<any>();
@@ -8445,18 +8463,64 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
       if (views instanceof Y.Array) {
-        views.forEach((view: any) => {
+        const width = parsed.width || 200;
+        const plainViewColumn = { id: columnId, hide: false, width };
+        for (let viewIndex = 0; viewIndex < views.length; viewIndex += 1) {
+          const view = views.get(viewIndex);
           if (view instanceof Y.Map) {
             const viewColumns = view.get("columns");
             if (viewColumns instanceof Y.Array) {
               const viewCol = new Y.Map<any>();
               viewCol.set("id", columnId);
               viewCol.set("hide", false);
-              viewCol.set("width", parsed.width || 200);
+              viewCol.set("width", width);
               viewColumns.push([viewCol]);
+            } else if (Array.isArray(viewColumns)) {
+              view.set("columns", [...viewColumns, plainViewColumn]);
+            } else {
+              const createdColumns = new Y.Array<any>();
+              const viewCol = new Y.Map<any>();
+              viewCol.set("id", columnId);
+              viewCol.set("hide", false);
+              viewCol.set("width", width);
+              createdColumns.push([viewCol]);
+              view.set("columns", createdColumns);
             }
+            if (parsed.type === "title") {
+              const header = view.get("header");
+              if (header instanceof Y.Map) {
+                header.set("titleColumn", columnId);
+              } else {
+                view.set("header", {
+                  ...(header && typeof header === "object" ? header : {}),
+                  titleColumn: columnId,
+                });
+              }
+            }
+            continue;
           }
-        });
+
+          if (view && typeof view === "object") {
+            const plainView = view as Record<string, any>;
+            const plainColumns = databaseArrayValues(plainView.columns).map(entry =>
+              entry instanceof Y.Map ? entry.toJSON() : entry
+            );
+            const header = plainView.header instanceof Y.Map
+              ? plainView.header.toJSON()
+              : plainView.header && typeof plainView.header === "object"
+                ? plainView.header
+                : {};
+            const updatedView = {
+              ...plainView,
+              columns: [...plainColumns, plainViewColumn],
+              ...(parsed.type === "title"
+                ? { header: { ...header, titleColumn: columnId } }
+                : {}),
+            };
+            views.delete(viewIndex, 1);
+            views.insert(viewIndex, [updatedView]);
+          }
+        }
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
@@ -8476,13 +8540,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "add_database_column",
     {
       title: "Add Database Column",
-      description: "Add a column to an existing AFFiNE database block. Supports rich-text, select, multi-select, number, checkbox, link, date types.",
+      description: "Add a column to an existing AFFiNE database block. Supports title, rich-text, select, multi-select, number, checkbox, link, and date types. A title addition is rejected when the current database snapshot already has a title column.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         name: z.string().min(1).describe("Column display name"),
-        type: z.enum(["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"]).default("rich-text").describe("Column type"),
+        type: z.enum(DATABASE_COLUMN_TYPE_VALUES).default("rich-text").describe("Column type"),
         options: z.array(z.string()).optional().describe("Predefined options for select/multi-select columns"),
         width: z.number().optional().describe("Column width in pixels (default 200)"),
       },
