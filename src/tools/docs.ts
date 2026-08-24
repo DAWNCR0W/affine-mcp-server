@@ -7645,6 +7645,12 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (typeof value === "string") {
       return value;
     }
+    if (value == null) {
+      return "";
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
     if (!Array.isArray(value)) {
       throw new Error("Rich-text values must be strings or delta arrays with string insert values");
     }

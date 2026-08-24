@@ -251,6 +251,53 @@ async function main() {
       cells: { Title: { insert: 'Invalid object input' } },
     }, 'Rich-text values must be strings or delta arrays');
 
+    const primitiveRow = await call('add_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      cells: { Title: 404, Notes: true },
+    });
+    const primitiveRowBlockId = primitiveRow?.rowBlockId;
+    if (!primitiveRowBlockId) throw new Error('Primitive compatibility row did not return rowBlockId');
+    await settle(1200);
+
+    const primitiveAfterAdd = await call('read_database_cells', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockIds: [primitiveRowBlockId],
+    });
+    expectEqual(primitiveAfterAdd.rows[0]?.title, '404', 'numeric row title after add_database_row');
+    expectEqual(primitiveAfterAdd.rows[0]?.cells.Title.value, '404', 'numeric rich-text cell after add_database_row');
+    expectEqual(primitiveAfterAdd.rows[0]?.cells.Notes.value, 'true', 'boolean rich-text cell after add_database_row');
+
+    await call('update_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: primitiveRowBlockId,
+      cells: { title: false, Notes: 0 },
+    });
+    await settle(1200);
+
+    const primitiveAfterUpdate = await call('read_database_cells', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockIds: [primitiveRowBlockId],
+    });
+    expectEqual(primitiveAfterUpdate.rows[0]?.title, 'false', 'boolean row title after update_database_row');
+    expectEqual(primitiveAfterUpdate.rows[0]?.cells.Title.value, 'false', 'boolean rich-text cell after update_database_row');
+    expectEqual(primitiveAfterUpdate.rows[0]?.cells.Notes.value, '0', 'numeric rich-text cell after update_database_row');
+
+    await call('delete_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: primitiveRowBlockId,
+    });
+    await settle(1200);
+
     const rowInputs = [
       {
         Title: richTextCases.initialTitle,
