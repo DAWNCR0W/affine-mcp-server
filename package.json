@@ -60,6 +60,7 @@
     "test:comprehensive": "bash tests/run-comprehensive.sh",
     "test:comprehensive:raw": "node test-comprehensive.mjs",
     "test:e2e": "bash tests/run-e2e.sh",
+    "test:block-editing": "node tests/test-block-editing.mjs",
     "test:db-create": "node tests/test-database-creation.mjs",
     "test:db-cells": "node tests/test-database-cells.mjs",
     "test:db-linked-doc": "node tests/test-database-linked-doc.mjs",
