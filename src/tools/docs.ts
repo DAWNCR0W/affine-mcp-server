@@ -7353,8 +7353,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }
 
   function normalizeDatabaseRichTextValue(value: unknown): string | TextDelta[] {
+    if (typeof value === "string") {
+      return value;
+    }
     if (!Array.isArray(value)) {
-      return String(value ?? "");
+      throw new Error("Rich-text values must be strings or delta arrays with string insert values");
     }
     const deltas = richTextValueToDeltas(value) ?? [];
     if (deltas.length !== value.length) {

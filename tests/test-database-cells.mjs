@@ -244,6 +244,13 @@ async function main() {
       await settle();
     }
 
+    await expectToolFailure('add_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      cells: { Title: { insert: 'Invalid object input' } },
+    }, 'Rich-text values must be strings or delta arrays');
+
     const rowInputs = [
       {
         Title: richTextCases.initialTitle,
