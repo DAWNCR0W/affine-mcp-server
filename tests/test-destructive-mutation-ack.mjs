@@ -11,6 +11,7 @@ import { registerCommentTools } from "../dist/tools/comments.js";
 import {
   createAcknowledgedDeletedDocTracker,
   deleteDocFromWorkspace,
+  isRetryableTrashStateError,
   setDocTrashState,
 } from "../dist/tools/docs.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
@@ -398,13 +399,14 @@ async function testDocumentTrashReceipts() {
   assert.equal(restoredAgain.status, "already_active");
   assert.equal(restoredAgain.changed, false);
 
-  const legacySocket = new FakeWorkspaceSocket();
+  const legacySocket = new FakeWorkspaceSocket({ staleWorkspaceReadsAfterPush: 1 });
   legacySocket.page().set("inTrash", true);
   const normalized = parseToolResult(
     await setDocTrashState(legacySocket, "workspace-1", "doc-1", true),
   );
   assert.equal(normalized.status, "trashed");
   assert.equal(normalized.changed, true);
+  assert.equal(typeof normalized.trashDate, "number");
   assert.equal(legacySocket.page().has("inTrash"), false);
   assert.equal(legacySocket.page().get("trash"), true);
   assert.equal(legacySocket.page().has("trashDate"), true);
@@ -428,6 +430,12 @@ async function testDocumentTrashReceipts() {
     setDocTrashState(new FakeWorkspaceSocket({ pushMode: "error" }), "workspace-1", "doc-1", true),
     /workspace metadata sync failed/,
   );
+
+  assert.equal(isRetryableTrashStateError(new Error("workspace metadata sync failed")), true);
+  assert.equal(isRetryableTrashStateError(new Error("space:load-doc timeout after 10000ms")), true);
+  assert.equal(isRetryableTrashStateError(new Error("Document doc-1 is not present in workspace workspace-1.")), false);
+  assert.equal(isRetryableTrashStateError(new Error("The workspace metadata document cannot be moved to trash.")), false);
+  assert.equal(isRetryableTrashStateError(new Error("permission denied")), false);
 }
 
 async function testWorkspaceReceipts() {

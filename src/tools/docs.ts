@@ -763,6 +763,24 @@ function workspacePageIsTrashed(page: Y.Map<any>): boolean {
       : typeof trashDate === "number" && trashDate > 0;
 }
 
+function workspacePageHasCanonicalTrashState(page: Y.Map<any>, inTrash: boolean): boolean {
+  if (page.has("inTrash") || page.get("trash") !== inTrash) return false;
+  const trashDate = page.get("trashDate");
+  return inTrash
+    ? typeof trashDate === "number" && trashDate > 0
+    : !page.has("trashDate");
+}
+
+export function isRetryableTrashStateError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/\b(?:unauthenticated|unauthorized|forbidden|permission denied|access denied)\b/i.test(message)) {
+    return false;
+  }
+  return /\b(?:socket|timeout|disconnected|sync failed)\b|space:(?:load-doc|push-doc-update)|trash state could not be verified|disappeared from workspace metadata/i.test(
+    message,
+  );
+}
+
 function workspacePageById(workspaceDoc: Y.Doc, docId: string): Y.Map<any> | null {
   const pages = workspaceDoc.getMap("meta").get("pages");
   if (!(pages instanceof Y.Array)) return null;
@@ -800,7 +818,7 @@ async function waitForWorkspacePageTrashState(
     }
     const workspaceDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
     const page = workspacePageById(workspaceDoc, docId);
-    if (page && workspacePageIsTrashed(page) === expectedInTrash) {
+    if (page && workspacePageHasCanonicalTrashState(page, expectedInTrash)) {
       return page;
     }
   }
@@ -6665,7 +6683,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       } catch (error) {
         return toolError(error, {
           code: inTrash ? "doc_trash_failed" : "doc_restore_failed",
-          retryable: true,
+          retryable: isRetryableTrashStateError(error),
           data: {
             kind: inTrash ? "doc.trash" : "doc.restore",
             status: "failed",
