@@ -102,6 +102,11 @@ async function main() {
     expectEqual(capabilities?.server?.name, 'affine-mcp', 'capabilities server name');
     expectArray(capabilities?.docs?.canonicalBlockTypes, 'canonical block types');
     expectTruthy(capabilities.docs.canonicalBlockTypes.includes('attachment'), 'attachment block advertised');
+    expectEqual(capabilities?.docs?.markdownImport?.lossy, true, 'markdown import lossy flag');
+    expectArray(capabilities?.docs?.markdownImport?.knownLosses, 'markdown import known losses');
+    const markdownLosses = capabilities.docs.markdownImport.knownLosses.join(' ').toLowerCase();
+    expectTruthy(markdownLosses.includes('whitespace'), 'markdown whitespace normalization advertised');
+    expectTruthy(markdownLosses.includes('blank lines'), 'markdown blank-line handling advertised');
     expectEqual(capabilities?.docs?.highLevelAuthoring?.semanticPageComposer, true, 'semantic page composer flag');
     expectEqual(capabilities?.docs?.highLevelAuthoring?.nativeTemplateInstantiation, true, 'native template instantiation flag');
     expectEqual(capabilities?.docs?.highLevelAuthoring?.createDocWithPlacement, true, 'create doc placement flag');
@@ -117,6 +122,63 @@ async function main() {
     const workspace = await call('create_workspace', { name: testResourceName('cap-fidelity') });
     const workspaceId = workspace?.id;
     expectTruthy(workspaceId, 'create_workspace id');
+
+    const markdownInput = [
+      'First paragraph.',
+      '',
+      'Second paragraph after a blank line.',
+      '',
+      '- [ ]    item with four leading spaces in its text',
+      '- [ ] plain item',
+      '',
+      'Third paragraph.',
+    ].join('\n');
+    const imported = await call('create_doc_from_markdown', {
+      workspaceId,
+      title: 'Markdown Loss Reporting',
+      markdown: markdownInput,
+    });
+    expectTruthy(imported?.docId, 'create_doc_from_markdown docId');
+    expectEqual(imported?.lossy, true, 'create_doc_from_markdown lossy');
+    expectEqual(imported?.stats?.skippedBlocks, 0, 'create_doc_from_markdown skippedBlocks');
+    expectEqual(imported?.stats?.removedBlocks, 0, 'create_doc_from_markdown removedBlocks');
+
+    const importedRead = await call('read_doc', {
+      workspaceId,
+      docId: imported.docId,
+      includeMarkdown: true,
+    });
+    expectTruthy(
+      importedRead?.markdown?.includes('- [ ] item with four leading spaces in its text'),
+      'read_doc should expose normalized list-item whitespace',
+    );
+
+    const replacementDoc = await call('create_doc', {
+      workspaceId,
+      title: 'Markdown Replacement Loss Reporting',
+      content: '',
+    });
+    expectTruthy(replacementDoc?.docId, 'replacement create_doc docId');
+    const replaced = await call('replace_doc_with_markdown', {
+      workspaceId,
+      docId: replacementDoc.docId,
+      markdown: 'Replacement paragraph.',
+    });
+    expectEqual(replaced?.lossy, true, 'replace_doc_with_markdown lossy');
+    expectEqual(replaced?.stats?.skippedBlocks, 0, 'replace skippedBlocks');
+    expectTruthy(replaced?.stats?.removedBlocks >= 1, 'replace removedBlocks');
+    expectTruthy(replaced?.stats?.removedEmptyParagraphs >= 1, 'replace removedEmptyParagraphs');
+    expectTruthy(
+      replaced?.warnings?.some(warning => warning.includes('empty paragraph')),
+      'replace empty-paragraph warning',
+    );
+
+    const appended = await call('append_markdown', {
+      workspaceId,
+      docId: replacementDoc.docId,
+      markdown: 'Appended paragraph.',
+    });
+    expectEqual(appended?.lossy, true, 'append_markdown lossy');
 
     const doc = await call('create_doc', {
       workspaceId,
