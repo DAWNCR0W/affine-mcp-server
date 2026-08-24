@@ -20,9 +20,21 @@ interface TestState {
   error?: string;
 }
 
+interface CellTestState {
+  baseUrl: string;
+  email: string;
+  workspaceId: string;
+  docId: string;
+  databaseBlockId: string;
+  richTextLinks: Array<{ text: string; href: string }>;
+  error?: string;
+}
+
 const STATE_PATH = path.resolve(__dirname, '..', 'test-database-state.json');
+const CELL_STATE_PATH = path.resolve(__dirname, '..', 'test-database-cells-state.json');
 
 let state: TestState;
+let cellState: CellTestState;
 
 test.beforeAll(() => {
   if (!fs.existsSync(STATE_PATH)) {
@@ -37,6 +49,20 @@ test.beforeAll(() => {
   }
   if (!state.workspaceId || !state.docId) {
     throw new Error('State file missing workspaceId or docId');
+  }
+
+  if (!fs.existsSync(CELL_STATE_PATH)) {
+    throw new Error(
+      `State file not found: ${CELL_STATE_PATH}\n` +
+      'Run "npm run test:db-cells" first to create rich-text database test data.',
+    );
+  }
+  cellState = JSON.parse(fs.readFileSync(CELL_STATE_PATH, 'utf8'));
+  if (cellState.error) {
+    throw new Error(`State file contains error from database cell test: ${cellState.error}`);
+  }
+  if (!cellState.workspaceId || !cellState.docId || !cellState.databaseBlockId || !cellState.richTextLinks?.length) {
+    throw new Error('Database cell state is missing IDs or rich-text links');
   }
 });
 
@@ -136,6 +162,36 @@ test.describe.serial('AFFiNE Database Verification', () => {
       // Verify a select value is present
       const selectValue = page.getByText('Active', { exact: true });
       await expect(selectValue.first()).toBeVisible({ timeout: 10_000 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('verify rich-text database links in the AFFiNE editor', async ({ browser }) => {
+    const storageStatePath = path.resolve(__dirname, '..', 'playwright-auth-state.json');
+    const context = await browser.newContext({ storageState: storageStatePath });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${cellState.baseUrl}/workspace/${cellState.workspaceId}/${cellState.docId}`);
+      await page.waitForLoadState('domcontentloaded');
+
+      if (page.url().includes('/sign-in')) {
+        throw new Error('Redirected to sign-in — login test did not persist auth state');
+      }
+
+      await page.waitForTimeout(5_000);
+      const databaseBlock = page.locator(
+        'affine-database, [data-block-flavour="affine:database"], ' +
+        '.affine-database-block-container, [class*="database"]',
+      );
+      await expect(databaseBlock.first()).toBeVisible({ timeout: 30_000 });
+
+      for (const expectedLink of cellState.richTextLinks) {
+        const link = page.locator(`a[href="${expectedLink.href}"]`).filter({ hasText: expectedLink.text }).first();
+        await expect(link).toBeVisible({ timeout: 15_000 });
+        await expect(link).toHaveAttribute('href', expectedLink.href);
+      }
     } finally {
       await context.close();
     }
