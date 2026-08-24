@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added recoverable `trash_doc` and `restore_doc` tools backed by AFFiNE workspace metadata, with idempotent retries and read-back verification.
+
 ## [3.2.2] - 2026-08-18
 
 ### Fixed

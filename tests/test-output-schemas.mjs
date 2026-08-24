@@ -82,6 +82,33 @@ assert.equal(
   "delete_tag must not advertise docMetaSynced as a boolean",
 );
 
+const trashStateOutput = {
+  kind: "doc.trash",
+  ok: true,
+  status: "trashed",
+  workspaceId: "workspace-1",
+  docId: "doc-1",
+  title: "Example",
+  changed: true,
+  previouslyInTrash: false,
+  inTrash: true,
+  trashDate: Date.now(),
+  readBackVerified: true,
+};
+assert.equal(toolOutputSchemaFor("trash_doc").safeParse(trashStateOutput).success, true);
+assert.equal(toolOutputSchemaFor("restore_doc").safeParse({
+  ...trashStateOutput,
+  kind: "doc.restore",
+  status: "restored",
+  inTrash: false,
+  trashDate: null,
+}).success, true);
+assert.equal(
+  toolOutputSchemaFor("trash_doc").safeParse({ ...trashStateOutput, readBackVerified: "yes" }).success,
+  false,
+  "trash_doc must advertise readBackVerified as a boolean",
+);
+
 assert.equal(toolOutputSchemaFor("get_doc").safeParse({ id: "doc-1" }).success, true);
 assert.equal(toolOutputSchemaFor("get_doc").safeParse({ value: null }).success, true);
 assert.equal(toolOutputSchemaFor("get_doc").safeParse({ value: "missing" }).success, false);
