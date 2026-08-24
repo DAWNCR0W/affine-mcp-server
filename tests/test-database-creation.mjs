@@ -15,6 +15,10 @@ import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import * as Y from 'yjs';
+
+import { acquireCredentials } from './acquire-credentials.mjs';
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, wsUrlFromGraphQLEndpoint } from '../dist/ws.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
@@ -33,6 +37,56 @@ function parseContent(result) {
     return JSON.parse(text);
   } catch {
     return text;
+  }
+}
+
+async function convertDatabaseHeadersToYMaps(workspaceId, docId, databaseBlockId) {
+  const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+  const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie, undefined);
+  try {
+    await joinWorkspace(socket, workspaceId);
+    const snapshot = await loadDoc(socket, workspaceId, docId);
+    if (!snapshot.missing) throw new Error(`Document ${docId} not found`);
+
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, 'base64'));
+    const previousState = Y.encodeStateVector(doc);
+    const blocks = doc.getMap('blocks');
+    let databaseBlock = blocks.get(databaseBlockId);
+    if (!(databaseBlock instanceof Y.Map)) {
+      for (const block of blocks.values()) {
+        if (block instanceof Y.Map && block.get('sys:id') === databaseBlockId) {
+          databaseBlock = block;
+          break;
+        }
+      }
+    }
+    if (!(databaseBlock instanceof Y.Map)) {
+      throw new Error(`Database block ${databaseBlockId} not found`);
+    }
+
+    const views = databaseBlock.get('prop:views');
+    if (!(views instanceof Y.Array)) throw new Error('Database views are not a Y.Array');
+    let converted = 0;
+    views.forEach(view => {
+      if (!(view instanceof Y.Map)) return;
+      const header = view.get('header');
+      if (header instanceof Y.Map) return;
+      const yHeader = new Y.Map();
+      if (header && typeof header === 'object') {
+        for (const [key, value] of Object.entries(header)) {
+          yHeader.set(key, value);
+        }
+      }
+      view.set('header', yHeader);
+      converted += 1;
+    });
+    if (converted === 0) throw new Error('Expected at least one plain database header to convert');
+
+    const delta = Y.encodeStateAsUpdate(doc, previousState);
+    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(delta).toString('base64'));
+  } finally {
+    socket.disconnect();
   }
 }
 
@@ -249,6 +303,9 @@ async function main() {
     if (!duplicateTitleRejected) {
       throw new Error('add_database_column accepted a second title column');
     }
+
+    await convertDatabaseHeadersToYMaps(state.workspaceId, state.docId, state.databaseBlockId);
+    await settle();
 
     const schema = await call('read_database_columns', {
       workspaceId: state.workspaceId,
