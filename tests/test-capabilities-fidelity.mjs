@@ -116,7 +116,7 @@ async function main() {
     expectEqual(capabilities?.database?.intentDrivenComposition, true, 'intentDrivenComposition flag');
     expectArray(capabilities?.database?.columnTypes, 'database column types');
     expectTruthy(capabilities.database.columnTypes.includes('title'), 'database title column advertised');
-    expectEqual(capabilities?.database?.advancedViewMutation, true, 'advancedViewMutation flag');
+    expectEqual(capabilities?.database?.advancedViewMutation, false, 'advancedViewMutation flag');
     expectEqual(capabilities?.workspace?.ruleBackedCollections, true, 'ruleBackedCollections flag');
     expectEqual(capabilities?.workspace?.workspaceBlueprints, true, 'workspaceBlueprints flag');
     expectEqual(capabilities?.collaboration?.replyCreation, false, 'replyCreation flag');

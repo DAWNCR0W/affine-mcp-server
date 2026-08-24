@@ -5599,7 +5599,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         supported: true,
         columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
         initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
-        advancedViewMutation: true,
+        advancedViewMutation: false,
         intentDrivenComposition: true,
         linkedDocRows: true,
       },
