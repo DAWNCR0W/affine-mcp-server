@@ -231,6 +231,7 @@ function testSentencePunctuationIsNotOverEscaped() {
     'Cancel the card; try to get the $95 annual fee waived',
     'Unlock the spare phone, then check email',
     "Check the bank's reply",
+    'AT&T account review',
   ];
 
   for (const text of samples) {

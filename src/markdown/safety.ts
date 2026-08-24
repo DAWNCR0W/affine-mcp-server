@@ -1,6 +1,7 @@
 const UNSAFE_LINK_SCHEMES = new Set(["data", "file", "javascript", "vbscript"]);
 const ENTITY_LIKE_AMPERSAND = /&(?=(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]+);)/gi;
-const INLINE_MARKDOWN_SYNTAX = new Set(["\\", "`", "*", "_", "[", "]", "<", "&", "~"]);
+const ENTITY_AFTER_AMPERSAND = /^(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]+);/i;
+const INLINE_MARKDOWN_SYNTAX = new Set(["\\", "`", "*", "_", "[", "]", "<", "~"]);
 
 export type MarkdownFrontmatterInput = {
   docId: string;
@@ -104,7 +105,14 @@ function escapeMarkdownCharacter(character: string): string {
 
 /** Escape untrusted text while leaving generated Markdown structure untouched. */
 export function escapeMarkdownPlainText(value: string): string {
-  return Array.from(value, escapeMarkdownCharacter)
+  let offset = 0;
+  return Array.from(value, character => {
+    const currentOffset = offset;
+    offset += character.length;
+    return character === "&" && ENTITY_AFTER_AMPERSAND.test(value.slice(currentOffset + 1))
+      ? "\\&"
+      : escapeMarkdownCharacter(character);
+  })
     .join("")
     .replace(/(\\<[^<>]*?)>/g, "$1\\>")
     .replace(/(\\\])\(/g, "$1\\(")
