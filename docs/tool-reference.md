@@ -61,7 +61,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include hierarchy-derived `parentId` values and `linkedDocIds` for inline LinkedPage references |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
@@ -82,6 +82,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
+| `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
+| `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
 | `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
 
 ### Content editing
@@ -92,6 +94,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `update_block` | Partially update an existing text block without changing its id | Supports text, todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
+| `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
@@ -128,12 +132,12 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
-| `add_database_column` | Add a column to a database block | Supports `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date` |
-| `add_database_row` | Add a row to a database block | Can set the built-in title field |
+| `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
+| `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
-| `read_database_cells` | Read row titles and decoded cell values | Supports row and column filters |
-| `update_database_row` | Update multiple cells on a row at once | `createOption` defaults to `true` |
+| `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
+| `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
 
 ## Edgeless canvas and surface elements
 
@@ -148,7 +152,7 @@ AFFiNE's edgeless doc has two layers: top-level edgeless blocks (`note`, `frame`
 | `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes any connectors referencing the deleted element. |
 | `update_frame_children` | Replace a frame block's contents wholesale | Every resolved id (surface element or edgeless block) goes into `prop:childElementIds` and comes back in `ownedIds`; unknown ids in `missing`. Default `resizeToFit: true` recomputes xywh to match new contents + `padding` + title band; pass `resizeToFit: false` to preserve the current box. Pass `[]` to clear ownership (resize skipped). |
 | `update_edgeless_block` | Partially update a note/frame/edgeless-text block | `x`/`y`/`width`/`height` merge with current `prop:xywh`; `background` replaces `prop:background`. Fields not applicable to the flavour come back under `ignored`. Use for repositioning / resizing / recoloring without re-creating the block. |
-| `delete_block` | Delete a block by id | Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
+| `delete_block` | Delete a block by id | Returns the deleted root and descendant snapshots so callers can reconstruct content. Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
 
 ### Layout helpers on `append_block`
 

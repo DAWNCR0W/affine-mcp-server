@@ -61,6 +61,7 @@ export const ALL_TOOLS = [
   "list_tags",
   "list_workspace_tree",
   "list_workspaces",
+  "move_block",
   "move_doc",
   "move_organize_node",
   "publish_doc",
@@ -73,10 +74,13 @@ export const ALL_TOOLS = [
   "rename_folder",
   "replace_doc_with_markdown",
   "resolve_comment",
+  "restore_doc",
   "revoke_doc",
   "search_docs",
   "set_doc_property",
   "sign_in",
+  "trash_doc",
+  "update_block",
   "update_collection",
   "update_collection_rules",
   "update_comment",
@@ -165,6 +169,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   list_tags: ["docs", "docs.tags", "docs.read", "read"],
   list_workspace_tree: ["docs", "docs.tree", "docs.read", "read"],
   list_workspaces: ["workspaces", "workspaces.read", "read"],
+  move_block: ["docs", "docs.write", "write"],
   move_doc: ["docs", "docs.tree", "docs.write", "write"],
   move_organize_node: ["organize", "organize.folders", "organize.write", "experimental", "write"],
   publish_doc: ["docs", "docs.share", "docs.write", "write"],
@@ -177,10 +182,13 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   rename_folder: ["organize", "organize.folders", "organize.write", "experimental", "write"],
   replace_doc_with_markdown: ["docs", "docs.markdown", "docs.write", "write"],
   resolve_comment: ["comments", "comments.write", "write"],
+  restore_doc: ["docs", "docs.write", "write"],
   revoke_doc: ["docs", "docs.share", "docs.write", "destructive", "write"],
   search_docs: ["docs", "docs.read", "read"],
   set_doc_property: ["docs", "docs.properties", "docs.write", "write"],
   sign_in: ["users", "users.auth", "auth", "write"],
+  trash_doc: ["docs", "docs.write", "write"],
+  update_block: ["docs", "docs.write", "write"],
   update_collection: ["organize", "organize.collections", "organize.write", "write"],
   update_collection_rules: ["organize", "organize.collections", "organize.write", "write"],
   update_comment: ["comments", "comments.write", "write"],
@@ -252,13 +260,17 @@ const CORE_TOOLS = new Set<ToolName>([
   "list_docs_by_tag",
   "list_tags",
   "list_workspaces",
+  "move_block",
   "read_database_cells",
   "read_database_columns",
   "read_doc",
   "remove_tag_from_doc",
   "replace_doc_with_markdown",
+  "restore_doc",
   "search_docs",
   "sign_in",
+  "trash_doc",
+  "update_block",
   "update_database_row",
   "update_doc_icon",
   "update_doc_title",
@@ -269,6 +281,11 @@ const AUTHORING_EXCLUDED_GROUPS = new Set([
   "cleanup",
   "destructive",
   "experimental",
+]);
+
+const IDEMPOTENT_WRITE_TOOLS = new Set<ToolName>([
+  "restore_doc",
+  "trash_doc",
 ]);
 
 const KNOWN_PROFILES = new Set<ToolProfile>(["full", "read_only", "core", "authoring"]);
@@ -402,7 +419,7 @@ export function toolAnnotationsFor(name: string): ToolAnnotations {
   return {
     readOnlyHint: isReadOnly,
     destructiveHint: isDestructive,
-    idempotentHint: isReadOnly,
+    idempotentHint: isReadOnly || IDEMPOTENT_WRITE_TOOLS.has(toolName),
     openWorldHint: true,
   };
 }

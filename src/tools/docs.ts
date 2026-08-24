@@ -383,6 +383,9 @@ type AppendBlockLegacyType = keyof typeof APPEND_BLOCK_LEGACY_ALIAS_MAP;
 const APPEND_BLOCK_LIST_STYLE_VALUES = ["bulleted", "numbered", "todo"] as const;
 type AppendBlockListStyle = typeof APPEND_BLOCK_LIST_STYLE_VALUES[number];
 const AppendBlockListStyle = z.enum(APPEND_BLOCK_LIST_STYLE_VALUES);
+const BLOCK_EDIT_TYPE_VALUES = ["paragraph", "heading", "quote", "list", "code"] as const;
+type BlockEditType = typeof BLOCK_EDIT_TYPE_VALUES[number];
+const BlockEditType = z.enum(BLOCK_EDIT_TYPE_VALUES);
 const APPEND_BLOCK_BOOKMARK_STYLE_VALUES = [
   "vertical",
   "horizontal",
@@ -412,7 +415,16 @@ type DatabaseIntentPreset = {
   extraColumns: DatabaseIntentColumnSpec[];
   starterRows: DatabaseIntentSeedRow[];
 };
-const DATABASE_COLUMN_TYPE_VALUES = ["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
+const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
+
+const MARKDOWN_IMPORT_KNOWN_LOSSES = [
+  "Nested markdown lists are flattened during import.",
+  "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
+  "HTML blocks are imported as plain paragraph text.",
+  "Blank lines delimit Markdown blocks and do not create spacer paragraph blocks.",
+  "CommonMark parsing normalizes Markdown syntax and surrounding whitespace, including leading whitespace in list-item content.",
+] as const;
+const MARKDOWN_IMPORT_IS_LOSSY = MARKDOWN_IMPORT_KNOWN_LOSSES.length > 0;
 
 const MARKDOWN_EXPORT_SUPPORTED_FLAVOURS = new Set<string>([
   "affine:paragraph",
@@ -750,6 +762,151 @@ export async function deleteDocFromWorkspace(
       },
     });
   }
+}
+
+function workspacePageIsTrashed(page: Y.Map<any>): boolean {
+  const inTrash = page.get("inTrash");
+  const trash = page.get("trash");
+  const trashDate = page.get("trashDate");
+  return typeof inTrash === "boolean"
+    ? inTrash
+    : typeof trash === "boolean"
+      ? trash
+      : typeof trashDate === "number" && trashDate > 0;
+}
+
+function workspacePageHasCanonicalTrashState(page: Y.Map<any>, inTrash: boolean): boolean {
+  if (page.has("inTrash") || page.get("trash") !== inTrash) return false;
+  const trashDate = page.get("trashDate");
+  return inTrash
+    ? typeof trashDate === "number" && trashDate > 0
+    : !page.has("trashDate");
+}
+
+export function isRetryableTrashStateError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/\b(?:unauthenticated|unauthorized|forbidden|permission denied|access denied)\b/i.test(message)) {
+    return false;
+  }
+  return /\b(?:socket|timeout|disconnected|sync failed)\b|space:(?:load-doc|push-doc-update)|trash state could not be verified|disappeared from workspace metadata/i.test(
+    message,
+  );
+}
+
+function workspacePageById(workspaceDoc: Y.Doc, docId: string): Y.Map<any> | null {
+  const pages = workspaceDoc.getMap("meta").get("pages");
+  if (!(pages instanceof Y.Array)) return null;
+  let match: Y.Map<any> | null = null;
+  pages.forEach((page: unknown) => {
+    if (!match && page instanceof Y.Map && page.get("id") === docId) {
+      match = page;
+    }
+  });
+  return match;
+}
+
+async function loadWorkspaceMetadataDoc(socket: WorkspaceSocket, workspaceId: string): Promise<Y.Doc> {
+  const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+  if (typeof snapshot.missing !== "string") {
+    throw new Error(`Workspace metadata document ${workspaceId} was not found.`);
+  }
+  const workspaceDoc = new Y.Doc();
+  Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
+  return workspaceDoc;
+}
+
+const TRASH_READBACK_ATTEMPTS = 10;
+const TRASH_READBACK_DELAY_MS = 200;
+
+async function waitForWorkspacePageTrashState(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  expectedInTrash: boolean,
+): Promise<Y.Map<any>> {
+  for (let attempt = 0; attempt < TRASH_READBACK_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, TRASH_READBACK_DELAY_MS));
+    }
+    const workspaceDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
+    const page = workspacePageById(workspaceDoc, docId);
+    if (page && workspacePageHasCanonicalTrashState(page, expectedInTrash)) {
+      return page;
+    }
+  }
+  throw new Error(`Document ${docId} trash state could not be verified after update.`);
+}
+
+/**
+ * Apply AFFiNE's native recoverable document trash metadata and verify it by
+ * reloading the workspace metadata document. This never deletes doc content.
+ */
+export async function setDocTrashState(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  inTrash: boolean,
+) {
+  if (docId === workspaceId) {
+    throw new Error("The workspace metadata document cannot be moved to trash.");
+  }
+
+  const workspaceDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
+  const page = workspacePageById(workspaceDoc, docId);
+  if (!page) {
+    throw new Error(`Document ${docId} is not present in workspace ${workspaceId}.`);
+  }
+
+  const title = typeof page.get("title") === "string" ? page.get("title") : null;
+  const previouslyInTrash = workspacePageIsTrashed(page);
+  const existingTrashDate = page.get("trashDate");
+  const hasCanonicalTrashDate = typeof existingTrashDate === "number" && existingTrashDate > 0;
+  const changed = inTrash
+    ? !previouslyInTrash || page.get("trash") !== true || page.has("inTrash") || !hasCanonicalTrashDate
+    : previouslyInTrash || page.has("inTrash") || page.get("trash") === true || page.has("trashDate");
+
+  if (changed) {
+    const previousState = Y.encodeStateVector(workspaceDoc);
+    workspaceDoc.transact(() => {
+      page.delete("inTrash");
+      page.set("trash", inTrash);
+      if (inTrash) {
+        page.set("trashDate", hasCanonicalTrashDate ? existingTrashDate : Date.now());
+      } else {
+        page.delete("trashDate");
+      }
+    });
+    const delta = Y.encodeStateAsUpdate(workspaceDoc, previousState);
+    await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+  }
+
+  const verifiedPage = changed
+    ? await waitForWorkspacePageTrashState(socket, workspaceId, docId, inTrash)
+    : workspacePageById(workspaceDoc, docId);
+  if (!verifiedPage) {
+    throw new Error(`Document ${docId} disappeared from workspace metadata during trash update.`);
+  }
+  const verifiedInTrash = workspacePageIsTrashed(verifiedPage);
+  if (verifiedInTrash !== inTrash) {
+    throw new Error(`Document ${docId} trash state could not be verified after update.`);
+  }
+  const verifiedTrashDate = verifiedPage.get("trashDate");
+
+  return receipt(inTrash ? "doc.trash" : "doc.restore", {
+    status: inTrash
+      ? changed ? "trashed" : "already_trashed"
+      : changed ? "restored" : "already_active",
+    workspaceId,
+    docId,
+    title,
+    changed,
+    previouslyInTrash,
+    inTrash: verifiedInTrash,
+    trashDate: typeof verifiedTrashDate === "number" && verifiedTrashDate > 0
+      ? verifiedTrashDate
+      : null,
+    readBackVerified: true,
+  });
 }
 
 type AcknowledgedDeletedDocTrackerOptions = {
@@ -1841,7 +1998,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return findParentIdByChild(blocks, blockId);
   }
 
-  function resolveInsertContext(blocks: Y.Map<any>, normalized: NormalizedAppendBlockInput): {
+  function resolveInsertContext(
+    blocks: Y.Map<any>,
+    normalized: Pick<NormalizedAppendBlockInput, "placement" | "strict" | "type">,
+  ): {
     parentId: string;
     parentBlock: Y.Map<any>;
     children: Y.Array<any>;
@@ -1933,6 +2093,53 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
 
     return { parentId, parentBlock, children, insertIndex };
+  }
+
+  function blockSnapshot(blocks: Y.Map<any>, blockId: string): Record<string, unknown> | null {
+    const block = findBlockById(blocks, blockId);
+    if (!block) return null;
+
+    const rawText = block.get("prop:text");
+    const rawType = block.get("prop:type");
+    const rawChecked = block.get("prop:checked");
+    const rawLanguage = block.get("prop:language");
+    const rawFlavour = block.get("sys:flavour");
+    return {
+      id: blockId,
+      parentId: resolveBlockParentId(blocks, blockId),
+      flavour: typeof rawFlavour === "string" ? rawFlavour : null,
+      type: typeof rawType === "string" ? rawType : null,
+      text: rawText instanceof Y.Text || typeof rawText === "string" ? asText(rawText) : null,
+      checked: typeof rawChecked === "boolean" ? rawChecked : null,
+      language: typeof rawLanguage === "string" ? rawLanguage : null,
+      childIds: childIdsFrom(block.get("sys:children")),
+    };
+  }
+
+  function editableBlockType(block: Y.Map<any>): BlockEditType | null {
+    const flavour = block.get("sys:flavour");
+    if (flavour === "affine:list") return "list";
+    if (flavour === "affine:code") return "code";
+    if (flavour !== "affine:paragraph") return null;
+
+    const type = block.get("prop:type");
+    if (type === "quote") return "quote";
+    if (typeof type === "string" && /^h[1-6]$/.test(type)) return "heading";
+    return "paragraph";
+  }
+
+  function removeBlockFromParents(blocks: Y.Map<any>, blockId: string): void {
+    for (const [, candidate] of blocks) {
+      if (!(candidate instanceof Y.Map)) continue;
+      const children = candidate.get("sys:children");
+      if (!(children instanceof Y.Array)) continue;
+      const values = children.toArray();
+      for (let index = values.length - 1; index >= 0; index -= 1) {
+        if (values[index] === blockId) {
+          children.delete(index, 1);
+        }
+      }
+    }
   }
 
   function createDatabaseViewColumn(columnId: string, width: number = 200, hide: boolean = false): Y.Map<any> {
@@ -3596,6 +3803,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }): Promise<{
     appendedCount: number;
     skippedCount: number;
+    removedCount: number;
+    removedEmptyParagraphCount: number;
     blockIds: string[];
   }> {
     const strict = parsed.strict !== false;
@@ -3619,6 +3828,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let lastInsertedBlockId: string | undefined;
       let replaceParentId: string | undefined;
       let skippedCount = 0;
+      let removedCount = 0;
+      let removedEmptyParagraphCount = 0;
       const blockIds: string[] = [];
 
       if (replaceExisting) {
@@ -3631,6 +3842,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const existingChildren = childIdsFrom(noteChildren);
         const descendantBlockIds = collectDescendantBlockIds(blocks, existingChildren);
         for (const descendantId of descendantBlockIds) {
+          const descendant = findBlockById(blocks, descendantId);
+          if (descendant) {
+            removedCount += 1;
+            if (
+              descendant.get("sys:flavour") === "affine:paragraph" &&
+              asText(descendant.get("prop:text")).length === 0
+            ) {
+              removedEmptyParagraphCount += 1;
+            }
+          }
           blocks.delete(descendantId);
         }
         if (noteChildren.length > 0) {
@@ -3689,6 +3910,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       return {
         appendedCount: blockIds.length,
         skippedCount,
+        removedCount,
+        removedEmptyParagraphCount,
         blockIds,
       };
     } finally {
@@ -5307,7 +5530,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         if (!(raw instanceof Y.Map)) return;
 
         const flavour = raw.get("sys:flavour");
-        const parentId = raw.get("sys:parent");
+        const parentId = resolveBlockParentId(blocks, blockId);
         const type = raw.get("prop:type");
         const propText = raw.get("prop:text");
         const textValue = asText(propText);
@@ -5325,7 +5548,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
         blockRows.push({
           id: blockId,
-          parentId: typeof parentId === "string" ? parentId : null,
+          parentId,
           flavour: typeof flavour === "string" ? flavour : null,
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
@@ -5402,12 +5625,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         legacyBlockAliases: Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
         markdownImport: {
           supported: true,
-          lossy: true,
-          knownLosses: [
-            "Nested markdown lists are flattened during import.",
-            "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
-            "HTML blocks are imported as plain paragraph text.",
-          ],
+          lossy: MARKDOWN_IMPORT_IS_LOSSY,
+          knownLosses: [...MARKDOWN_IMPORT_KNOWN_LOSSES],
         },
         markdownExport: {
           supportedFlavours: [...MARKDOWN_EXPORT_SUPPORTED_FLAVOURS].sort(),
@@ -5433,7 +5652,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         supported: true,
         columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
         initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
-        advancedViewMutation: true,
+        advancedViewMutation: false,
         intentDrivenComposition: true,
         linkedDocRows: true,
       },
@@ -6277,6 +6496,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     let applied = {
       appendedCount: 0,
       skippedCount: 0,
+      removedCount: 0,
+      removedEmptyParagraphCount: 0,
       blockIds: [] as string[],
     };
 
@@ -6318,11 +6539,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
       warnings,
-      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
+        removedBlocks: applied.removedCount,
+        removedEmptyParagraphs: applied.removedEmptyParagraphCount,
       },
     };
   };
@@ -6433,11 +6656,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       appendedCount: applied.appendedCount,
       blockIds: applied.blockIds,
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
-      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
+        removedBlocks: applied.removedCount,
+        removedEmptyParagraphs: applied.removedEmptyParagraphCount,
       },
     });
   };
@@ -6491,21 +6716,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       replaceExisting: true,
     });
 
-    const applyWarnings =
-      applied.skippedCount > 0
+    const applyWarnings = [
+      ...(applied.skippedCount > 0
         ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
-        : [];
+        : []),
+      ...(applied.removedEmptyParagraphCount > 0
+        ? [`Replacement removed ${applied.removedEmptyParagraphCount} existing empty paragraph block(s), which Markdown cannot represent.`]
+        : []),
+    ];
 
     return receipt("doc.replace_with_markdown", {
       workspaceId,
       docId: parsed.docId,
       replaced: true,
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
-      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
+        removedBlocks: applied.removedCount,
+        removedEmptyParagraphs: applied.removedEmptyParagraphCount,
       },
     });
   };
@@ -6523,6 +6754,59 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     replaceDocWithMarkdownHandler as any
+  );
+
+  const setTrashStateHandler = (inTrash: boolean) => async (parsed: { workspaceId?: string; docId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      try {
+        return await setDocTrashState(socket, workspaceId, parsed.docId, inTrash);
+      } catch (error) {
+        return toolError(error, {
+          code: inTrash ? "doc_trash_failed" : "doc_restore_failed",
+          retryable: isRetryableTrashStateError(error),
+          data: {
+            kind: inTrash ? "doc.trash" : "doc.restore",
+            status: "failed",
+            workspaceId,
+            docId: parsed.docId,
+          },
+        });
+      }
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  server.registerTool(
+    "trash_doc",
+    {
+      title: "Move Document to Trash",
+      description: "Move a document to the AFFiNE trash without deleting its content. This is recoverable with restore_doc and safe to retry.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    setTrashStateHandler(true) as any,
+  );
+
+  server.registerTool(
+    "restore_doc",
+    {
+      title: "Restore Document from Trash",
+      description: "Restore a document from the AFFiNE trash without changing its content. This is safe to retry.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    setTrashStateHandler(false) as any,
   );
 
   // DELETE DOC
@@ -7272,6 +7556,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const columnsRaw = view instanceof Y.Map ? view.get("columns") : view?.columns;
       const headerRaw = view instanceof Y.Map ? view.get("header") : view?.header;
       const groupByRaw = view instanceof Y.Map ? view.get("groupBy") : view?.groupBy;
+      const titleColumn = databaseRecordValue(headerRaw, "titleColumn");
+      const iconColumn = databaseRecordValue(headerRaw, "iconColumn");
+      const groupByColumnId = databaseRecordValue(groupByRaw, "columnId");
+      const groupByName = databaseRecordValue(groupByRaw, "name");
+      const groupByType = databaseRecordValue(groupByRaw, "type");
       const columns: DatabaseViewColumnDef[] = databaseArrayValues(columnsRaw)
         .map((entry: any) => {
           const columnId = entry instanceof Y.Map ? entry.get("id") : entry?.id;
@@ -7300,14 +7589,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         columnIds: columns.map(column => column.id),
         groupBy: groupByRaw
           ? {
-              columnId: typeof (groupByRaw as any)?.columnId === "string" ? (groupByRaw as any).columnId : null,
-              name: typeof (groupByRaw as any)?.name === "string" ? (groupByRaw as any).name : null,
-              type: typeof (groupByRaw as any)?.type === "string" ? (groupByRaw as any).type : null,
+              columnId: typeof groupByColumnId === "string" ? groupByColumnId : null,
+              name: typeof groupByName === "string" ? groupByName : null,
+              type: typeof groupByType === "string" ? groupByType : null,
             }
           : null,
         header: {
-          titleColumn: typeof (headerRaw as any)?.titleColumn === "string" ? (headerRaw as any).titleColumn : null,
-          iconColumn: typeof (headerRaw as any)?.iconColumn === "string" ? (headerRaw as any).iconColumn : null,
+          titleColumn: typeof titleColumn === "string" ? titleColumn : null,
+          iconColumn: typeof iconColumn === "string" ? iconColumn : null,
         },
       });
     });
@@ -7352,24 +7641,40 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return childIdsFrom(dbBlock.get("sys:children"));
   }
 
-  function readDatabaseRowTitle(rowBlock: Y.Map<any>): string {
-    return asText(rowBlock.get("prop:text"));
+  function normalizeDatabaseRichTextValue(value: unknown): string | TextDelta[] {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (value == null) {
+      return "";
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (!Array.isArray(value)) {
+      throw new Error("Rich-text values must be strings or delta arrays with string insert values");
+    }
+    const deltas = richTextValueToDeltas(value) ?? [];
+    if (deltas.length !== value.length) {
+      throw new Error("Rich-text values must be strings or delta arrays with string insert values");
+    }
+    return deltas;
   }
 
   function resolveDatabaseTitleValue(
     cells: Record<string, unknown>,
     lookup: DatabaseColumnLookup,
-  ): string {
+  ): string | TextDelta[] {
     if (lookup.titleCol) {
       const value = cells[lookup.titleCol.name] ?? cells[lookup.titleCol.id];
       if (value !== undefined) {
-        return String(value ?? "");
+        return normalizeDatabaseRichTextValue(value);
       }
     }
 
     for (const [key, value] of Object.entries(cells)) {
       if (isTitleAliasKey(key)) {
-        return String(value ?? "");
+        return normalizeDatabaseRichTextValue(value);
       }
     }
 
@@ -7377,7 +7682,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (namedTitleColumn) {
       const value = cells[namedTitleColumn.name] ?? cells[namedTitleColumn.id];
       if (value !== undefined) {
-        return String(value ?? "");
+        return normalizeDatabaseRichTextValue(value);
       }
     }
 
@@ -7413,7 +7718,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
     } else {
       const titleValue = resolveDatabaseTitleValue(parsed.cells, parsed.lookup);
-      rowBlock.set("prop:text", makeText(String(titleValue)));
+      rowBlock.set("prop:text", makeText(titleValue));
     }
     parsed.blocks.set(rowBlockId, rowBlock);
 
@@ -7470,6 +7775,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return [];
   }
 
+  function databaseRecordValue(value: unknown, key: string): unknown {
+    if (value instanceof Y.Map) {
+      return value.get(key);
+    }
+    if (value && typeof value === "object") {
+      return (value as Record<string, unknown>)[key];
+    }
+    return undefined;
+  }
+
   /** Find or create a select option for a column, mutating the column's data in place */
   function resolveSelectOptionId(
     col: { name: string; raw: any; options: Array<{ id: string; value: string; color: string }> },
@@ -7522,7 +7837,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     switch (col.type) {
       case "rich-text":
       case "title":
-        return { ...base, value: richTextValueToString(rawValue) || null };
+        return {
+          ...base,
+          value: richTextValueToString(rawValue) || null,
+          deltas: richTextValueToDeltas(rawValue) ?? [],
+        };
       case "select": {
         const optionId = asStringOrNull(rawValue);
         const option = col.options.find(entry => entry.id === optionId) || null;
@@ -7580,7 +7899,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     switch (col.type) {
       case "rich-text":
       case "title":
-        cellValue.set("value", makeText(String(value ?? "")));
+        cellValue.set("value", makeText(normalizeDatabaseRichTextValue(value)));
         break;
       case "number": {
         const num = Number(value);
@@ -7708,7 +8027,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
       } else {
         const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
-        rowBlock.set("prop:text", makeText(String(titleValue)));
+        rowBlock.set("prop:text", makeText(titleValue));
       }
       ctx.blocks.set(rowBlockId, rowBlock);
 
@@ -7753,7 +8072,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. For select columns, pass the display label (option auto-created if new)."),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. Rich-text and title values accept strings or delta arrays with optional attributes. For select columns, pass the display label (option auto-created if new)."),
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
@@ -7839,7 +8158,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const rows = requestedRows.map(rowBlockId => {
         const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, rowBlockId);
-        const title = readDatabaseRowTitle(rowBlock) || null;
+        const titleValue = rowBlock.get("prop:text");
+        const title = richTextValueToString(titleValue) || null;
         const rowCells = ctx.cellsMap.get(rowBlockId);
         const cells: Record<string, Record<string, unknown>> = {};
 
@@ -7862,6 +8182,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return {
           rowBlockId,
           title,
+          titleDeltas: richTextValueToDeltas(titleValue) ?? [],
           linkedDocId: readLinkedDocId(rowBlock),
           cells,
         };
@@ -7876,7 +8197,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "read_database_cells",
     {
       title: "Read Database Cells",
-      description: "Read row titles and database cell values from an AFFiNE database block.",
+      description: "Read row titles and database cell values from an AFFiNE database block. Rich-text titles and cells include both plain values and formatting-preserving deltas.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
@@ -7946,13 +8267,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     try {
       const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
-      let titleValue: string | null = null;
+      let titleValue: string | TextDelta[] | null = null;
 
       for (const [key, value] of Object.entries(parsed.cells)) {
         const col = findDatabaseColumn(key, ctx);
         if (!col) {
           if (isTitleAliasKey(key)) {
-            titleValue = String(value ?? "");
+            titleValue = normalizeDatabaseRichTextValue(value);
             continue;
           }
           throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
@@ -7960,7 +8281,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
         writeDatabaseCellValue(rowCells, col, value, parsed.createOption ?? true);
         if (col.type === "title" || isTitleAliasKey(col.name)) {
-          titleValue = String(value ?? "");
+          titleValue = normalizeDatabaseRichTextValue(value);
         }
       }
 
@@ -7992,7 +8313,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Use `title` for the built-in row title."),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Rich-text and title values accept strings or delta arrays with optional attributes. Use `title` for the built-in row title."),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
@@ -8170,6 +8491,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       if (existingDefs.some(c => c.name === parsed.name)) {
         throw new Error(`Column '${parsed.name}' already exists`);
       }
+      if (parsed.type === "title" && existingDefs.some(c => c.type === "title")) {
+        throw new Error("Database already has a title column");
+      }
 
       const columnId = generateId();
       const column = new Y.Map<any>();
@@ -8198,18 +8522,64 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
       if (views instanceof Y.Array) {
-        views.forEach((view: any) => {
+        const width = parsed.width || 200;
+        const plainViewColumn = { id: columnId, hide: false, width };
+        for (let viewIndex = 0; viewIndex < views.length; viewIndex += 1) {
+          const view = views.get(viewIndex);
           if (view instanceof Y.Map) {
             const viewColumns = view.get("columns");
             if (viewColumns instanceof Y.Array) {
               const viewCol = new Y.Map<any>();
               viewCol.set("id", columnId);
               viewCol.set("hide", false);
-              viewCol.set("width", parsed.width || 200);
+              viewCol.set("width", width);
               viewColumns.push([viewCol]);
+            } else if (Array.isArray(viewColumns)) {
+              view.set("columns", [...viewColumns, plainViewColumn]);
+            } else {
+              const createdColumns = new Y.Array<any>();
+              const viewCol = new Y.Map<any>();
+              viewCol.set("id", columnId);
+              viewCol.set("hide", false);
+              viewCol.set("width", width);
+              createdColumns.push([viewCol]);
+              view.set("columns", createdColumns);
             }
+            if (parsed.type === "title") {
+              const header = view.get("header");
+              if (header instanceof Y.Map) {
+                header.set("titleColumn", columnId);
+              } else {
+                view.set("header", {
+                  ...(header && typeof header === "object" ? header : {}),
+                  titleColumn: columnId,
+                });
+              }
+            }
+            continue;
           }
-        });
+
+          if (view && typeof view === "object") {
+            const plainView = view as Record<string, any>;
+            const plainColumns = databaseArrayValues(plainView.columns).map(entry =>
+              entry instanceof Y.Map ? entry.toJSON() : entry
+            );
+            const header = plainView.header instanceof Y.Map
+              ? plainView.header.toJSON()
+              : plainView.header && typeof plainView.header === "object"
+                ? plainView.header
+                : {};
+            const updatedView = {
+              ...plainView,
+              columns: [...plainColumns, plainViewColumn],
+              ...(parsed.type === "title"
+                ? { header: { ...header, titleColumn: columnId } }
+                : {}),
+            };
+            views.delete(viewIndex, 1);
+            views.insert(viewIndex, [updatedView]);
+          }
+        }
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
@@ -8229,13 +8599,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "add_database_column",
     {
       title: "Add Database Column",
-      description: "Add a column to an existing AFFiNE database block. Supports rich-text, select, multi-select, number, checkbox, link, date types.",
+      description: "Add a column to an existing AFFiNE database block. Supports title, rich-text, select, multi-select, number, checkbox, link, and date types. A title addition is rejected when the current database snapshot already has a title column.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         name: z.string().min(1).describe("Column display name"),
-        type: z.enum(["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"]).default("rich-text").describe("Column type"),
+        type: z.enum(DATABASE_COLUMN_TYPE_VALUES).default("rich-text").describe("Column type"),
         options: z.array(z.string()).optional().describe("Predefined options for select/multi-select columns"),
         width: z.number().optional().describe("Column width in pixels (default 200)"),
       },
@@ -9186,6 +9556,247 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   };
 
+  const updateBlockHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    text?: string;
+    checked?: boolean;
+    type?: BlockEditType;
+    style?: AppendBlockListStyle;
+    level?: number;
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+    if (
+      params.text === undefined &&
+      params.checked === undefined &&
+      params.type === undefined &&
+      params.style === undefined &&
+      params.level === undefined
+    ) {
+      throw new Error("update_block requires at least one of text, checked, type, style, or level.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+
+      const currentType = editableBlockType(block);
+      if (!currentType) {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(block.get("sys:flavour"))}' — update_block supports paragraph, heading, quote, list, and code blocks.`
+        );
+      }
+      const requestedType = params.type ?? currentType;
+      const paragraphTypes = new Set<BlockEditType>(["paragraph", "heading", "quote"]);
+      const sameFlavour =
+        (paragraphTypes.has(currentType) && paragraphTypes.has(requestedType)) ||
+        currentType === requestedType;
+      if (!sameFlavour) {
+        throw new Error(
+          `Cannot change block '${params.blockId}' from '${currentType}' to '${requestedType}' while preserving its id. Only paragraph/heading/quote conversions share one AFFiNE block flavour.`
+        );
+      }
+
+      if (params.style !== undefined && requestedType !== "list") {
+        throw new Error("The 'style' field can only be used with type='list'.");
+      }
+      if (params.level !== undefined && requestedType !== "heading") {
+        throw new Error("The 'level' field can only be used with type='heading'.");
+      }
+      if (params.checked !== undefined && requestedType !== "list") {
+        throw new Error("The 'checked' field can only be used with a todo list block.");
+      }
+
+      const previous = blockSnapshot(blocks, params.blockId);
+      const changed: string[] = [];
+      const markChanged = (field: string) => {
+        if (!changed.includes(field)) changed.push(field);
+      };
+
+      if (paragraphTypes.has(requestedType)) {
+        const rawType = block.get("prop:type");
+        const currentHeadingLevel =
+          typeof rawType === "string" && /^h([1-6])$/.test(rawType)
+            ? Number(rawType.slice(1))
+            : 1;
+        const nextRawType = requestedType === "heading"
+          ? `h${params.level ?? currentHeadingLevel}`
+          : requestedType === "quote"
+            ? "quote"
+            : "text";
+        if (rawType !== nextRawType) {
+          block.set("prop:type", nextRawType);
+          markChanged(params.level !== undefined && requestedType === currentType ? "level" : "type");
+        }
+      } else if (requestedType === "list") {
+        const rawStyle = block.get("prop:type");
+        const currentStyle = (APPEND_BLOCK_LIST_STYLE_VALUES as readonly string[]).includes(rawStyle)
+          ? rawStyle as AppendBlockListStyle
+          : "bulleted";
+        const nextStyle = params.style ?? currentStyle;
+        if (rawStyle !== nextStyle) {
+          block.set("prop:type", nextStyle);
+          markChanged("style");
+        }
+        if (params.checked !== undefined) {
+          if (nextStyle !== "todo") {
+            throw new Error("The 'checked' field can only be used when list style is 'todo'.");
+          }
+          if (block.get("prop:checked") !== params.checked) {
+            block.set("prop:checked", params.checked);
+            markChanged("checked");
+          }
+        }
+      }
+
+      if (params.text !== undefined && asText(block.get("prop:text")) !== params.text) {
+        block.set("prop:text", makeText(params.text));
+        markChanged("text");
+      }
+
+      if (changed.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
+
+      return text({
+        updated: changed.length > 0,
+        blockId: params.blockId,
+        changed,
+        previous,
+        block: blockSnapshot(blocks, params.blockId),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
+  const moveBlockHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    placement: AppendPlacement;
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+    const placement = normalizePlacement(params.placement);
+    if (!placement) {
+      throw new Error("move_block requires a placement target.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+
+      const flavour = block.get("sys:flavour");
+      if (flavour === "affine:page" || flavour === "affine:surface") {
+        throw new Error(`Refusing to move document root block '${params.blockId}'.`);
+      }
+
+      const descendants = new Set(collectDescendantBlockIds(blocks, [params.blockId]));
+      const targetIds = [placement.parentId, placement.afterBlockId, placement.beforeBlockId]
+        .filter((value): value is string => typeof value === "string");
+      const cyclicTarget = targetIds.find(id => descendants.has(id));
+      if (cyclicTarget) {
+        throw new Error(`Cannot move block '${params.blockId}' into or relative to its own descendant '${cyclicTarget}'.`);
+      }
+
+      const fromParentId = resolveBlockParentId(blocks, params.blockId);
+      const fromParent = fromParentId ? findBlockById(blocks, fromParentId) : null;
+      const fromChildren = fromParent?.get("sys:children");
+      const fromIndex = fromChildren instanceof Y.Array
+        ? indexOfChild(fromChildren, params.blockId)
+        : -1;
+      const resolvedPlacement: AppendPlacement =
+        placement.index !== undefined && !placement.parentId
+          ? { ...placement, parentId: fromParentId ?? undefined }
+          : placement;
+      if (placement.index !== undefined && !resolvedPlacement.parentId) {
+        throw new Error(
+          `Block '${params.blockId}' has no parent; supply placement.parentId with placement.index.`
+        );
+      }
+
+      removeBlockFromParents(blocks, params.blockId);
+      const moveType: AppendBlockCanonicalType = flavour === "affine:note"
+        ? "note"
+        : flavour === "affine:frame"
+          ? "frame"
+          : flavour === "affine:edgeless-text"
+            ? "edgeless_text"
+            : "paragraph";
+      const target = resolveInsertContext(blocks, {
+        placement: resolvedPlacement,
+        strict: true,
+        type: moveType,
+      });
+      target.children.insert(target.insertIndex, [params.blockId]);
+      block.set("sys:parent", null);
+
+      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      await pushDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+      return text({
+        moved: true,
+        blockId: params.blockId,
+        fromParentId,
+        toParentId: target.parentId,
+        fromIndex,
+        toIndex: target.insertIndex,
+        block: blockSnapshot(blocks, params.blockId),
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
   const deleteBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -9215,7 +9826,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = blocks.get(params.blockId);
       if (!(block instanceof Y.Map)) {
-        return text({ deleted: false, blockId: params.blockId, reason: "not-found" });
+        return text({
+          deleted: false,
+          blockId: params.blockId,
+          reason: "not-found",
+          deletedIds: [],
+          deletedBlock: null,
+          deletedBlocks: [],
+          prunedConnectors: [],
+        });
       }
 
       const flavour = block.get("sys:flavour");
@@ -9223,8 +9842,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         throw new Error(`Refusing to delete page-root block '${params.blockId}' — use delete_doc for whole-doc removal.`);
       }
 
-      const deletedIds: string[] = [];
       const deleteRecursive = params.deleteChildren !== false;
+      const candidateIds = deleteRecursive
+        ? collectDescendantBlockIds(blocks, [params.blockId])
+        : [params.blockId];
+      const deletedBlocks = candidateIds
+        .map(id => blockSnapshot(blocks, id))
+        .filter((entry): entry is Record<string, unknown> => entry !== null);
+      const deletedBlock = deletedBlocks.find(entry => entry.id === params.blockId) ?? null;
+      const deletedIds: string[] = [];
       const walk = (id: string) => {
         const b = blocks.get(id);
         if (!(b instanceof Y.Map)) return;
@@ -9289,7 +9915,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
-      return text({ deleted: true, blockId: params.blockId, deletedIds, prunedConnectors });
+      return text({
+        deleted: true,
+        blockId: params.blockId,
+        deletedIds,
+        deletedBlock,
+        deletedBlocks,
+        prunedConnectors,
+      });
     } finally {
       socket.disconnect();
     }
@@ -9675,11 +10308,52 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   server.registerTool(
+    "update_block",
+    {
+      title: "Update Block",
+      description:
+        "Partially update one paragraph, heading, quote, list, or code block while preserving its block id. Omitted fields remain unchanged. Paragraph/heading/quote conversions preserve ids; cross-flavour conversions are rejected.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Block id to update."),
+        text: z.string().optional().describe("Replacement block text. Omit to preserve the current text."),
+        checked: z.boolean().optional().describe("Todo checked state. Only valid for a list whose resulting style is todo."),
+        type: BlockEditType.optional().describe("Resulting logical block type."),
+        style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),
+        level: z.number().int().min(1).max(6).optional().describe("Heading level. Only valid when the resulting type is heading."),
+      },
+    },
+    updateBlockHandler as any
+  );
+
+  server.registerTool(
+    "move_block",
+    {
+      title: "Move Block",
+      description:
+        "Move an existing block without changing its id. Reuses append_block placement semantics and rejects document-root moves and cycles.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Block id to move."),
+        placement: z.object({
+          parentId: z.string().optional(),
+          afterBlockId: z.string().optional(),
+          beforeBlockId: z.string().optional(),
+          index: z.number().int().min(0).optional(),
+        }).describe("Destination parent or position, using append_block placement semantics."),
+      },
+    },
+    moveBlockHandler as any
+  );
+
+  server.registerTool(
     "delete_block",
     {
       title: "Delete Block",
       description:
-        "Delete a block by id. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs.",
+        "Delete a block by id and return snapshots of the removed content. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),

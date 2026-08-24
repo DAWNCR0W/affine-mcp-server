@@ -1,5 +1,5 @@
 {
-  "version": "3.2.2",
+  "version": "3.3.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -63,6 +63,7 @@
     "list_tags",
     "list_workspace_tree",
     "list_workspaces",
+    "move_block",
     "move_doc",
     "move_organize_node",
     "publish_doc",
@@ -75,10 +76,13 @@
     "rename_folder",
     "replace_doc_with_markdown",
     "resolve_comment",
+    "restore_doc",
     "revoke_doc",
     "search_docs",
     "set_doc_property",
     "sign_in",
+    "trash_doc",
+    "update_block",
     "update_collection",
     "update_collection_rules",
     "update_comment",
