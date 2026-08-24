@@ -107,6 +107,19 @@ async function main() {
     return parsed;
   }
 
+  async function expectCallError(toolName, args, expectedMessage) {
+    try {
+      await call(toolName, args);
+    } catch (error) {
+      if (!expectedMessage.test(error.message)) {
+        throw error;
+      }
+      console.log('    ✓ Rejected as expected');
+      return;
+    }
+    throw new Error(`${toolName} unexpectedly succeeded`);
+  }
+
   try {
     await client.connect(transport);
 
@@ -156,6 +169,21 @@ async function main() {
     });
     expectTruthy(temporary?.blockId, 'append_block temporary id');
 
+    const destinationNote = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'note',
+    });
+    expectTruthy(destinationNote?.blockId, 'append_block destination note id');
+    const destinationAnchor = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'paragraph',
+      text: 'Destination anchor',
+      placement: { parentId: destinationNote.blockId },
+    });
+    expectTruthy(destinationAnchor?.blockId, 'append_block destination anchor id');
+
     const checked = await call('update_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -177,6 +205,54 @@ async function main() {
     expectEqual(renamed?.blockId, state.taskBlockId, 'update_block text id');
     expectEqual(renamed?.block?.text, state.taskText, 'update_block text');
     expectEqual(renamed?.block?.checked, true, 'update_block preserves omitted checked state');
+
+    await expectCallError('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.taskBlockId,
+      type: 'paragraph',
+    }, /while preserving its id/);
+    const afterRejectedUpdate = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const unchangedTask = afterRejectedUpdate?.blocks?.find(block => block.id === state.taskBlockId);
+    expectTruthy(unchangedTask, 'rejected update preserves block id');
+    expectEqual(unchangedTask.text, state.taskText, 'rejected update preserves text');
+    expectEqual(unchangedTask.type, 'todo', 'rejected update preserves type');
+    expectEqual(unchangedTask.checked, true, 'rejected update preserves checked state');
+
+    const movedToParent = await call('move_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: temporary.blockId,
+      placement: { parentId: destinationNote.blockId },
+    });
+    expectEqual(movedToParent?.toParentId, destinationNote.blockId, 'move_block explicit parent');
+    const afterParentMove = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const parentAfterMove = afterParentMove?.blocks?.find(block => block.id === destinationNote.blockId);
+    expectTruthy(parentAfterMove, 'move_block destination parent');
+    expectEqual(parentAfterMove.childIds.at(-1), temporary.blockId, 'move_block appends to explicit parent');
+
+    const reordered = await call('move_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: temporary.blockId,
+      placement: { index: 0 },
+    });
+    expectEqual(reordered?.toParentId, destinationNote.blockId, 'move_block index keeps current parent');
+    expectEqual(reordered?.toIndex, 0, 'move_block index receipt');
+    const afterIndexMove = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const parentAfterReorder = afterIndexMove?.blocks?.find(block => block.id === destinationNote.blockId);
+    expectTruthy(parentAfterReorder, 'move_block index parent');
+    expectEqual(parentAfterReorder.childIds[0], temporary.blockId, 'move_block index order');
+    expectEqual(parentAfterReorder.childIds[1], destinationAnchor.blockId, 'move_block retained sibling order');
 
     const converted = await call('update_block', {
       workspaceId: state.workspaceId,

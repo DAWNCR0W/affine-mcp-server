@@ -9744,6 +9744,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const fromIndex = fromChildren instanceof Y.Array
         ? indexOfChild(fromChildren, params.blockId)
         : -1;
+      const resolvedPlacement: AppendPlacement =
+        placement.index !== undefined && !placement.parentId
+          ? { ...placement, parentId: fromParentId ?? undefined }
+          : placement;
+      if (placement.index !== undefined && !resolvedPlacement.parentId) {
+        throw new Error(
+          `Block '${params.blockId}' has no parent; supply placement.parentId with placement.index.`
+        );
+      }
 
       removeBlockFromParents(blocks, params.blockId);
       const moveType: AppendBlockCanonicalType = flavour === "affine:note"
@@ -9754,7 +9763,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             ? "edgeless_text"
             : "paragraph";
       const target = resolveInsertContext(blocks, {
-        placement,
+        placement: resolvedPlacement,
         strict: true,
         type: moveType,
       });
