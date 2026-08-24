@@ -414,6 +414,15 @@ type DatabaseIntentPreset = {
 };
 const DATABASE_COLUMN_TYPE_VALUES = ["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
+const MARKDOWN_IMPORT_KNOWN_LOSSES = [
+  "Nested markdown lists are flattened during import.",
+  "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
+  "HTML blocks are imported as plain paragraph text.",
+  "Blank lines delimit Markdown blocks and do not create spacer paragraph blocks.",
+  "CommonMark parsing normalizes Markdown syntax and surrounding whitespace, including leading whitespace in list-item content.",
+] as const;
+const MARKDOWN_IMPORT_IS_LOSSY = MARKDOWN_IMPORT_KNOWN_LOSSES.length > 0;
+
 const MARKDOWN_EXPORT_SUPPORTED_FLAVOURS = new Set<string>([
   "affine:paragraph",
   "affine:list",
@@ -3741,6 +3750,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   }): Promise<{
     appendedCount: number;
     skippedCount: number;
+    removedCount: number;
+    removedEmptyParagraphCount: number;
     blockIds: string[];
   }> {
     const strict = parsed.strict !== false;
@@ -3764,6 +3775,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       let lastInsertedBlockId: string | undefined;
       let replaceParentId: string | undefined;
       let skippedCount = 0;
+      let removedCount = 0;
+      let removedEmptyParagraphCount = 0;
       const blockIds: string[] = [];
 
       if (replaceExisting) {
@@ -3776,6 +3789,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const existingChildren = childIdsFrom(noteChildren);
         const descendantBlockIds = collectDescendantBlockIds(blocks, existingChildren);
         for (const descendantId of descendantBlockIds) {
+          const descendant = findBlockById(blocks, descendantId);
+          if (descendant) {
+            removedCount += 1;
+            if (
+              descendant.get("sys:flavour") === "affine:paragraph" &&
+              asText(descendant.get("prop:text")).length === 0
+            ) {
+              removedEmptyParagraphCount += 1;
+            }
+          }
           blocks.delete(descendantId);
         }
         if (noteChildren.length > 0) {
@@ -3834,6 +3857,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       return {
         appendedCount: blockIds.length,
         skippedCount,
+        removedCount,
+        removedEmptyParagraphCount,
         blockIds,
       };
     } finally {
@@ -5547,12 +5572,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         legacyBlockAliases: Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
         markdownImport: {
           supported: true,
-          lossy: true,
-          knownLosses: [
-            "Nested markdown lists are flattened during import.",
-            "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
-            "HTML blocks are imported as plain paragraph text.",
-          ],
+          lossy: MARKDOWN_IMPORT_IS_LOSSY,
+          knownLosses: [...MARKDOWN_IMPORT_KNOWN_LOSSES],
         },
         markdownExport: {
           supportedFlavours: [...MARKDOWN_EXPORT_SUPPORTED_FLAVOURS].sort(),
@@ -6422,6 +6443,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     let applied = {
       appendedCount: 0,
       skippedCount: 0,
+      removedCount: 0,
+      removedEmptyParagraphCount: 0,
       blockIds: [] as string[],
     };
 
@@ -6463,11 +6486,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
       warnings,
-      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
+        removedBlocks: applied.removedCount,
+        removedEmptyParagraphs: applied.removedEmptyParagraphCount,
       },
     };
   };
@@ -6578,11 +6603,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       appendedCount: applied.appendedCount,
       blockIds: applied.blockIds,
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
-      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
+        removedBlocks: applied.removedCount,
+        removedEmptyParagraphs: applied.removedEmptyParagraphCount,
       },
     });
   };
@@ -6636,21 +6663,27 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       replaceExisting: true,
     });
 
-    const applyWarnings =
-      applied.skippedCount > 0
+    const applyWarnings = [
+      ...(applied.skippedCount > 0
         ? [`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`]
-        : [];
+        : []),
+      ...(applied.removedEmptyParagraphCount > 0
+        ? [`Replacement removed ${applied.removedEmptyParagraphCount} existing empty paragraph block(s), which Markdown cannot represent.`]
+        : []),
+    ];
 
     return receipt("doc.replace_with_markdown", {
       workspaceId,
       docId: parsed.docId,
       replaced: true,
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
-      lossy: parsedMarkdown.lossy || applied.skippedCount > 0,
+      lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
         parsedBlocks: parsedMarkdown.operations.length,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
+        removedBlocks: applied.removedCount,
+        removedEmptyParagraphs: applied.removedEmptyParagraphCount,
       },
     });
   };
