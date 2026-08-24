@@ -387,6 +387,9 @@ export async function startHttpMcpServer(
 
         const mcpServer = await createMcpServer();
         await mcpServer.connect(transport);
+      } else if (sessionId && !existing) {
+        sendJsonRpcError(res, 404, -32001, "Session not found");
+        return;
       } else {
         sendJsonRpcError(
           res,
