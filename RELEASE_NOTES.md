@@ -1,5 +1,47 @@
 # Release Notes
 
+## Version 3.3.0 (2026-08-24)
+
+### Highlights
+- Added recoverable document trash and restore operations that preserve content and verify the resulting AFFiNE workspace metadata.
+- Added block-level update and move operations that retain block IDs while editing, converting, reordering, or reparenting supported text blocks.
+- Added database title-column support and strengthened rich-text cell handling across AFFiNE's stored database view representations.
+- Improved HTTP session errors, Markdown output fidelity, and import-loss reporting.
+
+### What Changed
+- Document lifecycle
+  - Added idempotent `trash_doc` and `restore_doc` tools with retry classification and read-back verification.
+  - Keeps permanent `delete_doc` separate for callers that explicitly require irreversible deletion.
+- Block editing
+  - Added `update_block` for partial text, todo-state, list-style, and compatible text-block type updates.
+  - Added `move_block` for same-parent reordering and cross-parent moves with root and cycle protection.
+  - `read_doc` now includes hierarchy-derived `parentId` values, and `delete_block` returns reconstructable deleted-block snapshots.
+- Database compatibility
+  - Added `title` to the supported database column types and rejects attempts to create a second title column.
+  - Synchronizes column mutations across Y.Map, Y.Array, and legacy stored view representations.
+  - Preserves valid rich-text Yjs deltas in cell reads and updates and rejects malformed delta payloads before mutation.
+- Runtime and Markdown behavior
+  - Unknown HTTP session IDs return an explicit `404 Session not found` response.
+  - Markdown output preserves ordinary punctuation, ampersands, and unknown entity-like text without unnecessary escaping.
+  - Fidelity analysis reports known Markdown import losses separately from export behavior.
+- Dependencies
+  - Refreshed the locked `jose` release from 6.2.8 to 6.2.9.
+
+### Compatibility
+- Four tools were added, bringing the canonical MCP surface from 92 to 96 tools; no tools were removed.
+- No existing required inputs were changed, and existing text and structured result paths remain available.
+- Node.js 20.18.1 or newer remains required.
+- Release behavior is validated against AFFiNE 0.27.4.
+
+### Validation Evidence
+- Node.js 20.18.1 and 24: clean `npm run ci`
+- `npm audit --audit-level=low`
+- `AFFINE_REVISION=0.27.4 npm run test:comprehensive`
+- `AFFINE_REVISION=0.27.4 npm run test:e2e`
+- Packed-tarball install, CLI, and 96-tool discovery smoke
+- `npm publish --dry-run --access public --ignore-scripts`
+- Linux/amd64 Docker build, version check, non-root UID check, and healthcheck smoke
+
 ## Version 3.2.2 (2026-08-18)
 
 ### Highlights

@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-08-24
+
 ### Added
 - Added recoverable `trash_doc` and `restore_doc` tools backed by AFFiNE workspace metadata, with idempotent retries and read-back verification.
+- Added `update_block` and `move_block` for in-place text-block editing, conversion, reordering, and reparenting without replacing block IDs.
+- Added `title` column support for AFFiNE databases, including duplicate-title rejection and synchronized updates across every stored view representation.
+
+### Changed
+- `read_doc` now reports hierarchy-derived `parentId` values, and `delete_block` returns snapshots of removed root and descendant blocks.
+- The canonical MCP tool surface now contains 96 tools.
+
+### Fixed
+- Preserved AFFiNE rich-text deltas when reading and updating database cells, while rejecting malformed rich-text inputs before mutation.
+- Unknown HTTP MCP session IDs now return `404 Session not found` instead of being treated as new-session requests.
+- Markdown export no longer over-escapes ordinary punctuation or ampersands and preserves unknown entity-like text.
+- Markdown fidelity reports now distinguish known import losses from lossless export behavior.
+
+### Dependencies
+- Refreshed the locked `jose` release from 6.2.8 to 6.2.9.
+
+### Tests
+- Added focused and browser-backed coverage for block editing, document trash recovery, database title columns and rich-text cells, HTTP session handling, and Markdown fidelity.
 
 ## [3.2.2] - 2026-08-18
 
@@ -671,6 +691,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.3.0
 [3.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.2
 [3.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.1
 [3.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.0
@@ -704,4 +725,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.2.2...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.3.0...HEAD
