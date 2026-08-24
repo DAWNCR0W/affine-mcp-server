@@ -2,7 +2,7 @@
 import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
 
 /**
- * Comprehensive live integration test for issue #50.
+ * Comprehensive live integration test for issues #50 and #304.
  *
  * Covers:
  * - `Title`-based row creation writing the built-in Kanban title
@@ -12,6 +12,7 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * - `update_database_row` batch updates
  * - `delete_database_row` removes rows cleanly from the database block
  * - select / multi-select option auto-create behavior and strict failure mode
+ * - rich-text delta attributes survive add, update, read, and row-title writes
  *
  * Outputs tests/test-database-cells-state.json for UI verification.
  */
@@ -143,6 +144,7 @@ async function main() {
     rowBlockIds: [],
     columnIds: {},
     finalRows: [],
+    richTextLinks: [],
   };
 
   const initialDates = {
@@ -154,6 +156,32 @@ async function main() {
     row1: Date.UTC(2026, 2, 12, 10, 15, 0),
     row2: Date.UTC(2026, 2, 13, 11, 45, 0),
   };
+
+  const richTextCases = {
+    initialTitle: [
+      { insert: 'Card ' },
+      { insert: 'Alpha', attributes: { link: 'https://example.com/cards/alpha' } },
+    ],
+    initialNotes: [
+      { insert: 'README', attributes: { link: 'https://example.com/readme' } },
+      { insert: ' is required', attributes: { italic: true } },
+    ],
+    updatedRow1Title: [
+      { insert: 'Card Alpha ' },
+      { insert: 'Prime', attributes: { bold: true } },
+    ],
+    updatedRow1Notes: [
+      { insert: 'Migration guide', attributes: { link: 'https://example.com/migration' } },
+    ],
+    finalTitle: [
+      { insert: 'Card Beta ' },
+      { insert: 'Final', attributes: { link: 'https://example.com/cards/beta-final' } },
+    ],
+    finalNotes: [
+      { insert: 'Release runbook', attributes: { bold: true, link: 'https://example.com/release-runbook' } },
+    ],
+  };
+  const rowTitles = ['Card Alpha', 'Card Beta'];
 
   await client.connect(transport);
 
@@ -193,6 +221,7 @@ async function main() {
 
     const columns = [
       { key: 'Title', name: 'Title', type: 'rich-text' },
+      { key: 'Notes', name: 'Notes', type: 'rich-text' },
       { key: 'Owner', name: 'Owner', type: 'rich-text' },
       { key: 'Stage', name: 'Stage', type: 'select', options: ['Todo', 'In Progress', 'Done'] },
       { key: 'Labels', name: 'Labels', type: 'multi-select', options: ['Backend', 'Frontend', 'Urgent'] },
@@ -217,7 +246,8 @@ async function main() {
 
     const rowInputs = [
       {
-        Title: 'Card Alpha',
+        Title: richTextCases.initialTitle,
+        Notes: richTextCases.initialNotes,
         Owner: 'Alice',
         Stage: 'In Progress',
         Labels: ['Backend'],
@@ -228,6 +258,7 @@ async function main() {
       },
       {
         Title: 'Card Beta',
+        Notes: 'Draft',
         Owner: 'Bob',
         Stage: 'Todo',
         Labels: ['Frontend', 'Urgent'],
@@ -255,9 +286,8 @@ async function main() {
     });
     for (let i = 0; i < state.rowBlockIds.length; i++) {
       const rowBlock = readAfterAdd?.blocks?.find(block => block.id === state.rowBlockIds[i]);
-      expectEqual(rowBlock?.text, rowInputs[i].Title, `row title after add_database_row for row ${i + 1}`);
+      expectEqual(rowBlock?.text, rowTitles[i], `row title after add_database_row for row ${i + 1}`);
     }
-
     const readAllRows = await call('read_database_cells', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -267,7 +297,11 @@ async function main() {
 
     const [row1, row2] = readAllRows.rows;
     expectEqual(row1.title, 'Card Alpha', 'row1 title after create');
+    expectArrayEqual(row1.titleDeltas, richTextCases.initialTitle, 'row1 title deltas after create');
     expectEqual(row1.cells.Title.value, 'Card Alpha', 'row1 custom Title cell');
+    expectArrayEqual(row1.cells.Title.deltas, richTextCases.initialTitle, 'row1 custom Title deltas after create');
+    expectEqual(row1.cells.Notes.value, 'README is required', 'row1 Notes');
+    expectArrayEqual(row1.cells.Notes.deltas, richTextCases.initialNotes, 'row1 Notes deltas after create');
     expectEqual(row1.cells.Owner.value, 'Alice', 'row1 Owner');
     expectEqual(row1.cells.Stage.value, 'In Progress', 'row1 Stage');
     expectTruthy(row1.cells.Stage.optionId, 'row1 Stage optionId');
@@ -279,7 +313,10 @@ async function main() {
     expectEqual(row1.cells.Link.value, 'https://example.com/alpha', 'row1 Link');
 
     expectEqual(row2.title, 'Card Beta', 'row2 title after create');
+    expectArrayEqual(row2.titleDeltas, [{ insert: 'Card Beta' }], 'row2 plain title deltas after create');
     expectEqual(row2.cells.Title.value, 'Card Beta', 'row2 custom Title cell');
+    expectArrayEqual(row2.cells.Title.deltas, [{ insert: 'Card Beta' }], 'row2 plain Title deltas after create');
+    expectArrayEqual(row2.cells.Notes.deltas, [{ insert: 'Draft' }], 'row2 plain Notes deltas after create');
     expectEqual(row2.cells.Owner.value, 'Bob', 'row2 Owner');
     expectEqual(row2.cells.Stage.value, 'Todo', 'row2 Stage');
     expectArrayEqual(row2.cells.Labels.value, ['Frontend', 'Urgent'], 'row2 Labels');
@@ -316,7 +353,8 @@ async function main() {
       databaseBlockId: state.databaseBlockId,
       rowBlockId: state.rowBlockIds[0],
       cells: {
-        Title: 'Card Alpha Prime',
+        Title: richTextCases.updatedRow1Title,
+        Notes: richTextCases.updatedRow1Notes,
         [state.columnIds.Owner]: 'Carol',
         Stage: 'Blocked',
         [state.columnIds.Labels]: ['Backend', 'Urgent', 'Release'],
@@ -336,7 +374,10 @@ async function main() {
     });
     const updatedRow1 = row1AfterSingleUpdates.rows[0];
     expectEqual(updatedRow1.title, 'Card Alpha Prime', 'row1 title after single-cell updates');
+    expectArrayEqual(updatedRow1.titleDeltas, richTextCases.updatedRow1Title, 'row1 title deltas after update_database_row');
     expectEqual(updatedRow1.cells.Title.value, 'Card Alpha Prime', 'row1 custom Title after update_database_row');
+    expectArrayEqual(updatedRow1.cells.Title.deltas, richTextCases.updatedRow1Title, 'row1 custom Title deltas after update_database_row');
+    expectArrayEqual(updatedRow1.cells.Notes.deltas, richTextCases.updatedRow1Notes, 'row1 Notes deltas after update_database_row');
     expectEqual(updatedRow1.cells.Owner.value, 'Carol', 'row1 Owner after update_database_row');
     expectEqual(updatedRow1.cells.Stage.value, 'Blocked', 'row1 Stage after auto-created option');
     expectArrayEqual(updatedRow1.cells.Labels.value, ['Backend', 'Urgent', 'Release'], 'row1 Labels after update_database_row');
@@ -373,7 +414,8 @@ async function main() {
       databaseBlockId: state.databaseBlockId,
       rowBlockId: state.rowBlockIds[1],
       cells: {
-        title: 'Card Beta Final',
+        title: richTextCases.finalTitle,
+        Notes: richTextCases.finalNotes,
         Owner: 'Dana',
         Stage: 'Done',
         [state.columnIds.Labels]: ['Frontend', 'QA'],
@@ -400,7 +442,11 @@ async function main() {
 
     expectEqual(finalRow1.title, 'Card Alpha Prime', 'final row1 title');
     expectEqual(finalRow2.title, 'Card Beta Final', 'final row2 title');
+    expectArrayEqual(finalRow2.titleDeltas, richTextCases.finalTitle, 'final row2 title deltas');
     expectEqual(finalRow2.cells.Title.value, 'Card Beta Final', 'final row2 custom Title cell');
+    expectArrayEqual(finalRow2.cells.Title.deltas, richTextCases.finalTitle, 'final row2 custom Title deltas');
+    expectEqual(finalRow2.cells.Notes.value, 'Release runbook', 'final row2 Notes');
+    expectArrayEqual(finalRow2.cells.Notes.deltas, richTextCases.finalNotes, 'final row2 Notes deltas');
     expectEqual(finalRow2.cells.Owner.value, 'Dana', 'final row2 Owner');
     expectEqual(finalRow2.cells.Stage.value, 'Done', 'final row2 Stage');
     expectArrayEqual(finalRow2.cells.Labels.value, ['Frontend', 'QA'], 'final row2 Labels');
@@ -441,6 +487,10 @@ async function main() {
     }
 
     state.finalRows = afterDelete.rows;
+    state.richTextLinks = [
+      { text: 'Final', href: 'https://example.com/cards/beta-final' },
+      { text: 'Release runbook', href: 'https://example.com/release-runbook' },
+    ];
 
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
     console.log();

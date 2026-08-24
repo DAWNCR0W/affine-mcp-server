@@ -7352,24 +7352,31 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return childIdsFrom(dbBlock.get("sys:children"));
   }
 
-  function readDatabaseRowTitle(rowBlock: Y.Map<any>): string {
-    return asText(rowBlock.get("prop:text"));
+  function normalizeDatabaseRichTextValue(value: unknown): string | TextDelta[] {
+    if (!Array.isArray(value)) {
+      return String(value ?? "");
+    }
+    const deltas = richTextValueToDeltas(value) ?? [];
+    if (deltas.length !== value.length) {
+      throw new Error("Rich-text values must be strings or delta arrays with string insert values");
+    }
+    return deltas;
   }
 
   function resolveDatabaseTitleValue(
     cells: Record<string, unknown>,
     lookup: DatabaseColumnLookup,
-  ): string {
+  ): string | TextDelta[] {
     if (lookup.titleCol) {
       const value = cells[lookup.titleCol.name] ?? cells[lookup.titleCol.id];
       if (value !== undefined) {
-        return String(value ?? "");
+        return normalizeDatabaseRichTextValue(value);
       }
     }
 
     for (const [key, value] of Object.entries(cells)) {
       if (isTitleAliasKey(key)) {
-        return String(value ?? "");
+        return normalizeDatabaseRichTextValue(value);
       }
     }
 
@@ -7377,7 +7384,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (namedTitleColumn) {
       const value = cells[namedTitleColumn.name] ?? cells[namedTitleColumn.id];
       if (value !== undefined) {
-        return String(value ?? "");
+        return normalizeDatabaseRichTextValue(value);
       }
     }
 
@@ -7413,7 +7420,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
     } else {
       const titleValue = resolveDatabaseTitleValue(parsed.cells, parsed.lookup);
-      rowBlock.set("prop:text", makeText(String(titleValue)));
+      rowBlock.set("prop:text", makeText(titleValue));
     }
     parsed.blocks.set(rowBlockId, rowBlock);
 
@@ -7522,7 +7529,11 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     switch (col.type) {
       case "rich-text":
       case "title":
-        return { ...base, value: richTextValueToString(rawValue) || null };
+        return {
+          ...base,
+          value: richTextValueToString(rawValue) || null,
+          deltas: richTextValueToDeltas(rawValue) ?? [],
+        };
       case "select": {
         const optionId = asStringOrNull(rawValue);
         const option = col.options.find(entry => entry.id === optionId) || null;
@@ -7580,7 +7591,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     switch (col.type) {
       case "rich-text":
       case "title":
-        cellValue.set("value", makeText(String(value ?? "")));
+        cellValue.set("value", makeText(normalizeDatabaseRichTextValue(value)));
         break;
       case "number": {
         const num = Number(value);
@@ -7708,7 +7719,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
       } else {
         const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
-        rowBlock.set("prop:text", makeText(String(titleValue)));
+        rowBlock.set("prop:text", makeText(titleValue));
       }
       ctx.blocks.set(rowBlockId, rowBlock);
 
@@ -7753,7 +7764,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. For select columns, pass the display label (option auto-created if new)."),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. Rich-text and title values accept strings or delta arrays with optional attributes. For select columns, pass the display label (option auto-created if new)."),
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
@@ -7839,7 +7850,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const rows = requestedRows.map(rowBlockId => {
         const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, rowBlockId);
-        const title = readDatabaseRowTitle(rowBlock) || null;
+        const titleValue = rowBlock.get("prop:text");
+        const title = richTextValueToString(titleValue) || null;
         const rowCells = ctx.cellsMap.get(rowBlockId);
         const cells: Record<string, Record<string, unknown>> = {};
 
@@ -7862,6 +7874,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         return {
           rowBlockId,
           title,
+          titleDeltas: richTextValueToDeltas(titleValue) ?? [],
           linkedDocId: readLinkedDocId(rowBlock),
           cells,
         };
@@ -7876,7 +7889,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "read_database_cells",
     {
       title: "Read Database Cells",
-      description: "Read row titles and database cell values from an AFFiNE database block.",
+      description: "Read row titles and database cell values from an AFFiNE database block. Rich-text titles and cells include both plain values and formatting-preserving deltas.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
@@ -7946,13 +7959,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     try {
       const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
       const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
-      let titleValue: string | null = null;
+      let titleValue: string | TextDelta[] | null = null;
 
       for (const [key, value] of Object.entries(parsed.cells)) {
         const col = findDatabaseColumn(key, ctx);
         if (!col) {
           if (isTitleAliasKey(key)) {
-            titleValue = String(value ?? "");
+            titleValue = normalizeDatabaseRichTextValue(value);
             continue;
           }
           throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
@@ -7960,7 +7973,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
         writeDatabaseCellValue(rowCells, col, value, parsed.createOption ?? true);
         if (col.type === "title" || isTitleAliasKey(col.name)) {
-          titleValue = String(value ?? "");
+          titleValue = normalizeDatabaseRichTextValue(value);
         }
       }
 
@@ -7992,7 +8005,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Use `title` for the built-in row title."),
+        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Rich-text and title values accept strings or delta arrays with optional attributes. Use `title` for the built-in row title."),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
