@@ -40,7 +40,7 @@ function parseContent(result) {
   }
 }
 
-async function convertDatabaseHeadersToYMaps(workspaceId, docId, databaseBlockId) {
+async function mutateDatabaseViews(workspaceId, docId, databaseBlockId, mutate) {
   const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
   const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie, undefined);
   try {
@@ -67,6 +67,49 @@ async function convertDatabaseHeadersToYMaps(workspaceId, docId, databaseBlockId
 
     const views = databaseBlock.get('prop:views');
     if (!(views instanceof Y.Array)) throw new Error('Database views are not a Y.Array');
+    const changed = mutate(views);
+    if (changed === 0) throw new Error('Expected database views to change');
+
+    const delta = Y.encodeStateAsUpdate(doc, previousState);
+    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(delta).toString('base64'));
+  } finally {
+    socket.disconnect();
+  }
+}
+
+async function seedDatabaseViewRepresentations(workspaceId, docId, databaseBlockId) {
+  await mutateDatabaseViews(workspaceId, docId, databaseBlockId, views => {
+    const yMapHeader = new Y.Map();
+    yMapHeader.set('titleColumn', null);
+    yMapHeader.set('iconColumn', null);
+
+    const yMapView = new Y.Map();
+    yMapView.set('id', `y-map-plain-columns-${databaseBlockId}`);
+    yMapView.set('name', 'Y.Map Plain Columns');
+    yMapView.set('mode', 'table');
+    yMapView.set('columns', []);
+    yMapView.set('filter', { type: 'group', op: 'and', conditions: [] });
+    yMapView.set('groupBy', null);
+    yMapView.set('sort', null);
+    yMapView.set('header', yMapHeader);
+
+    const plainView = {
+      id: `plain-view-${databaseBlockId}`,
+      name: 'Plain Object View',
+      mode: 'table',
+      columns: [],
+      filter: { type: 'group', op: 'and', conditions: [] },
+      groupBy: null,
+      sort: null,
+      header: { titleColumn: null, iconColumn: null },
+    };
+    views.push([yMapView, plainView]);
+    return 2;
+  });
+}
+
+async function convertDatabaseHeadersToYMaps(workspaceId, docId, databaseBlockId) {
+  await mutateDatabaseViews(workspaceId, docId, databaseBlockId, views => {
     let converted = 0;
     views.forEach(view => {
       if (!(view instanceof Y.Map)) return;
@@ -81,13 +124,8 @@ async function convertDatabaseHeadersToYMaps(workspaceId, docId, databaseBlockId
       view.set('header', yHeader);
       converted += 1;
     });
-    if (converted === 0) throw new Error('Expected at least one plain database header to convert');
-
-    const delta = Y.encodeStateAsUpdate(doc, previousState);
-    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(delta).toString('base64'));
-  } finally {
-    socket.disconnect();
-  }
+    return converted;
+  });
 }
 
 async function main() {
@@ -258,6 +296,8 @@ async function main() {
     if (!state.databaseBlockId) throw new Error('append_block(database) did not return blockId');
     console.log(`  Database Block ID: ${state.databaseBlockId}`);
     await settle();
+    await seedDatabaseViewRepresentations(state.workspaceId, state.docId, state.databaseBlockId);
+    await settle();
 
     // 4. Add columns
     const columnDefs = [
@@ -313,16 +353,26 @@ async function main() {
       databaseBlockId: state.databaseBlockId,
     });
     const titleColumn = schema?.columns?.find(column => column.type === 'title');
+    const statusColumn = schema?.columns?.find(column => column.name === 'Status');
     if (!titleColumn?.id) throw new Error('read_database_columns did not return a title column');
+    if (statusColumn?.type !== 'select') {
+      throw new Error('read_database_columns did not return a select Status column');
+    }
     if (schema.titleColumnId !== titleColumn.id) {
       throw new Error(`titleColumnId mismatch: expected ${titleColumn.id}, got ${schema.titleColumnId}`);
     }
     if (schema.columnCount !== 2) {
       throw new Error(`expected a minimal two-column database, got ${schema.columnCount} columns`);
     }
-    for (const view of schema.views || []) {
+    if (!Array.isArray(schema.views) || schema.views.length !== 3) {
+      throw new Error(`expected all three database view representations, got ${JSON.stringify(schema.views)}`);
+    }
+    for (const view of schema.views) {
       if (view.header?.titleColumn !== titleColumn.id) {
         throw new Error(`view ${view.id} is not bound to title column ${titleColumn.id}`);
+      }
+      if (!view.columnIds?.includes(titleColumn.id) || !view.columnIds?.includes(statusColumn.id)) {
+        throw new Error(`view ${view.id} does not expose both minimal database columns`);
       }
     }
 
