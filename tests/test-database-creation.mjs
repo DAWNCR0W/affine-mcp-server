@@ -171,18 +171,28 @@ async function main() {
     });
     assertParentIdsAreNull(readAfterAppendParagraph, 'after append_block paragraph');
 
+    const punctuationMarkdown = [
+      '- [ ] second item (appended)',
+      '- [ ] Call the bank about a refund. notes are elsewhere',
+      '- [ ] Cancel the card; try to get the $95 annual fee waived',
+      '- [ ] Unlock the spare phone, then check email',
+    ].join('\n');
     const markdownDoc = await call('create_doc_from_markdown', {
       workspaceId: state.workspaceId,
       title: 'ParentId Markdown Structure Check',
-      markdown: '# Heading from markdown\n\nBody from markdown import.',
+      markdown: `# Heading from markdown\n\n${punctuationMarkdown}`,
     });
     if (!markdownDoc?.docId) throw new Error('create_doc_from_markdown did not return docId');
 
     const readMarkdownDoc = await call('read_doc', {
       workspaceId: state.workspaceId,
       docId: markdownDoc.docId,
+      includeMarkdown: true,
     });
     assertParentIdsAreNull(readMarkdownDoc, 'after create_doc_from_markdown');
+    if (!readMarkdownDoc?.markdown?.includes(punctuationMarkdown)) {
+      throw new Error(`read_doc over-escaped sentence punctuation: ${JSON.stringify(readMarkdownDoc?.markdown)}`);
+    }
 
     // 3. Create database block
     const dbBlock = await call('append_block', {

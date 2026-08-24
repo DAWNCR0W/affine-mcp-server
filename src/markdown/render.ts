@@ -220,7 +220,11 @@ function renderTextDelta(
     }
   }
 
-  let rendered = renderAsCode ? inlineCodeFence(content) : escapeMarkdownPlainText(content);
+  let rendered = renderAsCode
+    ? inlineCodeFence(content)
+    : options.tableCell
+      ? escapeMarkdownTableCell(content)
+      : escapeMarkdownPlainText(content);
   if (attributes.bold) rendered = `**${rendered}**`;
   if (attributes.italic) rendered = `*${rendered}*`;
   if (attributes.strike) rendered = `~~${rendered}~~`;
