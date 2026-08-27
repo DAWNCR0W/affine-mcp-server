@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
 
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,11 +65,54 @@ async function main() {
     email: EMAIL,
     workspaceId: null,
     docId: null,
+    inboxHeadingBlockId: null,
     taskBlockId: null,
+    quoteBlockId: null,
+    codeBlockId: null,
     taskText: 'Ship the verified release',
     oldTaskText: 'Ship the draft release',
+    inboxHeadingText: 'Inbox priority',
+    quoteText: 'Review the highlighted contract',
+    codeText: 'const status = "highlighted";',
+    coloredSegment: 'priority',
+    highlightedSegment: 'verified',
     doneHeadingText: 'Done',
     deletedText: 'Remove this temporary note',
+    inboxHeadingDeltas: [
+      { insert: 'Inbox ' },
+      { insert: 'priority', attributes: { color: 'var(--affine-text-highlight-foreground-blue)' } },
+    ],
+    oldTaskDeltas: [
+      { insert: 'Ship the ' },
+      { insert: 'draft', attributes: { background: 'var(--affine-text-highlight-yellow)' } },
+      { insert: ' release' },
+    ],
+    taskDeltas: [
+      { insert: 'Ship the ' },
+      {
+        insert: 'verified',
+        attributes: {
+          color: 'var(--affine-text-highlight-foreground-blue)',
+          background: 'var(--affine-text-highlight-purple)',
+        },
+      },
+      { insert: ' release' },
+    ],
+    quoteDeltas: [
+      { insert: 'Review the ' },
+      { insert: 'highlighted', attributes: { background: 'var(--affine-text-highlight-yellow)' } },
+      { insert: ' contract' },
+    ],
+    codeDeltas: [
+      { insert: 'const status = ' },
+      { insert: '"highlighted"', attributes: { futureInlineAttribute: { version: 1 } } },
+      { insert: ';' },
+    ],
+    deletedDeltas: [
+      { insert: 'Remove this ' },
+      { insert: 'temporary', attributes: { color: 'var(--affine-text-highlight-foreground-red)' } },
+      { insert: ' note' },
+    ],
   };
   const client = new Client({ name: 'affine-mcp-block-editing-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
@@ -135,22 +179,42 @@ async function main() {
     state.docId = document?.docId;
     expectTruthy(state.docId, 'create_doc docId');
 
-    await call('append_block', {
+    const inboxHeading = await call('append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
       type: 'heading',
       level: 2,
-      text: 'Inbox',
+      text: state.inboxHeadingDeltas,
     });
+    state.inboxHeadingBlockId = inboxHeading?.blockId;
+    expectTruthy(state.inboxHeadingBlockId, 'append_block rich-text heading id');
     const task = await call('append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
       type: 'list',
       style: 'bulleted',
-      text: state.oldTaskText,
+      text: state.oldTaskDeltas,
     });
     state.taskBlockId = task?.blockId;
     expectTruthy(state.taskBlockId, 'append_block task id');
+
+    const quote = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'quote',
+      text: state.quoteDeltas,
+    });
+    state.quoteBlockId = quote?.blockId;
+    expectTruthy(state.quoteBlockId, 'append_block rich-text quote id');
+
+    const code = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'code',
+      text: state.codeDeltas,
+    });
+    state.codeBlockId = code?.blockId;
+    expectTruthy(state.codeBlockId, 'append_block rich-text code id');
 
     const doneHeading = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -165,7 +229,7 @@ async function main() {
       workspaceId: state.workspaceId,
       docId: state.docId,
       type: 'paragraph',
-      text: state.deletedText,
+      text: state.deletedDeltas,
     });
     expectTruthy(temporary?.blockId, 'append_block temporary id');
 
@@ -193,6 +257,7 @@ async function main() {
     });
     expectEqual(checked?.blockId, state.taskBlockId, 'update_block checked id');
     expectEqual(checked?.block?.text, state.oldTaskText, 'update_block preserves omitted text');
+    assert.deepEqual(checked?.block?.deltas, state.oldTaskDeltas, 'update_block preserves omitted text deltas');
     expectEqual(checked?.block?.type, 'todo', 'update_block list style');
     expectEqual(checked?.block?.checked, true, 'update_block checked state');
 
@@ -200,11 +265,31 @@ async function main() {
       workspaceId: state.workspaceId,
       docId: state.docId,
       blockId: state.taskBlockId,
-      text: state.taskText,
+      text: state.taskDeltas,
     });
     expectEqual(renamed?.blockId, state.taskBlockId, 'update_block text id');
     expectEqual(renamed?.block?.text, state.taskText, 'update_block text');
+    assert.deepEqual(renamed?.previous?.deltas, state.oldTaskDeltas, 'update_block previous text deltas');
+    assert.deepEqual(renamed?.block?.deltas, state.taskDeltas, 'update_block replacement text deltas');
     expectEqual(renamed?.block?.checked, true, 'update_block preserves omitted checked state');
+
+    const unchangedDeltas = await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.taskBlockId,
+      text: state.taskDeltas,
+    });
+    expectEqual(unchangedDeltas?.updated, false, 'update_block identical deltas no-op');
+    assert.deepEqual(unchangedDeltas?.changed, [], 'update_block identical deltas changed fields');
+
+    const unchangedPlainText = await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.taskBlockId,
+      text: state.taskText,
+    });
+    expectEqual(unchangedPlainText?.updated, false, 'update_block identical plain text no-op');
+    assert.deepEqual(unchangedPlainText?.block?.deltas, state.taskDeltas, 'plain-text no-op preserves existing attributes');
 
     await expectCallError('update_block', {
       workspaceId: state.workspaceId,
@@ -219,6 +304,7 @@ async function main() {
     const unchangedTask = afterRejectedUpdate?.blocks?.find(block => block.id === state.taskBlockId);
     expectTruthy(unchangedTask, 'rejected update preserves block id');
     expectEqual(unchangedTask.text, state.taskText, 'rejected update preserves text');
+    assert.deepEqual(unchangedTask.deltas, state.taskDeltas, 'rejected update preserves text deltas');
     expectEqual(unchangedTask.type, 'todo', 'rejected update preserves type');
     expectEqual(unchangedTask.checked, true, 'rejected update preserves checked state');
 
@@ -264,6 +350,7 @@ async function main() {
     expectEqual(converted?.blockId, temporary.blockId, 'update_block type id');
     expectEqual(converted?.block?.type, 'h3', 'update_block heading level');
     expectEqual(converted?.block?.text, state.deletedText, 'update_block preserves text during type change');
+    assert.deepEqual(converted?.block?.deltas, state.deletedDeltas, 'update_block preserves deltas during type change');
 
     const moved = await call('move_block', {
       workspaceId: state.workspaceId,
@@ -274,6 +361,7 @@ async function main() {
     expectEqual(moved?.blockId, state.taskBlockId, 'move_block id');
     expectEqual(moved?.moved, true, 'move_block moved');
     expectEqual(moved?.block?.parentId, moved?.toParentId, 'move_block parent receipt');
+    assert.deepEqual(moved?.block?.deltas, state.taskDeltas, 'move_block snapshot preserves text deltas');
 
     const deleted = await call('delete_block', {
       workspaceId: state.workspaceId,
@@ -284,6 +372,7 @@ async function main() {
     expectEqual(deleted?.deletedBlock?.id, temporary.blockId, 'delete_block snapshot id');
     expectEqual(deleted?.deletedBlock?.type, 'h3', 'delete_block snapshot type');
     expectEqual(deleted?.deletedBlock?.text, state.deletedText, 'delete_block snapshot text');
+    assert.deepEqual(deleted?.deletedBlock?.deltas, state.deletedDeltas, 'delete_block snapshot deltas');
     expectEqual(deleted?.deletedBlocks?.length, 1, 'delete_block snapshot count');
 
     const read = await call('read_doc', {
@@ -295,12 +384,28 @@ async function main() {
     const taskBlock = blocks.find(block => block.id === state.taskBlockId);
     expectTruthy(taskBlock, 'read_doc task block');
     expectEqual(taskBlock.text, state.taskText, 'read_doc updated text');
+    assert.deepEqual(taskBlock.deltas, state.taskDeltas, 'read_doc updated text deltas');
     expectEqual(taskBlock.checked, true, 'read_doc updated checked state');
     expectEqual(taskBlock.type, 'todo', 'read_doc todo type');
     expectEqual(blocks.some(block => block.id === temporary.blockId), false, 'read_doc deleted block absence');
 
     const doneBlock = blocks.find(block => block.id === doneHeading.blockId);
     expectTruthy(doneBlock, 'read_doc done heading');
+    assert.deepEqual(
+      blocks.find(block => block.id === state.inboxHeadingBlockId)?.deltas,
+      state.inboxHeadingDeltas,
+      'read_doc heading deltas',
+    );
+    assert.deepEqual(
+      blocks.find(block => block.id === state.quoteBlockId)?.deltas,
+      state.quoteDeltas,
+      'read_doc quote deltas',
+    );
+    assert.deepEqual(
+      blocks.find(block => block.id === state.codeBlockId)?.deltas,
+      state.codeDeltas,
+      'read_doc code deltas with arbitrary future attributes',
+    );
     expectEqual(taskBlock.parentId, doneBlock.parentId, 'moved task and heading parent');
     const parent = blocks.find(block => block.id === taskBlock.parentId);
     expectTruthy(parent, 'read_doc moved task parent');

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Locator } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,9 @@ interface TestState {
   taskBlockId: string;
   taskText: string;
   oldTaskText: string;
+  inboxHeadingText: string;
+  coloredSegment: string;
+  highlightedSegment: string;
   doneHeadingText: string;
   deletedText: string;
   error?: string;
@@ -25,6 +28,34 @@ interface TestState {
 let state: TestState;
 const password = process.env.AFFINE_ADMIN_PASSWORD!;
 if (!password) throw new Error('AFFINE_ADMIN_PASSWORD env var required');
+
+async function segmentStyles(block: Locator, segment: string) {
+  return block.evaluate((root, target) => {
+    const walker = root.ownerDocument.createTreeWalker(root, 4);
+    let textNode = walker.nextNode();
+    while (textNode && !textNode.textContent?.includes(target)) {
+      textNode = walker.nextNode();
+    }
+    if (!textNode) return null;
+
+    const rootColor = getComputedStyle(root).color;
+    let color = rootColor;
+    let backgroundColor = 'rgba(0, 0, 0, 0)';
+    const inlineStyles: string[] = [];
+    let element = textNode.parentElement;
+    while (element && element !== root) {
+      const computed = getComputedStyle(element);
+      const inlineStyle = element.getAttribute('style');
+      if (inlineStyle) inlineStyles.push(inlineStyle);
+      if (computed.color !== rootColor) color = computed.color;
+      if (computed.backgroundColor !== 'rgba(0, 0, 0, 0)' && computed.backgroundColor !== 'transparent') {
+        backgroundColor = computed.backgroundColor;
+      }
+      element = element.parentElement;
+    }
+    return { rootColor, color, backgroundColor, inlineStyles };
+  }, segment);
+}
 
 test.beforeAll(() => {
   if (!fs.existsSync(STATE_PATH)) {
@@ -59,6 +90,17 @@ test.describe.serial('AFFiNE block editing verification', () => {
       await expect(taskBlock.locator('.affine-list--checked')).toHaveCount(1);
       await expect(page.getByText(state.oldTaskText, { exact: true })).toHaveCount(0);
       await expect(page.getByText(state.deletedText, { exact: true })).toHaveCount(0);
+
+      const inboxHeading = page.locator('affine-paragraph').filter({ hasText: state.inboxHeadingText }).first();
+      await expect(inboxHeading).toBeVisible({ timeout: 30_000 });
+      const coloredStyles = await segmentStyles(inboxHeading, state.coloredSegment);
+      expect(coloredStyles, 'colored text segment was not rendered').not.toBeNull();
+      expect(coloredStyles?.color).not.toBe(coloredStyles?.rootColor);
+
+      const highlightedStyles = await segmentStyles(taskBlock, state.highlightedSegment);
+      expect(highlightedStyles, 'highlighted text segment was not rendered').not.toBeNull();
+      expect(highlightedStyles?.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+      expect(highlightedStyles?.backgroundColor).not.toBe('transparent');
 
       const renderedText = await page.locator('affine-paragraph, affine-list').allTextContents();
       const doneIndex = renderedText.findIndex(value => value.includes(state.doneHeadingText));

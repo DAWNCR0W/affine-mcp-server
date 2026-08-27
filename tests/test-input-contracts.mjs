@@ -90,6 +90,38 @@ function toolSchema(name) {
   return z.object(fields);
 }
 
+const highlightedText = [
+  { insert: "plain " },
+  {
+    insert: "colored",
+    attributes: {
+      color: "var(--affine-text-highlight-foreground-blue)",
+      background: "var(--affine-text-highlight-yellow)",
+      futureAttribute: { enabled: true },
+    },
+  },
+];
+for (const [name, required] of [
+  ["append_block", { docId: "doc-1", type: "paragraph" }],
+  ["update_block", { docId: "doc-1", blockId: "block-1" }],
+]) {
+  const schema = toolSchema(name);
+  const parsed = schema.safeParse({ ...required, text: highlightedText });
+  assert.equal(parsed.success, true, `${name} must accept formatting-preserving text deltas`);
+  assert.deepEqual(parsed.data.text, highlightedText, `${name} must preserve arbitrary inline attributes`);
+  for (const invalidText of [
+    { insert: "not-an-array" },
+    [{ insert: 42 }],
+    [{ insert: "invalid attributes", attributes: [] }],
+  ]) {
+    assert.equal(
+      schema.safeParse({ ...required, text: invalidText }).success,
+      false,
+      `${name} must reject malformed text deltas`,
+    );
+  }
+}
+
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
