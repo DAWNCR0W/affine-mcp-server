@@ -5,6 +5,7 @@ import { fetch } from "undici";
 import { VERSION, AFFINE_CLIENT_VERSION, type ServerConfig } from "./config.js";
 import type { HttpAuthState } from "./httpAuth.js";
 import { getOAuthResourceUrl, probeOAuthReadiness } from "./oauth.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const READINESS_TIMEOUT_MS = 5_000;
 
@@ -19,38 +20,30 @@ async function probeAffineGraphql(config: ServerConfig): Promise<void> {
   }
   if (config.apiToken) headers.Authorization = `Bearer ${config.apiToken}`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), READINESS_TIMEOUT_MS);
-  try {
-    const response = await fetch(config.graphqlEndpoint, {
+  const { response, body } = await fetchResponseBody(
+    signal => fetch(config.graphqlEndpoint, {
       method: "POST",
       headers,
       body: JSON.stringify({ query: "query AffineMcpReadiness { __typename }" }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`AFFiNE GraphQL returned HTTP ${response.status}.`);
-    }
-    const payload = await response.json() as {
-      data?: { __typename?: unknown };
-      errors?: Array<{ message?: unknown }>;
-    };
-    if (payload.errors?.length) {
-      const message = payload.errors
-        .map((error) => typeof error.message === "string" ? error.message : "Unknown GraphQL error")
-        .join("; ");
-      throw new Error(`AFFiNE GraphQL readiness query failed: ${message}`);
-    }
-    if (typeof payload.data?.__typename !== "string") {
-      throw new Error("AFFiNE GraphQL returned an unexpected readiness response.");
-    }
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`AFFiNE GraphQL readiness timed out after ${READINESS_TIMEOUT_MS}ms.`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
+      signal,
+    }),
+    { label: "AFFiNE GraphQL readiness", timeoutMs: READINESS_TIMEOUT_MS },
+  );
+  if (!response.ok) {
+    throw new Error(`AFFiNE GraphQL returned HTTP ${response.status}.`);
+  }
+  const payload = JSON.parse(body) as {
+    data?: { __typename?: unknown };
+    errors?: Array<{ message?: unknown }>;
+  };
+  if (payload.errors?.length) {
+    const message = payload.errors
+      .map((error) => typeof error.message === "string" ? error.message : "Unknown GraphQL error")
+      .join("; ");
+    throw new Error(`AFFiNE GraphQL readiness query failed: ${message}`);
+  }
+  if (typeof payload.data?.__typename !== "string") {
+    throw new Error("AFFiNE GraphQL returned an unexpected readiness response.");
   }
 }
 

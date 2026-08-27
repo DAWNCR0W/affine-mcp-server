@@ -24,7 +24,7 @@ import {
   BoundedTreeDepth,
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
-import { secureRandomInt31, secureRandomString } from "../util/random.js";
+import { secureAffineId, secureRandomInt31 } from "../util/random.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -982,10 +982,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   const acknowledgedDeletedDocs = createAcknowledgedDeletedDocTracker();
 
   // helpers
-  function generateId(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-    return secureRandomString(10, chars);
-  }
+  const generateId = secureAffineId;
 
   async function getCookieAndEndpoint() {
     return await gql.getConnectionAuth();
@@ -9308,13 +9305,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
-        socket,
-        workspaceId,
-        params.docId,
-        Buffer.from(delta).toString("base64")
-      );
+      if (changed.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
       return text({
         updated: changed.length > 0,
         elementId: params.elementId,
@@ -9566,13 +9565,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
-        socket,
-        workspaceId,
-        params.docId,
-        Buffer.from(delta).toString("base64")
-      );
+      if (changed.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
       return text({ updated: changed.length > 0, blockId: params.blockId, flavour, changed, ignored });
     } finally {
       socket.disconnect();

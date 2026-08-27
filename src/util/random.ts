@@ -1,5 +1,7 @@
 import { randomInt } from "node:crypto";
 
+const AFFINE_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+
 /** Generate an unbiased cryptographically secure string from a unique alphabet. */
 export function secureRandomString(length: number, alphabet: string): string {
   if (!Number.isSafeInteger(length) || length < 1) {
@@ -17,6 +19,11 @@ export function secureRandomString(length: number, alphabet: string): string {
     result += alphabet[randomInt(alphabet.length)]!;
   }
   return result;
+}
+
+/** Generate the 10-character identifier used by AFFiNE documents, blocks, and elements. */
+export function secureAffineId(): string {
+  return secureRandomString(10, AFFINE_ID_ALPHABET);
 }
 
 /** Generate the non-negative signed 32-bit seed expected by AFFiNE surface elements. */

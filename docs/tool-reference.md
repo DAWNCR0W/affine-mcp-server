@@ -19,7 +19,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `list_workspaces` | List all available workspaces | Includes best-effort profile names, avatar references, and direct URLs; set `includeProfile: false` for a faster GraphQL-only response |
 | `get_workspace` | Read workspace details | Includes permissions plus best-effort profile metadata and a direct URL |
 | `create_workspace` | Create a workspace with an initial document | Destructive in the sense that it creates new server state |
-| `update_workspace` | Update workspace settings | Use carefully in shared workspaces |
+| `update_workspace` | Update workspace settings | Requires at least one of `public` or `enableAi`; use carefully in shared workspaces |
 | `delete_workspace` | Permanently delete a workspace | Destructive; `confirmWorkspaceId` must exactly match `id`; unconfirmed outcomes return an MCP error instead of a success receipt |
 | `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs; depth is limited to 0-20 |
 | `get_orphan_docs` | Find documents that are not linked from a parent doc | Useful for cleanup and audits |
@@ -201,7 +201,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | --- | --- | --- |
 | `current_user` | Return the current signed-in user | |
 | `sign_in` | Sign in with email and password | Self-hosted flows only for direct programmatic sign-in |
-| `update_profile` | Update current user profile data | |
+| `update_profile` | Update current user profile data | Requires at least one of `name` or `avatarUrl` |
 | `update_settings` | Update user notification preferences | |
 
 ## Notifications
