@@ -5,7 +5,7 @@ import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
-import { secureRandomString } from "../util/random.js";
+import { secureAffineId } from "../util/random.js";
 import {
   connectWorkspaceSocket,
   joinWorkspace,
@@ -124,11 +124,7 @@ async function enrichWorkspaceProfiles(
   }
 }
 
-// Generate AFFiNE-style document ID
-function generateDocId(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-  return secureRandomString(10, chars);
-}
+const generateDocId = secureAffineId;
 
 // Create initial workspace data with a document
 function createInitialWorkspaceData(workspaceName: string = 'New Workspace', avatar: string = '') {
