@@ -6,6 +6,7 @@ import FormData from "form-data";
 import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
 import { secureAffineId } from "../util/random.js";
+import { fetchResponseBody } from "../util/httpResponse.js";
 import {
   connectWorkspaceSocket,
   joinWorkspace,
@@ -37,6 +38,8 @@ const DEFAULT_WORKSPACE_TOOL_DEPENDENCIES: WorkspaceToolDependencies = {
   joinWorkspace,
   loadDoc,
 };
+
+const WORKSPACE_CREATE_TIMEOUT_MS = 30_000;
 
 function affineBaseUrl(endpoint: string): string {
   const configuredBaseUrl = process.env.AFFINE_BASE_URL?.trim();
@@ -358,16 +361,35 @@ export function registerWorkspaceTools(
         });
         
         // Send request
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            ...headers,
-            ...form.getHeaders()
-          },
-          body: form as any
-        });
-        
-        const result = await response.json() as any;
+        const { response, body } = await fetchResponseBody(
+          signal => fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              ...headers,
+              ...form.getHeaders()
+            },
+            body: form as any,
+            signal,
+          }),
+          { label: "Workspace creation request", timeoutMs: WORKSPACE_CREATE_TIMEOUT_MS },
+        );
+
+        let result: any;
+        try {
+          result = JSON.parse(body);
+        } catch {
+          if (!response.ok) {
+            throw new Error(`Workspace creation failed with HTTP ${response.status}.`);
+          }
+          throw new Error("Workspace creation returned invalid JSON.");
+        }
+
+        if (!response.ok) {
+          const message = typeof result.errors?.[0]?.message === "string"
+            ? `: ${result.errors[0].message}`
+            : "";
+          throw new Error(`Workspace creation failed with HTTP ${response.status}${message}`);
+        }
         
         if (result.errors) {
           throw new Error(result.errors[0].message);
