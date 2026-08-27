@@ -492,7 +492,6 @@ type AppendBlockInput = {
   docId: string;
   type: string;
   text?: string | TextDelta[];
-  deltas?: TextDelta[];
   url?: string;
   pageId?: string;
   iframeUrl?: string;
@@ -1717,7 +1716,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("Code language is too long (max 64 chars).");
     }
 
-    if (normalized.type === "divider" && raw.text && raw.text.length > 0 && normalized.strict) {
+    if (normalized.type === "divider" && normalized.text.length > 0 && normalized.strict) {
       throw new Error("Divider blocks do not accept text.");
     }
 
@@ -1896,7 +1895,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const latex = (parsed.latex ?? "").trim();
     const tableData = Array.isArray(parsed.tableData) ? parsed.tableData : undefined;
     const tableCellDeltas = Array.isArray(parsed.tableCellDeltas) ? parsed.tableCellDeltas : undefined;
-    const textDeltas = Array.isArray(parsed.text) ? parsed.text : parsed.deltas;
+    const textDeltas = Array.isArray(parsed.text) ? parsed.text : undefined;
     const plainText = Array.isArray(parsed.text)
       ? parsed.text.map(delta => delta.insert).join("")
       : parsed.text ?? "";
@@ -3051,9 +3050,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           workspaceId,
           docId,
           type: "heading",
-          text: operation.text,
+          text: operation.deltas ?? operation.text,
           level: operation.level,
-          deltas: operation.deltas,
           strict,
           placement,
         };
@@ -3062,8 +3060,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           workspaceId,
           docId,
           type: "paragraph",
-          text: operation.text,
-          deltas: operation.deltas,
+          text: operation.deltas ?? operation.text,
           strict,
           placement,
         };
@@ -3072,8 +3069,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           workspaceId,
           docId,
           type: "quote",
-          text: operation.text,
-          deltas: operation.deltas,
+          text: operation.deltas ?? operation.text,
           strict,
           placement,
         };
@@ -3082,8 +3078,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           workspaceId,
           docId,
           type: "callout",
-          text: operation.text,
-          deltas: operation.deltas,
+          text: operation.deltas ?? operation.text,
           strict,
           placement,
         };
@@ -3092,10 +3087,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           workspaceId,
           docId,
           type: "list",
-          text: operation.text,
+          text: operation.deltas ?? operation.text,
           style: operation.style,
           checked: operation.checked,
-          deltas: operation.deltas,
           strict,
           placement,
         };

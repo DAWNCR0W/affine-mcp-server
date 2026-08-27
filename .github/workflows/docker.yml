@@ -54,6 +54,36 @@ jobs:
           CONTAINER_UID="$(docker run --rm --entrypoint id affine-mcp-server:pr-smoke -u)"
           test -n "$CONTAINER_UID"
           test "$CONTAINER_UID" != "0"
+          SMOKE_TOKEN="$(openssl rand -hex 32)"
+          CONTAINER_ID="$(docker run -d -e AFFINE_MCP_HTTP_TOKEN="$SMOKE_TOKEN" affine-mcp-server:pr-smoke)"
+          trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
+          for attempt in {1..40}; do
+            STATE="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID")"
+            RUNNING="$(docker inspect -f '{{.State.Running}}' "$CONTAINER_ID")"
+            if [ "$RUNNING" != "true" ]; then
+              echo "Container stopped before becoming healthy (state: $STATE)"
+              docker logs "$CONTAINER_ID"
+              exit 1
+            fi
+            HEALTH_STATUS="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_ID")"
+            if [ "$HEALTH_STATUS" = "healthy" ]; then
+              HEALTH_JSON="$(docker exec "$CONTAINER_ID" wget -qO- http://127.0.0.1:3000/healthz)"
+              if ! echo "$HEALTH_JSON" | grep -Eq '"protected"[[:space:]]*:[[:space:]]*true'; then
+                echo "Container health endpoint did not report protected mode"
+                docker logs "$CONTAINER_ID"
+                exit 1
+              fi
+              exit 0
+            fi
+            if [ "$HEALTH_STATUS" = "unhealthy" ]; then
+              docker logs "$CONTAINER_ID"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Container did not become healthy after $attempt attempts"
+          docker inspect "$CONTAINER_ID"
+          exit 1
 
   build-and-push-release:
     if: github.event_name != 'pull_request'
