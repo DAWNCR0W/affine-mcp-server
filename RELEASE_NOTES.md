@@ -4,14 +4,14 @@
 
 ### Highlights
 - Strict divider validation now evaluates the same canonical rich-text content that block creation would use, preventing non-empty internal delta content from being silently discarded.
-- The published container now starts correctly with the documented argument-free `docker run` command and is covered by a real healthcheck smoke test.
+- The published container now starts correctly with the documented argument-free `docker run` command and required bearer token, and is covered by a real healthcheck smoke test.
 
 ### What Changed
 - Removed the redundant internal delta input alongside `AppendBlockInput.text`.
 - Markdown operations now pass formatting-preserving deltas through the canonical text input whenever deltas are available.
 - Existing rich-text import and divider validation paths cover the unified contract without adding a second public input.
 - Reset the Node base image command so the MCP HTTP server starts by default, while preserving explicit CLI commands such as `--version`.
-- Extended Docker PR validation from build, version, and UID checks to a healthy default-start container check.
+- Extended Docker PR validation from build, version, and UID checks to an authenticated, healthy default-start container check.
 
 ### Compatibility
 - The canonical MCP surface remains at 96 tools; no public input or output contract changed.

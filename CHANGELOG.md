@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Markdown rich-text operations now use one canonical content input, so strict divider validation cannot accept and then discard non-empty delta content.
-- The container now starts the HTTP server when run without arguments instead of inheriting the Node base image command and exiting; PR image checks now wait for a healthy container.
+- The container now starts the HTTP server when run without arguments instead of inheriting the Node base image command and exiting; PR image checks now supply the required bearer token and wait for a healthy container.
 
 ## [3.4.0] - 2026-08-27
 

@@ -54,7 +54,8 @@ jobs:
           CONTAINER_UID="$(docker run --rm --entrypoint id affine-mcp-server:pr-smoke -u)"
           test -n "$CONTAINER_UID"
           test "$CONTAINER_UID" != "0"
-          CONTAINER_ID="$(docker run -d affine-mcp-server:pr-smoke)"
+          SMOKE_TOKEN="$(openssl rand -hex 32)"
+          CONTAINER_ID="$(docker run -d -e AFFINE_MCP_HTTP_TOKEN="$SMOKE_TOKEN" affine-mcp-server:pr-smoke)"
           trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
           for attempt in {1..40}; do
             STATUS="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_ID")"
@@ -67,6 +68,7 @@ jobs:
             fi
             sleep 2
           done
+          echo "Container did not become healthy after $attempt attempts"
           docker inspect "$CONTAINER_ID"
           exit 1
 
