@@ -12,6 +12,7 @@
 - Formatting-preserving block text
   - `append_block.text` and `update_block.text` accept either a plain string or a delta array with arbitrary inline attributes.
   - `read_doc` and block-editing receipts return canonical `deltas` alongside flattened `text`.
+  - Empty delta content is normalized consistently when validating divider blocks.
   - String inputs and existing response fields remain compatible.
 - HTTP response safety
   - GraphQL, authentication, readiness, CLI, blob-upload, and workspace-creation paths share one bounded response reader.

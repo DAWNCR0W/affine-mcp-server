@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - GraphQL, sign-in, readiness, CLI, blob-upload, and workspace-creation response bodies are bounded to 16 MiB while request timeouts remain active through complete body consumption.
 - Empty workspace and profile updates are rejected before reaching AFFiNE, and ignored-only surface or edgeless updates no longer push unchanged CRDT state.
+- Empty rich-text delta segments that normalize to no content no longer make divider creation fail strict validation.
 
 ### Dependencies
 - Aligned the locked Node.js type definitions with the minimum supported Node.js 20 runtime.

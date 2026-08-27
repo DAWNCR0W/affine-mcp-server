@@ -216,6 +216,20 @@ async function main() {
     state.codeBlockId = code?.blockId;
     expectTruthy(state.codeBlockId, 'append_block rich-text code id');
 
+    const emptyDivider = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'divider',
+      text: [{ insert: '' }],
+    });
+    expectTruthy(emptyDivider?.blockId, 'append_block empty rich-text divider id');
+    await expectCallError('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'divider',
+      text: [{ insert: 'not empty' }],
+    }, /do not accept text/);
+
     const doneHeading = await call('append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
