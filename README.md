@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.3.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.4.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -162,7 +162,7 @@ If you want to expose the server remotely over HTTP instead of stdio, start with
 
 ## Compatibility Matrix
 
-Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20 and 24 release lines.
+Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20, 22, 24, and 26 release lines.
 
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |

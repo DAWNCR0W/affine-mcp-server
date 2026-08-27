@@ -9,6 +9,7 @@ import { registerCommentTools } from "../dist/tools/comments.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { registerHistoryTools } from "../dist/tools/history.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
+import { registerUserCRUDTools } from "../dist/tools/userCRUD.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
 import {
   BoundedHistoryTake,
@@ -82,6 +83,7 @@ registerCommentTools(registry, gql, {});
 registerDocTools(registry, gql, {});
 registerHistoryTools(registry, gql, {});
 registerNotificationTools(registry, gql);
+registerUserCRUDTools(registry, gql);
 registerWorkspaceTools(registry, gql);
 
 function toolSchema(name) {
@@ -90,12 +92,56 @@ function toolSchema(name) {
   return z.object(fields);
 }
 
+const highlightedText = [
+  { insert: "plain " },
+  {
+    insert: "colored",
+    attributes: {
+      color: "var(--affine-text-highlight-foreground-blue)",
+      background: "var(--affine-text-highlight-yellow)",
+      futureAttribute: { enabled: true },
+    },
+  },
+];
+for (const [name, required] of [
+  ["append_block", { docId: "doc-1", type: "paragraph" }],
+  ["update_block", { docId: "doc-1", blockId: "block-1" }],
+]) {
+  const schema = toolSchema(name);
+  const parsed = schema.safeParse({ ...required, text: highlightedText });
+  assert.equal(parsed.success, true, `${name} must accept formatting-preserving text deltas`);
+  assert.deepEqual(parsed.data.text, highlightedText, `${name} must preserve arbitrary inline attributes`);
+  for (const invalidText of [
+    { insert: "not-an-array" },
+    [{ insert: 42 }],
+    [{ insert: "invalid attributes", attributes: [] }],
+  ]) {
+    assert.equal(
+      schema.safeParse({ ...required, text: invalidText }).success,
+      false,
+      `${name} must reject malformed text deltas`,
+    );
+  }
+}
+
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
 assert.equal(toolSchema("list_comments").safeParse({ docId: "d", first: 1.5 }).success, false);
 assert.equal(toolSchema("list_notifications").safeParse({ offset: -1 }).success, false);
 assert.equal(toolSchema("list_histories").safeParse({ guid: "d", take: 0 }).success, false);
+
+const emptyWorkspaceUpdate = parseResult(await registry.tools.get("update_workspace").handler({
+  id: "workspace-1",
+}));
+assert.equal(emptyWorkspaceUpdate.code, "invalid_arguments");
+assert.match(emptyWorkspaceUpdate.error, /requires at least one of: public, enableAi/);
+assert.equal(requestCount, 0, "empty workspace update must not reach AFFiNE");
+
+const emptyProfileUpdate = parseResult(await registry.tools.get("update_profile").handler({}));
+assert.equal(emptyProfileUpdate.code, "invalid_arguments");
+assert.match(emptyProfileUpdate.error, /requires at least one of: name, avatarUrl/);
+assert.equal(requestCount, 0, "empty profile update must not reach AFFiNE");
 
 const deleteDoc = registry.tools.get("delete_doc").handler;
 await assert.rejects(

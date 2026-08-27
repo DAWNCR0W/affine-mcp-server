@@ -66,6 +66,13 @@ cookie, while setting a bearer credential removes any cookie header.
 
 `upload_blob` treats content as UTF-8 by default and preserves it exactly, including leading and trailing whitespace. Binary callers must pass `encoding: "base64"`; Base64 input is validated for canonical padding before it is decoded. ASCII whitespace inside explicit Base64 input is ignored.
 
+### Upstream response safeguards
+
+GraphQL, sign-in, workspace creation, and readiness requests keep their timeout
+active until the complete response body is consumed. Non-upload response bodies
+are limited to 16 MiB. `upload_blob` uses the separately configurable timeout
+and response limit above.
+
 ### Authentication
 
 | Variable | Use when | Notes |

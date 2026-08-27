@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
@@ -22,7 +24,7 @@ import {
   BoundedTreeDepth,
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
-import { secureRandomInt31, secureRandomString } from "../util/random.js";
+import { secureAffineId, secureRandomInt31 } from "../util/random.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -335,6 +337,11 @@ export function removeEmbeddedLinkedDocumentBlocks(
 
 const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
 const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
+const TextDeltaInput = z.object({
+  insert: z.string(),
+  attributes: z.record(z.unknown()).optional(),
+});
+const RichTextInput = z.union([z.string(), z.array(TextDeltaInput)]);
 const MarkdownContent = z.string().min(1, "markdown required").describe("Markdown content to import, append, replace, or export-roundtrip.");
 const TagName = z.string().trim().min(1, "tag required").describe("Workspace tag name.");
 const TagIdOrName = z.string().trim().min(1, "tag required").describe("Workspace tag id or tag name.");
@@ -484,7 +491,7 @@ type AppendBlockInput = {
   workspaceId?: string;
   docId: string;
   type: string;
-  text?: string;
+  text?: string | TextDelta[];
   deltas?: TextDelta[];
   url?: string;
   pageId?: string;
@@ -975,10 +982,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   const acknowledgedDeletedDocs = createAcknowledgedDeletedDocTracker();
 
   // helpers
-  function generateId(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-    return secureRandomString(10, chars);
-  }
+  const generateId = secureAffineId;
 
   async function getCookieAndEndpoint() {
     return await gql.getConnectionAuth();
@@ -1007,6 +1011,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       offset += delta.insert.length;
     }
     return yText;
+  }
+
+  function canonicalTextDeltas(content: TextDelta[]): TextDelta[] {
+    const doc = new Y.Doc();
+    const value = makeText(content);
+    doc.getMap("root").set("text", value);
+    return richTextValueToDeltas(value) ?? [];
   }
 
   /**
@@ -1706,7 +1717,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       throw new Error("Code language is too long (max 64 chars).");
     }
 
-    if (normalized.type === "divider" && raw.text && raw.text.length > 0 && normalized.strict) {
+    if (normalized.type === "divider" && normalized.text.length > 0 && normalized.strict) {
       throw new Error("Divider blocks do not accept text.");
     }
 
@@ -1885,6 +1896,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const latex = (parsed.latex ?? "").trim();
     const tableData = Array.isArray(parsed.tableData) ? parsed.tableData : undefined;
     const tableCellDeltas = Array.isArray(parsed.tableCellDeltas) ? parsed.tableCellDeltas : undefined;
+    const textDeltas = Array.isArray(parsed.text) ? parsed.text : parsed.deltas;
+    const plainText = Array.isArray(parsed.text)
+      ? parsed.text.map(delta => delta.insert).join("")
+      : parsed.text ?? "";
 
     const normalized: NormalizedAppendBlockInput = {
       workspaceId: parsed.workspaceId,
@@ -1892,7 +1907,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       type: typeInfo.type,
       strict,
       placement,
-      text: parsed.text ?? "",
+      text: plainText,
       url,
       pageId,
       iframeUrl,
@@ -1922,7 +1937,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       caption: parsed.caption,
       legacyType: typeInfo.legacyType,
       tableData,
-      deltas: parsed.deltas,
+      deltas: textDeltas,
       tableCellDeltas,
       childElementIds: Array.isArray(parsed.childElementIds) ? parsed.childElementIds : undefined,
       stackAfter: parsed.stackAfter,
@@ -2104,12 +2119,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const rawChecked = block.get("prop:checked");
     const rawLanguage = block.get("prop:language");
     const rawFlavour = block.get("sys:flavour");
+    const hasRichText = rawText instanceof Y.Text || typeof rawText === "string";
     return {
       id: blockId,
       parentId: resolveBlockParentId(blocks, blockId),
       flavour: typeof rawFlavour === "string" ? rawFlavour : null,
       type: typeof rawType === "string" ? rawType : null,
-      text: rawText instanceof Y.Text || typeof rawText === "string" ? asText(rawText) : null,
+      text: hasRichText ? asText(rawText) : null,
+      deltas: hasRichText ? richTextValueToDeltas(rawText) ?? [] : [],
       checked: typeof rawChecked === "boolean" ? rawChecked : null,
       language: typeof rawLanguage === "string" ? rawLanguage : null,
       childIds: childIdsFrom(block.get("sys:children")),
@@ -2376,7 +2393,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         if (normalized.caption) {
           block.set("prop:caption", normalized.caption);
         }
-        block.set("prop:text", makeText(content));
+        block.set("prop:text", makeText(normalized.deltas ?? content));
         return { blockId, block, flavour: "affine:code" };
       }
       case "divider": {
@@ -2752,7 +2769,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("prop:fontWeight", "regular");
         block.set("prop:textAlign", "left");
         const edgelessTextExtraBlocks: Array<{ blockId: string; block: Y.Map<any> }> = [];
-        if (content) {
+        if (content || normalized.deltas?.some(delta => delta.insert.length > 0)) {
           const paraId = generateId();
           const para = new Y.Map<any>();
           setSysFields(para, paraId, "affine:paragraph");
@@ -2796,7 +2813,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         block.set("prop:edgeless", edgeless);
         block.set("prop:comments", undefined);
         const noteExtraBlocks: Array<{ blockId: string; block: Y.Map<any> }> = [];
-        if (content) {
+        if (content || normalized.deltas?.some(delta => delta.insert.length > 0)) {
           const paraId = generateId();
           const para = new Y.Map<any>();
           setSysFields(para, paraId, "affine:paragraph");
@@ -5514,6 +5531,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         flavour: string | null;
         type: string | null;
         text: string | null;
+        deltas: TextDelta[];
         linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
@@ -5534,6 +5552,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const type = raw.get("prop:type");
         const propText = raw.get("prop:text");
         const textValue = asText(propText);
+        const deltas = richTextValueToDeltas(propText) ?? [];
         const linkedDocIds = extractLinkedPageRefs(propText);
         const language = raw.get("prop:language");
         const checked = raw.get("prop:checked");
@@ -5552,6 +5571,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           flavour: typeof flavour === "string" ? flavour : null,
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
+          deltas,
           linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
           language: typeof language === "string" ? language : null,
@@ -5604,7 +5624,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "read_doc",
     {
       title: "Read Document Content",
-      description: "Read document block content via WebSocket snapshot (blocks + plain text). Set includeMarkdown: true to also get the rendered markdown — useful when you need to read content without a separate export_doc_markdown call.",
+      description: "Read document block content via WebSocket snapshot. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -6129,7 +6149,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     workspaceId?: string;
     docId: string;
     type: string;
-    text?: string;
+    text?: string | TextDelta[];
     url?: string;
     pageId?: string;
     iframeUrl?: string;
@@ -6217,7 +6237,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe|database|data_view|surface_ref|frame|edgeless_text|note. Legacy aliases remain supported."),
-        text: z.string().optional().describe("Block content text"),
+        text: RichTextInput.optional().describe("Block content as plain text or a delta array that preserves inline attributes."),
         url: z.string()
           .refine(isSafeUrlInput, "url must be a safe absolute URL without control characters or embedded credentials")
           .optional()
@@ -9285,13 +9305,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
-        socket,
-        workspaceId,
-        params.docId,
-        Buffer.from(delta).toString("base64")
-      );
+      if (changed.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
       return text({
         updated: changed.length > 0,
         elementId: params.elementId,
@@ -9543,13 +9565,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
-        socket,
-        workspaceId,
-        params.docId,
-        Buffer.from(delta).toString("base64")
-      );
+      if (changed.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
       return text({ updated: changed.length > 0, blockId: params.blockId, flavour, changed, ignored });
     } finally {
       socket.disconnect();
@@ -9560,7 +9584,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     workspaceId?: string;
     docId: string;
     blockId: string;
-    text?: string;
+    text?: string | TextDelta[];
     checked?: boolean;
     type?: BlockEditType;
     style?: AppendBlockListStyle;
@@ -9669,9 +9693,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      if (params.text !== undefined && asText(block.get("prop:text")) !== params.text) {
-        block.set("prop:text", makeText(params.text));
-        markChanged("text");
+      if (params.text !== undefined) {
+        const rawText = block.get("prop:text");
+        const textMatches = typeof params.text === "string"
+          ? asText(rawText) === params.text
+          : isDeepStrictEqual(richTextValueToDeltas(rawText) ?? [], canonicalTextDeltas(params.text));
+        if (!textMatches) {
+          block.set("prop:text", makeText(params.text));
+          markChanged("text");
+        }
       }
 
       if (changed.length > 0) {
@@ -10317,7 +10347,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         blockId: z.string().min(1).describe("Block id to update."),
-        text: z.string().optional().describe("Replacement block text. Omit to preserve the current text."),
+        text: RichTextInput.optional().describe("Replacement block text. A delta array preserves inline attributes. Omit to preserve the current text."),
         checked: z.boolean().optional().describe("Todo checked state. Only valid for a list whose resulting style is todo."),
         type: BlockEditType.optional().describe("Resulting logical block type."),
         style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),

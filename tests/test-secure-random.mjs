@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  secureAffineId,
   secureRandomInt31,
   secureRandomString,
 } from "../dist/util/random.js";
@@ -20,6 +21,13 @@ const identifiers = Array.from(
 assert.equal(new Set(identifiers).size, identifiers.length, "sample identifiers must be unique");
 for (const identifier of identifiers) {
   assert.equal(identifier.length, 21);
+  assert.match(identifier, /^[A-Za-z0-9_-]+$/);
+}
+
+const affineIdentifiers = Array.from({ length: 512 }, () => secureAffineId());
+assert.equal(new Set(affineIdentifiers).size, affineIdentifiers.length);
+for (const identifier of affineIdentifiers) {
+  assert.equal(identifier.length, 10);
   assert.match(identifier, /^[A-Za-z0-9_-]+$/);
 }
 
