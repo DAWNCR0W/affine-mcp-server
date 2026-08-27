@@ -1,5 +1,46 @@
 # Release Notes
 
+## Version 3.4.0 (2026-08-27)
+
+### Highlights
+- Block creation and editing now preserve arbitrary AFFiNE inline text attributes, including colors and highlights, through a lossless delta input and output path.
+- Upstream HTTP response handling now enforces a 16 MiB body limit and keeps request deadlines active until each body is fully consumed.
+- Empty workspace and profile updates fail before mutation, while ignored-only surface updates avoid unnecessary CRDT pushes.
+- CI now validates every supported even-numbered Node.js release from 20 through 26.
+
+### What Changed
+- Formatting-preserving block text
+  - `append_block.text` and `update_block.text` accept either a plain string or a delta array with arbitrary inline attributes.
+  - `read_doc` and block-editing receipts return canonical `deltas` alongside flattened `text`.
+  - String inputs and existing response fields remain compatible.
+- HTTP response safety
+  - GraphQL, authentication, readiness, CLI, blob-upload, and workspace-creation paths share one bounded response reader.
+  - Slow or oversized response bodies fail predictably instead of bypassing the request deadline or consuming unbounded memory.
+  - Diagnostic response bodies are cancelled when their content is not needed.
+- Mutation handling
+  - `update_workspace` and `update_profile` require at least one meaningful field.
+  - Surface and edgeless updates that contain only ignored elements do not send unchanged Yjs state.
+  - AFFiNE document and workspace identifiers use the shared cryptographically secure generator.
+- Runtime validation
+  - CI covers Node.js 20, 22, 24, and 26.
+  - Node.js type definitions are aligned with the minimum supported runtime.
+
+### Compatibility
+- The canonical MCP surface remains at 96 tools; no tools or existing required inputs were removed.
+- Plain-string block text remains supported, and delta arrays are an additive input and output path.
+- Node.js 20.18.1 or newer remains required.
+- Release behavior is validated against AFFiNE 0.27.4.
+
+### Validation Evidence
+- Node.js 20.20.2, 22.23.2, 24.20.0, and 26.7.0: clean `npm ci && npm run ci`
+- `npm audit --audit-level=low` with zero vulnerabilities
+- `AFFINE_REVISION=0.27.4 npm run test:comprehensive` (16 focused integrations; 111/111 comprehensive checks)
+- `AFFINE_REVISION=0.27.4 npm run test:e2e` (24 integration tests; 17 Playwright tests)
+- Isolated database UI row integration coverage
+- Packed-tarball install, CLI, and 96-tool discovery smoke on Node.js 20 and 26
+- `npm publish --dry-run --access public --ignore-scripts`
+- Linux/amd64 Docker build, version check, non-root UID check, and healthcheck smoke
+
 ## Version 3.3.0 (2026-08-24)
 
 ### Highlights

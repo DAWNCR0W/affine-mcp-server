@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-08-27
+
+### Added
+- `append_block` and `update_block` now accept formatting-preserving rich-text delta arrays as well as plain strings.
+- `read_doc` and block-editing snapshots now expose canonical `deltas` alongside flattened text for lossless read-modify-write flows.
+
+### Security
+- AFFiNE document and workspace identifiers now use the shared cryptographically secure identifier generator.
+
+### Fixed
+- GraphQL, sign-in, readiness, CLI, blob-upload, and workspace-creation response bodies are bounded to 16 MiB while request timeouts remain active through complete body consumption.
+- Empty workspace and profile updates are rejected before reaching AFFiNE, and ignored-only surface or edgeless updates no longer push unchanged CRDT state.
+
+### Dependencies
+- Aligned the locked Node.js type definitions with the minimum supported Node.js 20 runtime.
+
+### Tests
+- Expanded CI validation to Node.js 20, 22, 24, and 26.
+- Added focused and browser-backed coverage for rich-text block formatting, bounded response handling, mutation input contracts, and no-op CRDT updates.
+
 ## [3.3.0] - 2026-08-24
 
 ### Added
@@ -691,6 +711,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.0
 [3.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.3.0
 [3.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.2
 [3.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.1
@@ -725,4 +746,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.4.0...HEAD
