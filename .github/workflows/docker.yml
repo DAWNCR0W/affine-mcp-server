@@ -54,6 +54,21 @@ jobs:
           CONTAINER_UID="$(docker run --rm --entrypoint id affine-mcp-server:pr-smoke -u)"
           test -n "$CONTAINER_UID"
           test "$CONTAINER_UID" != "0"
+          CONTAINER_ID="$(docker run -d affine-mcp-server:pr-smoke)"
+          trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
+          for attempt in {1..40}; do
+            STATUS="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_ID")"
+            if [ "$STATUS" = "healthy" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" = "unhealthy" ] || [ "$STATUS" = "exited" ]; then
+              docker logs "$CONTAINER_ID"
+              exit 1
+            fi
+            sleep 2
+          done
+          docker inspect "$CONTAINER_ID"
+          exit 1
 
   build-and-push-release:
     if: github.event_name != 'pull_request'
