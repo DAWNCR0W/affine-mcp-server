@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-08-27
+
+### Fixed
+- Markdown rich-text operations now use one canonical content input, so strict divider validation cannot accept and then discard non-empty delta content.
+
 ## [3.4.0] - 2026-08-27
 
 ### Added
@@ -712,6 +717,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.4.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.1
 [3.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.0
 [3.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.3.0
 [3.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.2
@@ -747,4 +753,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.4.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.4.1...HEAD

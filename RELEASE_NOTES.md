@@ -1,5 +1,31 @@
 # Release Notes
 
+## Version 3.4.1 (2026-08-27)
+
+### Highlights
+- Strict divider validation now evaluates the same canonical rich-text content that block creation would use, preventing non-empty internal delta content from being silently discarded.
+
+### What Changed
+- Removed the redundant internal delta input alongside `AppendBlockInput.text`.
+- Markdown operations now pass formatting-preserving deltas through the canonical text input whenever deltas are available.
+- Existing rich-text import and divider validation paths cover the unified contract without adding a second public input.
+
+### Compatibility
+- The canonical MCP surface remains at 96 tools; no public input or output contract changed.
+- Plain-string and formatting-preserving delta inputs remain supported through `append_block.text` and `update_block.text`.
+- Node.js 20.18.1 or newer remains required.
+- Release behavior is validated against AFFiNE 0.27.4.
+
+### Validation Evidence
+- Node.js 20.20.2, 22.23.2, 24.20.0, and 26.7.0: clean `npm ci && npm run ci`
+- `npm audit --audit-level=low` with zero vulnerabilities
+- `AFFINE_REVISION=0.27.4 npm run test:comprehensive` (16 focused integrations; 111/111 comprehensive checks)
+- `AFFINE_REVISION=0.27.4 npm run test:e2e` (24 integration tests; 17 Playwright tests)
+- Isolated database UI row integration coverage
+- Packed-tarball install, CLI, and 96-tool discovery smoke on Node.js 20 and 26
+- `npm publish --dry-run --access public --ignore-scripts`
+- Linux/amd64 Docker build, version check, non-root UID check, and healthcheck smoke
+
 ## Version 3.4.0 (2026-08-27)
 
 ### Highlights
