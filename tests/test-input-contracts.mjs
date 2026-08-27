@@ -9,6 +9,7 @@ import { registerCommentTools } from "../dist/tools/comments.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { registerHistoryTools } from "../dist/tools/history.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
+import { registerUserCRUDTools } from "../dist/tools/userCRUD.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
 import {
   BoundedHistoryTake,
@@ -82,6 +83,7 @@ registerCommentTools(registry, gql, {});
 registerDocTools(registry, gql, {});
 registerHistoryTools(registry, gql, {});
 registerNotificationTools(registry, gql);
+registerUserCRUDTools(registry, gql);
 registerWorkspaceTools(registry, gql);
 
 function toolSchema(name) {
@@ -128,6 +130,18 @@ assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success,
 assert.equal(toolSchema("list_comments").safeParse({ docId: "d", first: 1.5 }).success, false);
 assert.equal(toolSchema("list_notifications").safeParse({ offset: -1 }).success, false);
 assert.equal(toolSchema("list_histories").safeParse({ guid: "d", take: 0 }).success, false);
+
+const emptyWorkspaceUpdate = parseResult(await registry.tools.get("update_workspace").handler({
+  id: "workspace-1",
+}));
+assert.equal(emptyWorkspaceUpdate.code, "invalid_arguments");
+assert.match(emptyWorkspaceUpdate.error, /requires at least one of: public, enableAi/);
+assert.equal(requestCount, 0, "empty workspace update must not reach AFFiNE");
+
+const emptyProfileUpdate = parseResult(await registry.tools.get("update_profile").handler({}));
+assert.equal(emptyProfileUpdate.code, "invalid_arguments");
+assert.match(emptyProfileUpdate.error, /requires at least one of: name, avatarUrl/);
+assert.equal(requestCount, 0, "empty profile update must not reach AFFiNE");
 
 const deleteDoc = registry.tools.get("delete_doc").handler;
 await assert.rejects(

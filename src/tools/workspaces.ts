@@ -462,6 +462,11 @@ export function registerWorkspaceTools(
   // UPDATE WORKSPACE
   const updateWorkspaceHandler = async ({ id, public: isPublic, enableAi }: { id: string; public?: boolean; enableAi?: boolean }) => {
       try {
+        if (isPublic === undefined && enableAi === undefined) {
+          return toolError("update_workspace requires at least one of: public, enableAi", {
+            code: "invalid_arguments",
+          });
+        }
         const mutation = `
           mutation UpdateWorkspace($input: UpdateWorkspaceInput!) {
             updateWorkspace(input: $input) {
@@ -502,7 +507,7 @@ export function registerWorkspaceTools(
     "update_workspace",
     {
       title: "Update Workspace",
-      description: "Update workspace settings",
+      description: "Update workspace settings. Requires at least one of public or enableAi.",
       inputSchema: {
         id: z.string().describe("Workspace ID"),
         public: z.boolean().optional().describe("Make workspace public"),

@@ -321,10 +321,24 @@ async function main() {
       x: 999,
       title: "bogus",
     });
+    expectEqual(ignoredUpdate?.updated, false, "ignored-only surface update updated=false");
     expectArray(ignoredUpdate?.ignored, "ignored array present");
     if (!ignoredUpdate.ignored.includes("x") || !ignoredUpdate.ignored.includes("title")) {
       throw new Error(
         `expected ignored to include x and title, got ${JSON.stringify(ignoredUpdate.ignored)}`
+      );
+    }
+
+    const ignoredBlockUpdate = await call("update_edgeless_block", {
+      workspaceId: workspace.id,
+      docId,
+      blockId: edgelessText.blockId,
+      background: "--affine-note-background-blue",
+    });
+    expectEqual(ignoredBlockUpdate?.updated, false, "ignored-only edgeless update updated=false");
+    if (!ignoredBlockUpdate?.ignored?.includes("background")) {
+      throw new Error(
+        `expected ignored edgeless fields to include background, got ${JSON.stringify(ignoredBlockUpdate?.ignored)}`
       );
     }
 

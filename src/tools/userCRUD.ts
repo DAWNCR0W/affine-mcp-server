@@ -7,6 +7,11 @@ export function registerUserCRUDTools(server: McpServer, gql: GraphQLClient) {
   // UPDATE PROFILE
   const updateProfileHandler = async ({ name, avatarUrl }: { name?: string; avatarUrl?: string }) => {
     try {
+      if (name === undefined && avatarUrl === undefined) {
+        return toolError("update_profile requires at least one of: name, avatarUrl", {
+          code: "invalid_arguments",
+        });
+      }
       const mutation = `
         mutation UpdateProfile($input: UpdateUserInput!) {
           updateProfile(input: $input) {
@@ -32,7 +37,7 @@ export function registerUserCRUDTools(server: McpServer, gql: GraphQLClient) {
     "update_profile",
     {
       title: "Update Profile",
-      description: "Update current user's profile information.",
+      description: "Update current user's profile information. Requires at least one of name or avatarUrl.",
       inputSchema: {
         name: z.string().optional().describe("Display name"),
         avatarUrl: z.string().optional().describe("Avatar URL")
