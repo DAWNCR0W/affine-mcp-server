@@ -142,7 +142,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/markdown-it": "^14.1.2",
-    "@types/node": "^20.18.1",
+    "@types/node": "^26.3.0",
     "tsx": "^4.16.2",
     "typescript": "^7.0.2"
   }
