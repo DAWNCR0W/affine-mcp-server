@@ -124,6 +124,32 @@ for (const [name, required] of [
   }
 }
 
+const appendBlockSchema = toolSchema("append_block");
+const tableCell = { docId: "doc-1", type: "table", rows: 1, columns: 2 };
+const tableData = [["left", "right"]];
+const tableCellDeltas = [[[{ insert: "left" }], [{ insert: "right", attributes: { bold: true } }]]];
+const parsedTable = appendBlockSchema.safeParse({ ...tableCell, tableData, tableCellDeltas });
+assert.equal(parsedTable.success, true, "append_block must accept table cell contents");
+assert.deepEqual(parsedTable.data.tableData, tableData, "append_block must preserve tableData");
+assert.deepEqual(
+  parsedTable.data.tableCellDeltas,
+  tableCellDeltas,
+  "append_block must preserve per-cell rich-text deltas",
+);
+for (const invalidTable of [
+  { tableData: "not-an-array" },
+  { tableData: ["not-a-row"] },
+  { tableData: [[42]] },
+  { tableCellDeltas: [[[{ insert: 42 }]]] },
+  { tableCellDeltas: [[[{ insert: "bad attributes", attributes: [] }]]] },
+]) {
+  assert.equal(
+    appendBlockSchema.safeParse({ ...tableCell, ...invalidTable }).success,
+    false,
+    `append_block must reject ${JSON.stringify(invalidTable)}`,
+  );
+}
+
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);

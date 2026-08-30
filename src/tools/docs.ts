@@ -6268,6 +6268,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         embed: z.boolean().optional().describe("Attachment embed mode"),
         rows: z.number().int().min(1).max(20).optional().describe("Table row count"),
         columns: z.number().int().min(1).max(20).optional().describe("Table column count"),
+        tableData: z.array(z.array(z.string())).optional().describe("Plain-text cell contents for type='table', as rows of columns. Row count must equal `rows` and every row length must equal `columns`. Omit to create an empty table."),
+        tableCellDeltas: z.array(z.array(z.array(TextDeltaInput))).optional().describe("Rich-text deltas per cell for type='table', parallel to `tableData` as [row][column][delta]. A cell with deltas here overrides the plain text at the same position in `tableData`."),
         latex: z.string().optional().describe("Latex expression"),
         level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
         style: AppendBlockListStyle.optional().describe("List style for type=list"),
