@@ -150,6 +150,24 @@ for (const invalidTable of [
   );
 }
 
+const appendBlock = registry.tools.get("append_block").handler;
+for (const [invalidCells, expected] of [
+  [{ rows: 2, columns: 2, tableCellDeltas: [[[{ insert: "only-one-row" }], []]] }, /tableCellDeltas row count must match table rows/],
+  [{ rows: 1, columns: 2, tableCellDeltas: [[[{ insert: "only-one-column" }]]] }, /tableCellDeltas column count must match table columns/],
+]) {
+  await assert.rejects(
+    appendBlock({ docId: "doc-1", type: "table", ...invalidCells }),
+    expected,
+    "append_block must reject tableCellDeltas that do not match the table shape",
+  );
+}
+await assert.rejects(
+  appendBlock({ docId: "doc-1", type: "paragraph", tableCellDeltas: [[[{ insert: "x" }]]] }),
+  /The 'tableCellDeltas' field can only be used with type='table'/,
+  "append_block must reject tableCellDeltas on a non-table block",
+);
+assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
+
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
