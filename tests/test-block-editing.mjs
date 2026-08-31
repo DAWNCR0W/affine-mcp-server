@@ -70,6 +70,7 @@ async function main() {
     quoteBlockId: null,
     codeBlockId: null,
     tableBlockId: null,
+    emptyOverrideTableBlockId: null,
     taskText: 'Ship the verified release',
     oldTaskText: 'Ship the draft release',
     inboxHeadingText: 'Inbox priority',
@@ -240,6 +241,18 @@ async function main() {
     });
     state.tableBlockId = table?.blockId;
     expectTruthy(state.tableBlockId, 'append_block 2x2 table id');
+
+    const emptyOverrideTable = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 1,
+      columns: 1,
+      tableData: [['fallback text']],
+      tableCellDeltas: [[[]]],
+    });
+    state.emptyOverrideTableBlockId = emptyOverrideTable?.blockId;
+    expectTruthy(state.emptyOverrideTableBlockId, 'append_block empty table delta override id');
 
     const emptyDivider = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -546,6 +559,10 @@ async function main() {
     );
     expectEqual(tableBlock.tableData[0][1], state.tableSiblingHeaderText, 'table header sibling unchanged');
     expectEqual(tableBlock.tableData[1][1], state.tableSiblingDataText, 'table data sibling unchanged');
+    const emptyOverrideTableBlock = blocks.find(block => block.id === state.emptyOverrideTableBlockId);
+    expectTruthy(emptyOverrideTableBlock, 'read_doc empty table delta override block');
+    assert.deepEqual(emptyOverrideTableBlock.tableData, [['']], 'empty table delta overrides fallback text');
+    assert.deepEqual(emptyOverrideTableBlock.tableCellDeltas, [[[]]], 'empty table delta remains empty');
     assert.deepEqual(
       blocks.find(block => block.id === state.inboxHeadingBlockId)?.deltas,
       state.inboxHeadingDeltas,

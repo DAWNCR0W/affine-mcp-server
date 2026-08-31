@@ -2521,9 +2521,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           for (let columnIndex = 0; columnIndex < columnIds.length; columnIndex += 1) {
             const columnId = columnIds[columnIndex];
             const cellText = tableData[rowIndex]?.[columnIndex] ?? "";
-            const cellDeltas = normalized.tableCellDeltas?.[rowIndex]?.[columnIndex] ?? [];
+            const cellDeltas = normalized.tableCellDeltas?.[rowIndex]?.[columnIndex];
             const cellYText = makeTableCellText(
-              cellDeltas.length > 0 ? cellDeltas : cellText,
+              cellDeltas ?? cellText,
               isHeader,
             );
             block.set(`prop:cells.${rowId}:${columnId}.text`, cellYText);
