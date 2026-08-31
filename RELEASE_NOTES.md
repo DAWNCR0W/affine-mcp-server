@@ -1,5 +1,35 @@
 # Release Notes
 
+## Version 3.5.0 (2026-08-31)
+
+### Highlights
+- AFFiNE tables can now be created with cell content through `append_block` and edited one cell at a time through the new `update_table_cell` tool.
+- Direct rich-text cell updates preserve inline attributes, header bold formatting, literal pipes, and dotted code text without rebuilding the table through Markdown.
+- `read_doc` now exposes complete table text and delta matrices for lossless read-modify-write flows.
+
+### What Changed
+- Declared `tableData` and `tableCellDeltas` on the public `append_block` schema and added dimension checks for both matrices.
+- Added zero-based row and column addressing for cell updates, including bounds, block-flavour, no-op, and missing-block safeguards.
+- Preserved arbitrary rich-text delta attributes and enforced AFFiNE header-row bold formatting during direct cell writes.
+- Added exact table matrices to `read_doc` block rows and kept Markdown export compatible with links, inline code, and escaped pipes.
+- Added CRDT, contract, profile, Markdown, and Chromium coverage for table creation and cell editing.
+- Refreshed `jose` from 6.2.9 to 6.2.10 and strengthened the container startup smoke gate.
+
+### Compatibility
+- One tool was added, bringing the canonical MCP surface from 96 to 97 tools; no tools or existing required inputs were removed.
+- Existing plain-string table content remains supported, and rich-text delta arrays are additive.
+- Node.js 20.18.1 or newer remains required.
+- Release behavior is validated against AFFiNE 0.27.4.
+
+### Validation Evidence
+- Node.js 26.5.1: clean `npm ci && npm run ci` (28 fast tests; 97-tool metadata, documentation, and package checks)
+- `npm audit --audit-level=low` with zero vulnerabilities
+- `AFFINE_REVISION=0.27.4 npm run test:comprehensive` (16 focused integrations; 112/112 comprehensive checks)
+- `AFFINE_REVISION=0.27.4 npm run test:e2e` (24 integration tests; 17 Playwright tests)
+- Packed-tarball install, CLI, and 97-tool discovery smoke
+- `npm publish --dry-run --access public --ignore-scripts`
+- Linux/amd64 Docker build, version check, non-root UID check, protected health endpoint, and authenticated startup smoke
+
 ## Version 3.4.1 (2026-08-27)
 
 ### Highlights

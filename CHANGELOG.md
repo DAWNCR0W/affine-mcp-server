@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-08-31
+
 ### Added
 - Added `update_table_cell` for in-place updates to AFFiNE table cells with zero-based coordinates and formatting-preserving rich-text deltas.
 
 ### Fixed
 - `append_block` now accepts `tableData` and `tableCellDeltas`, so a table created with cell contents is no longer silently empty; previously the schema stripped both fields and only `append_markdown` could fill cells.
+
+### Dependencies
+- Updated `jose` from 6.2.9 to 6.2.10.
+
+### Tests
+- Hardened container startup smoke checks to fail immediately when the process exits and to require protected mode from the live health endpoint.
 
 ## [3.4.1] - 2026-08-27
 
@@ -724,6 +732,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.0
 [3.4.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.1
 [3.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.0
 [3.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.3.0
@@ -760,4 +769,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.4.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.5.0...HEAD
