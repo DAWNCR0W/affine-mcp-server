@@ -67,7 +67,11 @@ jobs:
             fi
             HEALTH_STATUS="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_ID")"
             if [ "$HEALTH_STATUS" = "healthy" ]; then
-              HEALTH_JSON="$(docker exec "$CONTAINER_ID" wget -qO- http://127.0.0.1:3000/healthz)"
+              if ! HEALTH_JSON="$(timeout 10s docker exec "$CONTAINER_ID" wget -qO- http://127.0.0.1:3000/healthz)"; then
+                echo "Container health endpoint probe failed"
+                docker logs "$CONTAINER_ID"
+                exit 1
+              fi
               if ! echo "$HEALTH_JSON" | grep -Eq '"protected"[[:space:]]*:[[:space:]]*true'; then
                 echo "Container health endpoint did not report protected mode"
                 docker logs "$CONTAINER_ID"
