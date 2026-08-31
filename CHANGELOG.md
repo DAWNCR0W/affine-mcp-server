@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `update_table_cell` for in-place updates to AFFiNE table cells with zero-based coordinates and formatting-preserving rich-text deltas.
+
 ### Fixed
 - `append_block` now accepts `tableData` and `tableCellDeltas`, so a table created with cell contents is no longer silently empty; previously the schema stripped both fields and only `append_markdown` could fill cells.
 

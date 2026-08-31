@@ -95,6 +95,7 @@
     "update_profile",
     "update_settings",
     "update_surface_element",
+    "update_table_cell",
     "update_workspace",
     "upload_blob"
   ]

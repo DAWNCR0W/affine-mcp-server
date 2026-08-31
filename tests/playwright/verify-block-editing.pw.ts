@@ -15,6 +15,7 @@ interface TestState {
   workspaceId: string;
   docId: string;
   taskBlockId: string;
+  tableBlockId: string;
   taskText: string;
   oldTaskText: string;
   inboxHeadingText: string;
@@ -22,6 +23,11 @@ interface TestState {
   highlightedSegment: string;
   doneHeadingText: string;
   deletedText: string;
+  tableHeaderText: string;
+  tableCellText: string;
+  tableLinkUrl: string;
+  tableSiblingHeaderText: string;
+  tableSiblingDataText: string;
   error?: string;
 }
 
@@ -63,8 +69,8 @@ test.beforeAll(() => {
   }
   state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
   if (state.error) throw new Error(`State file contains an integration-test error: ${state.error}`);
-  if (!state.workspaceId || !state.docId || !state.taskBlockId) {
-    throw new Error('State file is missing workspaceId, docId, or taskBlockId');
+  if (!state.workspaceId || !state.docId || !state.taskBlockId || !state.tableBlockId) {
+    throw new Error('State file is missing workspaceId, docId, taskBlockId, or tableBlockId');
   }
 });
 
@@ -107,6 +113,33 @@ test.describe.serial('AFFiNE block editing verification', () => {
       const taskIndex = renderedText.findIndex(value => value.includes(state.taskText));
       expect(doneIndex).toBeGreaterThanOrEqual(0);
       expect(taskIndex).toBe(doneIndex + 1);
+
+      let tableBlock: Locator = page
+        .locator('affine-table, [data-block-flavour="affine:table"]')
+        .filter({ hasText: state.tableHeaderText })
+        .first();
+      if (await tableBlock.count() === 0) {
+        tableBlock = page.locator(`[data-block-id="${state.tableBlockId}"]`).filter({ hasText: state.tableHeaderText }).first();
+      }
+      await expect(tableBlock).toBeVisible({ timeout: 30_000 });
+      const tableHeader = tableBlock.getByText(state.tableHeaderText, { exact: true });
+      await expect(tableHeader).toHaveCount(1);
+      await expect(tableBlock.getByText(state.tableSiblingHeaderText, { exact: true })).toHaveCount(1);
+      await expect(tableBlock.getByText(state.tableCellText, { exact: true })).toHaveCount(1);
+      await expect(tableBlock.getByText(state.tableSiblingDataText, { exact: true })).toHaveCount(1);
+
+      const headerFontWeight = Number.parseInt(
+        await tableHeader.evaluate(element => getComputedStyle(element).fontWeight),
+        10,
+      );
+      expect(headerFontWeight).toBeGreaterThanOrEqual(600);
+
+      const tableLink = tableBlock.locator(`a[href="${state.tableLinkUrl}"]`).filter({ hasText: 'GitLab' }).first();
+      await expect(tableLink).toHaveAttribute('href', state.tableLinkUrl);
+      await expect(tableLink).toHaveText('GitLab');
+
+      const inlineCode = tableBlock.locator('code').filter({ hasText: 'team.AI' }).first();
+      await expect(inlineCode).toBeVisible();
     } finally {
       await context.close();
     }

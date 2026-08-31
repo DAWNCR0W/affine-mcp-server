@@ -69,6 +69,7 @@ async function main() {
     taskBlockId: null,
     quoteBlockId: null,
     codeBlockId: null,
+    tableBlockId: null,
     taskText: 'Ship the verified release',
     oldTaskText: 'Ship the draft release',
     inboxHeadingText: 'Inbox priority',
@@ -78,6 +79,16 @@ async function main() {
     highlightedSegment: 'verified',
     doneHeadingText: 'Done',
     deletedText: 'Remove this temporary note',
+    tableHeaderText: 'Updated Header',
+    tableCellText: 'team.AI | GitLab',
+    tableLinkUrl: 'https://gitlab.com',
+    tableSiblingHeaderText: 'Keep header sibling',
+    tableSiblingDataText: 'Keep data sibling',
+    tableCellDeltas: [
+      { insert: 'team.AI', attributes: { code: true } },
+      { insert: ' | ' },
+      { insert: 'GitLab', attributes: { link: 'https://gitlab.com' } },
+    ],
     inboxHeadingDeltas: [
       { insert: 'Inbox ' },
       { insert: 'priority', attributes: { color: 'var(--affine-text-highlight-foreground-blue)' } },
@@ -216,6 +227,20 @@ async function main() {
     state.codeBlockId = code?.blockId;
     expectTruthy(state.codeBlockId, 'append_block rich-text code id');
 
+    const table = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 2,
+      columns: 2,
+      tableData: [
+        ['Original Header', state.tableSiblingHeaderText],
+        ['Original data', state.tableSiblingDataText],
+      ],
+    });
+    state.tableBlockId = table?.blockId;
+    expectTruthy(state.tableBlockId, 'append_block 2x2 table id');
+
     const emptyDivider = await call('append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -304,6 +329,102 @@ async function main() {
     });
     expectEqual(unchangedPlainText?.updated, false, 'update_block identical plain text no-op');
     assert.deepEqual(unchangedPlainText?.block?.deltas, state.taskDeltas, 'plain-text no-op preserves existing attributes');
+
+    const updatedHeader = await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.tableBlockId,
+      row: 0,
+      column: 0,
+      text: state.tableHeaderText,
+    });
+    expectEqual(updatedHeader?.updated, true, 'update_table_cell header changed');
+    expectEqual(updatedHeader?.row, 0, 'update_table_cell header row');
+    expectEqual(updatedHeader?.column, 0, 'update_table_cell header column');
+    expectEqual(updatedHeader?.previous?.text, 'Original Header', 'update_table_cell header previous text');
+    assert.deepEqual(
+      updatedHeader?.previous?.deltas,
+      [{ insert: 'Original Header', attributes: { bold: true } }],
+      'update_table_cell header previous deltas',
+    );
+    expectEqual(updatedHeader?.cell?.text, state.tableHeaderText, 'update_table_cell header current text');
+    assert.deepEqual(
+      updatedHeader?.cell?.deltas,
+      [{ insert: state.tableHeaderText, attributes: { bold: true } }],
+      'update_table_cell header remains bold',
+    );
+
+    const updatedCell = await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.tableBlockId,
+      row: 1,
+      column: 0,
+      text: state.tableCellDeltas,
+    });
+    expectEqual(updatedCell?.updated, true, 'update_table_cell rich-text cell changed');
+    expectEqual(updatedCell?.previous?.text, 'Original data', 'update_table_cell cell previous text');
+    expectEqual(updatedCell?.cell?.text, state.tableCellText, 'update_table_cell cell current text');
+    assert.deepEqual(updatedCell?.cell?.deltas, state.tableCellDeltas, 'update_table_cell cell deltas');
+
+    const unchangedCellDeltas = await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.tableBlockId,
+      row: 1,
+      column: 0,
+      text: state.tableCellDeltas,
+    });
+    expectEqual(unchangedCellDeltas?.updated, false, 'update_table_cell identical deltas no-op');
+    assert.deepEqual(unchangedCellDeltas?.cell?.deltas, state.tableCellDeltas, 'table delta no-op preserves attributes');
+
+    const unchangedHeaderText = await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.tableBlockId,
+      row: 0,
+      column: 0,
+      text: state.tableHeaderText,
+    });
+    expectEqual(unchangedHeaderText?.updated, false, 'update_table_cell identical plain text no-op');
+    assert.deepEqual(
+      unchangedHeaderText?.cell?.deltas,
+      [{ insert: state.tableHeaderText, attributes: { bold: true } }],
+      'table plain-text no-op preserves header bold',
+    );
+
+    await expectCallError('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.taskBlockId,
+      row: 0,
+      column: 0,
+      text: 'wrong flavour',
+    }, /only mutates affine:table/);
+    await expectCallError('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: 'missing-table-block',
+      row: 0,
+      column: 0,
+      text: 'missing',
+    }, /Block 'missing-table-block' not found/);
+    await expectCallError('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.tableBlockId,
+      row: 2,
+      column: 0,
+      text: 'out of range',
+    }, /Table row 2 is out of range/);
+    await expectCallError('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.tableBlockId,
+      row: 0,
+      column: 2,
+      text: 'out of range',
+    }, /Table column 2 is out of range/);
 
     await expectCallError('update_block', {
       workspaceId: state.workspaceId,
@@ -405,6 +526,26 @@ async function main() {
 
     const doneBlock = blocks.find(block => block.id === doneHeading.blockId);
     expectTruthy(doneBlock, 'read_doc done heading');
+    const tableBlock = blocks.find(block => block.id === state.tableBlockId);
+    expectTruthy(tableBlock, 'read_doc table block');
+    assert.deepEqual(
+      tableBlock.tableData,
+      [[state.tableHeaderText, state.tableSiblingHeaderText], [state.tableCellText, state.tableSiblingDataText]],
+      'read_doc table full matrix',
+    );
+    assert.deepEqual(
+      tableBlock.tableCellDeltas,
+      [
+        [
+          [{ insert: state.tableHeaderText, attributes: { bold: true } }],
+          [{ insert: state.tableSiblingHeaderText, attributes: { bold: true } }],
+        ],
+        [state.tableCellDeltas, [{ insert: state.tableSiblingDataText }]],
+      ],
+      'read_doc table exact cell deltas',
+    );
+    expectEqual(tableBlock.tableData[0][1], state.tableSiblingHeaderText, 'table header sibling unchanged');
+    expectEqual(tableBlock.tableData[1][1], state.tableSiblingDataText, 'table data sibling unchanged');
     assert.deepEqual(
       blocks.find(block => block.id === state.inboxHeadingBlockId)?.deltas,
       state.inboxHeadingDeltas,
@@ -428,6 +569,19 @@ async function main() {
     if (doneIndex < 0 || taskIndex !== doneIndex + 1) {
       throw new Error(`move_block order mismatch: doneIndex=${doneIndex}, taskIndex=${taskIndex}`);
     }
+
+    const markdown = await call('export_doc_markdown', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    expectEqual(
+      markdown.warnings.some(warning => warning.includes(`Table block '${state.tableBlockId}'`)),
+      false,
+      'export_doc_markdown table warnings',
+    );
+    expectEqual(markdown.markdown.includes('`team.AI`'), true, 'export_doc_markdown inline code');
+    expectEqual(markdown.markdown.includes('[GitLab](https://gitlab.com)'), true, 'export_doc_markdown link');
+    expectEqual(markdown.markdown.includes('\\|'), true, 'export_doc_markdown escaped table pipe');
 
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
     console.log();
