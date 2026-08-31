@@ -533,6 +533,15 @@ type AppendBlockInput = {
   padding?: number;
 };
 
+type UpdateTableCellInput = {
+  workspaceId?: string;
+  docId: string;
+  blockId: string;
+  row: number;
+  column: number;
+  text: string | TextDelta[];
+};
+
 type NormalizedAppendBlockInput = {
   workspaceId?: string;
   docId: string;
@@ -1012,11 +1021,36 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return yText;
   }
 
-  function canonicalTextDeltas(content: TextDelta[]): TextDelta[] {
+  function makeTableCellText(content: string | TextDelta[], isHeader: boolean): Y.Text {
+    const yText = new Y.Text();
+    if (typeof content === "string") {
+      if (content.length > 0) {
+        yText.insert(0, content, isHeader ? { bold: true } : {});
+      }
+      return yText;
+    }
+
+    let offset = 0;
+    for (const delta of content) {
+      if (!delta.insert) continue;
+      const attributes = isHeader
+        ? { ...(delta.attributes ?? {}), bold: true }
+        : (delta.attributes ? { ...delta.attributes } : {});
+      yText.insert(offset, delta.insert, attributes);
+      offset += delta.insert.length;
+    }
+    return yText;
+  }
+
+  function canonicalDeltas(content: string | TextDelta[], isHeader = false): TextDelta[] {
     const doc = new Y.Doc();
-    const value = makeText(content);
+    const value = isHeader ? makeTableCellText(content, true) : makeText(content);
     doc.getMap("root").set("text", value);
     return richTextValueToDeltas(value) ?? [];
+  }
+
+  function canonicalTextDeltas(content: TextDelta[]): TextDelta[] {
+    return canonicalDeltas(content);
   }
 
   /**
@@ -2488,25 +2522,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
             const columnId = columnIds[columnIndex];
             const cellText = tableData[rowIndex]?.[columnIndex] ?? "";
             const cellDeltas = normalized.tableCellDeltas?.[rowIndex]?.[columnIndex] ?? [];
-            const cellYText = new Y.Text();
-            // First row is always rendered bold (header row convention)
-            if (cellDeltas.length > 0) {
-              let offset = 0;
-              for (const delta of cellDeltas) {
-                if (!delta.insert) {
-                  continue;
-                }
-                const attrs = isHeader
-                  ? { ...(delta.attributes ?? {}), bold: true }
-                  : (delta.attributes ? { ...delta.attributes } : {});
-                cellYText.insert(offset, delta.insert, attrs);
-                offset += delta.insert.length;
-              }
-            } else if (isHeader && cellText) {
-              cellYText.insert(0, cellText, { bold: true });
-            } else {
-              cellYText.insert(0, cellText);
-            }
+            const cellYText = makeTableCellText(
+              cellDeltas.length > 0 ? cellDeltas : cellText,
+              isHeader,
+            );
             block.set(`prop:cells.${rowId}:${columnId}.text`, cellYText);
           }
         }
@@ -3201,6 +3220,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   function extractTableData(block: Y.Map<any>): {
     tableData: string[][];
     tableCellDeltas: TextDelta[][][];
+    rowIds: string[];
+    columnIds: string[];
   } | null {
     const compareOrder = (left: string, right: string) => {
       if (left < right) return -1;
@@ -3210,13 +3231,18 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const rowsValue = block.get("prop:rows");
     const columnsValue = block.get("prop:columns");
     const cellsValue = block.get("prop:cells");
+    const mapField = (payload: unknown, field: string): unknown => {
+      if (payload instanceof Y.Map) return payload.get(field);
+      if (payload && typeof payload === "object") return (payload as any)[field];
+      return undefined;
+    };
 
     let rowEntries = mapEntries(rowsValue)
       .map(([rowId, payload]) => ({
         rowId,
         order:
-          payload && typeof payload === "object" && typeof (payload as any).order === "string"
-            ? (payload as any).order
+          typeof mapField(payload, "order") === "string"
+            ? mapField(payload, "order") as string
             : rowId,
       }))
       .sort((a, b) => compareOrder(a.order, b.order));
@@ -3225,8 +3251,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       .map(([columnId, payload]) => ({
         columnId,
         order:
-          payload && typeof payload === "object" && typeof (payload as any).order === "string"
-            ? (payload as any).order
+          typeof mapField(payload, "order") === "string"
+            ? mapField(payload, "order") as string
             : columnId,
       }))
       .sort((a, b) => compareOrder(a.order, b.order));
@@ -3282,6 +3308,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           });
           continue;
         }
+        if (payload instanceof Y.Text || typeof payload === "string") {
+          cells.set(cellKey, {
+            text: richTextValueToString(payload),
+            deltas: richTextValueToDeltas(payload) ?? [],
+          });
+          continue;
+        }
         if (payload && typeof payload === "object" && "text" in payload) {
           const textValue = (payload as any).text;
           cells.set(cellKey, {
@@ -3310,7 +3343,40 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       tableCellDeltas.push(rowDeltas);
     }
 
-    return { tableData, tableCellDeltas };
+    return {
+      tableData,
+      tableCellDeltas,
+      rowIds: rowEntries.map(({ rowId }) => rowId),
+      columnIds: columnEntries.map(({ columnId }) => columnId),
+    };
+  }
+
+  function writeTableCellText(
+    block: Y.Map<any>,
+    rowId: string,
+    columnId: string,
+    nextText: Y.Text,
+  ): void {
+    const currentCells = block.get("prop:cells");
+    const rowsAreNested = block.get("prop:rows") instanceof Y.Map;
+    const columnsAreNested = block.get("prop:columns") instanceof Y.Map;
+    if (!rowsAreNested && !columnsAreNested && !(currentCells instanceof Y.Map)) {
+      block.set(`prop:cells.${rowId}:${columnId}.text`, nextText);
+      return;
+    }
+
+    const cells = currentCells instanceof Y.Map
+      ? currentCells
+      : ensureYMap(block, "prop:cells");
+    const cellKey = `${rowId}:${columnId}`;
+    const existing = cells.get(cellKey);
+    if (existing instanceof Y.Map) {
+      existing.set("text", nextText);
+    } else {
+      const cell = new Y.Map<any>();
+      cell.set("text", nextText);
+      cells.set(cellKey, cell);
+    }
   }
 
   function collectDocForMarkdown(
@@ -5538,6 +5604,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         type: string | null;
         text: string | null;
         deltas: TextDelta[];
+        tableData?: string[][];
+        tableCellDeltas?: TextDelta[][][];
         linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
@@ -5559,6 +5627,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const propText = raw.get("prop:text");
         const textValue = asText(propText);
         const deltas = richTextValueToDeltas(propText) ?? [];
+        const table = flavour === "affine:table" ? extractTableData(raw) : null;
         const linkedDocIds = extractLinkedPageRefs(propText);
         const language = raw.get("prop:language");
         const checked = raw.get("prop:checked");
@@ -5578,6 +5647,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           type: typeof type === "string" ? type : null,
           text: textValue.length > 0 ? textValue : null,
           deltas,
+          ...(table ? {
+            tableData: table.tableData,
+            tableCellDeltas: table.tableCellDeltas,
+          } : {}),
           linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
           language: typeof language === "string" ? language : null,
@@ -9734,6 +9807,102 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   };
 
+  const updateTableCellHandler = async (params: UpdateTableCellInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+    if (!Number.isInteger(params.row) || params.row < 0) {
+      throw new Error("row must be a non-negative integer.");
+    }
+    if (!Number.isInteger(params.column) || params.column < 0) {
+      throw new Error("column must be a non-negative integer.");
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+      const flavour = block.get("sys:flavour");
+      if (flavour !== "affine:table") {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(flavour)}' — update_table_cell only mutates affine:table blocks.`
+        );
+      }
+
+      const table = extractTableData(block);
+      if (!table) {
+        throw new Error(`Table block '${params.blockId}' has no readable row/column layout.`);
+      }
+      if (params.row >= table.rowIds.length) {
+        throw new Error(
+          `Table row ${params.row} is out of range (row count: ${table.rowIds.length}).`
+        );
+      }
+      if (params.column >= table.columnIds.length) {
+        throw new Error(
+          `Table column ${params.column} is out of range (column count: ${table.columnIds.length}).`
+        );
+      }
+
+      const rowId = table.rowIds[params.row];
+      const columnId = table.columnIds[params.column];
+      const previousText = table.tableData[params.row][params.column];
+      const previousDeltas = table.tableCellDeltas[params.row][params.column];
+      const isHeader = params.row === 0;
+      const nextText = makeTableCellText(params.text, isHeader);
+      const nextDeltas = canonicalDeltas(params.text, isHeader);
+      const changed = typeof params.text === "string"
+        ? previousText !== params.text
+        : !isDeepStrictEqual(previousDeltas, nextDeltas);
+
+      if (changed) {
+        writeTableCellText(block, rowId, columnId, nextText);
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
+
+      return text({
+        updated: changed,
+        blockId: params.blockId,
+        row: params.row,
+        column: params.column,
+        rowId,
+        columnId,
+        previous: {
+          text: previousText,
+          deltas: previousDeltas,
+        },
+        cell: {
+          text: changed ? richTextValueToString(nextText) : previousText,
+          deltas: changed ? nextDeltas : previousDeltas,
+        },
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
   const moveBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10363,6 +10532,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     updateBlockHandler as any
+  );
+
+  server.registerTool(
+    "update_table_cell",
+    {
+      title: "Update Table Cell",
+      description:
+        "Replace one cell in an AFFiNE table by zero-based row and column while preserving rich-text attributes and the table's header bold formatting.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Table block id (flavour affine:table)."),
+        row: z.number().int().min(0).describe("Zero-based table row."),
+        column: z.number().int().min(0).describe("Zero-based table column."),
+        text: RichTextInput.describe("Replacement cell text as plain text or a delta array that preserves inline attributes."),
+      },
+    },
+    updateTableCellHandler as any
   );
 
   server.registerTool(

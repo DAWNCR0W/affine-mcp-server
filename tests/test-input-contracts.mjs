@@ -106,6 +106,7 @@ const highlightedText = [
 for (const [name, required] of [
   ["append_block", { docId: "doc-1", type: "paragraph" }],
   ["update_block", { docId: "doc-1", blockId: "block-1" }],
+  ["update_table_cell", { docId: "doc-1", blockId: "table-1", row: 0, column: 0 }],
 ]) {
   const schema = toolSchema(name);
   const parsed = schema.safeParse({ ...required, text: highlightedText });
@@ -123,6 +124,14 @@ for (const [name, required] of [
     );
   }
 }
+
+const updateTableCellSchema = toolSchema("update_table_cell");
+expectSchemaRejects(updateTableCellSchema, [
+  { docId: "doc-1", blockId: "table-1", row: -1, column: 0, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 0, column: -1, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 1.5, column: 0, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 0, column: 1.5, text: "x" },
+]);
 
 const appendBlockSchema = toolSchema("append_block");
 const tableCell = { docId: "doc-1", type: "table", rows: 1, columns: 2 };

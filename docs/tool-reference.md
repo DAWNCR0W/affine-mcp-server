@@ -95,6 +95,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
+| `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. |
 | `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
@@ -103,7 +104,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 
 #### Formatting-preserving block text
 
-For inline-rich-text blocks, `append_block.text` and `update_block.text` accept either a string or a delta array. Each delta requires a string `insert` and may contain arbitrary `attributes`; the server passes attributes through without restricting them to a fixed formatting vocabulary.
+For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `update_table_cell.text` accept either a string or a delta array. Each delta requires a string `insert` and may contain arbitrary `attributes`; the server passes attributes through without restricting them to a fixed formatting vocabulary.
 
 ```json
 [
@@ -113,7 +114,7 @@ For inline-rich-text blocks, `append_block.text` and `update_block.text` accept 
 ]
 ```
 
-`read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
+`read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
 
 ### Tags
 
