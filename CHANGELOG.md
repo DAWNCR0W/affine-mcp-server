@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `append_block` now accepts `tableData` and `tableCellDeltas`, so a table created with cell contents is no longer silently empty; previously the schema stripped both fields and only `append_markdown` could fill cells.
+
 ## [3.4.1] - 2026-08-27
 
 ### Fixed

@@ -1839,10 +1839,22 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           }
         }
       }
+      if (normalized.tableCellDeltas) {
+        if (!Array.isArray(normalized.tableCellDeltas) || normalized.tableCellDeltas.length !== normalized.rows) {
+          throw new Error("tableCellDeltas row count must match table rows.");
+        }
+        for (const row of normalized.tableCellDeltas) {
+          if (!Array.isArray(row) || row.length !== normalized.columns) {
+            throw new Error("tableCellDeltas column count must match table columns.");
+          }
+        }
+      }
     } else if ((raw.rows !== undefined || raw.columns !== undefined) && normalized.strict) {
       throw new Error("The 'rows'/'columns' fields can only be used with type='table'.");
     } else if (raw.tableData !== undefined && normalized.strict) {
       throw new Error("The 'tableData' field can only be used with type='table'.");
+    } else if (raw.tableCellDeltas !== undefined && normalized.strict) {
+      throw new Error("The 'tableCellDeltas' field can only be used with type='table'.");
     }
 
     if (normalized.type !== "database" && normalized.type !== "data_view" && raw.viewMode !== undefined && normalized.strict) {
@@ -6268,6 +6280,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         embed: z.boolean().optional().describe("Attachment embed mode"),
         rows: z.number().int().min(1).max(20).optional().describe("Table row count"),
         columns: z.number().int().min(1).max(20).optional().describe("Table column count"),
+        tableData: z.array(z.array(z.string())).optional().describe("Plain-text cell contents for type='table', as rows of columns. Row count must equal `rows` and every row length must equal `columns`. Omit to create an empty table."),
+        tableCellDeltas: z.array(z.array(z.array(TextDeltaInput))).optional().describe("Rich-text deltas per cell for type='table', parallel to `tableData` as [row][column][delta]. A cell with deltas here overrides the plain text at the same position in `tableData`."),
         latex: z.string().optional().describe("Latex expression"),
         level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
         style: AppendBlockListStyle.optional().describe("List style for type=list"),
