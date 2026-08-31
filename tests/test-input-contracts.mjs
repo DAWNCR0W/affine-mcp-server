@@ -106,6 +106,7 @@ const highlightedText = [
 for (const [name, required] of [
   ["append_block", { docId: "doc-1", type: "paragraph" }],
   ["update_block", { docId: "doc-1", blockId: "block-1" }],
+  ["update_table_cell", { docId: "doc-1", blockId: "table-1", row: 0, column: 0 }],
 ]) {
   const schema = toolSchema(name);
   const parsed = schema.safeParse({ ...required, text: highlightedText });
@@ -123,6 +124,58 @@ for (const [name, required] of [
     );
   }
 }
+
+const updateTableCellSchema = toolSchema("update_table_cell");
+expectSchemaRejects(updateTableCellSchema, [
+  { docId: "doc-1", blockId: "table-1", row: -1, column: 0, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 0, column: -1, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 1.5, column: 0, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 0, column: 1.5, text: "x" },
+]);
+
+const appendBlockSchema = toolSchema("append_block");
+const tableCell = { docId: "doc-1", type: "table", rows: 1, columns: 2 };
+const tableData = [["left", "right"]];
+const tableCellDeltas = [[[{ insert: "left" }], [{ insert: "right", attributes: { bold: true } }]]];
+const parsedTable = appendBlockSchema.safeParse({ ...tableCell, tableData, tableCellDeltas });
+assert.equal(parsedTable.success, true, "append_block must accept table cell contents");
+assert.deepEqual(parsedTable.data.tableData, tableData, "append_block must preserve tableData");
+assert.deepEqual(
+  parsedTable.data.tableCellDeltas,
+  tableCellDeltas,
+  "append_block must preserve per-cell rich-text deltas",
+);
+for (const invalidTable of [
+  { tableData: "not-an-array" },
+  { tableData: ["not-a-row"] },
+  { tableData: [[42]] },
+  { tableCellDeltas: [[[{ insert: 42 }]]] },
+  { tableCellDeltas: [[[{ insert: "bad attributes", attributes: [] }]]] },
+]) {
+  assert.equal(
+    appendBlockSchema.safeParse({ ...tableCell, ...invalidTable }).success,
+    false,
+    `append_block must reject ${JSON.stringify(invalidTable)}`,
+  );
+}
+
+const appendBlock = registry.tools.get("append_block").handler;
+for (const [invalidCells, expected] of [
+  [{ rows: 2, columns: 2, tableCellDeltas: [[[{ insert: "only-one-row" }], []]] }, /tableCellDeltas row count must match table rows/],
+  [{ rows: 1, columns: 2, tableCellDeltas: [[[{ insert: "only-one-column" }]]] }, /tableCellDeltas column count must match table columns/],
+]) {
+  await assert.rejects(
+    appendBlock({ docId: "doc-1", type: "table", ...invalidCells }),
+    expected,
+    "append_block must reject tableCellDeltas that do not match the table shape",
+  );
+}
+await assert.rejects(
+  appendBlock({ docId: "doc-1", type: "paragraph", tableCellDeltas: [[[{ insert: "x" }]]] }),
+  /The 'tableCellDeltas' field can only be used with type='table'/,
+  "append_block must reject tableCellDeltas on a non-table block",
+);
+assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
 
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);

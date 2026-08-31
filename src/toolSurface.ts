@@ -93,6 +93,7 @@ export const ALL_TOOLS = [
   "update_profile",
   "update_settings",
   "update_surface_element",
+  "update_table_cell",
   "update_workspace",
   "upload_blob",
 ] as const;
@@ -201,6 +202,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   update_profile: ["users", "users.write", "admin", "write"],
   update_settings: ["users", "users.write", "admin", "write"],
   update_surface_element: ["docs", "docs.edgeless", "docs.surface", "docs.write", "write"],
+  update_table_cell: ["docs", "docs.write", "write"],
   update_workspace: ["workspaces", "workspaces.write", "admin", "write"],
   upload_blob: ["blobs", "blobs.write", "write"],
 };
@@ -274,6 +276,7 @@ const CORE_TOOLS = new Set<ToolName>([
   "update_database_row",
   "update_doc_icon",
   "update_doc_title",
+  "update_table_cell",
 ]);
 
 const AUTHORING_EXCLUDED_GROUPS = new Set([

@@ -65,6 +65,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['update_doc_icon', 'test-icons.mjs'],
   ['update_doc_title', 'test-create-placement.mjs'],
   ['update_folder_icon', 'test-icons.mjs'],
+  ['update_table_cell', 'test-block-editing.mjs'],
 ]);
 
 if (!PASSWORD) {
