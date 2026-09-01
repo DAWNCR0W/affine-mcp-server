@@ -1883,6 +1883,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           }
         }
       }
+      // An empty table cannot be filled afterwards: update_block rejects
+      // affine:table. Reporting success for one is a dead end, so strict mode
+      // says so and non-strict callers get a warning on the result.
+      if (!normalized.tableData && !normalized.tableCellDeltas && normalized.strict) {
+        throw new Error(
+          "A table needs tableData (or tableCellDeltas) to have any cell content. Pass strict: false to create an empty table on purpose.",
+        );
+      }
     } else if ((raw.rows !== undefined || raw.columns !== undefined) && normalized.strict) {
       throw new Error("The 'rows'/'columns' fields can only be used with type='table'.");
     } else if (raw.tableData !== undefined && normalized.strict) {
@@ -3043,6 +3051,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
+      const warnings: string[] = [];
+      if (normalized.type === "table" && !normalized.tableData && !normalized.tableCellDeltas) {
+        warnings.push(
+          `Table ${blockId} was created with no cell content. Pass tableData to fill it; update_block cannot edit table cells afterwards.`,
+        );
+      }
+
       return {
         appended: true,
         blockId,
@@ -3052,6 +3067,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         legacyType: normalized.legacyType || null,
         ownedIds: normalized._frameOwnedIds,
         missing: normalized._frameMissing,
+        ...(warnings.length ? { warnings } : {}),
       };
     } finally {
       socket.disconnect();
