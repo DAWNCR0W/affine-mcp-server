@@ -6321,6 +6321,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       ...(result.ownedIds ? { ownedIds: result.ownedIds } : {}),
       ...(result.missing ? { missing: result.missing } : {}),
       ...(markdownApplied ? { markdown: markdownApplied } : {}),
+      ...(result.warnings?.length ? { warnings: result.warnings } : {}),
     });
   };
   server.registerTool(
