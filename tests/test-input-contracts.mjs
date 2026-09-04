@@ -175,11 +175,6 @@ await assert.rejects(
   /The 'tableCellDeltas' field can only be used with type='table'/,
   "append_block must reject tableCellDeltas on a non-table block",
 );
-await assert.rejects(
-  appendBlock({ docId: "doc-1", type: "table", rows: 2, columns: 2 }),
-  /A table needs tableData \(or tableCellDeltas\) to have any cell content/,
-  "append_block must not silently create an empty table under strict",
-);
 assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
 
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);

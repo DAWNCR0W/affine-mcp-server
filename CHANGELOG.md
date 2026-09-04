@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- `append_block` no longer reports success for a `type: "table"` call with no cell content. Under `strict` it raises, and non-strict callers get a `warnings` entry on the result; an empty table could not be filled afterwards because `update_block` rejects `affine:table`.
+### Added
+- `append_block` now returns a `warnings` entry when a `type: "table"` call creates a table with no cell content, naming `tableData`, `tableCellDeltas` and `update_table_cell` as the ways to fill it. Creating an empty table on purpose still succeeds unchanged.
 
 ## [3.5.0] - 2026-08-31
 
