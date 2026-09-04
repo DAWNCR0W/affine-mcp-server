@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `append_block` now returns a `warnings` entry when a `type: "table"` call creates a table with no cell content, naming `tableData`, `tableCellDeltas` and `update_table_cell` as the ways to fill it. Creating an empty table on purpose still succeeds unchanged.
+
 ## [3.5.0] - 2026-08-31
 
 ### Added

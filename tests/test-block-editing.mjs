@@ -70,6 +70,7 @@ async function main() {
     quoteBlockId: null,
     codeBlockId: null,
     tableBlockId: null,
+    emptyTableBlockId: null,
     emptyOverrideTableBlockId: null,
     taskText: 'Ship the verified release',
     oldTaskText: 'Ship the draft release',
@@ -85,6 +86,7 @@ async function main() {
     tableLinkUrl: 'https://gitlab.com',
     tableSiblingHeaderText: 'Keep header sibling',
     tableSiblingDataText: 'Keep data sibling',
+    emptyTableFilledText: 'Filled after creation',
     tableCellDeltas: [
       { insert: 'team.AI', attributes: { code: true } },
       { insert: ' | ' },
@@ -241,6 +243,29 @@ async function main() {
     });
     state.tableBlockId = table?.blockId;
     expectTruthy(state.tableBlockId, 'append_block 2x2 table id');
+
+    const emptyTable = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 2,
+      columns: 2,
+    });
+    state.emptyTableBlockId = emptyTable?.blockId;
+    expectTruthy(state.emptyTableBlockId, 'append_block empty table id');
+    expectEqual(emptyTable?.appended, true, 'append_block empty table still succeeds');
+    expectTruthy(
+      emptyTable?.warnings?.some(warning => warning.includes(state.emptyTableBlockId)),
+      'append_block empty table warns about the missing cell content',
+    );
+    expectTruthy(
+      emptyTable?.warnings?.some(warning => warning.includes('update_table_cell')),
+      'append_block empty table warning names update_table_cell',
+    );
+    expectTruthy(
+      table?.warnings === undefined,
+      'append_block does not warn when tableData is supplied',
+    );
 
     const emptyOverrideTable = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -404,6 +429,24 @@ async function main() {
       unchangedHeaderText?.cell?.deltas,
       [{ insert: state.tableHeaderText, attributes: { bold: true } }],
       'table plain-text no-op preserves header bold',
+    );
+
+    // The warning on an empty table points at update_table_cell, so prove the
+    // route it names actually works on a table created with no cell content.
+    const filledEmptyTableCell = await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.emptyTableBlockId,
+      row: 1,
+      column: 1,
+      text: state.emptyTableFilledText,
+    });
+    expectEqual(filledEmptyTableCell?.updated, true, 'update_table_cell fills an empty table cell');
+    expectEqual(filledEmptyTableCell?.previous?.text, '', 'empty table cell started empty');
+    expectEqual(
+      filledEmptyTableCell?.cell?.text,
+      state.emptyTableFilledText,
+      'empty table cell holds the new text',
     );
 
     await expectCallError('update_table_cell', {
