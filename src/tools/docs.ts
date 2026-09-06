@@ -3043,6 +3043,16 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
+      // Creating an empty table is supported, but nothing on the result said the
+      // cells were empty, so a caller that meant to pass cell content had no
+      // signal. Name the three ways to fill it rather than rejecting the call.
+      const warnings: string[] = [];
+      if (normalized.type === "table" && !normalized.tableData && !normalized.tableCellDeltas) {
+        warnings.push(
+          `Table ${blockId} was created with no cell content. Pass tableData or tableCellDeltas on append_block to fill it, or use update_table_cell to set cells afterwards.`,
+        );
+      }
+
       return {
         appended: true,
         blockId,
@@ -3052,6 +3062,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         legacyType: normalized.legacyType || null,
         ownedIds: normalized._frameOwnedIds,
         missing: normalized._frameMissing,
+        ...(warnings.length ? { warnings } : {}),
       };
     } finally {
       socket.disconnect();
@@ -6305,6 +6316,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       ...(result.ownedIds ? { ownedIds: result.ownedIds } : {}),
       ...(result.missing ? { missing: result.missing } : {}),
       ...(markdownApplied ? { markdown: markdownApplied } : {}),
+      ...(result.warnings?.length ? { warnings: result.warnings } : {}),
     });
   };
   server.registerTool(
