@@ -9,6 +9,7 @@ import { registerCommentTools } from "../dist/tools/comments.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { registerHistoryTools } from "../dist/tools/history.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
+import { registerUserCRUDTools } from "../dist/tools/userCRUD.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
 import {
   BoundedHistoryTake,
@@ -82,6 +83,7 @@ registerCommentTools(registry, gql, {});
 registerDocTools(registry, gql, {});
 registerHistoryTools(registry, gql, {});
 registerNotificationTools(registry, gql);
+registerUserCRUDTools(registry, gql);
 registerWorkspaceTools(registry, gql);
 
 function toolSchema(name) {
@@ -90,12 +92,109 @@ function toolSchema(name) {
   return z.object(fields);
 }
 
+const highlightedText = [
+  { insert: "plain " },
+  {
+    insert: "colored",
+    attributes: {
+      color: "var(--affine-text-highlight-foreground-blue)",
+      background: "var(--affine-text-highlight-yellow)",
+      futureAttribute: { enabled: true },
+    },
+  },
+];
+for (const [name, required] of [
+  ["append_block", { docId: "doc-1", type: "paragraph" }],
+  ["update_block", { docId: "doc-1", blockId: "block-1" }],
+  ["update_table_cell", { docId: "doc-1", blockId: "table-1", row: 0, column: 0 }],
+]) {
+  const schema = toolSchema(name);
+  const parsed = schema.safeParse({ ...required, text: highlightedText });
+  assert.equal(parsed.success, true, `${name} must accept formatting-preserving text deltas`);
+  assert.deepEqual(parsed.data.text, highlightedText, `${name} must preserve arbitrary inline attributes`);
+  for (const invalidText of [
+    { insert: "not-an-array" },
+    [{ insert: 42 }],
+    [{ insert: "invalid attributes", attributes: [] }],
+  ]) {
+    assert.equal(
+      schema.safeParse({ ...required, text: invalidText }).success,
+      false,
+      `${name} must reject malformed text deltas`,
+    );
+  }
+}
+
+const updateTableCellSchema = toolSchema("update_table_cell");
+expectSchemaRejects(updateTableCellSchema, [
+  { docId: "doc-1", blockId: "table-1", row: -1, column: 0, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 0, column: -1, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 1.5, column: 0, text: "x" },
+  { docId: "doc-1", blockId: "table-1", row: 0, column: 1.5, text: "x" },
+]);
+
+const appendBlockSchema = toolSchema("append_block");
+const tableCell = { docId: "doc-1", type: "table", rows: 1, columns: 2 };
+const tableData = [["left", "right"]];
+const tableCellDeltas = [[[{ insert: "left" }], [{ insert: "right", attributes: { bold: true } }]]];
+const parsedTable = appendBlockSchema.safeParse({ ...tableCell, tableData, tableCellDeltas });
+assert.equal(parsedTable.success, true, "append_block must accept table cell contents");
+assert.deepEqual(parsedTable.data.tableData, tableData, "append_block must preserve tableData");
+assert.deepEqual(
+  parsedTable.data.tableCellDeltas,
+  tableCellDeltas,
+  "append_block must preserve per-cell rich-text deltas",
+);
+for (const invalidTable of [
+  { tableData: "not-an-array" },
+  { tableData: ["not-a-row"] },
+  { tableData: [[42]] },
+  { tableCellDeltas: [[[{ insert: 42 }]]] },
+  { tableCellDeltas: [[[{ insert: "bad attributes", attributes: [] }]]] },
+]) {
+  assert.equal(
+    appendBlockSchema.safeParse({ ...tableCell, ...invalidTable }).success,
+    false,
+    `append_block must reject ${JSON.stringify(invalidTable)}`,
+  );
+}
+
+const appendBlock = registry.tools.get("append_block").handler;
+for (const [invalidCells, expected] of [
+  [{ rows: 2, columns: 2, tableCellDeltas: [[[{ insert: "only-one-row" }], []]] }, /tableCellDeltas row count must match table rows/],
+  [{ rows: 1, columns: 2, tableCellDeltas: [[[{ insert: "only-one-column" }]]] }, /tableCellDeltas column count must match table columns/],
+]) {
+  await assert.rejects(
+    appendBlock({ docId: "doc-1", type: "table", ...invalidCells }),
+    expected,
+    "append_block must reject tableCellDeltas that do not match the table shape",
+  );
+}
+await assert.rejects(
+  appendBlock({ docId: "doc-1", type: "paragraph", tableCellDeltas: [[[{ insert: "x" }]]] }),
+  /The 'tableCellDeltas' field can only be used with type='table'/,
+  "append_block must reject tableCellDeltas on a non-table block",
+);
+assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
+
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
 assert.equal(toolSchema("list_comments").safeParse({ docId: "d", first: 1.5 }).success, false);
 assert.equal(toolSchema("list_notifications").safeParse({ offset: -1 }).success, false);
 assert.equal(toolSchema("list_histories").safeParse({ guid: "d", take: 0 }).success, false);
+
+const emptyWorkspaceUpdate = parseResult(await registry.tools.get("update_workspace").handler({
+  id: "workspace-1",
+}));
+assert.equal(emptyWorkspaceUpdate.code, "invalid_arguments");
+assert.match(emptyWorkspaceUpdate.error, /requires at least one of: public, enableAi/);
+assert.equal(requestCount, 0, "empty workspace update must not reach AFFiNE");
+
+const emptyProfileUpdate = parseResult(await registry.tools.get("update_profile").handler({}));
+assert.equal(emptyProfileUpdate.code, "invalid_arguments");
+assert.match(emptyProfileUpdate.error, /requires at least one of: name, avatarUrl/);
+assert.equal(requestCount, 0, "empty profile update must not reach AFFiNE");
 
 const deleteDoc = registry.tools.get("delete_doc").handler;
 await assert.rejects(

@@ -64,6 +64,7 @@ export const ALL_TOOLS = [
   "list_tags",
   "list_workspace_tree",
   "list_workspaces",
+  "move_block",
   "move_doc",
   "move_organize_node",
   "publish_doc",
@@ -86,6 +87,7 @@ export const ALL_TOOLS = [
   "set_mindmap_style",
   "sign_in",
   "trash_doc",
+  "update_block",
   "update_collection",
   "update_collection_rules",
   "update_comment",
@@ -99,6 +101,7 @@ export const ALL_TOOLS = [
   "update_profile",
   "update_settings",
   "update_surface_element",
+  "update_table_cell",
   "update_workspace",
   "upload_blob",
 ] as const;
@@ -183,6 +186,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   list_tags: ["docs", "docs.tags", "docs.read", "read"],
   list_workspace_tree: ["docs", "docs.tree", "docs.read", "read"],
   list_workspaces: ["workspaces", "workspaces.read", "read"],
+  move_block: ["docs", "docs.write", "write"],
   move_doc: ["docs", "docs.tree", "docs.write", "write"],
   move_organize_node: ["organize", "organize.folders", "organize.write", "experimental", "write"],
   publish_doc: ["docs", "docs.share", "docs.write", "write"],
@@ -201,6 +205,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   set_doc_property: ["docs", "docs.properties", "docs.write", "write"],
   sign_in: ["users", "users.auth", "auth", "write"],
   trash_doc: ["docs", "docs.write", "write"],
+  update_block: ["docs", "docs.write", "write"],
   update_collection: ["organize", "organize.collections", "organize.write", "write"],
   update_collection_rules: ["organize", "organize.collections", "organize.write", "write"],
   update_comment: ["comments", "comments.write", "write"],
@@ -213,6 +218,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   update_profile: ["users", "users.write", "admin", "write"],
   update_settings: ["users", "users.write", "admin", "write"],
   update_surface_element: ["docs", "docs.edgeless", "docs.surface", "docs.write", "write"],
+  update_table_cell: ["docs", "docs.write", "write"],
   update_workspace: ["workspaces", "workspaces.write", "admin", "write"],
   upload_blob: ["blobs", "blobs.write", "write"],
 };
@@ -273,6 +279,7 @@ const CORE_TOOLS = new Set<ToolName>([
   "list_docs_by_tag",
   "list_tags",
   "list_workspaces",
+  "move_block",
   "read_database_cells",
   "read_database_columns",
   "read_doc",
@@ -282,9 +289,11 @@ const CORE_TOOLS = new Set<ToolName>([
   "search_docs",
   "sign_in",
   "trash_doc",
+  "update_block",
   "update_database_row",
   "update_doc_icon",
   "update_doc_title",
+  "update_table_cell",
 ]);
 
 const AUTHORING_EXCLUDED_GROUPS = new Set([

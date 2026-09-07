@@ -146,13 +146,13 @@ test.describe.serial('AFFiNE Database Verification', () => {
       await expect(databaseBlock.first()).toBeVisible({ timeout: 30_000 });
 
       // Verify column headers
-      const columnNames = ['Name', 'Status', 'Priority', 'Done'];
+      const columnNames = ['Title', 'Status'];
       for (const colName of columnNames) {
         const colHeader = page.getByText(colName, { exact: true });
         await expect(colHeader.first()).toBeVisible({ timeout: 10_000 });
       }
 
-      // Verify row content — check that each row's Name value appears
+      // Verify row content — check that each row's title value appears
       const rowNames = ['Build feature', 'Write tests', 'Deploy release'];
       for (const name of rowNames) {
         const rowCell = page.getByText(name, { exact: true });

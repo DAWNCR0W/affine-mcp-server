@@ -198,6 +198,21 @@ async function initializeSession(baseUrl, id) {
   return sessionId;
 }
 
+async function waitForSessionCapacity(baseUrl, id, timeoutMs = 6_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await postMcp(baseUrl, initializeBody(id));
+    if (response.status === 200) {
+      await response.body?.cancel();
+      return;
+    }
+    assertEqual(response.status, 503, "session capacity polling status");
+    await response.body?.cancel();
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting ${timeoutMs}ms for session capacity`);
+}
+
 async function testRuntimeConfig() {
   assertEqual(parseBodyLimit(undefined), 4 * 1024 * 1024, "default body limit");
   assertEqual(parseBodyLimit("1kb"), 1024, "kilobyte body limit");
@@ -266,10 +281,46 @@ async function testBodyLimitErrors() {
   }
 }
 
+async function testUnknownSessionReturnsNotFound() {
+  const server = await startHealthyServer();
+  try {
+    const unknownSessionId = "00000000-0000-0000-0000-000000000000";
+    const toolsList = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+
+    const unknownPost = await postMcp(server.baseUrl, toolsList, unknownSessionId);
+    assertEqual(unknownPost.status, 404, "unknown-session POST status");
+    const unknownPostBody = await readJson(unknownPost);
+    assertEqual(unknownPostBody.error?.code, -32001, "unknown-session POST error code");
+    assertEqual(
+      unknownPostBody.error?.message,
+      "Session not found",
+      "unknown-session POST error",
+    );
+
+    for (const method of ["GET", "DELETE"]) {
+      const response = await fetch(`${server.baseUrl}/mcp`, {
+        method,
+        headers: {
+          Accept: "application/json, text/event-stream",
+          "mcp-session-id": unknownSessionId,
+        },
+      });
+      assertEqual(response.status, 404, `unknown-session ${method} status`);
+      await response.body?.cancel();
+    }
+
+    const missingSession = await postMcp(server.baseUrl, toolsList);
+    assertEqual(missingSession.status, 400, "missing-session non-initialize status");
+    await missingSession.body?.cancel();
+  } finally {
+    await server.close();
+  }
+}
+
 async function testSessionCapacityActivityAndIdleCleanup() {
   const server = await startHealthyServer({
     AFFINE_MCP_HTTP_MAX_SESSIONS: "1",
-    AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS: "600",
+    AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS: "4000",
   });
   try {
     const firstSessionId = await initializeSession(server.baseUrl, 1);
@@ -278,7 +329,7 @@ async function testSessionCapacityActivityAndIdleCleanup() {
     assertEqual(full.status, 503, "session capacity status");
     assertEqual((await readJson(full)).error?.code, -32002, "session capacity error code");
 
-    await delay(400);
+    await delay(2200);
     const activity = await postMcp(
       server.baseUrl,
       { jsonrpc: "2.0", method: "notifications/initialized" },
@@ -287,13 +338,12 @@ async function testSessionCapacityActivityAndIdleCleanup() {
     assert([200, 202, 204].includes(activity.status), `session activity status: ${activity.status}`);
     await activity.body?.cancel();
 
-    await delay(400);
+    await delay(2200);
     const stillFull = await postMcp(server.baseUrl, initializeBody(3));
     assertEqual(stillFull.status, 503, "session activity refreshes idle deadline");
     await stillFull.body?.cancel();
 
-    await delay(500);
-    await initializeSession(server.baseUrl, 4);
+    await waitForSessionCapacity(server.baseUrl, 4);
     assert(server.logs().stderr.includes("idle timeout"), "idle cleanup should be logged");
   } finally {
     await server.close();
@@ -325,12 +375,16 @@ async function testForcedConnectionDeadline() {
     socket.once("connect", resolve);
     socket.once("error", reject);
   });
-  socket.write(
-    "POST /mcp HTTP/1.1\r\n" +
-      `Host: 127.0.0.1:${server.port}\r\n` +
-      "Content-Type: application/json\r\n" +
-      "Content-Length: 100000\r\n\r\n{",
-  );
+  await new Promise((resolve, reject) => {
+    socket.write(
+      "POST /mcp HTTP/1.1\r\n" +
+        `Host: 127.0.0.1:${server.port}\r\n` +
+        "Content-Type: application/json\r\n" +
+        "Content-Length: 100000\r\n\r\n{",
+      error => error ? reject(error) : resolve(),
+    );
+  });
+  await delay(100);
 
   server.child.kill("SIGTERM");
   const result = await waitForExit(server.child, 2_000);
@@ -434,6 +488,7 @@ async function main() {
   await testRuntimeConfig();
   await testStartupErrors();
   await testBodyLimitErrors();
+  await testUnknownSessionReturnsNotFound();
   await testSessionCapacityActivityAndIdleCleanup();
   await testShutdownWithActiveSession();
   await testForcedConnectionDeadline();

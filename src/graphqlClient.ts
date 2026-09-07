@@ -2,6 +2,7 @@ import { fetch } from "undici";
 
 import type { AuthSnapshot } from "./authSession.js";
 import { VERSION, AFFINE_CLIENT_VERSION } from "./config.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const GQL_FETCH_TIMEOUT_MS = 30_000;
 
@@ -205,24 +206,15 @@ export class GraphQLClient {
       ...connection.headers,
     };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GQL_FETCH_TIMEOUT_MS);
-    let res;
-    try {
-      res = await fetch(this.opts.endpoint, {
+    const { response: res, body } = await fetchResponseBody(
+      signal => fetch(this.opts.endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({ query, variables }),
-        signal: controller.signal,
-      });
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new Error(`GraphQL request timed out after ${GQL_FETCH_TIMEOUT_MS / 1000}s`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
+        signal,
+      }),
+      { label: "GraphQL request", timeoutMs: GQL_FETCH_TIMEOUT_MS },
+    );
 
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
@@ -234,7 +226,6 @@ export class GraphQLClient {
 
     const contentType = res.headers.get("content-type") || "";
     if (!contentType.includes("application/json") && !contentType.includes("application/graphql")) {
-      const body = await res.text();
       const snippet = sanitizeErrorBody(body);
       throw new Error(
         `GraphQL endpoint returned non-JSON response (${res.status} ${res.statusText}, ` +
@@ -243,17 +234,20 @@ export class GraphQLClient {
     }
 
     if (!res.ok) {
-      let body: string;
+      let detail = body;
       try {
-        const json = await res.json() as any;
-        body = json.errors?.map((e: any) => e.message).join("; ") || JSON.stringify(json);
-      } catch {
-        body = await res.text().catch(() => "(unreadable body)");
-      }
-      throw new Error(`GraphQL HTTP ${res.status}: ${sanitizeErrorBody(body)}`);
+        const json = JSON.parse(body) as any;
+        detail = json.errors?.map((e: any) => e.message).join("; ") || JSON.stringify(json);
+      } catch {}
+      throw new Error(`GraphQL HTTP ${res.status}: ${sanitizeErrorBody(detail)}`);
     }
 
-    const json = await res.json() as any;
+    let json: any;
+    try {
+      json = JSON.parse(body);
+    } catch {
+      throw new Error("GraphQL endpoint returned invalid JSON.");
+    }
     if (json.errors) {
       const msg = json.errors.map((e: any) => e.message).join("; ");
       throw new Error(`GraphQL error: ${sanitizeErrorBody(msg)}`);

@@ -19,7 +19,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `list_workspaces` | List all available workspaces | Includes best-effort profile names, avatar references, and direct URLs; set `includeProfile: false` for a faster GraphQL-only response |
 | `get_workspace` | Read workspace details | Includes permissions plus best-effort profile metadata and a direct URL |
 | `create_workspace` | Create a workspace with an initial document | Destructive in the sense that it creates new server state |
-| `update_workspace` | Update workspace settings | Use carefully in shared workspaces |
+| `update_workspace` | Update workspace settings | Requires at least one of `public` or `enableAi`; use carefully in shared workspaces |
 | `delete_workspace` | Permanently delete a workspace | Destructive; `confirmWorkspaceId` must exactly match `id`; unconfirmed outcomes return an MCP error instead of a success receipt |
 | `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs; depth is limited to 0-20 |
 | `get_orphan_docs` | Find documents that are not linked from a parent doc | Useful for cleanup and audits |
@@ -61,7 +61,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, and `linkedDocIds` for inline LinkedPage references |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
@@ -93,11 +93,28 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
 | `get_doc_icon` | Read a document's current sidebar icon | |
-| `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
+| `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. |
+| `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+
+#### Formatting-preserving block text
+
+For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `update_table_cell.text` accept either a string or a delta array. Each delta requires a string `insert` and may contain arbitrary `attributes`; the server passes attributes through without restricting them to a fixed formatting vocabulary.
+
+```json
+[
+  { "insert": "plain " },
+  { "insert": "colored", "attributes": { "color": "var(--affine-text-highlight-foreground-blue)" } },
+  { "insert": " highlighted", "attributes": { "background": "var(--affine-text-highlight-yellow)" } }
+]
+```
+
+`read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
 
 ### Tags
 
@@ -130,7 +147,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
-| `add_database_column` | Add a column to a database block | Supports `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date` |
+| `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
@@ -150,7 +167,7 @@ AFFiNE's edgeless doc has two layers: top-level edgeless blocks (`note`, `frame`
 | `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes any connectors referencing the deleted element. |
 | `update_frame_children` | Replace a frame block's contents wholesale | Every resolved id (surface element or edgeless block) goes into `prop:childElementIds` and comes back in `ownedIds`; unknown ids in `missing`. Default `resizeToFit: true` recomputes xywh to match new contents + `padding` + title band; pass `resizeToFit: false` to preserve the current box. Pass `[]` to clear ownership (resize skipped). |
 | `update_edgeless_block` | Partially update a note/frame/edgeless-text block | `x`/`y`/`width`/`height` merge with current `prop:xywh`; `background` replaces `prop:background`. Fields not applicable to the flavour come back under `ignored`. Use for repositioning / resizing / recoloring without re-creating the block. |
-| `delete_block` | Delete a block by id | Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
+| `delete_block` | Delete a block by id | Returns the deleted root and descendant snapshots so callers can reconstruct content. Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
 
 ### Layout helpers on `append_block`
 
@@ -185,7 +202,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | --- | --- | --- |
 | `current_user` | Return the current signed-in user | |
 | `sign_in` | Sign in with email and password | Self-hosted flows only for direct programmatic sign-in |
-| `update_profile` | Update current user profile data | |
+| `update_profile` | Update current user profile data | Requires at least one of `name` or `avatarUrl` |
 | `update_settings` | Update user notification preferences | |
 
 ## Notifications

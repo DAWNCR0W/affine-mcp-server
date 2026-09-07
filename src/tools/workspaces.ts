@@ -5,7 +5,8 @@ import * as Y from "yjs";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
-import { secureRandomString } from "../util/random.js";
+import { secureAffineId } from "../util/random.js";
+import { fetchResponseBody } from "../util/httpResponse.js";
 import {
   connectWorkspaceSocket,
   joinWorkspace,
@@ -37,6 +38,8 @@ const DEFAULT_WORKSPACE_TOOL_DEPENDENCIES: WorkspaceToolDependencies = {
   joinWorkspace,
   loadDoc,
 };
+
+const WORKSPACE_CREATE_TIMEOUT_MS = 30_000;
 
 function affineBaseUrl(endpoint: string): string {
   const configuredBaseUrl = process.env.AFFINE_BASE_URL?.trim();
@@ -124,11 +127,7 @@ async function enrichWorkspaceProfiles(
   }
 }
 
-// Generate AFFiNE-style document ID
-function generateDocId(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-  return secureRandomString(10, chars);
-}
+const generateDocId = secureAffineId;
 
 // Create initial workspace data with a document
 function createInitialWorkspaceData(workspaceName: string = 'New Workspace', avatar: string = '') {
@@ -362,16 +361,35 @@ export function registerWorkspaceTools(
         });
         
         // Send request
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            ...headers,
-            ...form.getHeaders()
-          },
-          body: form as any
-        });
-        
-        const result = await response.json() as any;
+        const { response, body } = await fetchResponseBody(
+          signal => fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              ...headers,
+              ...form.getHeaders()
+            },
+            body: form as any,
+            signal,
+          }),
+          { label: "Workspace creation request", timeoutMs: WORKSPACE_CREATE_TIMEOUT_MS },
+        );
+
+        let result: any;
+        try {
+          result = JSON.parse(body);
+        } catch {
+          if (!response.ok) {
+            throw new Error(`Workspace creation failed with HTTP ${response.status}.`);
+          }
+          throw new Error("Workspace creation returned invalid JSON.");
+        }
+
+        if (!response.ok) {
+          const message = typeof result.errors?.[0]?.message === "string"
+            ? `: ${result.errors[0].message}`
+            : "";
+          throw new Error(`Workspace creation failed with HTTP ${response.status}${message}`);
+        }
         
         if (result.errors) {
           throw new Error(result.errors[0].message);
@@ -444,6 +462,11 @@ export function registerWorkspaceTools(
   // UPDATE WORKSPACE
   const updateWorkspaceHandler = async ({ id, public: isPublic, enableAi }: { id: string; public?: boolean; enableAi?: boolean }) => {
       try {
+        if (isPublic === undefined && enableAi === undefined) {
+          return toolError("update_workspace requires at least one of: public, enableAi", {
+            code: "invalid_arguments",
+          });
+        }
         const mutation = `
           mutation UpdateWorkspace($input: UpdateWorkspaceInput!) {
             updateWorkspace(input: $input) {
@@ -484,7 +507,7 @@ export function registerWorkspaceTools(
     "update_workspace",
     {
       title: "Update Workspace",
-      description: "Update workspace settings",
+      description: "Update workspace settings. Requires at least one of public or enableAi.",
       inputSchema: {
         id: z.string().describe("Workspace ID"),
         public: z.boolean().optional().describe("Make workspace public"),

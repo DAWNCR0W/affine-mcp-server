@@ -1,6 +1,7 @@
 import { fetch } from "undici";
 
 import { AFFINE_CLIENT_VERSION } from "./config.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const AUTH_FETCH_TIMEOUT_MS = 30_000;
 
@@ -61,25 +62,17 @@ export async function loginWithPassword(
   if (!hasHeader(headers, "x-affine-version")) {
     headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AUTH_FETCH_TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch(url, {
+  const { response: res, body } = await fetchResponseBody(
+    signal => fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({ email, password }),
-      signal: controller.signal,
-    });
-  } catch (err: any) {
-    if (err.name === "AbortError") throw new Error(`Sign-in request timed out after ${AUTH_FETCH_TIMEOUT_MS / 1000}s`);
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+    { label: "Sign-in request", timeoutMs: AUTH_FETCH_TIMEOUT_MS },
+  );
   if (!res.ok) {
-    const raw = await res.text().catch(() => "");
-    const sanitized = raw.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+    const sanitized = body.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
     const truncated = sanitized.length > 200 ? sanitized.slice(0, 200) + "..." : sanitized;
     throw new Error(`Sign-in failed: ${res.status} ${truncated}`);
   }
@@ -98,4 +91,3 @@ export async function loginWithPassword(
   assertNoCRLF(cookieHeader, "Cookie header from sign-in");
   return { cookieHeader };
 }
-

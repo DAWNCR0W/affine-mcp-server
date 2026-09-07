@@ -3,6 +3,7 @@
   "classifications": {
     "test-auth-session.mjs": "fast",
     "test-blob-upload-contract.mjs": "fast",
+    "test-block-editing.mjs": "integration",
     "test-canvas-tool-map-demo.mjs": "integration",
     "test-capabilities-fidelity.mjs": "integration",
     "test-cli-commands.mjs": "fast",
@@ -29,6 +30,7 @@
     "test-find-doc-by-title.mjs": "integration",
     "test-http-bearer.mjs": "integration",
     "test-http-email-password.mjs": "integration",
+    "test-http-response-safety.mjs": "fast",
     "test-http-runtime-safety.mjs": "fast",
     "test-http-security.mjs": "fast",
     "test-icons.mjs": "integration",
@@ -75,6 +77,7 @@
       "test-destructive-mutation-ack.mjs",
       "test-docs-drift.mjs",
       "test-document-mutation-safety.mjs",
+      "test-http-response-safety.mjs",
       "test-http-runtime-safety.mjs",
       "test-http-security.mjs",
       "test-input-contracts.mjs",
@@ -96,7 +99,9 @@
       "test-workspace-discovery.mjs"
     ],
     "e2e": [
+      "test-block-editing.mjs",
       "test-database-creation.mjs",
+      "test-capabilities-fidelity.mjs",
       "test-database-cells.mjs",
       "test-database-linked-doc.mjs",
       "test-http-email-password.mjs",
@@ -121,6 +126,7 @@
     ],
     "comprehensive": [
       "test-tool-filtering.mjs",
+      "test-block-editing.mjs",
       "test-capabilities-fidelity.mjs",
       "test-create-placement.mjs",
       "test-doc-discovery.mjs",

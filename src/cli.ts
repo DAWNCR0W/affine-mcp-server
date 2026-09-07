@@ -17,6 +17,7 @@ import {
 import { loginWithPassword } from "./auth.js";
 import { probeOAuthReadiness, validateOAuthConfig } from "./oauth.js";
 import { parseBooleanFlag } from "./networkSecurity.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const CLI_FETCH_TIMEOUT_MS = 30_000;
 
@@ -126,26 +127,17 @@ async function gql(
   const body: any = { query };
   if (variables) body.variables = variables;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CLI_FETCH_TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch(graphqlEndpoint, {
+  const { response: res, body: responseBody } = await fetchResponseBody(
+    signal => fetch(graphqlEndpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      throw new Error(`Request timed out after ${CLI_FETCH_TIMEOUT_MS / 1000}s`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+    { label: "Request", timeoutMs: CLI_FETCH_TIMEOUT_MS },
+  );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json() as any;
+  const json = JSON.parse(responseBody) as any;
   if (json.errors) throw new Error(json.errors.map((e: any) => e.message).join("; "));
   return json.data;
 }
@@ -792,6 +784,7 @@ async function doctor(args: string[]) {
   const healthTimer = setTimeout(() => healthController.abort(), CLI_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(summary.baseUrl, { signal: healthController.signal });
+    await response.body?.cancel();
     checks.push({
       name: "base-url",
       ok: true,

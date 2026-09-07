@@ -1,5 +1,5 @@
 {
-  "version": "3.2.2",
+  "version": "3.5.1",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -66,6 +66,7 @@
     "list_tags",
     "list_workspace_tree",
     "list_workspaces",
+    "move_block",
     "move_doc",
     "move_organize_node",
     "publish_doc",
@@ -88,6 +89,7 @@
     "set_mindmap_style",
     "sign_in",
     "trash_doc",
+    "update_block",
     "update_collection",
     "update_collection_rules",
     "update_comment",
@@ -101,6 +103,7 @@
     "update_profile",
     "update_settings",
     "update_surface_element",
+    "update_table_cell",
     "update_workspace",
     "upload_blob"
   ]

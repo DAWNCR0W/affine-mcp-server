@@ -8,7 +8,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added eight native mindmap tools for hierarchy editing, right/left/balance layouts, four styles, and native lock/unlock, with read-only discovery, validation, and request/response documentation.
+
+### Tests
+- Added native mindmap coverage for Yjs round trips, subtree moves, invalid topology, layout geometry, style transitions, lock inheritance, and tool filtering.
+
+## [3.5.1] - 2026-09-07
+
+### Security
+- Updated locked `fast-uri` to 3.1.7 and `qs` to 6.16.0 to address reported URI parsing and query-string parsing advisories, including the required `side-channel` dependency updates.
+
+### Added
+- `append_block` now returns a `warnings` entry when a `type: "table"` call creates a table with no cell content, naming `tableData`, `tableCellDeltas` and `update_table_cell` as the ways to fill it. Creating an empty table on purpose still succeeds unchanged.
+
+### Dependencies
+- Updated locked `markdown-it` from 14.3.0 to 14.3.1, `@types/markdown-it` from 14.1.2 to 14.2.0, and `tsx` from 4.23.12 to 4.23.13.
+
+### Tests
+- Added integration coverage for empty-table warnings and filling an empty table with `update_table_cell`.
+
+## [3.5.0] - 2026-08-31
+
+### Added
+- Added `update_table_cell` for in-place updates to AFFiNE table cells with zero-based coordinates and formatting-preserving rich-text deltas.
+
+### Fixed
+- `append_block` now accepts `tableData` and `tableCellDeltas`, so a table created with cell contents is no longer silently empty; previously the schema stripped both fields and only `append_markdown` could fill cells.
+
+### Dependencies
+- Updated `jose` from 6.2.9 to 6.2.10.
+
+### Tests
+- Hardened container startup smoke checks to fail immediately when the process exits and to require protected mode from the live health endpoint.
+
+## [3.4.1] - 2026-08-27
+
+### Fixed
+- Markdown rich-text operations now use one canonical content input, so strict divider validation cannot accept and then discard non-empty delta content.
+- The container now starts the HTTP server when run without arguments instead of inheriting the Node base image command and exiting; PR image checks now supply the required bearer token and wait for a healthy container.
+
+## [3.4.0] - 2026-08-27
+
+### Added
+- `append_block` and `update_block` now accept formatting-preserving rich-text delta arrays as well as plain strings.
+- `read_doc` and block-editing snapshots now expose canonical `deltas` alongside flattened text for lossless read-modify-write flows.
+
+### Security
+- AFFiNE document and workspace identifiers now use the shared cryptographically secure identifier generator.
+
+### Fixed
+- GraphQL, sign-in, readiness, CLI, blob-upload, and workspace-creation response bodies are bounded to 16 MiB while request timeouts remain active through complete body consumption.
+- Empty workspace and profile updates are rejected before reaching AFFiNE, and ignored-only surface or edgeless updates no longer push unchanged CRDT state.
+- Empty rich-text delta segments that normalize to no content no longer make divider creation fail strict validation.
+
+### Dependencies
+- Aligned the locked Node.js type definitions with the minimum supported Node.js 20 runtime.
+
+### Tests
+- Expanded CI validation to Node.js 20, 22, 24, and 26.
+- Added focused and browser-backed coverage for rich-text block formatting, bounded response handling, mutation input contracts, and no-op CRDT updates.
+
+## [3.3.0] - 2026-08-24
+
+### Added
 - Added recoverable `trash_doc` and `restore_doc` tools backed by AFFiNE workspace metadata, with idempotent retries and read-back verification.
+- Added `update_block` and `move_block` for in-place text-block editing, conversion, reordering, and reparenting without replacing block IDs.
+- Added `title` column support for AFFiNE databases, including duplicate-title rejection and synchronized updates across every stored view representation.
+
+### Changed
+- `read_doc` now reports hierarchy-derived `parentId` values, and `delete_block` returns snapshots of removed root and descendant blocks.
+- The canonical MCP tool surface now contains 96 tools.
+
+### Fixed
+- Preserved AFFiNE rich-text deltas when reading and updating database cells, while rejecting malformed rich-text inputs before mutation.
+- Unknown HTTP MCP session IDs now return `404 Session not found` instead of being treated as new-session requests.
+- Markdown export no longer over-escapes ordinary punctuation or ampersands and preserves unknown entity-like text.
+- Markdown fidelity reports now distinguish known import losses from lossless export behavior.
+
+### Dependencies
+- Refreshed the locked `jose` release from 6.2.8 to 6.2.9.
+
+### Tests
+- Added focused and browser-backed coverage for block editing, document trash recovery, database title columns and rich-text cells, HTTP session handling, and Markdown fidelity.
 
 ## [3.2.2] - 2026-08-18
 
@@ -671,6 +752,11 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.5.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.1
+[3.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.0
+[3.4.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.1
+[3.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.0
+[3.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.3.0
 [3.2.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.2
 [3.2.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.1
 [3.2.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.2.0
@@ -704,4 +790,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.2.2...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.5.1...HEAD

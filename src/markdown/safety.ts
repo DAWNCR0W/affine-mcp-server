@@ -1,5 +1,10 @@
+import MarkdownIt from "markdown-it";
+
 const UNSAFE_LINK_SCHEMES = new Set(["data", "file", "javascript", "vbscript"]);
 const ENTITY_LIKE_AMPERSAND = /&(?=(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]+);)/gi;
+const MARKDOWN_ENTITY = /^&(?:#(?:x[a-f0-9]{1,6}|[0-9]{1,7})|[a-z][a-z0-9]{1,31});/i;
+const INLINE_MARKDOWN_SYNTAX = new Set(["\\", "`", "*", "_", "[", "]", "<", "~"]);
+const markdownUtils = new MarkdownIt().utils;
 
 export type MarkdownFrontmatterInput = {
   docId: string;
@@ -90,11 +95,6 @@ export function hasUnsafeMarkdownLinkScheme(destination: string): boolean {
 
 function escapeMarkdownCharacter(character: string): string {
   const codePoint = character.codePointAt(0) as number;
-  const isAsciiPunctuation =
-    (codePoint >= 0x21 && codePoint <= 0x2f) ||
-    (codePoint >= 0x3a && codePoint <= 0x40) ||
-    (codePoint >= 0x5b && codePoint <= 0x60) ||
-    (codePoint >= 0x7b && codePoint <= 0x7e);
   const isStructuralWhitespace =
     codePoint <= 0x1f ||
     (codePoint >= 0x7f && codePoint <= 0x9f) ||
@@ -103,12 +103,33 @@ function escapeMarkdownCharacter(character: string): string {
   if (isStructuralWhitespace) {
     return `&#${codePoint};`;
   }
-  return isAsciiPunctuation ? `\\${character}` : character;
+  return INLINE_MARKDOWN_SYNTAX.has(character) ? `\\${character}` : character;
+}
+
+function startsMarkdownEntity(value: string, offset: number): boolean {
+  const candidate = value.slice(offset).match(MARKDOWN_ENTITY)?.[0];
+  return candidate !== undefined && markdownUtils.unescapeAll(candidate) !== candidate;
 }
 
 /** Escape untrusted text while leaving generated Markdown structure untouched. */
 export function escapeMarkdownPlainText(value: string): string {
-  return Array.from(value, escapeMarkdownCharacter).join("");
+  let offset = 0;
+  return Array.from(value, character => {
+    const currentOffset = offset;
+    offset += character.length;
+    return character === "&" && startsMarkdownEntity(value, currentOffset)
+      ? "\\&"
+      : escapeMarkdownCharacter(character);
+  })
+    .join("")
+    .replace(/(\\<[^<>]*?)>/g, "$1\\>")
+    .replace(/(\\\])\(/g, "$1\\(")
+    .replace(/(\\\]\\\([a-z][a-z0-9+.-]*):/gi, "$1\\:")
+    .replace(/^([ \t]{0,3})(#{1,6})(?=[ \t]|$)/, "$1\\$2")
+    .replace(/^([ \t]{0,3})(>)/, "$1\\$2")
+    .replace(/^([ \t]{0,3})([-+])(?=[ \t]|$)/, "$1\\$2")
+    .replace(/^([ \t]{0,3})(\d{1,9})([.)])(?=[ \t]|$)/, "$1$2\\$3")
+    .replace(/^([ \t]{0,3})-(?=(?:[ \t]*-){2,}[ \t]*$)/, "$1\\-");
 }
 
 export function escapeMarkdownLinkLabel(value: string): string {
@@ -116,7 +137,7 @@ export function escapeMarkdownLinkLabel(value: string): string {
 }
 
 export function escapeMarkdownTableCell(value: string): string {
-  return escapeMarkdownPlainText(value);
+  return escapeMarkdownPlainText(value).replace(/\|/g, "\\|");
 }
 
 export function escapeMarkdownLinkDestination(value: string): string {

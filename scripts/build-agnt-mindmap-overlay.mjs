@@ -1,5 +1,5 @@
 // Build a small overlay on the deployed 3.2.1-trash-v1 distribution. This avoids
-// shipping unrelated 3.2.2 changes from the newer fork branch during this rollout.
+// shipping unrelated newer upstream changes during this compatibility rollout.
 // Usage: npm run build; node scripts/build-agnt-mindmap-overlay.mjs BASE_DIR OUT_DIR
 import fs from 'node:fs';
 import path from 'node:path';
