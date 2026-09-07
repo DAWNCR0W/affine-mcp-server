@@ -1,5 +1,26 @@
 # Release Notes
 
+## Version 3.5.1 (2026-09-07)
+
+### Highlights
+- `append_block` now warns when a table is created without cell content and explains how to fill it with `tableData`, `tableCellDeltas`, or `update_table_cell`.
+- Intentional empty-table creation continues to succeed, and tables supplied with cell content do not receive this warning.
+
+### What Changed
+- Updated locked `fast-uri` to 3.1.7 and `qs` to 6.16.0 to address reported security advisories.
+- Returned the empty-table warning to callers and added integration coverage for creating an empty table and filling a cell afterwards.
+- Updated locked `markdown-it` to 14.3.1, `@types/markdown-it` to 14.2.0, and `tsx` to 4.23.13.
+
+### Compatibility
+- The canonical MCP surface remains at 97 tools; existing required inputs and successful empty-table creation remain compatible.
+- Node.js 20.18.1 or newer remains required.
+
+### Validation Evidence
+- Node.js 26.5.1: `npm run ci` passed (28 fast tests, 97-tool metadata, documentation, and package checks).
+- `npm audit --audit-level=low` reported zero vulnerabilities.
+- `AFFINE_REVISION=0.27.4 PLAYWRIGHT_BROWSER_CHANNEL=chrome npm run test:e2e` passed (24 integration tests and 17 Chrome browser tests).
+- Linux/amd64 Docker build and runtime smoke passed: version 3.5.1, non-root UID 100, and healthy protected HTTP mode.
+
 ## Version 3.5.0 (2026-08-31)
 
 ### Highlights

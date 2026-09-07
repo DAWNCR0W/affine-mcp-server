@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-09-07
+
+### Security
+- Updated locked `fast-uri` to 3.1.7 and `qs` to 6.16.0 to address reported URI parsing and query-string parsing advisories, including the required `side-channel` dependency updates.
+
+### Added
+- `append_block` now returns a `warnings` entry when a `type: "table"` call creates a table with no cell content, naming `tableData`, `tableCellDeltas` and `update_table_cell` as the ways to fill it. Creating an empty table on purpose still succeeds unchanged.
+
+### Dependencies
+- Updated locked `markdown-it` from 14.3.0 to 14.3.1, `@types/markdown-it` from 14.1.2 to 14.2.0, and `tsx` from 4.23.12 to 4.23.13.
+
+### Tests
+- Added integration coverage for empty-table warnings and filling an empty table with `update_table_cell`.
+
 ## [3.5.0] - 2026-08-31
 
 ### Added
@@ -732,6 +746,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.5.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.1
 [3.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.0
 [3.4.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.1
 [3.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.0
@@ -769,4 +784,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.5.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.5.1...HEAD
