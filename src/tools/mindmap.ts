@@ -30,7 +30,9 @@ export type MindmapHelpers = {
   nextSurfaceElementIndex: (values: Values) => string;
 };
 
+/** Stops local processing before a mutation delta can be sent. */
 function fail(message: string): never { throw new Error(message); }
+/** Decodes positive shape bounds before layout or resizing. */
 function bounds(element: Values): number[] {
   let b: unknown;
   try { b = JSON.parse(element.get("xywh")); } catch { fail("Invalid native node bounds"); }
@@ -38,6 +40,7 @@ function bounds(element: Values): number[] {
   return b as number[];
 }
 
+/** Validates native ownership and topology, then returns ordered shape nodes. */
 function readTree(values: Values, mindmapId: string): Tree {
   Id.parse(mindmapId);
   const map = values.get(mindmapId);
@@ -85,10 +88,12 @@ function readTree(values: Values, mindmapId: string): Tree {
   return { map, details, nodes, root: roots[0] };
 }
 
+/** Resolves a node only within the already validated mindmap. */
 function nodeIn(tree: Tree, id: string): Node {
   Id.parse(id);
   return tree.nodes.get(id) ?? fail("nodeId/parentId/beforeId is missing or belongs to another mindmap");
 }
+/** Allocates a native fractional index without changing sibling IDs. */
 function insertionIndex(parent: Node, beforeId?: string, excludeId?: string): string {
   const siblings = parent.children.filter(n => n.id !== excludeId);
   const pos = beforeId === undefined ? siblings.length : siblings.findIndex(n => n.id === beforeId);
@@ -98,8 +103,11 @@ function insertionIndex(parent: Node, beforeId?: string, excludeId?: string): st
 
 // Persist layout as well as topology: remote Yjs changes do not invoke all local
 // editor watchers. Spacing/balance match affine/gfx/mindmap/src/view/layout.ts.
+/** Persists native spacing while preserving the root anchor and collapsed subtrees. */
 function layoutTree(tree: Tree) {
+  /** Measures visible subtree height for native vertical spacing. */
   const height = (node: Node, children = node.children): number => Math.max(bounds(node.element)[3], node.detail.collapsed || !children.length ? 0 : children.reduce((sum, child) => sum + height(child), 0) + 45 * (children.length - 1));
+  /** Positions one side of a branch recursively without moving its anchor. */
   const place = (node: Node, children: Node[], right: boolean, first: boolean) => {
     if (node.detail.collapsed) return;
     const [x, y, w, h] = bounds(node.element);
@@ -123,6 +131,7 @@ function layoutTree(tree: Tree) {
   } else place(tree.root, children, tree.map.get("layoutType") === 0, true);
 }
 
+/** Estimates label bounds until the native editor can refine text measurements. */
 function resizeLabel(element: Values, label: string) {
   const [x, y] = bounds(element);
   const fontSize = Number(element.get("fontSize")) || 20;
@@ -136,6 +145,7 @@ function resizeLabel(element: Values, label: string) {
 
 // Shape fields from AFFiNE 174ad9bc5 mindmap/style.ts; colors from its pinned
 // @toeverything/theme 1.1.23. Connectors still come from the native style getter.
+/** Selects the verified BlockSuite preset for a node depth and root branch. */
 function nativeNodeStyle(style: number, root: boolean, branch: number, depth: number): Record<string, any> {
   const black = { light: "#000000", dark: "#ffffff" };
   const common = { textResizing: 0, maxWidth: 512, filled: true, color: "#000000", fontFamily: "blocksuite:surface:Poppins" };
@@ -145,7 +155,9 @@ function nativeNodeStyle(style: number, root: boolean, branch: number, depth: nu
   return { ...common, radius: 8, strokeWidth: root ? 4 : 3, strokeColor: root ? "#53b2ef" : ["#6e52df", "#e96cab", "#ff8c38", "#fcd34d", "#3cbc36", "#7ae2d5"][branch % 6], fillColor: "#ffffff", fontSize: root ? 20 : 16, fontWeight: root ? "600" : "500", padding: root ? [11, 22] : [6, 22], shadow: { offsetX: 0, offsetY: 6, blur: 12, color: "rgba(0, 0, 0, 0.14)" } };
 }
 
+/** Applies a remote style switch to every node, clearing obsolete preset fields. */
 function styleTree(tree: Tree) {
+  /** Propagates each root branch color and depth-specific style to descendants. */
   const visit = (node: Node, branch: number, depth: number) => {
     const style = nativeNodeStyle(tree.map.get("style") ?? 1, depth === 0, branch, depth);
     for (const [key, value] of Object.entries(style)) node.element.set(key, value);
@@ -157,14 +169,17 @@ function styleTree(tree: Tree) {
   visit(tree.root, 0, 0);
 }
 
+/** Reads an optional native lock flag and rejects malformed stored values. */
 function selfLocked(element: Values): boolean {
   const value = element.get("lockedBySelf");
   if (value !== undefined && typeof value !== "boolean") fail("Invalid native lockedBySelf state");
   return value ?? false;
 }
 
+/** Combines the map lock with inherited group locks, rejecting ownership cycles. */
 function mapLock(values: Values, mindmapId: string) {
   const ancestors = new Set<string>();
+  /** Walks group owners to collect inherited locks without revisiting ancestors. */
   const visit = (id: string, path: Set<string>) => {
     for (const [parentId, parent] of values.entries()) {
       if (!(parent instanceof Y.Map) || !["group", "mindmap"].includes(parent.get("type"))) continue;
@@ -182,6 +197,7 @@ function mapLock(values: Values, mindmapId: string) {
   return { lockedBySelf, lockedByAncestor, locked: lockedBySelf || lockedByAncestor };
 }
 
+/** Creates a uniquely identified shape while preserving literal label text. */
 function addShape(values: Values, helpers: MindmapHelpers, label: string) {
   const built = helpers.buildSurfaceElementData("shape", helpers.nextSurfaceElementIndex(values), { text: label });
   if (values.has(built.elementId)) fail("Generated node ID collision; retry the operation");
@@ -191,6 +207,7 @@ function addShape(values: Values, helpers: MindmapHelpers, label: string) {
   return built.elementId;
 }
 
+/** Returns a validated, serializable hierarchy with geometry and effective locks. */
 export function readNativeMindmap(values: Values, mindmapId: string) {
   const tree = readTree(values, mindmapId);
   const lock = mapLock(values, mindmapId);
@@ -204,6 +221,7 @@ export function readNativeMindmap(values: Values, mindmapId: string) {
 }
 
 type Operation = "create" | "add" | "update" | "reparent" | "layout" | "style" | "lock";
+/** Mutates a request-local document; callers persist its delta only after success. */
 export function mutateNativeMindmap(values: Values, operation: Operation, p: Record<string, any>, helpers: MindmapHelpers) {
   let mindmapId = p.mindmapId as string;
   let nodeId: string | undefined;
@@ -271,9 +289,11 @@ export function mutateNativeMindmap(values: Values, operation: Operation, p: Rec
   return { ...readNativeMindmap(values, mindmapId), ...(nodeId ? { nodeId } : {}) };
 }
 
+/** Registers native mindmap tools with per-request Yjs documents and socket cleanup. */
 export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }, helpers: MindmapHelpers) {
   const base = { workspaceId: z.string().min(1).optional(), docId: Id };
   const target = { ...base, mindmapId: Id };
+  /** Loads and validates one document, persists successful mutations, and releases resources. */
   const run = (operation: Operation | "get") => async (p: Record<string, any>): Promise<CallToolResult> => {
     const workspaceId = p.workspaceId || defaults.workspaceId;
     if (!workspaceId) return toolError("workspaceId is required", { code: "invalid_mindmap_input" }) as CallToolResult;

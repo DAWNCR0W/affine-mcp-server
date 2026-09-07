@@ -314,6 +314,12 @@ registerDocTools(docServer, docGql, { workspaceId: "workspace-1" });
 const docClient = await connectInMemory(docServer, "get-doc-output-schema-test");
 
 const listedDocTools = await docClient.listTools();
+for (const name of ["create_mindmap", "add_mindmap_node", "update_mindmap_node", "reparent_mindmap_node"]) {
+  const definition = listedDocTools.tools.find(tool => tool.name === name);
+  assert.equal(definition?.outputSchema?.properties?.nodeId?.type, "string", `${name} must advertise nodeId`);
+  assert.equal(toolOutputSchemaFor(name).safeParse({ ok: true, nodeId: 42 }).success, false);
+  assert.equal(toolOutputSchemaFor(name).safeParse(representativeError).success, true);
+}
 const getDocDefinition = listedDocTools.tools.find(tool => tool.name === "get_doc");
 assert.equal(getDocDefinition.outputSchema?.type, "object");
 assert.equal(getDocDefinition.outputSchema?.properties?.value?.type, "null");

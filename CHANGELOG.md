@@ -10,8 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added eight native mindmap tools for hierarchy editing, right/left/balance layouts, four styles, and native lock/unlock, with read-only discovery, validation, and request/response documentation.
 
+### Fixed
+- Declared the returned native mindmap `nodeId` in mutation output schemas; rejected reused overlay output directories and pinned the compatibility image's verified base digest.
+
 ### Tests
-- Added native mindmap coverage for Yjs round trips, subtree moves, invalid topology, layout geometry, style transitions, lock inheritance, and tool filtering.
+- Added native mindmap coverage for Yjs round trips, subtree moves, invalid topology, layout geometry, style transitions, lock inheritance, tool filtering, output contracts, and non-destructive overlay directory validation.
 
 ## [3.5.1] - 2026-09-07
 

@@ -16,19 +16,25 @@ node --test tests/test-native-mindmap.mjs
 
 Export `dist/`, `package.json`, and `tool-manifest.json` from the existing
 `agnt/affine-mcp-server:3.2.1-trash-v1` image to a private temporary directory.
+The Dockerfile uses its verified immutable `RepoDigests` reference. The image
+must be available to the Docker builder; a local image ID alone is not a
+substitute for a repository digest.
 Do not export environment variables, credentials, config files, or document data.
+Use a new path or an empty directory for `OVERLAY_DIR`. The generator rejects
+non-empty directories, files, and symlinks without deleting existing contents.
 Run:
 
 ```sh
 node scripts/build-agnt-mindmap-overlay.mjs "$BASE_EXPORT" "$OVERLAY_DIR"
 docker build --network none -f deploy/Dockerfile.mindmap-overlay \
-  -t agnt/affine-mcp-server:3.2.1-mindmap-v2 "$OVERLAY_DIR"
+  -t agnt/affine-mcp-server:3.2.1-agnt-mindmap-v2 "$OVERLAY_DIR"
 ```
 
 The generator rejects any base file whose SHA-256 differs from the verified
-3.2.1 deployment. Verify the Docker base image ID against the generated
-`overlay-manifest.json` too. The overlay contains the new compiled module, two
-registration lines in `docs.js`, eight catalog/output-schema entries, the read-only
+3.2.1 deployment. The Dockerfile pins the verified base independently of the
+mutable tag; `overlay-manifest.json` also records its image ID. The overlay
+contains the new compiled module, two registration lines in `docs.js`, eight
+catalog/output-schema entries, the read-only
 catalog entry, and package/manifest version metadata. Other code and dependencies
 remain from the base image. No credential or transport configuration is changed.
 
