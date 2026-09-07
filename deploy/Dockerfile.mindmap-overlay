@@ -1,0 +1,7 @@
+# Build context: output of scripts/build-agnt-mindmap-overlay.mjs.
+# Verify the base ID against overlay-manifest.json before docker build.
+FROM agnt/affine-mcp-server:3.2.1-trash-v1
+COPY --chown=affine:affine dist/ /app/dist/
+COPY --chown=affine:affine package.json tool-manifest.json /app/
+COPY --chown=affine:affine overlay-manifest.json /app/overlay-manifest.json
+LABEL org.opencontainers.image.version="3.2.1-agnt-mindmap-v2"

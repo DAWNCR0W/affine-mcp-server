@@ -213,3 +213,43 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |
+
+## Native mindmaps
+
+See the [native mindmap guide](native-mindmaps.md) for request/response fields,
+an executable workflow example, validation behavior, and deployment links.
+
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE |
+| `get_mindmap` | Read validated topology, child order, labels, collapsed state and geometry | Discover IDs with `get_edgeless_canvas` |
+| `add_mindmap_node` | Append or insert a child of `parentId` | `beforeId` must be a sibling; returns `nodeId` |
+| `update_mindmap_node` | Replace text or change collapsed state | Keeps IDs and parent links |
+| `reparent_mindmap_node` | Move a node and its descendants within the same map | Rejects root moves, cycles and foreign IDs |
+| `set_mindmap_layout` | Persist direction and node coordinates together | `right`, `left`, `balance`; no `down`/`up` |
+| `set_mindmap_style` | Apply native style and persist node appearance/size | `style`: integer 1–4; keeps hierarchy |
+| `set_mindmap_lock` | Set native map lock inherited by its nodes | `locked`: boolean; retains independent node/ancestor locks |
+
+These operations store a native `type=mindmap` element with a `Y.Map` of shape IDs
+and `{index, parent?, collapsed?}` details. They do not create ordinary connectors;
+BlockSuite derives its own local connectors from the hierarchy. Shape nodes only,
+maximum 500 nodes and depth 64. Node removal is deliberately not exposed.
+
+Layout values are verified against [AFFiNE 174ad9bc5](https://github.com/toeverything/AFFiNE/blob/174ad9bc5/blocksuite/affine/model/src/consts/mindmap.ts):
+RIGHT=0, LEFT=1, BALANCE=2. Downward layout requires an editor change, not a new MCP
+enum value. Positions are persisted because remote changes do not trigger every
+local editor watcher. Text dimensions are estimated; the native editor may refine
+them when opened. The root remains anchored during layout and reparenting.
+
+Styles ONE=1, TWO=2, THREE=3, FOUR=4 are supported by `set_mindmap_style` and
+the optional creation `style` (default ONE). `set_mindmap_lock` writes native
+`lockedBySelf`; effective `locked` also includes containing group locks. Other
+mutations reject locked maps/nodes. Unlock keeps independent node locks intact.
+
+Create a document with its intended `folderId` first and verify its sidebar link,
+then create a root, add project children to `rootId`, and add tasks to the returned
+project `nodeId`. Run hierarchy mutations sequentially. The upstream persistence
+API has no compare-and-swap: simultaneous edits by independent clients can still
+race; read back the map after a batch. A failed push may have an uncertain outcome,
+so inspect the document before retrying creation. Existing malformed or shared
+node ownership is rejected before persistence.
