@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Stdio bridge for a private local Streamable HTTP MCP listener.
+import '../dist/stdioHttpProxy.js';
