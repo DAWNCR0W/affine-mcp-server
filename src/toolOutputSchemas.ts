@@ -8,6 +8,7 @@ type FieldKind =
   | "boolean"
   | "nullableString"
   | "nullableNumber"
+  | "nullableBoolean"
   | "stringArray"
   | "unknownArray"
   | "object"
@@ -31,6 +32,15 @@ const receipt = (fields: OutputSpec["fields"], optional = false): OutputSpec =>
 
 /** Marks a tool output as supporting the shared structured error envelope. */
 const fallible = (outputSpec: OutputSpec): OutputSpec => ({ ...outputSpec, errorEnvelope: true });
+
+const documentCreationFailureFields: OutputSpec["fields"] = {
+  status: "string",
+  requiresManualRepair: "boolean",
+  stage: "string",
+  contentPersisted: "nullableBoolean",
+  metadataPersisted: "nullableBoolean",
+  recoveryGuidance: "string",
+};
 
 /**
  * Top-level fields advertised for each tool result. Complex AFFiNE payloads are
@@ -63,10 +73,10 @@ const OUTPUT_SPECS = {
   create_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   create_comment: receipt({ workspaceId: "string", docId: "string", commentId: "string", id: "string", comment: "object" }),
   create_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", type: "string", index: "string", created: "boolean" }),
-  create_doc: receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", folderId: "nullableString", folderLinked: "boolean", folderNodeId: "nullableString", warnings: "stringArray" }),
-  create_doc_from_markdown: receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object" }),
+  create_doc: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", folderId: "nullableString", folderLinked: "boolean", folderNodeId: "nullableString", warnings: "stringArray", ...documentCreationFailureFields })),
+  create_doc_from_markdown: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object", ...documentCreationFailureFields })),
   create_folder: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string", storageDocId: "string" }),
-  create_semantic_page: spec({ workspaceId: "string", docId: "string", title: "string", pageType: "string", pageId: "string", noteId: "string", sectionCount: "number", sectionHeadingIds: "stringArray", blockIds: "stringArray", parentLinked: "boolean", warnings: "stringArray" }),
+  create_semantic_page: fallible(spec({ workspaceId: "string", docId: "string", title: "string", pageType: "string", pageId: "string", noteId: "string", sectionCount: "number", sectionHeadingIds: "stringArray", blockIds: "stringArray", parentLinked: "boolean", warnings: "stringArray", ...documentCreationFailureFields })),
   create_tag: spec({ workspaceId: "string", tag: "string", created: "boolean" }),
   create_workspace: fallible(receipt({ workspaceId: "string", id: "string", name: "string", avatar: "string", firstDocId: "string", syncStatus: "string", status: "string", message: "string", url: "string", error: "string" }, true)),
   create_workspace_blueprint: spec({ workspaceId: "string", rootFolderId: "string", rootFolderName: "string", childFolders: "unknownArray", childFolderCount: "number", storageDocId: "string" }),
@@ -95,7 +105,7 @@ const OUTPUT_SPECS = {
   get_orphan_docs: spec({ count: "number", orphans: "unknownArray" }, true),
   get_workspace: fallible(spec({ id: "string", public: "boolean", enableAi: "boolean", createdAt: "string", permissions: "object", error: "string" }, true)),
   inspect_template_structure: spec({ workspaceId: "string", templateDocId: "string", title: "string", tags: "stringArray", pageId: "nullableString", surfaceId: "nullableString", noteId: "nullableString", rootBlockIds: "stringArray", blockCount: "number", blocks: "unknownArray", nativeCloneSupported: "boolean", fallbackReasons: "stringArray" }),
-  instantiate_template_native: spec({ workspaceId: "string", sourceTemplateDocId: "string", docId: "string", title: "string", mode: "string", nativeCloneSupported: "boolean", linkedToParent: "boolean", preservedTags: "stringArray", replacedVariableCount: "number", unresolvedVariables: "stringArray", warnings: "stringArray", blockCount: "number", rootBlockIds: "stringArray" }, true),
+  instantiate_template_native: fallible(spec({ workspaceId: "string", sourceTemplateDocId: "string", docId: "string", title: "string", mode: "string", nativeCloneSupported: "boolean", linkedToParent: "boolean", preservedTags: "stringArray", replacedVariableCount: "number", unresolvedVariables: "stringArray", warnings: "stringArray", blockCount: "number", rootBlockIds: "stringArray", ...documentCreationFailureFields }, true)),
   list_children: spec({ docId: "string", count: "number", children: "unknownArray" }, true),
   list_collections: spec({ items: "unknownArray" }),
   list_comments: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
@@ -161,6 +171,7 @@ function fieldSchema(kind: FieldKind): ZodTypeAny {
     case "boolean": return z.boolean();
     case "nullableString": return z.string().nullable();
     case "nullableNumber": return z.number().nullable();
+    case "nullableBoolean": return z.boolean().nullable();
     case "stringArray": return z.array(z.string());
     case "unknownArray": return z.array(z.unknown());
     case "object": return z.record(z.string(), z.unknown());

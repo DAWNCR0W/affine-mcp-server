@@ -191,6 +191,8 @@ Expected results:
 - `doctor` checks config shape and connectivity and points to the failing layer
 - `healthz` reports process liveness; `readyz` succeeds only when OAuth discovery (if enabled) and the configured AFFiNE GraphQL endpoint are reachable
 
+OAuth metadata requests have a five-second timeout covering headers and the complete response body. Failed discovery entries are removed from the cache so the next readiness check or token verification can retry after the issuer recovers.
+
 If you are onboarding another client, these helpers can generate snippets from the current config:
 
 ```bash

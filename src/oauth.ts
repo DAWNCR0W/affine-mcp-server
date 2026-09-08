@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 
 import { discoverAuthorizationServerMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 export type OAuthConfig = {
   publicBaseUrl: string;
@@ -36,6 +37,26 @@ const ALLOWED_JWT_ALGORITHMS = [
 
 const metadataCache = new Map<string, Promise<AuthorizationServerMetadata>>();
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+export const OAUTH_DISCOVERY_TIMEOUT_MS = 5_000;
+
+/**
+ * The SDK reads `response.json()` after its fetch function resolves. Buffer the
+ * body here so the same abortable timeout covers headers and full body reads.
+ */
+async function fetchOAuthMetadata(input: string | URL, init?: RequestInit): Promise<Response> {
+  const { response, body } = await fetchResponseBody(
+    signal => fetch(input, {
+      ...init,
+      signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+    }),
+    { label: "OAuth metadata discovery", timeoutMs: OAUTH_DISCOVERY_TIMEOUT_MS },
+  );
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
 
 function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
@@ -124,7 +145,9 @@ async function loadAuthorizationServerMetadata(issuerUrl: string): Promise<Autho
   let pending = metadataCache.get(issuerUrl);
   if (!pending) {
     pending = (async () => {
-      const discovered = await discoverAuthorizationServerMetadata(new URL(issuerUrl));
+      const discovered = await discoverAuthorizationServerMetadata(new URL(issuerUrl), {
+        fetchFn: fetchOAuthMetadata,
+      });
       if (!discovered?.issuer || typeof discovered.issuer !== "string") {
         throw new Error(`Could not discover authorization server metadata from ${issuerUrl}`);
       }
@@ -135,7 +158,12 @@ async function loadAuthorizationServerMetadata(issuerUrl: string): Promise<Autho
         issuer: discovered.issuer,
         jwks_uri: discovered.jwks_uri,
       };
-    })();
+    })().catch((error) => {
+      // Only evict this generation. A future retry must not remove a newer
+      // in-flight entry if cache ownership changes between attempts.
+      if (metadataCache.get(issuerUrl) === pending) metadataCache.delete(issuerUrl);
+      throw error;
+    });
     metadataCache.set(issuerUrl, pending);
   }
   return pending;

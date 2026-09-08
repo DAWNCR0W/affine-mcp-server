@@ -1,18 +1,27 @@
 #!/usr/bin/env node
+import "./require-destructive-test-safety.mjs";
+
 import assert from "node:assert/strict";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as Y from "yjs";
 
 import {
   buildWorkspaceListDocsFallbackConnection,
   collectLinkedChildIds,
   documentMoveToolResult,
+  documentCreationToolResult,
+  filterWorkspaceListDocsConnection,
   isWorkspaceListDocsPermissionDenied,
   requestListDocsWithPublicFallback,
   removeEmbeddedLinkedDocumentBlocks,
+  registerDocTools,
 } from "../dist/tools/docs.js";
 
 import {
+  DocumentCreationError,
   executeSafeDocumentMove,
   handleMarkdownOperationFailure,
   isDocumentMoveSuccessful,
@@ -137,6 +146,243 @@ import {
     ["doc-0", "doc-2", "doc-4"],
     "permission fallback must exclude locally acknowledged deletions before pagination",
   );
+}
+
+{
+  const deletedDocIds = new Set(["deleted-doc"]);
+  const firstCursorPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: true, endCursor: "raw-cursor-2" },
+    edges: [
+      { cursor: "raw-cursor-1", node: { id: "live-doc-1" } },
+      { cursor: "raw-cursor-2", node: { id: "deleted-doc" } },
+    ],
+  }, deletedDocIds);
+  assert.deepEqual(firstCursorPage.edges.map((edge) => edge.node.id), ["live-doc-1"]);
+  assert.equal(firstCursorPage.pageInfo.hasNextPage, true);
+  assert.equal(
+    firstCursorPage.pageInfo.endCursor,
+    "raw-cursor-2",
+    "cursor pagination must advance past a trailing deleted edge",
+  );
+
+  const allDeletedCursorPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: true, endCursor: null },
+    edges: [{ cursor: "raw-cursor-deleted", node: { id: "deleted-doc" } }],
+  }, deletedDocIds);
+  assert.deepEqual(allDeletedCursorPage.edges, []);
+  assert.equal(allDeletedCursorPage.pageInfo.hasNextPage, true);
+  assert.equal(
+    allDeletedCursorPage.pageInfo.endCursor,
+    "raw-cursor-deleted",
+    "an all-deleted cursor page must retain the raw edge cursor",
+  );
+
+  const firstOffsetPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: true, endCursor: "raw-offset-1" },
+    edges: [
+      { cursor: "raw-offset-0", node: { id: "deleted-doc" } },
+      { cursor: "raw-offset-1", node: { id: "live-doc-1" } },
+    ],
+  }, deletedDocIds);
+  assert.equal(firstOffsetPage.pageInfo.hasNextPage, true, "offset pagination must preserve backend progress");
+  assert.equal(firstOffsetPage.pageInfo.endCursor, "raw-offset-1");
+
+  const secondOffsetPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: false, endCursor: "raw-offset-2" },
+    edges: [{ cursor: "raw-offset-2", node: { id: "live-doc-2" } }],
+  }, deletedDocIds);
+  assert.deepEqual(secondOffsetPage.edges.map((edge) => edge.node.id), ["live-doc-2"]);
+  assert.equal(secondOffsetPage.pageInfo.hasNextPage, false);
+  assert.equal(secondOffsetPage.pageInfo.endCursor, "raw-offset-2");
+}
+
+{
+  const partialError = new DocumentCreationError({
+    workspaceId: "workspace-1",
+    docId: "doc-created-once",
+    title: "Recovered title",
+    stage: "metadata",
+    contentPersisted: true,
+    metadataPersisted: false,
+    cause: new Error("metadata write timed out"),
+  });
+  const partialResponse = documentCreationToolResult(partialError, "doc.create");
+  assert.equal(partialResponse.isError, true);
+  assert.equal(partialResponse.structuredContent.kind, "doc.create");
+  assert.equal(partialResponse.structuredContent.ok, false);
+  assert.equal(partialResponse.structuredContent.code, "DOCUMENT_CREATE_PARTIAL");
+  assert.equal(partialResponse.structuredContent.status, "partial");
+  assert.equal(partialResponse.structuredContent.docId, "doc-created-once");
+  assert.equal(partialResponse.structuredContent.stage, "metadata");
+  assert.equal(partialResponse.structuredContent.contentPersisted, true);
+  assert.equal(partialResponse.structuredContent.metadataPersisted, false);
+  assert.equal(partialResponse.structuredContent.retryable, false);
+  assert.match(partialResponse.structuredContent.recoveryGuidance, /Do not retry document creation/);
+
+  const uncertainError = new DocumentCreationError({
+    workspaceId: "workspace-1",
+    docId: "doc-possibly-created",
+    title: "Unknown title",
+    stage: "content",
+    contentPersisted: null,
+    metadataPersisted: null,
+    cause: "socket disconnected",
+  });
+  const uncertainResponse = documentCreationToolResult(uncertainError, "doc.create_from_markdown");
+  assert.equal(uncertainResponse.isError, true);
+  assert.equal(uncertainResponse.structuredContent.kind, "doc.create_from_markdown");
+  assert.equal(uncertainResponse.structuredContent.code, "DOCUMENT_CREATE_UNCERTAIN");
+  assert.equal(uncertainResponse.structuredContent.status, "uncertain");
+  assert.equal(uncertainResponse.structuredContent.docId, "doc-possibly-created");
+  assert.equal(documentCreationToolResult(new Error("ordinary failure"), "doc.create"), null);
+}
+
+{
+  const workspaceRoot = new Y.Doc();
+  const workspacePages = new Y.Array();
+  workspaceRoot.getMap("meta").set("pages", workspacePages);
+  const emptyWorkspaceSnapshot = Buffer.from(Y.encodeStateAsUpdate(workspaceRoot)).toString("base64");
+  const contentUpdates = new Map();
+  let contentMode = "persist";
+  let contentRejectRemaining = 0;
+  let contentPushCount = 0;
+  let metadataMode = "ack-lost";
+  let ackLostApplied = false;
+  let staleWorkspaceReads = 0;
+  let metadataPushCount = 0;
+  const metadataUpdates = [];
+  const socket = { disconnect() {} };
+  const fakeGql = {
+    async getConnectionAuth() {
+      return { endpoint: "http://example.test/graphql" };
+    },
+    async request() {
+      throw new Error("Unexpected GraphQL request in document creation recovery test");
+    },
+  };
+  const transport = {
+    async connectWorkspaceSocket() {
+      return socket;
+    },
+    async joinWorkspace() {},
+    async loadDoc(_socket, workspaceId, docId) {
+      if (docId === workspaceId) {
+        if (staleWorkspaceReads > 0) {
+          staleWorkspaceReads -= 1;
+          return { missing: emptyWorkspaceSnapshot };
+        }
+        return {
+          missing: Buffer.from(Y.encodeStateAsUpdate(workspaceRoot)).toString("base64"),
+        };
+      }
+      if (contentMode === "unreadable") {
+        throw new Error("content readback unavailable");
+      }
+      const content = contentUpdates.get(docId);
+      return content ? { missing: content } : {};
+    },
+    async pushDocUpdate(_socket, workspaceId, docId, updateBase64) {
+      if (docId !== workspaceId) {
+        contentPushCount += 1;
+        if (contentMode === "unreadable") {
+          throw new Error("content write acknowledgement unavailable");
+        }
+        if (contentMode === "reject-once" && contentRejectRemaining > 0) {
+          contentRejectRemaining -= 1;
+          throw new Error("content write rejected before persistence");
+        }
+        contentUpdates.set(docId, updateBase64);
+        return Date.now();
+      }
+      metadataPushCount += 1;
+      metadataUpdates.push(updateBase64);
+      if (metadataMode === "ack-lost") {
+        Y.applyUpdate(workspaceRoot, Buffer.from(updateBase64, "base64"));
+        if (!ackLostApplied) {
+          ackLostApplied = true;
+          staleWorkspaceReads = 2;
+        }
+        throw new Error("metadata write timed out");
+      }
+      if (metadataMode === "persistent-failure") {
+        throw new Error("metadata write timed out");
+      }
+      Y.applyUpdate(workspaceRoot, Buffer.from(updateBase64, "base64"));
+      return Date.now();
+    },
+  };
+  const server = new McpServer({ name: "document-creation-recovery-test", version: "1.0.0" });
+  registerDocTools(server, fakeGql, { workspaceId: "workspace-1" }, transport);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "document-creation-recovery-client", version: "1.0.0" });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const acknowledged = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "ACK lost", content: "body" },
+  });
+  assert.equal(acknowledged.isError, undefined);
+  assert.equal(acknowledged.structuredContent.ok, true);
+  assert.equal(workspacePages.length, 1, "metadata ACK loss must reconcile the existing page");
+  assert.equal(metadataPushCount, 2, "a stale metadata read permits one bounded replay");
+  assert.equal(metadataUpdates[0], metadataUpdates[1], "metadata replay must use the exact original Yjs update");
+
+  metadataMode = "persistent-failure";
+  const partial = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Partial", content: "body" },
+  });
+  assert.equal(partial.isError, true);
+  assert.equal(partial.structuredContent.kind, "doc.create");
+  assert.equal(partial.structuredContent.ok, false);
+  assert.equal(partial.structuredContent.code, "DOCUMENT_CREATE_PARTIAL");
+  assert.equal(partial.structuredContent.status, "partial");
+  assert.equal(typeof partial.structuredContent.docId, "string");
+  assert.equal(contentUpdates.has(partial.structuredContent.docId), true);
+  assert.equal(partial.structuredContent.stage, "metadata");
+  assert.equal(partial.structuredContent.contentPersisted, true);
+  assert.equal(partial.structuredContent.metadataPersisted, false);
+  assert.equal(partial.structuredContent.retryable, false);
+  assert.match(partial.structuredContent.recoveryGuidance, /Do not retry document creation/);
+  assert.equal(metadataPushCount, 4, "metadata recovery must be bounded to one repair attempt");
+  assert.equal(workspacePages.length, 1, "failed metadata repair must not duplicate an existing page");
+
+  metadataMode = "success";
+  contentMode = "reject-once";
+  contentRejectRemaining = 1;
+  const contentPushesBeforeRetry = contentPushCount;
+  const contentRecovered = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Content retry", content: "body" },
+  });
+  assert.equal(contentRecovered.isError, undefined);
+  assert.equal(contentRecovered.structuredContent.ok, true);
+  assert.equal(contentUpdates.has(contentRecovered.structuredContent.docId), true);
+  assert.equal(contentPushCount, contentPushesBeforeRetry + 2, "content recovery must retry the same generated id once");
+
+  contentMode = "unreadable";
+  const contentReadbackPushesBeforeFailure = contentPushCount;
+  const uncertainContent = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Unreadable content", content: "body" },
+  });
+  assert.equal(uncertainContent.isError, true);
+  assert.equal(uncertainContent.structuredContent.kind, "doc.create");
+  assert.equal(uncertainContent.structuredContent.code, "DOCUMENT_CREATE_UNCERTAIN");
+  assert.equal(uncertainContent.structuredContent.status, "uncertain");
+  assert.equal(typeof uncertainContent.structuredContent.docId, "string");
+  assert.equal(uncertainContent.structuredContent.stage, "content");
+  assert.equal(uncertainContent.structuredContent.contentPersisted, null);
+  assert.equal(contentPushCount, contentReadbackPushesBeforeFailure + 1, "unreadable content must not trigger blind recreation");
+  assert.equal(contentUpdates.has(uncertainContent.structuredContent.docId), false);
+  assert.equal(metadataPushCount, 5, "unreadable content must stop before metadata mutation");
+
+  await client.close();
+  await server.close();
 }
 
 function dependencies(overrides = {}) {
