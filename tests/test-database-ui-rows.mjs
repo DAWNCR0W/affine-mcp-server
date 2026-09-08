@@ -132,7 +132,10 @@ async function main() {
     });
     await settle(1500);
 
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({
+      headless: true,
+      ...(process.env.PLAYWRIGHT_BROWSER_CHANNEL ? { channel: process.env.PLAYWRIGHT_BROWSER_CHANNEL } : {}),
+    });
     const page = await browser.newPage();
 
     await page.goto(`${BASE_URL}/sign-in`);
