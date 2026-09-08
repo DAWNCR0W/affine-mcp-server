@@ -1,8 +1,9 @@
 import { createInterface } from "node:readline";
 import process from "node:process";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const DEFAULT_ENDPOINT = `http://127.0.0.1:${process.env.PORT || "3000"}/mcp`;
-const REQUEST_TIMEOUT_MS = 60_000;
+const REQUEST_TIMEOUT_MS = Number(process.env.AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS || 60_000);
 const CLOSE_TIMEOUT_MS = 5_000;
 
 type JsonRpcId = string | number | null;
@@ -77,18 +78,16 @@ async function fetchWithTimeout(
   input: string,
   init: RequestInit,
   timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+): Promise<{ response: Response; body: string }> {
+  return fetchResponseBody(
+    signal => fetch(input, { ...init, signal }),
+    { label: "MCP HTTP request", timeoutMs },
+  );
 }
 
 class StdioHttpProxy {
   private sessionId: string | undefined;
+  private initializeMessage: JsonRpcMessage | undefined;
   private closing = false;
   private queue = Promise.resolve();
 
@@ -136,52 +135,74 @@ class StdioHttpProxy {
     }
   }
 
-  private async forwardOne(message: JsonRpcMessage): Promise<void> {
-    const isInitialize = message.method === "initialize";
-    if (isInitialize && this.sessionId) {
-      throw new Error("MCP session is already initialized");
-    }
-    if (!isInitialize && !this.sessionId) {
-      throw new Error("MCP session is not initialized");
-    }
-
+  private async exchange(message: JsonRpcMessage) {
     const headers: Record<string, string> = {
       Accept: "application/json, text/event-stream",
       Authorization: `Bearer ${this.token}`,
       "Content-Type": "application/json",
     };
     if (this.sessionId) headers["mcp-session-id"] = this.sessionId;
+    return fetchWithTimeout(this.endpoint, {
+      method: "POST", headers, body: JSON.stringify(message),
+    }, REQUEST_TIMEOUT_MS);
+  }
 
-    const response = await fetchWithTimeout(
-      this.endpoint,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify(message),
-      },
-      REQUEST_TIMEOUT_MS,
-    );
-    const responseBody = await response.text();
+  private async restoreSession(): Promise<void> {
+    this.sessionId = undefined;
+    if (!this.initializeMessage) throw new Error("MCP session is not initialized");
+    await this.forwardOne(this.initializeMessage, false, false);
+    const { response } = await this.exchange({
+      jsonrpc: "2.0", method: "notifications/initialized",
+    });
+    if (!response.ok) {
+      this.sessionId = undefined;
+      throw new Error(`MCP reinitialization failed with status ${response.status}`);
+    }
+  }
+
+  private async forwardOne(message: JsonRpcMessage, emit = true, recover = true): Promise<void> {
+    const isInitialize = message.method === "initialize";
+    if (isInitialize && this.sessionId) {
+      throw new Error("MCP session is already initialized");
+    }
+    if (!isInitialize && !this.sessionId) {
+      await this.restoreSession();
+    }
+    const { response, body: responseBody } = await this.exchange(message);
+    // This listener rejects unknown session IDs before dispatching the tool.
+    // Only that explicit rejection is safe to replay, including for writes.
+    // Network failures/timeouts are ambiguous and must never replay a write.
+    let sessionMissing = false;
+    if (response.status === 404) {
+      try { sessionMissing = JSON.parse(responseBody)?.error?.code === -32001; } catch { /* not an MCP session rejection */ }
+    }
+    if (sessionMissing && !isInitialize && recover) {
+      await this.restoreSession();
+      return this.forwardOne(message, emit, false);
+    }
     if (!response.ok) {
       throw new Error(`MCP HTTP request failed with status ${response.status}`);
     }
 
+    const messages = parseJsonRpcMessages(responseBody, response.headers.get("content-type") || "");
     if (isInitialize) {
+      const result = messages.find((value: any) => value?.id === message.id) as any;
+      if (!result?.result || result.error) throw new Error("MCP initialization did not succeed");
       const sessionId = response.headers.get("mcp-session-id");
       if (!sessionId) throw new Error("MCP initialize response did not include mcp-session-id");
       this.sessionId = sessionId;
+      this.initializeMessage = message;
     }
-
-    for (const responseMessage of parseJsonRpcMessages(
-      responseBody,
-      response.headers.get("content-type") || "",
-    )) {
-      writeMessage(responseMessage);
+    if (emit) {
+      for (const responseMessage of messages) writeMessage(responseMessage);
     }
   }
 }
 
 async function main(): Promise<void> {
+  if (!Number.isSafeInteger(REQUEST_TIMEOUT_MS) || REQUEST_TIMEOUT_MS < 100 || REQUEST_TIMEOUT_MS > 300_000) {
+    throw new Error("AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS must be an integer between 100 and 300000");
+  }
   const proxy = new StdioHttpProxy(loadEndpoint(), requireHttpToken());
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let closing: Promise<void> | undefined;
