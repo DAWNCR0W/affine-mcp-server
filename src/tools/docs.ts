@@ -182,6 +182,28 @@ export function buildWorkspaceListDocsFallbackConnection(
   };
 }
 
+/** Filter acknowledged deletions without discarding the backend page cursor. */
+export function filterWorkspaceListDocsConnection(
+  connection: WorkspaceListDocsConnection,
+  excludedDocIds: ReadonlySet<string>,
+): WorkspaceListDocsConnection {
+  const rawEdges = connection.edges;
+  const edges = excludedDocIds.size === 0
+    ? rawEdges
+    : rawEdges.filter((edge) => {
+        const nodeId = edge?.node?.id;
+        return typeof nodeId !== "string" || !excludedDocIds.has(nodeId);
+      });
+  return {
+    ...connection,
+    edges,
+    pageInfo: {
+      ...connection.pageInfo,
+      endCursor: connection.pageInfo.endCursor ?? rawEdges.at(-1)?.cursor ?? null,
+    },
+  };
+}
+
 export async function requestListDocsWithPublicFallback(
   gql: Pick<GraphQLClient, "request">,
   variables: ListDocsVariables,
@@ -4778,9 +4800,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           })
         : [];
 
-      const visibleEdges = deletedDocIds.size > 0
-        ? mergedEdges.filter((edge: any) => !deletedDocIds.has(edge?.node?.id))
-        : mergedEdges;
+      const filteredConnection = docs?.pageInfo
+        ? filterWorkspaceListDocsConnection({
+            totalCount: typeof docs.totalCount === "number" ? docs.totalCount : 0,
+            pageInfo: docs.pageInfo,
+            edges: mergedEdges,
+          }, deletedDocIds)
+        : null;
+      const visibleEdges = filteredConnection?.edges ?? mergedEdges;
 
       const correctedTotalCount =
         typeof docs?.totalCount === "number" &&
@@ -4795,12 +4822,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const correctedPageInfo = docs?.pageInfo
         ? {
-            ...docs.pageInfo,
-            endCursor: visibleEdges.length > 0 ? visibleEdges[visibleEdges.length - 1]?.cursor ?? null : null,
-            hasNextPage:
-              typeof correctedTotalCount === "number" && !parsed.after
-                ? (parsed.offset ?? 0) + visibleEdges.length < correctedTotalCount
-                : docs.pageInfo.hasNextPage,
+            ...(filteredConnection?.pageInfo ?? docs.pageInfo),
           }
         : docs?.pageInfo;
 

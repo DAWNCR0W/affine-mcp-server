@@ -7,6 +7,7 @@ import {
   buildWorkspaceListDocsFallbackConnection,
   collectLinkedChildIds,
   documentMoveToolResult,
+  filterWorkspaceListDocsConnection,
   isWorkspaceListDocsPermissionDenied,
   requestListDocsWithPublicFallback,
   removeEmbeddedLinkedDocumentBlocks,
@@ -137,6 +138,58 @@ import {
     ["doc-0", "doc-2", "doc-4"],
     "permission fallback must exclude locally acknowledged deletions before pagination",
   );
+}
+
+{
+  const deletedDocIds = new Set(["deleted-doc"]);
+  const firstCursorPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: true, endCursor: "raw-cursor-2" },
+    edges: [
+      { cursor: "raw-cursor-1", node: { id: "live-doc-1" } },
+      { cursor: "raw-cursor-2", node: { id: "deleted-doc" } },
+    ],
+  }, deletedDocIds);
+  assert.deepEqual(firstCursorPage.edges.map((edge) => edge.node.id), ["live-doc-1"]);
+  assert.equal(firstCursorPage.pageInfo.hasNextPage, true);
+  assert.equal(
+    firstCursorPage.pageInfo.endCursor,
+    "raw-cursor-2",
+    "cursor pagination must advance past a trailing deleted edge",
+  );
+
+  const allDeletedCursorPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: true, endCursor: null },
+    edges: [{ cursor: "raw-cursor-deleted", node: { id: "deleted-doc" } }],
+  }, deletedDocIds);
+  assert.deepEqual(allDeletedCursorPage.edges, []);
+  assert.equal(allDeletedCursorPage.pageInfo.hasNextPage, true);
+  assert.equal(
+    allDeletedCursorPage.pageInfo.endCursor,
+    "raw-cursor-deleted",
+    "an all-deleted cursor page must retain the raw edge cursor",
+  );
+
+  const firstOffsetPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: true, endCursor: "raw-offset-1" },
+    edges: [
+      { cursor: "raw-offset-0", node: { id: "deleted-doc" } },
+      { cursor: "raw-offset-1", node: { id: "live-doc-1" } },
+    ],
+  }, deletedDocIds);
+  assert.equal(firstOffsetPage.pageInfo.hasNextPage, true, "offset pagination must preserve backend progress");
+  assert.equal(firstOffsetPage.pageInfo.endCursor, "raw-offset-1");
+
+  const secondOffsetPage = filterWorkspaceListDocsConnection({
+    totalCount: 3,
+    pageInfo: { hasNextPage: false, endCursor: "raw-offset-2" },
+    edges: [{ cursor: "raw-offset-2", node: { id: "live-doc-2" } }],
+  }, deletedDocIds);
+  assert.deepEqual(secondOffsetPage.edges.map((edge) => edge.node.id), ["live-doc-2"]);
+  assert.equal(secondOffsetPage.pageInfo.hasNextPage, false);
+  assert.equal(secondOffsetPage.pageInfo.endCursor, "raw-offset-2");
 }
 
 function dependencies(overrides = {}) {
