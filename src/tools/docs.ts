@@ -8,8 +8,12 @@ import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text, toolError } from "../util/mcp.js";
 import {
   type DocumentMoveOutcome,
+  type DocumentCreationErrorInput,
+  DocumentCreationError,
   executeSafeDocumentMove,
   handleMarkdownOperationFailure,
+  isDocumentCreationError,
+  toDocumentCreationResult,
   toDocumentMoveResult,
 } from "../util/mutationSafety.js";
 import {
@@ -265,6 +269,34 @@ export function documentMoveToolResult(
   return receipt("doc.move", {
     ...context,
     ...outcomeData,
+  });
+}
+
+/** Keep the generated document id and recovery state in every creation error. */
+export function documentCreationToolResult(error: unknown, kind: string) {
+  if (!isDocumentCreationError(error)) {
+    return null;
+  }
+  const result = toDocumentCreationResult(error);
+  const { ok, error: message, code, retryable, ...failureData } = result;
+  return toolError(message, {
+    code,
+    retryable,
+    data: { kind, ...failureData },
+  });
+}
+
+/** Preserve an id when a post-skeleton materialization step cannot be confirmed. */
+function documentCreationMaterializationError(
+  context: Pick<DocumentCreationErrorInput, "workspaceId" | "docId" | "title">,
+  cause: unknown,
+): DocumentCreationError {
+  return new DocumentCreationError({
+    ...context,
+    stage: "content",
+    contentPersisted: null,
+    metadataPersisted: true,
+    cause,
   });
 }
 
@@ -1009,9 +1041,25 @@ export function createAcknowledgedDeletedDocTracker({
   };
 }
 
-export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
+type DocumentCreationTransport = {
+  connectWorkspaceSocket?: typeof connectWorkspaceSocket;
+  joinWorkspace?: typeof joinWorkspace;
+  loadDoc?: typeof loadDoc;
+  pushDocUpdate?: typeof pushDocUpdate;
+};
+
+export function registerDocTools(
+  server: McpServer,
+  gql: GraphQLClient,
+  defaults: { workspaceId?: string },
+  documentCreationTransport: DocumentCreationTransport = {},
+) {
   registerMindmapTools(server, gql, defaults, { getSurfaceElementsValueMap, buildSurfaceElementData, writeSurfaceElement, nextSurfaceElementIndex });
   const acknowledgedDeletedDocs = createAcknowledgedDeletedDocTracker();
+  const connectForDocumentCreation = documentCreationTransport.connectWorkspaceSocket ?? connectWorkspaceSocket;
+  const joinForDocumentCreation = documentCreationTransport.joinWorkspace ?? joinWorkspace;
+  const loadForDocumentCreation = documentCreationTransport.loadDoc ?? loadDoc;
+  const pushForDocumentCreation = documentCreationTransport.pushDocUpdate ?? pushDocUpdate;
 
   // helpers
   const generateId = secureAffineId;
@@ -4090,93 +4138,14 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const socket = await connectForDocumentCreation(wsUrl, cookie, bearer);
     try {
-      await joinWorkspace(socket, workspaceId);
+      await joinForDocumentCreation(socket, workspaceId);
 
       const docId = generateId();
       const title = parsed.title || "Untitled";
-      const ydoc = new Y.Doc();
-      const blocks = ydoc.getMap("blocks");
-      const pageId = generateId();
-      const page = new Y.Map();
-      setSysFields(page, pageId, "affine:page");
-      const titleText = new Y.Text();
-      titleText.insert(0, title);
-      page.set("prop:title", titleText);
-      const children = new Y.Array();
-      page.set("sys:children", children);
-      blocks.set(pageId, page);
-
-      const surfaceId = generateId();
-      const surface = new Y.Map();
-      setSysFields(surface, surfaceId, "affine:surface");
-      surface.set("sys:parent", null);
-      surface.set("sys:children", new Y.Array());
-      const elements = new Y.Map<any>();
-      elements.set("type", "$blocksuite:internal:native$");
-      elements.set("value", new Y.Map<any>());
-      surface.set("prop:elements", elements);
-      blocks.set(surfaceId, surface);
-      children.push([surfaceId]);
-
-      const noteId = generateId();
-      const note = new Y.Map();
-      setSysFields(note, noteId, "affine:note");
-      note.set("sys:parent", null);
-      note.set("prop:displayMode", "both");
-      note.set("prop:xywh", DEFAULT_NOTE_XYWH);
-      note.set("prop:index", "a0");
-      note.set("prop:hidden", false);
-      note.set("prop:background", buildDefaultNoteBackground());
-      const noteChildren = new Y.Array();
-      note.set("sys:children", noteChildren);
-      blocks.set(noteId, note);
-      children.push([noteId]);
-
-      const paraId = generateId();
-      const para = new Y.Map();
-      setSysFields(para, paraId, "affine:paragraph");
-      para.set("sys:parent", null);
-      para.set("sys:children", new Y.Array());
-      para.set("prop:type", "text");
-      const paragraphText = new Y.Text();
-      if (parsed.content) paragraphText.insert(0, parsed.content);
-      para.set("prop:text", paragraphText);
-      blocks.set(paraId, para);
-      noteChildren.push([paraId]);
-
-      const meta = ydoc.getMap("meta");
-      meta.set("id", docId);
-      meta.set("title", title);
-      meta.set("createDate", Date.now());
-      meta.set("tags", new Y.Array());
-
-      const updateFull = Y.encodeStateAsUpdate(ydoc);
-      const updateBase64 = Buffer.from(updateFull).toString("base64");
-      await pushDocUpdate(socket, workspaceId, docId, updateBase64);
-
-      const wsDoc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (snapshot.missing) {
-        Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
-      }
-      const prevSV = Y.encodeStateVector(wsDoc);
-      const wsMeta = wsDoc.getMap("meta");
-      let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
-      if (!pages) {
-        pages = new Y.Array();
-        wsMeta.set("pages", pages);
-      }
-      const entry = new Y.Map();
-      entry.set("id", docId);
-      entry.set("title", title);
-      entry.set("createDate", Date.now());
-      entry.set("tags", new Y.Array());
-      pages.push([entry as any]);
-      const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
-      const wsDeltaBase64 = Buffer.from(wsDelta).toString("base64");
-      await pushDocUpdate(socket, workspaceId, workspaceId, wsDeltaBase64);
+      const docShell = createDocSkeleton(title, docId, parsed.content);
+      await commitNewDocument(socket, workspaceId, docId, title, docShell.doc);
 
       return {
         workspaceId,
@@ -4268,7 +4237,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   }
 
-  function createDocSkeleton(title: string, docId: string): {
+  function createDocSkeleton(title: string, docId: string, content = ""): {
     doc: Y.Doc;
     blocks: Y.Map<any>;
     pageId: string;
@@ -4318,7 +4287,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     skeletonPara.set("sys:parent", null);
     skeletonPara.set("sys:children", new Y.Array());
     skeletonPara.set("prop:type", "text");
-    skeletonPara.set("prop:text", new Y.Text());
+    skeletonPara.set("prop:text", makeText(content));
     blocks.set(skeletonParaId, skeletonPara);
     skeletonNoteChildren.push([skeletonParaId]);
 
@@ -4515,31 +4484,220 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     throw new Error(`Section heading '${sectionTitle}' was not found.`);
   }
 
-  async function commitNewDocument(
+  type DocumentCreationProbe = Pick<
+    DocumentCreationErrorInput,
+    "contentPersisted" | "metadataPersisted"
+  >;
+
+  async function probeDocumentCreation(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+  ): Promise<DocumentCreationProbe> {
+    let contentPersisted: DocumentCreationProbe["contentPersisted"] = null;
+    let metadataPersisted: DocumentCreationProbe["metadataPersisted"] = null;
+
+    try {
+      const contentSnapshot = await loadForDocumentCreation(socket, workspaceId, docId);
+      contentPersisted = typeof contentSnapshot.missing === "string"
+        || typeof contentSnapshot.state === "string";
+    } catch {
+      // A failed read cannot distinguish a missing document from an accepted
+      // write whose readback is temporarily unavailable.
+    }
+
+    try {
+      const workspaceSnapshot = await loadForDocumentCreation(socket, workspaceId, workspaceId);
+      if (typeof workspaceSnapshot.missing !== "string") {
+        metadataPersisted = false;
+      } else {
+        const workspaceDoc = new Y.Doc();
+        Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+        metadataPersisted = getWorkspacePageEntries(workspaceDoc.getMap("meta"))
+          .some(page => page.id === docId);
+      }
+    } catch {
+      metadataPersisted = null;
+    }
+
+    return { contentPersisted, metadataPersisted };
+  }
+
+  async function buildWorkspacePageMetadataUpdate(
     socket: any,
     workspaceId: string,
     docId: string,
     title: string,
-    doc: Y.Doc
-  ) {
-    const updateFull = Y.encodeStateAsUpdate(doc);
-    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(updateFull).toString("base64"));
-
-    const wsDoc = new Y.Doc();
-    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-    if (snapshot.missing) {
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+  ): Promise<string | null> {
+    const snapshotBase64 = (await loadForDocumentCreation(socket, workspaceId, workspaceId)).missing;
+    if (typeof snapshotBase64 !== "string") {
+      throw new Error(`Workspace metadata document ${workspaceId} was not found.`);
     }
-    const prevSV = Y.encodeStateVector(wsDoc);
-    const wsMeta = wsDoc.getMap("meta");
+
+    const workspaceDoc = new Y.Doc();
+    Y.applyUpdate(workspaceDoc, Buffer.from(snapshotBase64, "base64"));
+    const wsMeta = workspaceDoc.getMap("meta");
+    if (getWorkspacePageEntries(wsMeta).some(page => page.id === docId)) {
+      return null;
+    }
+
+    const prevSV = Y.encodeStateVector(workspaceDoc);
     let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
     if (!pages) {
       pages = new Y.Array();
       wsMeta.set("pages", pages);
     }
     pages.push([makeWorkspacePageEntry(docId, title)]);
-    const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
-    await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+    const wsDelta = Y.encodeStateAsUpdate(workspaceDoc, prevSV);
+    return Buffer.from(wsDelta).toString("base64");
+  }
+
+  async function ensureWorkspacePageMetadata(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+    title: string,
+    metadataUpdateBase64?: string,
+  ): Promise<void> {
+    if (metadataUpdateBase64) {
+      const snapshot = await loadForDocumentCreation(socket, workspaceId, workspaceId);
+      if (typeof snapshot.missing !== "string") {
+        throw new Error(`Workspace metadata document ${workspaceId} was not found.`);
+      }
+      const workspaceDoc = new Y.Doc();
+      Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
+      if (getWorkspacePageEntries(workspaceDoc.getMap("meta")).some(page => page.id === docId)) {
+        return;
+      }
+    }
+
+    const updateBase64 = metadataUpdateBase64 ?? await buildWorkspacePageMetadataUpdate(
+      socket,
+      workspaceId,
+      docId,
+      title,
+    );
+    if (!updateBase64) return;
+    await pushForDocumentCreation(socket, workspaceId, workspaceId, updateBase64);
+  }
+
+  /**
+   * Reconcile one failed creation with the generated id. At most one identical
+   * content retry and one deduplicated metadata retry are attempted; callers
+   * must inspect the returned docId instead of starting a new creation.
+   */
+  async function reconcileDocumentCreation(
+    socket: any,
+    input: {
+      workspaceId: string;
+      docId: string;
+      title: string;
+      contentUpdateBase64: string;
+      metadataUpdateBase64?: string;
+      stage: DocumentCreationErrorInput["stage"];
+      cause: unknown;
+    },
+  ): Promise<void> {
+    let lastError = input.cause;
+    let state = await probeDocumentCreation(socket, input.workspaceId, input.docId);
+    if (state.contentPersisted === true && state.metadataPersisted === true) {
+      return;
+    }
+
+    if (
+      input.stage === "content"
+      && state.contentPersisted === false
+    ) {
+      try {
+        await pushForDocumentCreation(
+          socket,
+          input.workspaceId,
+          input.docId,
+          input.contentUpdateBase64,
+        );
+      } catch (error) {
+        lastError = error;
+      }
+      state = await probeDocumentCreation(socket, input.workspaceId, input.docId);
+    }
+
+    if (state.contentPersisted === true && state.metadataPersisted === false) {
+      try {
+        // ensureWorkspacePageMetadata reloads and checks docId before writing,
+        // so an ACK lost after the write cannot create a duplicate page entry.
+        await ensureWorkspacePageMetadata(
+          socket,
+          input.workspaceId,
+          input.docId,
+          input.title,
+          input.metadataUpdateBase64,
+        );
+      } catch (error) {
+        lastError = error;
+      }
+      state = await probeDocumentCreation(socket, input.workspaceId, input.docId);
+    }
+
+    if (state.contentPersisted === true && state.metadataPersisted === true) {
+      return;
+    }
+
+    const failureInput: DocumentCreationErrorInput = {
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      title: input.title,
+      stage: state.contentPersisted === true ? "metadata" : input.stage,
+      contentPersisted: state.contentPersisted,
+      metadataPersisted: state.metadataPersisted,
+      cause: lastError,
+    };
+    throw new DocumentCreationError(failureInput);
+  }
+
+  async function commitNewDocument(
+    socket: any,
+    workspaceId: string,
+    docId: string,
+    title: string,
+    doc: Y.Doc,
+  ): Promise<void> {
+    const contentUpdateBase64 = Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64");
+    try {
+      await pushForDocumentCreation(socket, workspaceId, docId, contentUpdateBase64);
+    } catch (error) {
+      await reconcileDocumentCreation(socket, {
+        workspaceId,
+        docId,
+        title,
+        contentUpdateBase64,
+        stage: "content",
+        cause: error,
+      });
+      return;
+    }
+
+    let metadataUpdateBase64: string | undefined;
+    try {
+      metadataUpdateBase64 = (await buildWorkspacePageMetadataUpdate(
+        socket,
+        workspaceId,
+        docId,
+        title,
+      )) ?? undefined;
+      if (metadataUpdateBase64) {
+        await pushForDocumentCreation(socket, workspaceId, workspaceId, metadataUpdateBase64);
+      }
+    } catch (error) {
+      await reconcileDocumentCreation(socket, {
+        workspaceId,
+        docId,
+        title,
+        contentUpdateBase64,
+        metadataUpdateBase64,
+        stage: "metadata",
+        cause: error,
+      });
+    }
   }
 
   async function createSemanticPageInternal(parsed: SemanticPageInput): Promise<{
@@ -4560,10 +4718,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const socket = await connectForDocumentCreation(wsUrl, cookie, bearer);
 
     try {
-      await joinWorkspace(socket, workspaceId);
+      await joinForDocumentCreation(socket, workspaceId);
 
       const docId = generateId();
       const title = parsed.title || "Untitled";
@@ -5992,7 +6150,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-
     try {
       await joinWorkspace(socket, workspaceId);
       const outcome = await executeSafeDocumentMove(parsed, {
@@ -6116,48 +6273,54 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) {
       throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
     }
-    const created = await createDocInternal({ ...parsed, workspaceId });
-    const placement = await finalizeDocPlacement({
-      workspaceId: created.workspaceId,
-      docId: created.docId,
-      parentDocId: parsed.parentDocId,
-      context: "create_doc",
-    });
-    const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
-    let linkedFolderId: string | null = null;
-    let folderNodeId: string | null = null;
-    if (parsed.folderId) {
-      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-      const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-      const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-      try {
-        await joinWorkspace(socket, created.workspaceId);
-        const link = await addOrganizeLinkToFolder(socket, created.workspaceId, {
-          folderId: parsed.folderId,
-          type: "doc",
-          targetId: created.docId,
-        });
-        linkedFolderId = link.parentId;
-        folderNodeId = link.id;
-      } catch (err: any) {
-        warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
-      } finally {
-        socket.disconnect();
+    try {
+      const created = await createDocInternal({ ...parsed, workspaceId });
+      const placement = await finalizeDocPlacement({
+        workspaceId: created.workspaceId,
+        docId: created.docId,
+        parentDocId: parsed.parentDocId,
+        context: "create_doc",
+      });
+      const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
+      let linkedFolderId: string | null = null;
+      let folderNodeId: string | null = null;
+      if (parsed.folderId) {
+        const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+        const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+        const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+        try {
+          await joinWorkspace(socket, created.workspaceId);
+          const link = await addOrganizeLinkToFolder(socket, created.workspaceId, {
+            folderId: parsed.folderId,
+            type: "doc",
+            targetId: created.docId,
+          });
+          linkedFolderId = link.parentId;
+          folderNodeId = link.id;
+        } catch (err: any) {
+          warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
+        } finally {
+          socket.disconnect();
+        }
       }
+      return receipt("doc.create", {
+        workspaceId: created.workspaceId,
+        docId: created.docId,
+        title: created.title,
+        status: warnings.length > 0 ? "created_with_warnings" : "created",
+        requiresManualRepair: warnings.length > 0,
+        parentDocId: placement.parentDocId,
+        linkedToParent: placement.linkedToParent,
+        folderId: linkedFolderId,
+        folderLinked: folderNodeId !== null,
+        folderNodeId,
+        warnings,
+      });
+    } catch (error) {
+      const failure = documentCreationToolResult(error, "doc.create");
+      if (failure) return failure;
+      throw error;
     }
-    return receipt("doc.create", {
-      workspaceId: created.workspaceId,
-      docId: created.docId,
-      title: created.title,
-      status: warnings.length > 0 ? "created_with_warnings" : "created",
-      requiresManualRepair: warnings.length > 0,
-      parentDocId: placement.parentDocId,
-      linkedToParent: placement.linkedToParent,
-      folderId: linkedFolderId,
-      folderLinked: folderNodeId !== null,
-      folderNodeId,
-      warnings,
-    });
   };
   server.registerTool(
     'create_doc',
@@ -6189,20 +6352,26 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     parentDocId?: string;
     sections?: SemanticSectionInput[];
   }) => {
-    const created = await createSemanticPageInternal(parsed);
-    return text({
-      workspaceId: created.workspaceId,
-      docId: created.docId,
-      title: created.title,
-      pageType: created.pageType,
-      pageId: created.pageId,
-      noteId: created.noteId,
-      sectionCount: created.sectionHeadingIds.length,
-      sectionHeadingIds: created.sectionHeadingIds,
-      blockIds: created.blockIds,
-      parentLinked: created.parentLinked,
-      warnings: created.warnings,
-    });
+    try {
+      const created = await createSemanticPageInternal(parsed);
+      return text({
+        workspaceId: created.workspaceId,
+        docId: created.docId,
+        title: created.title,
+        pageType: created.pageType,
+        pageId: created.pageId,
+        noteId: created.noteId,
+        sectionCount: created.sectionHeadingIds.length,
+        sectionHeadingIds: created.sectionHeadingIds,
+        blockIds: created.blockIds,
+        parentLinked: created.parentLinked,
+        warnings: created.warnings,
+      });
+    } catch (error) {
+      const failure = documentCreationToolResult(error, "doc.create_semantic_page");
+      if (failure) return failure;
+      throw error;
+    }
   };
   server.registerTool(
     "create_semantic_page",
@@ -6647,9 +6816,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           strict: parsed.strict,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `Document ${created.docId} was created, but its Markdown content could not be confirmed: ${message}. Inspect or delete that document before retrying.`,
+        throw documentCreationMaterializationError(
+          {
+            workspaceId: created.workspaceId,
+            docId: created.docId,
+            title: created.title,
+          },
+          error,
         );
       }
     }
@@ -6694,7 +6867,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     strict?: boolean;
     parentDocId?: string;
   }) => {
-    return receipt("doc.create_from_markdown", await createDocFromMarkdownCore(parsed));
+    try {
+      return receipt("doc.create_from_markdown", await createDocFromMarkdownCore(parsed));
+    } catch (error) {
+      const failure = documentCreationToolResult(error, "doc.create_from_markdown");
+      if (failure) return failure;
+      throw error;
+    }
   };
   server.registerTool(
     "create_doc_from_markdown",
@@ -6723,10 +6902,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     if (!workspaceId) throw new Error("workspaceId is required.");
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const socket = await connectForDocumentCreation(wsUrl, cookie, bearer);
     try {
-      await joinWorkspace(socket, workspaceId);
-      const snap = await loadDoc(socket, workspaceId, parsed.templateDocId);
+      await joinForDocumentCreation(socket, workspaceId);
+      const snap = await loadForDocumentCreation(socket, workspaceId, parsed.templateDocId);
       if (!snap.missing) throw new Error(`Template doc ${parsed.templateDocId} not found.`);
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
@@ -7322,6 +7501,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    let createdDocForRecovery: Pick<CreateDocResult, "workspaceId" | "docId" | "title"> | null = null;
 
     try {
       await joinWorkspace(socket, workspaceId);
@@ -7392,6 +7572,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         workspaceId,
         title: targetTitle,
       });
+      createdDocForRecovery = created;
 
       const targetSnapshot = await loadDoc(socket, workspaceId, created.docId);
       if (!targetSnapshot.missing) {
@@ -7490,6 +7671,13 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         blockCount: nativeSummary.blockCount,
         rootBlockIds: nativeSummary.rootBlockIds.map(blockId => blockIdMap.get(blockId) ?? blockId),
       });
+    } catch (error) {
+      const creationError = createdDocForRecovery
+        ? documentCreationMaterializationError(createdDocForRecovery, error)
+        : error;
+      const failure = documentCreationToolResult(creationError, "doc.instantiate_template_native");
+      if (failure) return failure;
+      throw error;
     } finally {
       socket.disconnect();
     }

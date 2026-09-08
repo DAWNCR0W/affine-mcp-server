@@ -165,3 +165,102 @@ export function handleMarkdownOperationFailure(
     `Markdown ${mode} aborted at operation ${input.operationIndex + 1}: ${message}`,
   );
 }
+
+export type DocumentCreationStage = "content" | "metadata";
+export type DocumentCreationStatus = "partial" | "uncertain";
+export type DocumentCreationPersistence = boolean | null;
+
+export type DocumentCreationErrorInput = {
+  workspaceId: string;
+  docId: string;
+  title: string;
+  stage: DocumentCreationStage;
+  contentPersisted: DocumentCreationPersistence;
+  metadataPersisted: DocumentCreationPersistence;
+  cause: unknown;
+};
+
+export type DocumentCreationFailure = {
+  status: DocumentCreationStatus;
+  workspaceId: string;
+  docId: string;
+  title: string;
+  stage: DocumentCreationStage;
+  contentPersisted: DocumentCreationPersistence;
+  metadataPersisted: DocumentCreationPersistence;
+  requiresManualRepair: true;
+  recoveryGuidance: string;
+};
+
+export type DocumentCreationResult = DocumentCreationFailure & {
+  ok: false;
+  error: string;
+  code: "DOCUMENT_CREATE_PARTIAL" | "DOCUMENT_CREATE_UNCERTAIN";
+  retryable: false;
+};
+
+function creationErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return "Unknown document creation error";
+}
+
+/** Preserve the generated id when a document write cannot be proven complete. */
+export class DocumentCreationError extends Error implements DocumentCreationFailure {
+  readonly status: DocumentCreationStatus;
+  readonly workspaceId: string;
+  readonly docId: string;
+  readonly title: string;
+  readonly stage: DocumentCreationStage;
+  readonly contentPersisted: DocumentCreationPersistence;
+  readonly metadataPersisted: DocumentCreationPersistence;
+  readonly requiresManualRepair = true as const;
+  readonly recoveryGuidance: string;
+  readonly code: DocumentCreationResult["code"];
+  readonly retryable = false as const;
+
+  constructor(input: DocumentCreationErrorInput) {
+    const contentConfirmed = input.contentPersisted === true;
+    const metadataMissing = input.metadataPersisted === false;
+    const status: DocumentCreationStatus = contentConfirmed && metadataMissing ? "partial" : "uncertain";
+    const recoveryGuidance = status === "partial"
+      ? `Document "${input.docId}" content is persisted but workspace metadata is missing. Do not retry document creation; inspect this docId and repair its workspace metadata or parent link manually.`
+      : `Document "${input.docId}" creation could not be fully confirmed. Do not retry document creation until this docId is inspected; reconcile existing content and workspace metadata first.`;
+    const message = `Document creation ${status} at ${input.stage} for doc "${input.docId}": ${creationErrorMessage(input.cause)}. ${recoveryGuidance}`;
+
+    super(message);
+    this.name = "DocumentCreationError";
+    this.status = status;
+    this.workspaceId = input.workspaceId;
+    this.docId = input.docId;
+    this.title = input.title;
+    this.stage = input.stage;
+    this.contentPersisted = input.contentPersisted;
+    this.metadataPersisted = input.metadataPersisted;
+    this.recoveryGuidance = recoveryGuidance;
+    this.code = status === "partial" ? "DOCUMENT_CREATE_PARTIAL" : "DOCUMENT_CREATE_UNCERTAIN";
+  }
+}
+
+export function isDocumentCreationError(error: unknown): error is DocumentCreationError {
+  return error instanceof DocumentCreationError;
+}
+
+/** Build the stable structured failure returned by every document creation caller. */
+export function toDocumentCreationResult(error: DocumentCreationError): DocumentCreationResult {
+  return {
+    ok: false,
+    status: error.status,
+    workspaceId: error.workspaceId,
+    docId: error.docId,
+    title: error.title,
+    stage: error.stage,
+    contentPersisted: error.contentPersisted,
+    metadataPersisted: error.metadataPersisted,
+    requiresManualRepair: true,
+    recoveryGuidance: error.recoveryGuidance,
+    error: error.message,
+    code: error.code,
+    retryable: false,
+  };
+}
