@@ -1,0 +1,8 @@
+# Build context: output of scripts/build-agnt-mindmap-overlay.mjs.
+# Original tag: agnt/affine-mcp-server:3.2.1-trash-v1.
+# This reference was verified in the base image's RepoDigests.
+FROM agnt/affine-mcp-server@sha256:0a5afd2db5f89d1f311d65a9871d816d65cab08e06492cc53a03aad450982ce4
+COPY --chown=affine:affine dist/ /app/dist/
+COPY --chown=affine:affine package.json tool-manifest.json /app/
+COPY --chown=affine:affine overlay-manifest.json /app/overlay-manifest.json
+LABEL org.opencontainers.image.version="3.2.1-agnt-mindmap-v2"

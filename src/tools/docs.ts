@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { registerMindmapTools } from "./mindmap.js";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
@@ -987,6 +988,7 @@ export function createAcknowledgedDeletedDocTracker({
 }
 
 export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {
+  registerMindmapTools(server, gql, defaults, { getSurfaceElementsValueMap, buildSurfaceElementData, writeSurfaceElement, nextSurfaceElementIndex });
   const acknowledgedDeletedDocs = createAcknowledgedDeletedDocTracker();
 
   // helpers
