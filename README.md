@@ -159,6 +159,9 @@ affine-mcp doctor
 ```
 
 If you want to expose the server remotely over HTTP instead of stdio, start with [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md).
+If an HTTP server already runs on the same host as your stdio client, use the
+private [stdio HTTP bridge](docs/configuration-and-deployment.md#private-stdio-bridge-for-a-local-http-listener)
+instead of starting another full server process.
 
 ## Compatibility Matrix
 
