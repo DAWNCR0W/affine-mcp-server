@@ -20,17 +20,20 @@ const CollectionId = z.string().min(1, "collectionId required").describe("AFFiNE
 const FolderId = z.string().min(1, "folderId required").describe("AFFiNE organize folder node id.");
 const OrganizeNodeId = z.string().min(1, "nodeId required").describe("AFFiNE organize node id from list_organize_nodes.");
 const FolderName = z.string().trim().min(1, "name required").describe("Non-empty sidebar folder or collection name.");
-const CollectionRuleFieldSchema = z.enum(["title", "tag", "docId"]).describe("Document field evaluated by the collection rule.");
-const CollectionRuleOperatorSchema = z.enum(["contains", "equals", "startsWith", "in"]).describe("Comparison operator for the collection rule.");
-const CollectionRuleSchema = z.object({
-  field: CollectionRuleFieldSchema,
-  operator: CollectionRuleOperatorSchema,
-  value: z.union([z.string(), z.array(z.string())]).describe("String value or list of values used by the selected operator."),
-}).describe("Single AFFiNE collection filter rule.");
+const CollectionRuleValueSchema = z.string().trim().min(1, "rule value required");
+const CollectionRuleValuesSchema = z.array(CollectionRuleValueSchema).min(1, "rule values required");
+const CollectionRuleSchema = z.union([
+  z.object({ field: z.literal("title"), operator: z.enum(["contains", "equals", "startsWith"]), value: CollectionRuleValueSchema }),
+  z.object({ field: z.literal("tag"), operator: z.enum(["contains", "equals"]), value: CollectionRuleValueSchema }),
+  z.object({ field: z.literal("docId"), operator: z.literal("equals"), value: CollectionRuleValueSchema }),
+  z.object({ field: z.literal("docId"), operator: z.literal("in"), value: CollectionRuleValuesSchema }),
+]).describe("Single AFFiNE collection filter rule.");
 const CollectionRulesSchema = z.object({
   match: z.enum(["all", "any"]).optional().describe("Whether all filters or any filter must match. Defaults to all."),
   filters: z.array(CollectionRuleSchema).describe("Collection filter rules used to build the allow-list."),
 }).describe("AFFiNE collection rule set.");
+
+type CollectionRulesInput = z.infer<typeof CollectionRulesSchema>;
 
 type CollectionInfo = {
   id: string;
@@ -867,8 +870,9 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
   }: {
     workspaceId?: string;
     name: string;
-    rules?: { match?: "all" | "any"; filters: CollectionRuleFilter[] };
+    rules?: CollectionRulesInput;
   }) => {
+    const parsedRules = rules === undefined ? undefined : CollectionRulesSchema.parse(rules);
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
     const { socket } = await getSocketContext();
     try {
@@ -884,7 +888,7 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
       const collection: CollectionInfo = {
         id: generateId(),
         name,
-        rules: rules ? normalizeCollectionRules(rules) : { match: "all", filters: [] },
+        rules: parsedRules ? normalizeCollectionRules(parsedRules) : { match: "all", filters: [] },
         allowList: [],
       };
 
@@ -917,10 +921,11 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
   }: {
     workspaceId?: string;
     collectionId: string;
-    rules: { match?: "all" | "any"; filters: CollectionRuleFilter[] };
+    rules: CollectionRulesInput;
   }) => {
+    const parsedRules = CollectionRulesSchema.parse(rules);
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
-    const normalizedRules = normalizeCollectionRules(rules);
+    const normalizedRules = normalizeCollectionRules(parsedRules);
     const result = await updateCollectionRulesInternal({
       workspaceId: resolvedWorkspaceId,
       collectionId,

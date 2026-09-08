@@ -95,6 +95,15 @@ async function main() {
     return parsed;
   }
 
+  async function expectFailure(toolName, args, message) {
+    try {
+      await call(toolName, args);
+    } catch {
+      return;
+    }
+    throw new Error(`${message}: expected ${toolName} to reject`);
+  }
+
   await client.connect(transport);
 
   try {
@@ -204,8 +213,8 @@ async function main() {
       rules: {
         match: 'all',
         filters: [
-          { field: 'title', operator: 'contains', value: 'Organize Parent' },
-          { field: 'tag', operator: 'equals', value: 'blueprint' },
+          { field: 'title', operator: 'contains', value: '  Organize Parent  ' },
+          { field: 'tag', operator: 'equals', value: ' blueprint ' },
         ],
       },
     });
@@ -230,6 +239,31 @@ async function main() {
     if (!updatedRulesAny.allowList.includes(parentDocId) || !updatedRulesAny.allowList.includes(childDocId)) {
       throw new Error('update_collection_rules any did not include both tagged docs');
     }
+
+    const previousRules = JSON.stringify(updatedRulesAny.rules);
+    const previousAllowList = [...updatedRulesAny.allowList].sort();
+    await expectFailure(
+      'update_collection_rules',
+      {
+        workspaceId,
+        collectionId,
+        rules: {
+          match: 'any',
+          filters: [
+            { field: 'title', operator: 'contains', value: 'Organize' },
+            { field: 'title', operator: 'in', value: ['legacy-invalid'] },
+          ],
+        },
+      },
+      'mixed valid and invalid collection rules',
+    );
+    const afterRejectedRules = await call('get_collection', { workspaceId, collectionId });
+    expectEqual(JSON.stringify(afterRejectedRules?.rules), previousRules, 'rejected rules must preserve stored rules');
+    expectEqual(
+      JSON.stringify([...afterRejectedRules.allowList].sort()),
+      JSON.stringify(previousAllowList),
+      'rejected rules must preserve collection membership',
+    );
 
     const blueprint = await call('create_workspace_blueprint', {
       workspaceId,
