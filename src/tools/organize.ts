@@ -45,6 +45,14 @@ type CollectionInfo = {
   allowList: string[];
 };
 
+type CollectionLookup = {
+  index: number;
+  raw: Record<string, unknown>;
+  collection: CollectionInfo;
+};
+
+type CollectionMutationPatch = Partial<Pick<CollectionInfo, "name" | "rules" | "allowList">>;
+
 type CollectionRuleField = "title" | "tag" | "docId";
 type CollectionRuleOperator = "contains" | "equals" | "startsWith" | "in";
 type CollectionRuleFilter = {
@@ -126,11 +134,19 @@ function generateFractionalIndexingKeyBetween(
   throw new Error("Unreachable fractional indexing state");
 }
 
-function normalizeCollection(value: unknown): CollectionInfo | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function asRecord(value: unknown): Record<string, unknown> | null {
+  const candidate = value instanceof Y.Map ? value.toJSON() : value;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     return null;
   }
-  const collection = value as Record<string, unknown>;
+  return candidate as Record<string, unknown>;
+}
+
+function normalizeCollection(value: unknown): CollectionInfo | null {
+  const collection = asRecord(value);
+  if (!collection) {
+    return null;
+  }
   if (typeof collection.id !== "string" || typeof collection.name !== "string") {
     return null;
   }
@@ -207,14 +223,15 @@ function readCollections(array: Y.Array<any>): CollectionInfo[] {
   return collections;
 }
 
-function findCollectionIndex(array: Y.Array<any>, id: string): number {
+function findCollection(array: Y.Array<any>, id: string): CollectionLookup | null {
   for (let i = 0; i < array.length; i += 1) {
-    const normalized = normalizeCollection(array.get(i));
-    if (normalized?.id === id) {
-      return i;
+    const raw = asRecord(array.get(i));
+    const collection = normalizeCollection(raw);
+    if (collection?.id === id && raw) {
+      return { index: i, raw, collection };
     }
   }
-  return -1;
+  return null;
 }
 
 function readOrganizeNodes(doc: Y.Doc): OrganizeNodeRecord[] {
@@ -382,10 +399,10 @@ function getWorkspacePageEntries(
 }
 
 function normalizeCollectionRuleFilter(value: unknown): CollectionRuleFilter | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const filter = asRecord(value);
+  if (!filter) {
     return null;
   }
-  const filter = value as Record<string, unknown>;
   if (filter.field !== "title" && filter.field !== "tag" && filter.field !== "docId") {
     return null;
   }
@@ -432,11 +449,11 @@ function normalizeCollectionRuleFilter(value: unknown): CollectionRuleFilter | n
 }
 
 function normalizeCollectionRules(value: unknown): CollectionInfo["rules"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const rules = asRecord(value);
+  if (!rules) {
     return { match: "all", filters: [] };
   }
 
-  const rules = value as Record<string, unknown>;
   const match = rules.match === "any" ? "any" : "all";
   const filters = Array.isArray(rules.filters)
     ? rules.filters
@@ -653,12 +670,62 @@ export function registerOrganizeTools(
     await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(update).toString("base64"));
   }
 
+  async function mutateCollectionEntry({
+    workspaceId,
+    collectionId,
+    update,
+  }: {
+    workspaceId: string;
+    collectionId: string;
+    update: (context: {
+      socket: any;
+      doc: Y.Doc;
+      collection: CollectionInfo;
+    }) => CollectionMutationPatch | Promise<CollectionMutationPatch>;
+  }): Promise<CollectionInfo> {
+    const { socket } = await getSocketContext();
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const { doc } = await loadWorkspaceRootDoc(socket, workspaceId);
+      const setting = doc.getMap("setting");
+      const current = setting.get("collections");
+      if (!(current instanceof Y.Array)) {
+        throw new Error("Workspace does not contain any collections.");
+      }
+      const found = findCollection(current, collectionId);
+      if (!found) {
+        throw new Error(`Collection '${collectionId}' was not found.`);
+      }
+
+      const patch = await update({
+        socket,
+        doc,
+        collection: found.collection,
+      });
+      const next: CollectionInfo = { ...found.collection, ...patch };
+      const nextValue = { ...found.raw, ...patch };
+
+      doc.transact(() => {
+        current.delete(found.index, 1);
+        current.insert(found.index, [nextValue]);
+      });
+      await saveWorkspaceRootDoc(socket, workspaceId, doc);
+      return next;
+    } finally {
+      socket.disconnect();
+    }
+  }
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: string): Promise<WorkspaceDocSummary[]> {
-  const { doc } = await loadWorkspaceRootDoc(socket, workspaceId);
+async function listWorkspaceDocsForCollectionRules(
+  socket: any,
+  workspaceId: string,
+  rootDoc?: Y.Doc,
+): Promise<WorkspaceDocSummary[]> {
+  const doc = rootDoc ?? (await loadWorkspaceRootDoc(socket, workspaceId)).doc;
   const meta = doc.getMap("meta");
   const tagOptionById = getWorkspaceTagOptionMaps(meta).byId;
   const pageEntries = getWorkspacePageEntries(meta, tagOptionById);
@@ -754,46 +821,20 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     collectionId: string;
     rules: CollectionInfo["rules"];
   }) {
-    const { socket } = await getSocketContext();
-    try {
-      await joinWorkspace(socket, workspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, workspaceId);
-      const setting = doc.getMap("setting");
-      const current = setting.get("collections");
-      if (!(current instanceof Y.Array)) {
-        throw new Error("Workspace does not contain any collections.");
-      }
-      const index = findCollectionIndex(current, collectionId);
-      if (index < 0) {
-        throw new Error(`Collection '${collectionId}' was not found.`);
-      }
-      const previous = normalizeCollection(current.get(index));
-      if (!previous) {
-        throw new Error(`Collection '${collectionId}' is malformed.`);
-      }
-
-      const docs = await listWorkspaceDocsForCollectionRules(socket, workspaceId);
-      const allowList = docs.filter(doc => matchesCollectionRules(doc, rules)).map(doc => doc.id);
-      const next: CollectionInfo = {
-        ...previous,
-        rules,
-        allowList,
-      };
-
-      doc.transact(() => {
-        current.delete(index, 1);
-        current.insert(index, [next]);
-      });
-
-      await saveWorkspaceRootDoc(socket, workspaceId, doc);
-      return {
-        collection: next,
-        matchedDocIds: allowList,
-        matchedCount: allowList.length,
-      };
-    } finally {
-      socket.disconnect();
-    }
+    const collection = await mutateCollectionEntry({
+      workspaceId,
+      collectionId,
+      update: async ({ socket, doc }) => {
+        const docs = await listWorkspaceDocsForCollectionRules(socket, workspaceId, doc);
+        const allowList = docs.filter(entry => matchesCollectionRules(entry, rules)).map(entry => entry.id);
+        return { rules, allowList };
+      },
+    });
+    return {
+      collection,
+      matchedDocIds: collection.allowList,
+      matchedCount: collection.allowList.length,
+    };
   }
 
   function requireWorkspaceId(workspaceId?: string): string {
@@ -839,8 +880,9 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
       const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
       const setting = doc.getMap("setting");
       const current = setting.get("collections");
-      const collections = current instanceof Y.Array ? readCollections(current) : [];
-      const collection = collections.find(entry => entry.id === collectionId);
+      const collection = current instanceof Y.Array
+        ? findCollection(current, collectionId)?.collection
+        : undefined;
       if (!collection) {
         throw new Error(`Collection '${collectionId}' was not found.`);
       }
@@ -965,39 +1007,14 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     name?: string;
   }) => {
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
-    const { socket } = await getSocketContext();
-    try {
-      await joinWorkspace(socket, resolvedWorkspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
-      const setting = doc.getMap("setting");
-      const current = setting.get("collections");
-      if (!(current instanceof Y.Array)) {
-        throw new Error("Workspace does not contain any collections.");
-      }
-      const index = findCollectionIndex(current, collectionId);
-      if (index < 0) {
-        throw new Error(`Collection '${collectionId}' was not found.`);
-      }
-
-      const previous = normalizeCollection(current.get(index));
-      if (!previous) {
-        throw new Error(`Collection '${collectionId}' is malformed.`);
-      }
-      const next: CollectionInfo = {
-        ...previous,
+    const collection = await mutateCollectionEntry({
+      workspaceId: resolvedWorkspaceId,
+      collectionId,
+      update: ({ collection: previous }) => ({
         name: name ?? previous.name,
-      };
-
-      doc.transact(() => {
-        current.delete(index, 1);
-        current.insert(index, [next]);
-      });
-
-      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
-      return text(next);
-    } finally {
-      socket.disconnect();
-    }
+      }),
+    });
+    return text(collection);
   };
 
   server.registerTool(
@@ -1031,11 +1048,11 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
       if (!(current instanceof Y.Array)) {
         throw new Error("Workspace does not contain any collections.");
       }
-      const index = findCollectionIndex(current, collectionId);
-      if (index < 0) {
+      const found = findCollection(current, collectionId);
+      if (!found) {
         throw new Error(`Collection '${collectionId}' was not found.`);
       }
-      current.delete(index, 1);
+      current.delete(found.index, 1);
       await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
       return text({ success: true, collectionId });
     } finally {
@@ -1066,36 +1083,14 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     docId: string;
   }) => {
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
-    const { socket } = await getSocketContext();
-    try {
-      await joinWorkspace(socket, resolvedWorkspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
-      const setting = doc.getMap("setting");
-      const current = setting.get("collections");
-      if (!(current instanceof Y.Array)) {
-        throw new Error("Workspace does not contain any collections.");
-      }
-      const index = findCollectionIndex(current, collectionId);
-      if (index < 0) {
-        throw new Error(`Collection '${collectionId}' was not found.`);
-      }
-      const previous = normalizeCollection(current.get(index));
-      if (!previous) {
-        throw new Error(`Collection '${collectionId}' is malformed.`);
-      }
-      const next: CollectionInfo = {
-        ...previous,
+    const collection = await mutateCollectionEntry({
+      workspaceId: resolvedWorkspaceId,
+      collectionId,
+      update: ({ collection: previous }) => ({
         allowList: Array.from(new Set([...previous.allowList, docId])),
-      };
-      doc.transact(() => {
-        current.delete(index, 1);
-        current.insert(index, [next]);
-      });
-      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
-      return text(next);
-    } finally {
-      socket.disconnect();
-    }
+      }),
+    });
+    return text(collection);
   };
 
   server.registerTool(
@@ -1122,36 +1117,14 @@ async function listWorkspaceDocsForCollectionRules(socket: any, workspaceId: str
     docId: string;
   }) => {
     const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
-    const { socket } = await getSocketContext();
-    try {
-      await joinWorkspace(socket, resolvedWorkspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
-      const setting = doc.getMap("setting");
-      const current = setting.get("collections");
-      if (!(current instanceof Y.Array)) {
-        throw new Error("Workspace does not contain any collections.");
-      }
-      const index = findCollectionIndex(current, collectionId);
-      if (index < 0) {
-        throw new Error(`Collection '${collectionId}' was not found.`);
-      }
-      const previous = normalizeCollection(current.get(index));
-      if (!previous) {
-        throw new Error(`Collection '${collectionId}' is malformed.`);
-      }
-      const next: CollectionInfo = {
-        ...previous,
+    const collection = await mutateCollectionEntry({
+      workspaceId: resolvedWorkspaceId,
+      collectionId,
+      update: ({ collection: previous }) => ({
         allowList: previous.allowList.filter(id => id !== docId),
-      };
-      doc.transact(() => {
-        current.delete(index, 1);
-        current.insert(index, [next]);
-      });
-      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
-      return text(next);
-    } finally {
-      socket.disconnect();
-    }
+      }),
+    });
+    return text(collection);
   };
 
   server.registerTool(
