@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-09-08
+
 ### Added
 - Added eight native mindmap tools for hierarchy editing, right/left/balance layouts, four styles, and native lock/unlock, with read-only discovery, validation, and request/response documentation.
 
@@ -766,6 +768,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.6.0
 [3.5.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.1
 [3.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.0
 [3.4.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.4.1
@@ -804,4 +807,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.5.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.6.0...HEAD
