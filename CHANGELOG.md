@@ -12,9 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Declared the returned native mindmap `nodeId` in mutation output schemas; rejected reused overlay output directories and pinned the compatibility image's verified base digest.
+- Retry OAuth metadata discovery after transient failures instead of retaining rejected cache entries, and bound discovery requests.
+- Align CLI authentication diagnostics with server support for bearer and cookie credentials supplied through additional headers.
+- Preserve document pagination progress when deleted entries are filtered from a backend page.
+- Report recoverable document creation failures with the allocated document ID and persistence stage instead of losing partially created documents behind a generic error.
+- Reject invalid collection filter combinations before changing collection membership.
+
+### Changed
+- Classify full-note Markdown replacement as destructive and exclude it from `core`, `authoring`, and destructive-disabled deployments. Incremental editing remains available.
+- Reuse document skeleton and persistence helpers and a common collection mutation path.
 
 ### Tests
 - Added native mindmap coverage for Yjs round trips, subtree moves, invalid topology, layout geometry, style transitions, lock inheritance, tool filtering, output contracts, and non-destructive overlay directory validation.
+- Added regression coverage for authentication recovery, CLI header credentials, document creation failures, deleted-page cursors, invalid collection rules, and destructive tool filtering.
+- Preserve credential acquisition failures in the E2E runner, verify recovery and exhaustion exit codes, and exercise native mindmap tools in the live comprehensive suite.
 
 ## [3.5.1] - 2026-09-07
 

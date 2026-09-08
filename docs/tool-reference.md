@@ -49,6 +49,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `add_organize_link` | Add a doc, tag, or collection link under a folder | Experimental |
 | `delete_organize_link` | Delete a doc, tag, or collection link | Experimental and destructive |
 
+Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag` with `contains` or `equals`; and `docId` with `equals` or `in`. All values are trimmed nonblank strings, except `docId` with `in`, which requires a nonempty list of nonblank strings. Invalid combinations reject the entire request before changing membership; they are never silently dropped from a submitted rule set.
+
 ## Documents
 
 ### Discovery and metadata
@@ -100,7 +102,15 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
-| `replace_doc_with_markdown` | Replace the main note content with Markdown | Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+| `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+
+#### Document creation failures
+
+Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.
+
+If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
+
+For `list_docs`, pagination follows the backend page even when deleted entries are filtered out. An empty visible page can still have `hasNextPage: true`; continue with its `endCursor` instead of treating an empty `edges` array as the end of the workspace.
 
 #### Formatting-preserving block text
 

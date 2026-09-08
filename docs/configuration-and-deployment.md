@@ -25,11 +25,15 @@ Auth priority within the active configuration:
 
 1. `AFFINE_API_TOKEN`
 2. `AFFINE_COOKIE`
-3. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
+3. A Bearer `Authorization` header in `AFFINE_HEADERS_JSON`
+4. A `Cookie` header in `AFFINE_HEADERS_JSON`
+5. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
 
 This priority is applied only within the selected environment or saved-config
 group. For example, environment email/password credentials take precedence
 over an older saved API token or session cookie.
+
+Header names are case-insensitive. The MCP runtime, `status`, `doctor`, and `show-config` use the same resolution, including header-only credentials. Diagnostic output redacts credential values.
 
 Email/password authentication is process-scoped. Concurrent HTTP MCP sessions
 share one sign-in attempt and the resulting cookie. In the default `async`
@@ -278,6 +282,8 @@ Available profiles:
 - `read_only`: expose discovery, reading, export, fidelity, and inspection tools, plus `sign_in`
 - `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
 - `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
+
+`replace_doc_with_markdown` removes the existing main-note content and is classified as destructive. It is available in `full`, but excluded from `core`, `authoring`, and deployments with `AFFINE_DISABLED_GROUPS=destructive`. Use `append_markdown` or `update_block` for incremental edits in those profiles.
 
 Profile, group, and tool names are validated at startup. An unknown value stops the server instead of falling back to a broader tool surface. This prevents a configuration typo from silently enabling tools that an operator intended to hide.
 
