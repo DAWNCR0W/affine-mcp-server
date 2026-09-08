@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 import { AuthSession, parseLoginMode } from "../src/authSession.ts";
 import { GraphQLClient } from "../src/graphqlClient.ts";
+import { resolveConfiguredAuth } from "../src/util/configuredAuth.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
@@ -299,6 +300,63 @@ async function testSingleFlightPrimitive() {
   assertEqual((await bearerPriority.ready()).kind, "bearer", "bearer ignores incomplete lower-priority credentials");
 }
 
+async function testConfiguredAuthResolution() {
+  const bearerHeaders = resolveConfiguredAuth({
+    headers: {
+      AUTHORIZATION: "Bearer header-token",
+      Cookie: "stale-cookie=1",
+      "X-Tenant": "header-tenant",
+    },
+    source: "env",
+  });
+  assertEqual(bearerHeaders.kind, "api-token", "case-insensitive Authorization header kind");
+  assertEqual(bearerHeaders.apiToken, "header-token", "header bearer token");
+  assertEqual(bearerHeaders.source, "env", "header auth source");
+  assertEqual(bearerHeaders.headers?.["X-Tenant"], "header-tenant", "header auth preserves non-auth headers");
+  assert(!Object.keys(bearerHeaders.headers || {}).some((name) => /^(authorization|cookie)$/i.test(name)), "header auth is canonicalized");
+
+  const cookieHeaders = resolveConfiguredAuth({
+    headers: { cOoKiE: "affine_session=header-cookie" },
+    source: "config",
+  });
+  assertEqual(cookieHeaders.kind, "cookie", "case-insensitive Cookie header kind");
+  assertEqual(cookieHeaders.cookie, "affine_session=header-cookie", "header cookie");
+  assertEqual(cookieHeaders.headers?.Cookie, "affine_session=header-cookie", "canonical cookie header");
+
+  const explicitToken = resolveConfiguredAuth({
+    apiToken: "explicit-token",
+    cookie: "cookie=\ninvalid-lower-priority",
+    email: EMAIL,
+    password: PASSWORD,
+    headers: { Authorization: "Basic ignored" },
+  });
+  assertEqual(explicitToken.kind, "api-token", "explicit token precedence");
+  assertEqual(explicitToken.apiToken, "explicit-token", "explicit token value");
+  assertEqual(explicitToken.cookie, undefined, "ignored lower-priority cookie is not exposed");
+  assertEqual(explicitToken.email, undefined, "ignored lower-priority email is not exposed");
+  assertEqual(explicitToken.password, undefined, "ignored lower-priority password is not exposed");
+
+  const explicitCookie = resolveConfiguredAuth({
+    cookie: "cookie=explicit",
+    headers: { Authorization: "Bearer lower-priority" },
+  });
+  assertEqual(explicitCookie.kind, "cookie", "explicit cookie precedence");
+  assertEqual(explicitCookie.cookie, "cookie=explicit", "explicit cookie value");
+  assertEqual(explicitCookie.apiToken, undefined, "ignored lower-priority token is not exposed");
+
+  const emailAuth = resolveConfiguredAuth({ email: EMAIL, password: PASSWORD });
+  assertEqual(emailAuth.kind, "email-password", "email/password fallback");
+  const partialEmail = resolveConfiguredAuth({ email: EMAIL });
+  assertEqual(partialEmail.kind, "none", "partial email does not select authentication");
+  assertEqual(partialEmail.email, EMAIL, "partial email remains available for configuration warnings");
+  assertEqual(partialEmail.password, undefined, "missing partial password remains unset");
+  assertThrows(
+    () => resolveConfiguredAuth({ headers: { Authorization: "Basic invalid" } }),
+    "Bearer scheme",
+    "invalid Authorization scheme",
+  );
+}
+
 async function testExclusiveAuthState() {
   const client = new GraphQLClient({
     endpoint: "http://127.0.0.1:1/graphql",
@@ -496,6 +554,7 @@ async function testConcurrentHttpSessionsAndDirectMultipart() {
 async function main() {
   assert(existsSync(MCP_SERVER_PATH), "dist/index.js is missing; run npm run build first");
   await testSingleFlightPrimitive();
+  await testConfiguredAuthResolution();
   await testExclusiveAuthState();
   await testFailureNeverFallsBack();
   await testEnvironmentCredentialsOverrideSavedAuthentication();
