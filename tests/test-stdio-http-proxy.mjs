@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
 const PROXY_PATH = path.join(PROJECT_DIR, "bin", "affine-mcp-http-proxy");
 const SERVER_PATH = path.join(PROJECT_DIR, "dist", "index.js");
+assert.ok(existsSync(SERVER_PATH), "dist/index.js is missing; run npm run build before test:fast");
 const TOKEN = "test-proxy-token";
 const SESSION_ID = "session-for-test";
 

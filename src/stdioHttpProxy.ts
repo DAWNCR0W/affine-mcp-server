@@ -5,6 +5,7 @@ import { fetchResponseBody } from "./util/httpResponse.js";
 const DEFAULT_ENDPOINT = `http://127.0.0.1:${process.env.PORT || "3000"}/mcp`;
 const REQUEST_TIMEOUT_MS = Number(process.env.AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS || 60_000);
 const CLOSE_TIMEOUT_MS = 5_000;
+const SIGNAL_SHUTDOWN_TIMEOUT_MS = CLOSE_TIMEOUT_MS;
 
 type JsonRpcId = string | number | null;
 type JsonRpcMessage = {
@@ -41,6 +42,13 @@ function loadEndpoint(): string {
 
 function writeMessage(message: unknown): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function shutdownDeadline(): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, SIGNAL_SHUTDOWN_TIMEOUT_MS);
+    timer.unref();
+  });
 }
 
 function protocolError(id: JsonRpcId | undefined, message: string): void {
@@ -236,7 +244,7 @@ async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       input.close();
-      void close().finally(() => {
+      void Promise.race([close().catch(() => undefined), shutdownDeadline()]).finally(() => {
         process.exit(signal === "SIGINT" ? 130 : 143);
       });
     });
