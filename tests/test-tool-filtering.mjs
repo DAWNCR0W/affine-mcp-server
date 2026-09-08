@@ -154,6 +154,7 @@ async function run() {
       toolsByName.list_docs?.annotations?.readOnlyHint === true &&
       toolsByName.list_docs?.annotations?.idempotentHint === true &&
       toolsByName.delete_doc?.annotations?.destructiveHint === true &&
+      toolsByName.replace_doc_with_markdown?.annotations?.destructiveHint === true &&
       toolsByName.trash_doc?.annotations?.destructiveHint === false &&
       toolsByName.trash_doc?.annotations?.idempotentHint === true &&
       toolsByName.restore_doc?.annotations?.destructiveHint === false &&
@@ -284,6 +285,7 @@ async function run() {
       AFFINE_TOOL_PROFILE: "core",
     });
     const trimmed = [
+      "replace_doc_with_markdown",
       "delete_workspace",
       "cleanup_blobs",
       "create_workspace_blueprint",
@@ -305,6 +307,7 @@ async function run() {
       AFFINE_TOOL_PROFILE: "authoring",
     });
     const hiddenAuthoring = [
+      "replace_doc_with_markdown",
       "delete_doc",
       "delete_surface_element",
       "cleanup_blobs",
@@ -317,6 +320,18 @@ async function run() {
       console.log("✅ Success: Authoring profile keeps editing tools while hiding restricted tools.");
     } else {
       console.error(`❌ Failed: Authoring profile mismatch. visible=${visibleRestricted.join(", ")} missing=${missingAuthoring.join(", ")}`);
+      hasFailures = true;
+    }
+
+    const withoutDestructiveTools = await testFiltering({ AFFINE_DISABLED_GROUPS: "destructive" });
+    if (
+      allTools.includes("replace_doc_with_markdown") &&
+      !withoutDestructiveTools.includes("replace_doc_with_markdown") &&
+      withoutDestructiveTools.includes("append_markdown")
+    ) {
+      console.log("✅ Success: Full replacement requires destructive tools; appending remains available.");
+    } else {
+      console.error("❌ Failed: Destructive filtering did not isolate full document replacement.");
       hasFailures = true;
     }
 

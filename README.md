@@ -197,6 +197,8 @@ Domains:
 
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
+Full-note replacement with `replace_doc_with_markdown` is destructive and requires `full` without disabling the `destructive` group. `core` and `authoring` retain incremental editing through `append_markdown` and `update_block`.
+
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 
 ## Documentation Map
