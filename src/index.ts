@@ -22,6 +22,7 @@ import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
 import { stripSchemaDialect } from "./util/mcp.js";
+import { resolveConfiguredAuth } from "./util/configuredAuth.js";
 import {
   assertOAuthServiceWritePolicy,
   createToolFilterEnvironment,
@@ -81,39 +82,16 @@ const loginMode = config.authMode === "oauth"
   ? "async"
   : parseLoginMode(process.env.AFFINE_LOGIN_AT_START);
 
-function findConfiguredHeader(name: string): string | undefined {
-  let value: string | undefined;
-  for (const [headerName, headerValue] of Object.entries(config.headers || {})) {
-    if (headerName.toLowerCase() === name) value = headerValue;
-  }
-  return value;
-}
-
-const configuredAuthorization = findConfiguredHeader("authorization");
-const configuredCookie = findConfiguredHeader("cookie");
-let headerBearer: string | undefined;
-if (!config.apiToken && configuredAuthorization !== undefined) {
-  if (/[\r\n]/.test(configuredAuthorization)) {
-    throw new Error("Configured Authorization header contains illegal CR/LF characters.");
-  }
-  const match = /^Bearer\s+(.+)$/i.exec(configuredAuthorization);
-  if (!match) {
-    throw new Error("Configured Authorization header must use the Bearer scheme.");
-  }
-  headerBearer = match[1];
-}
-
-const sessionBearer = config.apiToken || headerBearer;
-const sessionCookie = sessionBearer
-  ? undefined
-  : config.cookie || configuredCookie;
+const configuredAuth = resolveConfiguredAuth(config);
+const sessionBearer = configuredAuth.apiToken;
+const sessionCookie = configuredAuth.cookie;
 const authSession = new AuthSession({
   baseUrl: config.baseUrl,
   bearer: sessionBearer,
   cookie: sessionCookie,
-  email: sessionBearer || sessionCookie ? undefined : config.email,
-  password: sessionBearer || sessionCookie ? undefined : config.password,
-  headers: config.headers,
+  email: sessionBearer || sessionCookie ? undefined : configuredAuth.email,
+  password: sessionBearer || sessionCookie ? undefined : configuredAuth.password,
+  headers: configuredAuth.headers,
 });
 
 if (config.authMode === "oauth" && !authSession.hasConfiguredAuth) {

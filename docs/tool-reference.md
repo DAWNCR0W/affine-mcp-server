@@ -49,6 +49,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `add_organize_link` | Add a doc, tag, or collection link under a folder | Experimental |
 | `delete_organize_link` | Delete a doc, tag, or collection link | Experimental and destructive |
 
+Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag` with `contains` or `equals`; and `docId` with `equals` or `in`. All values are trimmed nonblank strings, except `docId` with `in`, which requires a nonempty list of nonblank strings. Invalid combinations reject the entire request before changing membership; they are never silently dropped from a submitted rule set.
+
 ## Documents
 
 ### Discovery and metadata
@@ -100,7 +102,15 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
-| `replace_doc_with_markdown` | Replace the main note content with Markdown | Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+| `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+
+#### Document creation failures
+
+Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.
+
+If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
+
+For `list_docs`, pagination follows the backend page even when deleted entries are filtered out. An empty visible page can still have `hasNextPage: true`; continue with its `endCursor` instead of treating an empty `edges` array as the end of the workspace.
 
 #### Formatting-preserving block text
 
@@ -230,3 +240,43 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |
+
+## Native mindmaps
+
+See the [native mindmap guide](native-mindmaps.md) for request/response fields,
+an executable workflow example, validation behavior, and deployment links.
+
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE |
+| `get_mindmap` | Read validated topology, child order, labels, collapsed state and geometry | Discover IDs with `get_edgeless_canvas` |
+| `add_mindmap_node` | Append or insert a child of `parentId` | `beforeId` must be a sibling; returns `nodeId` |
+| `update_mindmap_node` | Replace text or change collapsed state | Keeps IDs and parent links |
+| `reparent_mindmap_node` | Move a node and its descendants within the same map | Rejects root moves, cycles and foreign IDs |
+| `set_mindmap_layout` | Persist direction and node coordinates together | `right`, `left`, `balance`; no `down`/`up` |
+| `set_mindmap_style` | Apply native style and persist node appearance/size | `style`: integer 1–4; keeps hierarchy |
+| `set_mindmap_lock` | Set native map lock inherited by its nodes | `locked`: boolean; retains independent node/ancestor locks |
+
+These operations store a native `type=mindmap` element with a `Y.Map` of shape IDs
+and `{index, parent?, collapsed?}` details. They do not create ordinary connectors;
+BlockSuite derives its own local connectors from the hierarchy. Shape nodes only,
+maximum 500 nodes and depth 64. Node removal is deliberately not exposed.
+
+Layout values are verified against [AFFiNE 174ad9bc5](https://github.com/toeverything/AFFiNE/blob/174ad9bc5/blocksuite/affine/model/src/consts/mindmap.ts):
+RIGHT=0, LEFT=1, BALANCE=2. Downward layout requires an editor change, not a new MCP
+enum value. Positions are persisted because remote changes do not trigger every
+local editor watcher. Text dimensions are estimated; the native editor may refine
+them when opened. The root remains anchored during layout and reparenting.
+
+Styles ONE=1, TWO=2, THREE=3, FOUR=4 are supported by `set_mindmap_style` and
+the optional creation `style` (default ONE). `set_mindmap_lock` writes native
+`lockedBySelf`; effective `locked` also includes containing group locks. Other
+mutations reject locked maps/nodes. Unlock keeps independent node locks intact.
+
+Create a document with its intended `folderId` first and verify its sidebar link,
+then create a root, add project children to `rootId`, and add tasks to the returned
+project `nodeId`. Run hierarchy mutations sequentially. The upstream persistence
+API has no compare-and-swap: simultaneous edits by independent clients can still
+race; read back the map after a batch. A failed push may have an uncertain outcome,
+so inspect the document before retrying creation. Existing malformed or shared
+node ownership is rejected before persistence.

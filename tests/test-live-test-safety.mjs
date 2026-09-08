@@ -155,4 +155,31 @@ try {
   fs.rmSync(generatedEnvPath, { force: true });
 }
 
+// Exercise the actual shell retry function without Docker or a live AFFiNE target.
+const e2eRunner = fs.readFileSync(path.join(testDirectory, 'run-e2e.sh'), 'utf8');
+const retryStart = e2eRunner.indexOf('acquire_credentials_with_retry() {');
+assert.ok(retryStart >= 0, 'credential retry function must exist');
+const retryEnd = e2eRunner.indexOf('\n}', retryStart);
+assert.ok(retryEnd > retryStart, 'credential retry function must be complete');
+const retryFunction = e2eRunner.slice(retryStart, retryEnd + 2);
+for (const recover of [false, true]) {
+  const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+AFFINE_CREDENTIAL_ACQUIRE_RETRIES=2
+AFFINE_CREDENTIAL_RETRY_DELAY_SECONDS=0
+SCRIPT_DIR=unused
+attempt_count=0
+node() {
+  attempt_count=$((attempt_count + 1))
+  if [[ ${recover ? '1' : '0'} == 1 && "$attempt_count" == 2 ]]; then return 0; fi
+  return 42
+}
+docker_diagnostics() { :; }
+sleep() { :; }
+${retryFunction}
+acquire_credentials_with_retry
+`], { encoding: 'utf8' });
+  assert.equal(result.status, recover ? 0 : 42, result.stderr || result.stdout);
+}
+
 console.log('Live destructive-test safety checks passed');

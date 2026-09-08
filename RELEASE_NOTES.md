@@ -1,5 +1,26 @@
 # Release Notes
 
+## Version 3.6.0 (2026-09-08)
+
+### Highlights
+- Added eight native mindmap tools to create and edit hierarchies, move subtrees, choose right/left/balance layouts, switch all four native styles, and lock or unlock maps.
+- Hardened authentication recovery, document creation, pagination, and collection updates against transient failures and invalid input.
+
+### What Changed
+- Native mindmaps preserve node IDs and descendants during moves, reject invalid topology and locked edits, and expose read-only discovery through `get_mindmap`.
+- OAuth discovery retries after transient failures and applies a bounded request deadline. CLI diagnostics and the server now resolve bearer and cookie credentials consistently, including credentials supplied through additional headers.
+- Document creation reuses stable IDs and reports partial or uncertain persistence with recovery guidance. Deleted document entries no longer prevent pagination from progressing.
+- Collection rules are validated before mutation; shared collection updates preserve unrelated metadata.
+- Full-note Markdown replacement is classified as destructive. Incremental editing remains available in restricted profiles.
+- Expanded regression and live comprehensive coverage, including all eight native mindmap operations and E2E credential acquisition failures.
+
+### Compatibility
+- Eight tools were added, bringing the canonical MCP surface from 97 to 105 tools. No tool names or existing required inputs were removed.
+- `replace_doc_with_markdown` is excluded from `core`, `authoring`, and destructive-disabled deployments. Use `full` with destructive tools enabled when full-note replacement is intended.
+- Native mindmaps support shape nodes, up to 500 nodes and depth 64. Node deletion, cross-map transfer, and `up`/`down` layouts are not exposed. Perform hierarchy mutations sequentially and read them back; concurrent writers have no compare-and-swap guarantee.
+- Mindmap locking is an editor lock, not an access-control boundary. The optional pinned 3.2.1 compatibility overlay is separate from this package release.
+- Node.js 20.18.1 or newer remains required. Local release validation targets AFFiNE 0.27.4.
+
 ## Version 3.5.1 (2026-09-07)
 
 ### Highlights

@@ -130,6 +130,24 @@ const upstream = createServer(async (request, response) => {
     response.end("No root route");
     return;
   }
+  if (request.method === "POST" && request.url === "/api/auth/sign-in") {
+    for await (const _chunk of request) {
+      // Drain the request body before returning the synthetic session cookie.
+    }
+    graphqlRequests.push({
+      authorization: request.headers.authorization || null,
+      cookie: request.headers.cookie || null,
+      tenant: request.headers["x-tenant"] || null,
+      affineVersion: request.headers["x-affine-version"] || null,
+      url: request.url,
+    });
+    response.writeHead(200, {
+      "Content-Type": "application/json",
+      "Set-Cookie": "affine_session=environment-login; Path=/",
+    });
+    response.end("{}");
+    return;
+  }
   if (request.method !== "POST" || request.url !== "/custom/graphql") {
     response.writeHead(404, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ error: "wrong path" }));
@@ -223,6 +241,7 @@ try {
   });
   const environmentCredentials = cleanEnvironment({
     XDG_CONFIG_HOME: staleSavedAuthHome,
+    AFFINE_GRAPHQL_PATH: "/custom/graphql",
     AFFINE_EMAIL: "environment@example.test",
     AFFINE_PASSWORD: "environment-password",
   });
@@ -267,6 +286,37 @@ try {
   expect(
     !environmentAuthConfig.stderr.includes(partialCredentialWarning),
     "complete environment email/password credentials produced a partial-credential warning",
+  );
+
+  const environmentAuthStatus = await runNode(
+    [DIST_ENTRY, "status", "--json"],
+    environmentCredentials,
+  );
+  expect(
+    environmentAuthStatus.code === 0,
+    `environment email/password status failed: ${environmentAuthStatus.stderr}`,
+  );
+  expect(
+    JSON.parse(environmentAuthStatus.stdout).authKind === "email-password",
+    "environment email/password status auth kind mismatch",
+  );
+  expect(
+    graphqlRequests.some(
+      (entry) => entry.url === "/api/auth/sign-in"
+        && entry.authorization === null
+        && entry.cookie === null
+        && entry.tenant === "saved-tenant",
+    ),
+    "saved auth headers were not stripped while retaining the saved non-auth header",
+  );
+  expect(
+    graphqlRequests.some(
+      (entry) => entry.url === "/custom/graphql"
+        && entry.cookie === "affine_session=environment-login"
+        && entry.authorization === null
+        && entry.tenant === "saved-tenant",
+    ),
+    "environment email/password runtime did not retain the saved non-auth header",
   );
 
   const environmentEmailOnlyConfig = await runNode(
@@ -334,6 +384,62 @@ try {
     "saved API token source was not reported after non-auth environment headers",
   );
 
+  const environmentHeaderAuth = await runNode(
+    [DIST_ENTRY, "show-config", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: staleSavedAuthHome,
+      AFFINE_GRAPHQL_PATH: "/custom/graphql",
+      AFFINE_HEADERS_JSON: JSON.stringify({
+        AUTHORIZATION: "Bearer environment-header-token",
+        "X-Tenant": "environment-header-tenant",
+      }),
+    }),
+  );
+  expect(
+    environmentHeaderAuth.code === 0,
+    `environment header auth config failed: ${environmentHeaderAuth.stderr}`,
+  );
+  const environmentHeaderSummary = JSON.parse(environmentHeaderAuth.stdout);
+  expect(
+    environmentHeaderSummary.authKind === "api-token",
+    "environment Authorization header did not override the saved token",
+  );
+  expect(
+    environmentHeaderSummary.sources.apiToken === "env",
+    "environment Authorization header was reported as the saved token source",
+  );
+  expect(
+    !environmentHeaderAuth.stdout.includes("environment-header-token"),
+    "environment Authorization header leaked in show-config",
+  );
+
+  const environmentHeaderStatus = await runNode(
+    [DIST_ENTRY, "status", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: staleSavedAuthHome,
+      AFFINE_GRAPHQL_PATH: "/custom/graphql",
+      AFFINE_HEADERS_JSON: JSON.stringify({
+        AUTHORIZATION: "Bearer environment-header-token",
+        "X-Tenant": "environment-header-tenant",
+      }),
+    }),
+  );
+  expect(
+    environmentHeaderStatus.code === 0,
+    `environment header auth status failed: ${environmentHeaderStatus.stderr}`,
+  );
+  expect(
+    JSON.parse(environmentHeaderStatus.stdout).authKind === "api-token",
+    "environment Authorization header status auth kind mismatch",
+  );
+  expect(
+    graphqlRequests.some(
+      (entry) => entry.authorization === "Bearer environment-header-token"
+        && entry.tenant === "environment-header-tenant",
+    ),
+    "runtime selected the saved token over the environment Authorization header",
+  );
+
   const status = await runNode([DIST_ENTRY, "status", "--json"], effectiveEnv);
   expect(status.code === 0, `status failed: ${status.stderr}`);
   const statusPayload = JSON.parse(status.stdout);
@@ -399,8 +505,14 @@ try {
   const shellSnippetEnv = cleanEnvironment({
     XDG_CONFIG_HOME: noConfigHome,
     AFFINE_BASE_URL: baseUrl,
-    AFFINE_COOKIE: unsafeShellCharacters,
+    AFFINE_EMAIL: "snippet@example.test",
+    AFFINE_PASSWORD: unsafeShellCharacters,
   });
+  const rejectedCookie = await runNode([DIST_ENTRY, "show-config", "--json"], cleanEnvironment({
+    XDG_CONFIG_HOME: noConfigHome,
+    AFFINE_COOKIE: unsafeShellCharacters,
+  }));
+  expect(rejectedCookie.code !== 0 && rejectedCookie.stderr.includes("illegal CR/LF"), "configured cookies must reject CR/LF before use");
   const codexSnippet = await runNode([DIST_ENTRY, "snippet", "codex", "--env"], shellSnippetEnv);
   expect(codexSnippet.code === 0, `Codex snippet failed: ${codexSnippet.stderr}`);
   const codexCommand = codexSnippet.stdout.endsWith("\n")
@@ -414,7 +526,9 @@ try {
     "--env",
     `AFFINE_BASE_URL=${baseUrl}`,
     "--env",
-    `AFFINE_COOKIE=${unsafeShellCharacters}`,
+    "AFFINE_EMAIL=snippet@example.test",
+    "--env",
+    `AFFINE_PASSWORD=${unsafeShellCharacters}`,
     "--",
     "affine-mcp",
   ];
@@ -456,6 +570,72 @@ try {
     graphqlRequests.some((entry) => entry.cookie === cookieFromStdin),
     "stdin cookie was not used to authenticate and validate the workspace",
   );
+
+  const headerAuthScenarios = [
+    {
+      label: "Authorization header",
+      headerName: "AUTHORIZATION",
+      headerValue: "Bearer header-only-bearer-token",
+      authKind: "api-token",
+      sourceKey: "apiToken",
+      requestKey: "authorization",
+      requestValue: "Bearer header-only-bearer-token",
+    },
+    {
+      label: "Cookie header",
+      headerName: "cOoKiE",
+      headerValue: "affine_session=header-only-cookie-value",
+      authKind: "cookie",
+      sourceKey: "cookie",
+      requestKey: "cookie",
+      requestValue: "affine_session=header-only-cookie-value",
+    },
+  ];
+  for (const scenario of headerAuthScenarios) {
+    const headerAuthHome = path.join(TEMP_ROOT, `header-only-${scenario.authKind}`);
+    writeConfig(headerAuthHome, {
+      AFFINE_BASE_URL: baseUrl,
+      AFFINE_GRAPHQL_PATH: "/custom/graphql",
+      AFFINE_HEADERS_JSON: JSON.stringify({
+        [scenario.headerName]: scenario.headerValue,
+        "X-Tenant": `header-only-${scenario.authKind}`,
+      }),
+      MCP_TRANSPORT: "http",
+    });
+    const headerAuthEnv = cleanEnvironment({ XDG_CONFIG_HOME: headerAuthHome });
+
+    const headerShowConfig = await runNode([DIST_ENTRY, "show-config", "--json"], headerAuthEnv);
+    expect(headerShowConfig.code === 0, `${scenario.label} show-config failed: ${headerShowConfig.stderr}`);
+    const headerSummary = JSON.parse(headerShowConfig.stdout);
+    expect(headerSummary.authKind === scenario.authKind, `${scenario.label} show-config auth kind mismatch`);
+    expect(headerSummary.sources[scenario.sourceKey] === "config", `${scenario.label} source was not config`);
+    expect(!headerShowConfig.stdout.includes(scenario.headerValue), `${scenario.label} secret leaked in show-config`);
+
+    const headerStatus = await runNode([DIST_ENTRY, "status", "--json"], headerAuthEnv);
+    expect(headerStatus.code === 0, `${scenario.label} status failed: ${headerStatus.stderr}`);
+    const headerStatusPayload = JSON.parse(headerStatus.stdout);
+    expect(headerStatusPayload.authKind === scenario.authKind, `${scenario.label} status auth kind mismatch`);
+    expect(headerStatusPayload.userEmail === "config@example.test", `${scenario.label} status did not authenticate`);
+    expect(!headerStatus.stdout.includes(scenario.headerValue), `${scenario.label} secret leaked in status`);
+
+    const headerDoctor = await runNode([DIST_ENTRY, "doctor", "--json"], headerAuthEnv);
+    expect(headerDoctor.code === 0, `${scenario.label} doctor failed: ${headerDoctor.stderr}`);
+    const headerDoctorPayload = JSON.parse(headerDoctor.stdout);
+    expect(headerDoctorPayload.ok === true, `${scenario.label} doctor did not pass`);
+    expect(headerDoctorPayload.authKind === scenario.authKind, `${scenario.label} doctor auth kind mismatch`);
+    expect(
+      headerDoctorPayload.checks.some((check) => check.name === "graphql-auth" && check.ok),
+      `${scenario.label} doctor did not authenticate GraphQL`,
+    );
+    expect(!headerDoctor.stdout.includes(scenario.headerValue), `${scenario.label} secret leaked in doctor`);
+    expect(
+      graphqlRequests.some(
+        (entry) => entry[scenario.requestKey] === scenario.requestValue
+          && entry.tenant === `header-only-${scenario.authKind}`,
+      ),
+      `${scenario.label} runtime and CLI credential resolution diverged`,
+    );
+  }
 
   const configuredUrlHome = path.join(TEMP_ROOT, "configured-url-cookie");
   writeConfig(configuredUrlHome, {
@@ -622,7 +802,7 @@ try {
   expect(ready.status === 200, `readyz did not validate the configured upstream: ${await ready.text()}`);
   expect(
     graphqlRequests.some(
-      (entry) => entry.query.includes("AffineMcpReadiness")
+      (entry) => entry.query?.includes("AffineMcpReadiness")
         && entry.authorization === "Bearer runtime-token"
         && entry.cookie === null
         && entry.tenant === "saved-tenant"
@@ -654,6 +834,7 @@ try {
       "non-TTY cookie prompt isolation",
       "workspace override validation",
       "legacy cookie argument redaction",
+      "header-only Authorization and Cookie CLI/runtime parity",
       "header-only credential logout",
       "strict transport validation",
       "saved HTTP runtime flags",

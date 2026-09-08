@@ -503,6 +503,36 @@ class ComprehensiveRunner {
         throw new Error('get_edgeless_canvas did not return expected shape');
       }
     });
+
+    // Exercise the native tools against persisted AFFiNE documents as well as pure Yjs fixtures.
+    let mindmapId, rootId, branchId, childId;
+    await this.callTool('create_mindmap', { workspaceId, docId, text: 'Release checks' }, parsed => {
+      mindmapId = parsed?.mindmapId;
+      rootId = parsed?.rootId;
+    });
+    if (!mindmapId || !rootId) throw new Error('create_mindmap did not return native IDs');
+    const mindmapTarget = { workspaceId, docId, mindmapId };
+    await this.callTool('add_mindmap_node', { ...mindmapTarget, parentId: rootId, text: 'Branch' }, parsed => {
+      branchId = parsed?.nodeId;
+    });
+    await this.callTool('add_mindmap_node', { ...mindmapTarget, parentId: rootId, text: 'Child' }, parsed => {
+      childId = parsed?.nodeId;
+    });
+    if (!branchId || !childId) throw new Error('add_mindmap_node did not return node IDs');
+    await this.callTool('update_mindmap_node', { ...mindmapTarget, nodeId: childId, text: 'Verified child', collapsed: true });
+    await this.callTool('reparent_mindmap_node', { ...mindmapTarget, nodeId: childId, parentId: branchId });
+    await this.callTool('set_mindmap_style', { ...mindmapTarget, style: 2 });
+    await this.callTool('set_mindmap_layout', { ...mindmapTarget, layout: 'left' });
+    await this.callTool('set_mindmap_lock', { ...mindmapTarget, locked: true });
+    await this.callTool('get_mindmap', mindmapTarget, parsed => {
+      const child = parsed?.nodes?.find(node => node.nodeId === childId);
+      if (
+        parsed?.nodeCount !== 3 || parsed.layout !== 'left' || parsed.style !== 2 || !parsed.locked ||
+        child?.parentId !== branchId || child.text !== 'Verified child' || child.collapsed !== true
+      ) {
+        throw new Error('Native mindmap hierarchy, edits, style, layout, or lock did not survive read-back');
+      }
+    });
     await this.callTool('delete_surface_element', { workspaceId, docId, elementId: shapeBId });
     await this.callTool('delete_block', { workspaceId, docId, blockId: noteBlockId });
 
