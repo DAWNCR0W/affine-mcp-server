@@ -21,6 +21,7 @@ import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
+import { coordinateTool } from "./toolCoordination.js";
 import { stripSchemaDialect } from "./util/mcp.js";
 import { resolveConfiguredAuth } from "./util/configuredAuth.js";
 import {
@@ -160,14 +161,18 @@ async function buildServer() {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
       const outputSchema = options?.outputSchema ?? toolOutputSchemaFor(name);
+      const coordinated = coordinateTool(name, options?.inputSchema || {}, handler, {
+        gql, endpoint: config.graphqlEndpoint, workspaceId: config.defaultWorkspaceId,
+      });
       return originalRegisterTool(name, {
         ...options,
+        inputSchema: coordinated.inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         annotations: {
           ...toolAnnotationsFor(name),
           ...(options?.annotations || {}),
         },
-      }, handler);
+      }, coordinated.handler);
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);

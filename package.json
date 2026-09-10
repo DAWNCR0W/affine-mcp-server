@@ -103,7 +103,8 @@
     "pack:check": "npm pack --dry-run",
     "release:verify": "node scripts/verify-release.mjs",
     "ci": "npm test && npm run pack:check",
-    "prepublishOnly": "npm run ci"
+    "prepublishOnly": "npm run ci",
+    "test:concurrent-writes": "node tests/test-concurrent-writes.mjs"
   },
   "files": [
     "bin",
@@ -136,7 +137,7 @@
     "socket.io-client": "^4.8.1",
     "undici": "^7.29.0",
     "yjs": "^13.6.27",
-    "zod": "^3.23.8"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",

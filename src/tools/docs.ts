@@ -30,6 +30,7 @@ import {
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
 import { secureAffineId, secureRandomInt31 } from "../util/random.js";
+import { documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -5760,11 +5761,14 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      let registered = false;
       const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
       if (workspaceSnapshot.missing) {
         const workspaceDoc = new Y.Doc();
         Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
         tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+        registered = isDocumentRegistered(workspaceDoc, parsed.docId);
+        workspaceDoc.destroy();
       }
 
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
@@ -5775,6 +5779,7 @@ export function registerDocTools(
           title: null,
           tags: [],
           exists: false,
+          revision: null,
           blockCount: 0,
           blocks: [],
           plainText: "",
@@ -5783,6 +5788,7 @@ export function registerDocTools(
 
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const revision = documentRevision(doc, registered);
 
       const meta = doc.getMap("meta");
       const tags = resolveTagLabels(getStringArray(getTagArray(meta)), tagOptionsById);
@@ -5883,6 +5889,7 @@ export function registerDocTools(
         title: title || null,
         tags,
         exists: true,
+        revision,
         blockCount: blockRows.length,
         blocks: blockRows,
         plainText: plainTextLines.join("\n"),
@@ -5896,7 +5903,7 @@ export function registerDocTools(
     "read_doc",
     {
       title: "Read Document Content",
-      description: "Read document block content via WebSocket snapshot. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
+      description: "Read document block content and its revision via WebSocket snapshot. Pass revision as expectedRevision on a document write to reject stale edits through a shared MCP server. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -5911,6 +5918,11 @@ export function registerDocTools(
       server: {
         name: "affine-mcp",
         capabilityVersion: 1,
+        writeCoordination: {
+          scope: "workspace",
+          boundary: "single MCP server process",
+          staleWritePrecondition: "read_doc.revision -> expectedRevision",
+        },
       },
       docs: {
         canonicalBlockTypes: [...APPEND_BLOCK_CANONICAL_TYPE_VALUES],

@@ -11,6 +11,7 @@
     "test-cli-version.mjs": "fast",
     "test-collection-rules.mjs": "fast",
     "test-comprehensive-result.mjs": "fast",
+    "test-concurrent-writes.mjs": "integration",
     "test-config-cli-consistency.mjs": "fast",
     "test-create-doc-folder-placement.mjs": "integration",
     "test-create-placement.mjs": "integration",
@@ -67,9 +68,11 @@
     "test-tag-visibility.mjs": "integration",
     "test-test-suite-verifier.mjs": "fast",
     "test-theme-defaults-setup.mjs": "integration",
+    "test-tool-coordination.mjs": "fast",
     "test-tool-filtering.mjs": "fast",
     "test-url-safety.mjs": "fast",
-    "test-workspace-discovery.mjs": "fast"
+    "test-workspace-discovery.mjs": "fast",
+    "test-write-coordinator.mjs": "fast"
   },
   "suites": {
     "fast": [
@@ -104,11 +107,14 @@
       "test-secure-random.mjs",
       "test-stdio-http-proxy.mjs",
       "test-test-suite-verifier.mjs",
+      "test-tool-coordination.mjs",
       "test-tool-filtering.mjs",
       "test-url-safety.mjs",
-      "test-workspace-discovery.mjs"
+      "test-workspace-discovery.mjs",
+      "test-write-coordinator.mjs"
     ],
     "e2e": [
+      "test-concurrent-writes.mjs",
       "test-block-editing.mjs",
       "test-database-creation.mjs",
       "test-capabilities-fidelity.mjs",
@@ -135,6 +141,7 @@
       "test-theme-defaults-setup.mjs"
     ],
     "comprehensive": [
+      "test-concurrent-writes.mjs",
       "test-tool-filtering.mjs",
       "test-block-editing.mjs",
       "test-capabilities-fidelity.mjs",

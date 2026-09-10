@@ -194,6 +194,65 @@ transports concurrently. If a connection prevents graceful shutdown beyond
 forcibly closed. Invalid runtime limit values and listen errors fail startup
 instead of leaving a partially running process.
 
+### Concurrent writes
+
+Run one HTTP MCP server and point every writing client at that listener. Clients
+that require stdio can each run the existing `affine-mcp-http-proxy` bridge; see
+[client setup](client-setup.md#reuse-a-local-http-listener-from-stdio-clients).
+All sessions in that server share a FIFO queue per AFFiNE workspace. The queue
+covers the entire tool operation, including loading snapshots, validation,
+workspace metadata changes, and persistence. `read_doc` uses the same queue so
+its content and revision follow earlier coordinated writes. Different
+workspaces can run concurrently.
+
+This boundary is one MCP server process. Separate full stdio servers, multiple
+HTTP replicas, and the native AFFiNE editor do not share this queue. Route all
+coordinated writers through one listener; session affinity alone is insufficient
+when writers for a workspace can reach different replicas. Yjs still merges
+external updates, but the upstream push API provides no compare-and-swap or
+cross-process isolation. Composite operations are serialized, not database
+transactions: existing partial/uncertain-write responses still apply.
+
+For edits derived from a previous read, pass `read_doc.revision` as
+`expectedRevision` on a document content mutation, such as block, table,
+database, mindmap, title, Markdown, or document deletion tools. Supported tools
+advertise the optional field in `tools/list`:
+
+```json
+{
+  "name": "update_block",
+  "arguments": {
+    "workspaceId": "workspace-id",
+    "docId": "document-id",
+    "blockId": "paragraph-id",
+    "text": "Revised text",
+    "expectedRevision": "<64-character revision returned by read_doc>"
+  }
+}
+```
+
+The comparison occurs inside the workspace queue before the tool runs. A
+mismatch returns `isError: true`, code `STALE_DOCUMENT_REVISION`, and
+`retryable: false`, with the expected/current revision in `details`. Read again
+and reconcile the edit before resubmitting. The token covers the primary
+document's full Yjs state, including deletions, and its presence in the workspace
+document registry. Removing that entry invalidates old tokens even if AFFiNE
+retains the deleted content snapshot. The token does not cover workspace
+tags, folders, collections, or other documents touched by a composite tool.
+Workspace metadata, comments, custom properties, publication, and document
+hierarchy tools are still serialized but do not advertise this content token.
+It is a content precondition within the shared server, not upstream CAS.
+Without `expectedRevision`, explicit replacements apply in queue order and a
+later replacement can intentionally supersede earlier text. A missing document
+has `revision: null` and cannot satisfy a supplied revision.
+
+The queue permits at most 100 waiting calls per workspace and waits at most
+60 seconds before execution starts. Queue overflow or timeout reports a
+structured error without invoking the tool. Cancellation removes a waiting
+call; an already executing call retains its slot until it settles, even if its
+caller disconnects. If an active request loses its response, read back before
+retrying because persistence may already have succeeded.
+
 ### Bearer mode
 
 ```bash
