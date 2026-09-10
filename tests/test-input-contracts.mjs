@@ -3,10 +3,16 @@ import "./require-destructive-test-safety.mjs";
 
 import assert from "node:assert/strict";
 import { z } from "zod";
+import * as Y from "yjs";
 
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
-import { registerDocTools } from "../dist/tools/docs.js";
+import {
+  readTableColumnWidth,
+  registerDocTools,
+  totalTableColumnWidth,
+  writeTableColumnWidth,
+} from "../dist/tools/docs.js";
 import { registerHistoryTools } from "../dist/tools/history.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
@@ -96,6 +102,46 @@ assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success,
 assert.equal(toolSchema("list_comments").safeParse({ docId: "d", first: 1.5 }).success, false);
 assert.equal(toolSchema("list_notifications").safeParse({ offset: -1 }).success, false);
 assert.equal(toolSchema("list_histories").safeParse({ guid: "d", take: 0 }).success, false);
+
+const updateTableColumnWidthsSchema = toolSchema("update_table_column_widths");
+assert.equal(updateTableColumnWidthsSchema.safeParse({
+  docId: "doc-1",
+  blockId: "table-1",
+  widths: [60, null, 800],
+}).success, true);
+expectSchemaRejects(updateTableColumnWidthsSchema, [
+  { docId: "doc-1", blockId: "table-1", widths: [] },
+  { docId: "doc-1", blockId: "table-1", widths: [59] },
+  { docId: "doc-1", blockId: "table-1", widths: [4097] },
+  { docId: "doc-1", blockId: "table-1", widths: [Number.POSITIVE_INFINITY] },
+]);
+
+const flatDoc = new Y.Doc();
+const flatTable = flatDoc.getMap("flat-table");
+const preservedCell = new Y.Text();
+preservedCell.applyDelta([{ insert: "Keep", attributes: { bold: true } }]);
+flatTable.set("prop:cells.row-1:column-1.text", preservedCell);
+writeTableColumnWidth(flatTable, "column-1", 272);
+assert.equal(flatTable.get("prop:columns.column-1.width"), 272);
+assert.equal(readTableColumnWidth(flatTable, "column-1"), 272);
+assert.deepEqual(preservedCell.toDelta(), [{ insert: "Keep", attributes: { bold: true } }]);
+writeTableColumnWidth(flatTable, "column-1", null);
+assert.equal(flatTable.has("prop:columns.column-1.width"), false);
+assert.equal(readTableColumnWidth(flatTable, "column-1"), null);
+
+const nestedDoc = new Y.Doc();
+const nestedTable = nestedDoc.getMap("nested-table");
+const nestedColumns = new Y.Map();
+const nestedColumn = new Y.Map();
+nestedColumn.set("columnId", "column-1");
+nestedColumns.set("column-1", nestedColumn);
+nestedTable.set("prop:columns", nestedColumns);
+writeTableColumnWidth(nestedTable, "column-1", 528);
+assert.equal(readTableColumnWidth(nestedTable, "column-1"), 528);
+writeTableColumnWidth(nestedTable, "column-1", null);
+assert.equal(nestedColumn.has("width"), false);
+assert.equal(totalTableColumnWidth([272, 528]), 800);
+assert.equal(totalTableColumnWidth([272, null]), null);
 
 const deleteDoc = registry.tools.get("delete_doc").handler;
 await assert.rejects(

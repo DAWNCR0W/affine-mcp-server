@@ -91,6 +91,7 @@
     "update_profile",
     "update_settings",
     "update_surface_element",
+    "update_table_column_widths",
     "update_workspace",
     "upload_blob"
   ]
