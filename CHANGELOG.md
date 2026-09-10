@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Share email/password login attempts, retry failures after a cooldown, and renew managed cookies before expiry across long-lived transport sessions.
 - Close native stdio sessions on EOF and bound proxy signal shutdown and HTTP response reads.
 - Return JSON-RPC parse and invalid-request errors for malformed proxy input, allowing subsequent valid requests to continue.
+- Discard restored session IDs when the initialized notification fails, and preserve expired login-cookie deadlines without treating unrelated cleared cookies as expired sessions.
 
 ### Security
 - Updated locked `hono` from 4.13.0 to 4.13.7 to address reported static-output path traversal, form nesting, and query parsing advisories.
@@ -24,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 - Verify malformed-input recovery, session expiration, ambiguous writes, response timeouts, and EOF cleanup.
 - Exercise the installed proxy executable against the packaged HTTP listener and verify a live authenticated AFFiNE request through the bridge.
+- Cover failed initialized notifications, expired cookies, and bounded test polling.
 
 ## [3.6.0] - 2026-09-08
 

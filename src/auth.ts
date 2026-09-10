@@ -16,14 +16,18 @@ function extractCookiePairs(setCookies: string[]): string {
 
 function cookieExpiresAt(setCookies: string[]): number | undefined {
   const now = Date.now();
-  const deadlines = setCookies.flatMap(cookie => {
+  const deadlines = setCookies.map(cookie => {
     const maxAge = cookie.match(/;\s*max-age=(-?\d+)(?:;|$)/i);
     const expires = cookie.match(/;\s*expires=([^;]+)/i);
     const deadline = maxAge ? now + Number(maxAge[1]) * 1000
       : expires ? Date.parse(expires[1]) : NaN;
-    return Number.isFinite(deadline) && deadline > now ? [deadline] : [];
+    return Number.isFinite(deadline) ? deadline : undefined;
   });
-  return deadlines.length ? Math.min(...deadlines) : undefined;
+  // A cleared cookie must not expire another usable cookie from the same login.
+  const active = deadlines.filter(deadline => deadline === undefined || deadline > now);
+  const finite = (active.length ? active : deadlines)
+    .filter((deadline): deadline is number => deadline !== undefined);
+  return finite.length ? Math.min(...finite) : undefined;
 }
 
 /** Reject cookie values containing CR/LF to prevent header injection. */

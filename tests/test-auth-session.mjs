@@ -100,7 +100,10 @@ async function startMockAffine(options = {}) {
           return;
         }
         state.loginCompletedAt = Date.now();
-        jsonResponse(res, 200, { ok: true }, { "Set-Cookie": `${COOKIE}; Path=/; HttpOnly${options.cookieAttributes || ""}` });
+        jsonResponse(res, 200, { ok: true }, { "Set-Cookie": [
+          `${COOKIE}; Path=/; HttpOnly${options.cookieAttributes || ""}`,
+          ...(options.additionalCookies || []),
+        ] });
         return;
       }
 
@@ -464,6 +467,57 @@ async function testCookieRenewal() {
   }
 }
 
+async function testExpiredCookieRenewal() {
+  for (const cookieAttributes of [
+    "; Max-Age=0", "; Max-Age=-1", "; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+  ]) {
+    const mock = await startMockAffine({ cookieAttributes });
+    try {
+      const result = await loginWithPassword(mock.baseUrl, EMAIL, PASSWORD);
+      assert(Number.isFinite(result.expiresAt) && result.expiresAt <= Date.now(),
+        `${cookieAttributes} must retain an expired deadline`);
+      let calls = 0;
+      const session = new AuthSession({
+        baseUrl: mock.baseUrl, email: EMAIL, password: PASSWORD,
+        login: async () => ++calls === 1 ? result : { cookieHeader: "session=renewed" },
+      });
+      await session.ready();
+      assertEqual((await session.ready()).cookie, "session=renewed", "expired cookie renews on the next request");
+      assertEqual(calls, 2, "expired cookie must not receive the no-expiry fallback");
+    } finally {
+      await mock.close();
+    }
+  }
+
+  for (const cookieAttributes of ["", "; Max-Age=120"]) {
+    const mock = await startMockAffine({
+      cookieAttributes, additionalCookies: ["obsolete=; Max-Age=0; Path=/"],
+    });
+    try {
+      const result = await loginWithPassword(mock.baseUrl, EMAIL, PASSWORD);
+      if (cookieAttributes) assert(result.expiresAt > Date.now(), "cleared cookie must not expire a live cookie");
+      else assertEqual(result.expiresAt, undefined, "cleared cookie must not change a session cookie's fallback");
+    } finally {
+      await mock.close();
+    }
+  }
+
+  let now = 0;
+  let calls = 0;
+  const session = new AuthSession({
+    baseUrl: "http://127.0.0.1:1", email: EMAIL, password: PASSWORD,
+    now: () => now,
+    login: async () => ({ cookieHeader: `session=${++calls}` }),
+  });
+  await session.ready();
+  now = 11 * 60 * 60 * 1000;
+  await session.ready();
+  assertEqual(calls, 1, "no-expiry cookies retain the twelve-hour fallback");
+  now = 12 * 60 * 60 * 1000;
+  await session.ready();
+  assertEqual(calls, 2, "no-expiry cookies renew by twelve hours");
+}
+
 async function testFailureNeverFallsBack() {
   const mock = await startMockAffine({ failLogin: true });
   try {
@@ -620,6 +674,7 @@ async function main() {
   await testConfiguredAuthResolution();
   await testTransientLoginRecovery();
   await testCookieRenewal();
+  await testExpiredCookieRenewal();
   await testExclusiveAuthState();
   await testFailureNeverFallsBack();
   await testEnvironmentCredentialsOverrideSavedAuthentication();
