@@ -123,6 +123,18 @@ This stores credentials in `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG
 - For self-hosted AFFiNE, use email/password (recommended) or a signed-in session cookie
 - `AFFINE_API_TOKEN` remains available only for deployments that still accept a compatible GraphQL bearer token
 
+The prompt defaults to `AFFINE_BASE_URL` from the environment or the saved config file, so pressing Enter keeps an already-configured self-hosted URL instead of switching back to AFFiNE Cloud.
+
+For a self-hosted instance reached over plain HTTP on a trusted private network, `AFFINE_ALLOW_INSECURE_HTTP=true` must be set for the login run as well as for the server. The opt-in is read from the environment first and then from the saved config file.
+
+To avoid re-running login when a session expires, persist the account credentials instead of the session cookie:
+
+```bash
+affine-mcp login --save-credentials
+```
+
+With the email/password method, this stores `AFFINE_EMAIL` and `AFFINE_PASSWORD` so the server signs in on its own and renews the session before it expires. The password is written to the mode-`600` config file, so use a dedicated least-privilege AFFiNE account. Without this flag the CLI keeps storing only the session credential, which never renews by itself.
+
 For scripted session-cookie setup, keep the cookie out of process arguments:
 
 ```bash

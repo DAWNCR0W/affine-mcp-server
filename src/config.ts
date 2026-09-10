@@ -110,7 +110,7 @@ export function writeConfigFile(vars: Record<string, string>) {
   }
 }
 
-type BaseUrlValidationOptions = {
+export type BaseUrlValidationOptions = {
   allowInsecureHttp?: boolean;
   insecureHttpOptInName?: string;
   label?: string;
@@ -167,9 +167,20 @@ export function validateGraphqlPath(input: string): string {
   return `/${trimmed.replace(/^\/+/, "")}`.replace(/\/$/, "") || "/";
 }
 
-/** Build the exact GraphQL endpoint used by the CLI and runtime. */
-export function buildGraphqlEndpoint(baseUrl: string, graphqlPath: string): string {
-  return `${validateBaseUrl(baseUrl)}${validateGraphqlPath(graphqlPath)}`;
+/**
+ * Build the exact GraphQL endpoint used by the CLI and runtime.
+ *
+ * `options` must be forwarded from the caller that validated `baseUrl`: this
+ * helper re-validates the URL, so dropping the plain-HTTP opt-in here makes a
+ * granted `AFFINE_ALLOW_INSECURE_HTTP=true` opt-in fail with
+ * "must use HTTPS for non-loopback destinations".
+ */
+export function buildGraphqlEndpoint(
+  baseUrl: string,
+  graphqlPath: string,
+  options: BaseUrlValidationOptions = {},
+): string {
+  return `${validateBaseUrl(baseUrl, options)}${validateGraphqlPath(graphqlPath)}`;
 }
 
 /**
