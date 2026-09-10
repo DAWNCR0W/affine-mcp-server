@@ -221,6 +221,13 @@ token in the host/container environment: do not put it in a command line or
 copy it to the client. `AFFINE_MCP_HTTP_PROXY_URL` defaults to
 `http://127.0.0.1:${PORT:-3000}/mcp` and accepts loopback URLs only.
 
+The default HTTP connection assumes a trusted host or container where untrusted
+processes cannot replace the listener or claim its port. Loopback limits network
+reachability; it does not authenticate the listener to the bridge. On a shared
+host with untrusted processes, use an `https://` loopback endpoint with a trusted
+certificate and an authenticated TLS terminator, or isolate the bridge and
+listener together. Do not disable TLS certificate verification.
+
 The bridge reinitializes an expired HTTP session only when the listener explicitly
 rejects its session ID before dispatch. It never retries an ambiguous request
 after a network failure or timeout, which avoids duplicating document writes.
