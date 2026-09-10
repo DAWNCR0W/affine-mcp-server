@@ -11,6 +11,7 @@
     "test-cli-version.mjs": "fast",
     "test-collection-rules.mjs": "fast",
     "test-comprehensive-result.mjs": "fast",
+    "test-concurrent-writes.mjs": "integration",
     "test-config-cli-consistency.mjs": "fast",
     "test-create-doc-folder-placement.mjs": "integration",
     "test-create-placement.mjs": "integration",
@@ -113,6 +114,7 @@
       "test-write-coordinator.mjs"
     ],
     "e2e": [
+      "test-concurrent-writes.mjs",
       "test-block-editing.mjs",
       "test-database-creation.mjs",
       "test-capabilities-fidelity.mjs",
@@ -139,6 +141,7 @@
       "test-theme-defaults-setup.mjs"
     ],
     "comprehensive": [
+      "test-concurrent-writes.mjs",
       "test-tool-filtering.mjs",
       "test-block-editing.mjs",
       "test-capabilities-fidelity.mjs",
