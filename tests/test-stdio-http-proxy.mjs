@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
@@ -89,19 +90,12 @@ async function startServer() {
   };
 }
 
-function waitFor(predicate, timeoutMs = 4_000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timed out waiting for proxy output")), timeoutMs);
-    const poll = () => {
-      if (predicate()) {
-        clearTimeout(timer);
-        resolve();
-        return;
-      }
-      setTimeout(poll, 10);
-    };
-    poll();
-  });
+async function waitFor(predicate, timeoutMs = 4_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for proxy output");
+    await delay(10);
+  }
 }
 
 async function main() {
@@ -194,6 +188,12 @@ async function testNativeStdioEof() {
     if (child.exitCode === null) child.kill("SIGKILL");
   }
 }
+
+let polls = 0;
+await assert.rejects(waitFor(() => { polls++; return false; }, 20), /timed out/);
+const completedPolls = polls;
+await delay(30);
+assert.equal(polls, completedPolls, "timed-out waits must stop polling");
 
 await main();
 await testNativeStdioEof();
