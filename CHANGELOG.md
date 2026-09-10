@@ -10,10 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Serialize complete MCP write operations per workspace across sessions in one server process. Separate workspaces remain independent, and queued requests have bounded waits and cancellation handling.
 - Return a document content `revision` from `read_doc` and accept optional `expectedRevision` on document content mutations to reject stale edits before mutation.
+- Added `login --save-credentials`, which stores the email/password used to sign in instead of the session cookie, so the server can sign in on its own and renew the session before it expires.
+
+### Fixed
+- Honor `AFFINE_ALLOW_INSECURE_HTTP` in `affine-mcp login`. The CLI granted the plain-HTTP opt-in to `validateBaseUrl` and then re-validated the same URL through `buildGraphqlEndpoint`, which dropped the option, so login always failed with "must use HTTPS for non-loopback destinations" on a self-hosted instance reached over plain HTTP. Runtime configuration was unaffected because `loadConfig` builds the endpoint itself.
+- Default the `login` URL prompt to the configured `AFFINE_BASE_URL` from the environment or the saved config file. The prompt displayed and fell back to `https://app.affine.pro`, so pressing Enter silently replaced a configured self-hosted URL with the AFFiNE Cloud URL.
+- Read the `AFFINE_ALLOW_INSECURE_HTTP` opt-in from the saved config file during `login`, matching runtime precedence (environment first, then config file).
+- Classify AFFiNE Cloud by complete hostname labels instead of substring-matching `affine.pro`. Self-hosted deployments such as `https://affine.proxy.internal` or `https://affine.pro.example.com` previously received the Cloud login menu, which offers no email/password option.
 
 ### Tests
 - Cover workspace queue ordering, cancellation, failure recovery, overload, and deletion-aware document revisions.
 - Verify concurrent writes through multiple HTTP sessions and independent stdio proxy processes against a local AFFiNE instance.
+- Added `tests/test-insecure-http-opt-in.mjs` covering opt-in forwarding through `buildGraphqlEndpoint`, Cloud/self-hosted hostname classification, and the `login` CLI path with the opt-in supplied by the environment and by the config file.
 
 ## [3.7.0] - 2026-09-10
 

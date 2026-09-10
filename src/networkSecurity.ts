@@ -27,3 +27,24 @@ export function isLoopbackHostname(input: string): boolean {
 export function isRemotePlainHttpUrl(url: URL): boolean {
   return url.protocol === "http:" && !isLoopbackHostname(url.hostname);
 }
+
+/** AFFiNE Cloud is served from the `affine.pro` registrable domain. */
+const AFFINE_CLOUD_DOMAIN = "affine.pro";
+
+/**
+ * Return true only when the URL belongs to AFFiNE Cloud.
+ *
+ * Hostnames are matched as complete labels so a self-hosted deployment cannot
+ * be misclassified by a substring. `https://affine.proxy.internal` and
+ * `https://affine.pro.example.com` are self-hosted, while `https://app.affine.pro`
+ * and `https://affine.pro` are Cloud.
+ */
+export function isAffineCloudUrl(input: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(input).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  return hostname === AFFINE_CLOUD_DOMAIN || hostname.endsWith(`.${AFFINE_CLOUD_DOMAIN}`);
+}
