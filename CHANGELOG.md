@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-09-10
+
+### Added
+- Added `affine-mcp-http-proxy` to connect a local stdio client to an existing loopback Streamable HTTP listener without starting another full server.
+
+### Fixed
+- Recover explicitly expired HTTP MCP sessions without replaying ambiguous writes after network failures or timeouts.
+- Share email/password login attempts, retry failures after a cooldown, and renew managed cookies before expiry across long-lived transport sessions.
+- Close native stdio sessions on EOF and bound proxy signal shutdown and HTTP response reads.
+- Return JSON-RPC parse and invalid-request errors for malformed proxy input, allowing subsequent valid requests to continue.
+
+### Security
+- Updated locked `hono` from 4.13.0 to 4.13.7 to address reported static-output path traversal, form nesting, and query parsing advisories.
+
+### Tests
+- Verify malformed-input recovery, session expiration, ambiguous writes, response timeouts, and EOF cleanup.
+- Exercise the installed proxy executable against the packaged HTTP listener and verify a live authenticated AFFiNE request through the bridge.
+
 ## [3.6.0] - 2026-09-08
 
 ### Added
@@ -768,6 +786,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.7.0
 [3.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.6.0
 [3.5.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.1
 [3.5.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.0
@@ -807,4 +826,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.6.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.7.0...HEAD
