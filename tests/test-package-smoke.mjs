@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +31,21 @@ const expectedManifest = JSON.parse(
   fs.readFileSync(path.join(rootDirectory, "tool-manifest.json"), "utf8")
 );
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "affine-mcp-package-smoke-"));
+const serverEnvironment = {
+  ...process.env,
+  AFFINE_BASE_URL: "http://127.0.0.1:9",
+  AFFINE_API_TOKEN: "package-smoke-token",
+  AFFINE_COOKIE: "",
+  AFFINE_EMAIL: "",
+  AFFINE_PASSWORD: "",
+  AFFINE_HEADERS_JSON: "",
+  AFFINE_MCP_AUTH_MODE: "bearer",
+  AFFINE_TOOL_PROFILE: "full",
+  AFFINE_DISABLED_GROUPS: "",
+  AFFINE_DISABLED_TOOLS: "",
+  MCP_TRANSPORT: "stdio",
+  XDG_CONFIG_HOME: path.join(temporaryDirectory, "config"),
+};
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -57,21 +75,7 @@ async function verifyServerSurface(installedDirectory, installedManifest) {
     command: process.execPath,
     args: [entryPoint],
     cwd: temporaryDirectory,
-    env: {
-      ...process.env,
-      AFFINE_BASE_URL: "http://127.0.0.1:9",
-      AFFINE_API_TOKEN: "package-smoke-token",
-      AFFINE_COOKIE: "",
-      AFFINE_EMAIL: "",
-      AFFINE_PASSWORD: "",
-      AFFINE_HEADERS_JSON: "",
-      AFFINE_MCP_AUTH_MODE: "bearer",
-      AFFINE_TOOL_PROFILE: "full",
-      AFFINE_DISABLED_GROUPS: "",
-      AFFINE_DISABLED_TOOLS: "",
-      MCP_TRANSPORT: "stdio",
-      XDG_CONFIG_HOME: path.join(temporaryDirectory, "config"),
-    },
+    env: serverEnvironment,
     stderr: "pipe",
   });
 
@@ -92,6 +96,73 @@ async function verifyServerSurface(installedDirectory, installedManifest) {
     );
   } finally {
     await transport.close();
+  }
+}
+
+async function verifyProxySurface(installedDirectory, installedManifest) {
+  const reservation = createServer();
+  reservation.listen(0, "127.0.0.1");
+  await once(reservation, "listening");
+  const port = reservation.address().port;
+  await new Promise((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
+  const endpoint = `http://127.0.0.1:${port}`;
+  const token = "package-smoke-http-token";
+  const server = spawn(process.execPath, [path.join(installedDirectory, "dist", "index.js")], {
+    cwd: temporaryDirectory,
+    env: {
+      ...serverEnvironment,
+      MCP_TRANSPORT: "http",
+      PORT: String(port),
+      AFFINE_MCP_HTTP_HOST: "127.0.0.1",
+      AFFINE_MCP_HTTP_TOKEN: token,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let logs = "";
+  server.stderr.on("data", chunk => { logs += chunk; });
+  const exited = once(server, "exit");
+  const proxyBin = path.join(installedDirectory, "bin", "affine-mcp-http-proxy");
+  const installedBin = path.join(temporaryDirectory, "node_modules", ".bin", "affine-mcp-http-proxy");
+  const client = new Client({ name: "packed-proxy-smoke", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.platform === "win32" ? process.execPath : installedBin,
+    args: process.platform === "win32" ? [proxyBin] : [],
+    cwd: temporaryDirectory,
+    env: {
+      ...serverEnvironment,
+      AFFINE_MCP_HTTP_TOKEN: token,
+      AFFINE_MCP_HTTP_PROXY_URL: `${endpoint}/mcp`,
+      AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS: "10000",
+    },
+    stderr: "pipe",
+  });
+  try {
+    assert.ok(fs.existsSync(proxyBin), "packed proxy executable must exist");
+    assert.ok(fs.existsSync(path.join(installedDirectory, "dist", "stdioHttpProxy.js")),
+      "packed proxy implementation must exist");
+    let healthy = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      assert.equal(server.exitCode, null, `packed HTTP server exited: ${logs}`);
+      try {
+        const response = await fetch(`${endpoint}/healthz`, { signal: AbortSignal.timeout(1000) });
+        healthy = response.ok;
+        await response.body?.cancel();
+      } catch { /* Wait for the listener to bind. */ }
+      if (healthy) break;
+      await delay(100);
+    }
+    assert.ok(healthy, `packed HTTP server did not become healthy: ${logs}`);
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    assert.deepEqual(tools.map(tool => tool.name).sort(), [...installedManifest.tools].sort(),
+      "installed proxy must expose the real packaged HTTP listener's tool surface");
+  } finally {
+    await transport.close();
+    if (server.exitCode === null) server.kill("SIGTERM");
+    if (!await Promise.race([exited.then(() => true), delay(5000).then(() => false)])) {
+      server.kill("SIGKILL");
+      await exited;
+    }
   }
 }
 
@@ -138,13 +209,14 @@ try {
   assert.match(help.stdout, /affine-mcp login/);
 
   await verifyServerSurface(installedDirectory, installedManifest);
+  await verifyProxySurface(installedDirectory, installedManifest);
 
   console.log(JSON.stringify({
     ok: true,
     tarball: tarballPath,
     package: `${installedPackage.name}@${installedPackage.version}`,
     tools: installedManifest.tools.length,
-    checks: ["installed package", "bin version", "dist version", "CLI help", "MCP tools/list"],
+    checks: ["installed package", "bin version", "dist version", "CLI help", "MCP tools/list", "installed proxy to HTTP tools/list"],
   }, null, 2));
 } finally {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
