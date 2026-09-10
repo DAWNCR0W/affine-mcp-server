@@ -14,6 +14,18 @@ function extractCookiePairs(setCookies: string[]): string {
   return pairs.join("; ");
 }
 
+function cookieExpiresAt(setCookies: string[]): number | undefined {
+  const now = Date.now();
+  const deadlines = setCookies.flatMap(cookie => {
+    const maxAge = cookie.match(/;\s*max-age=(-?\d+)(?:;|$)/i);
+    const expires = cookie.match(/;\s*expires=([^;]+)/i);
+    const deadline = maxAge ? now + Number(maxAge[1]) * 1000
+      : expires ? Date.parse(expires[1]) : NaN;
+    return Number.isFinite(deadline) && deadline > now ? [deadline] : [];
+  });
+  return deadlines.length ? Math.min(...deadlines) : undefined;
+}
+
 /** Reject cookie values containing CR/LF to prevent header injection. */
 function assertNoCRLF(value: string, label: string): void {
   if (/[\r\n]/.test(value)) {
@@ -50,7 +62,7 @@ export async function loginWithPassword(
   email: string,
   password: string,
   configuredHeaders?: Record<string, string>,
-): Promise<{ cookieHeader: string }> {
+): Promise<{ cookieHeader: string; expiresAt?: number }> {
   const url = `${baseUrl.replace(/\/$/, "")}/api/auth/sign-in`;
   // Configured headers first so an explicit override wins; only supply the
   // default version when the caller did not set one in any casing, so Fetch
@@ -89,5 +101,5 @@ export async function loginWithPassword(
   }
   const cookieHeader = extractCookiePairs(setCookies);
   assertNoCRLF(cookieHeader, "Cookie header from sign-in");
-  return { cookieHeader };
+  return { cookieHeader, expiresAt: cookieExpiresAt(setCookies) };
 }

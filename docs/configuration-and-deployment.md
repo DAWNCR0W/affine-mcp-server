@@ -105,6 +105,8 @@ and response limit above.
 | `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | none | Comma-separated list for browser clients |
 | `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS` | No | `false` | Testing only; rejected in OAuth mode |
 | `AFFINE_MCP_HTTP_TOKEN` | Required for non-loopback bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
+| `AFFINE_MCP_HTTP_PROXY_URL` | No | `http://127.0.0.1:${PORT:-3000}/mcp` | Loopback Streamable HTTP endpoint used by `affine-mcp-http-proxy` |
+| `AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS` | No | `60000` | Deadline for the complete proxy response, including its body; integer from `100` to `300000` |
 | `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer-mode listener |
 | `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
 | `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
@@ -205,6 +207,31 @@ export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
 export PORT=3000
 
 npm run start:http
+```
+
+### Private stdio bridge for a local HTTP listener
+
+When a managed host already runs the HTTP transport, use
+`affine-mcp-http-proxy` for a local stdio client instead of starting another
+full MCP server process. The bridge forwards one stdio session to the existing
+loopback `/mcp` listener and sends `DELETE /mcp` when stdin closes.
+
+It requires `AFFINE_MCP_HTTP_TOKEN` in its inherited environment. Keep that
+token in the host/container environment: do not put it in a command line or
+copy it to the client. `AFFINE_MCP_HTTP_PROXY_URL` defaults to
+`http://127.0.0.1:${PORT:-3000}/mcp` and accepts loopback URLs only.
+
+The bridge reinitializes an expired HTTP session only when the listener explicitly
+rejects its session ID before dispatch. It never retries an ambiguous request
+after a network failure or timeout, which avoids duplicating document writes.
+Email/password login failures can recover on a later request after a five-second
+cooldown; concurrent sessions share the same login attempt.
+Sessions established with email/password renew before cookie expiry, or after
+twelve hours when the server omits an expiry. Explicit cookies and bearer tokens
+remain managed by the caller.
+
+```bash
+affine-mcp-http-proxy
 ```
 
 Use bearer mode when:
