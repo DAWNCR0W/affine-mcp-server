@@ -1,4 +1,4 @@
-import { z, type ZodRawShape, type ZodTypeAny } from "zod";
+import { z, type ZodType } from "zod/v4";
 
 import { toolAnnotationsFor, type ToolName } from "./toolSurface.js";
 
@@ -19,19 +19,23 @@ type FieldKind =
 
 type OutputSpec = {
   fields: Record<string, FieldKind>;
+  optionalFields?: Record<string, FieldKind>;
   optional?: boolean;
+  requiredFields?: string[];
   errorEnvelope?: boolean;
 };
 
 /** Builds a top-level tool output specification. */
-const spec = (fields: OutputSpec["fields"], optional = false): OutputSpec => ({ fields, optional });
+const spec = (fields: OutputSpec["fields"], optional = false, requiredFields?: string[]): OutputSpec =>
+  ({ fields, optional, requiredFields });
 
 /** Builds the shared mutation-receipt fields plus tool-specific fields. */
 const receipt = (fields: OutputSpec["fields"], optional = false): OutputSpec =>
-  spec({ kind: "string", ok: "boolean", ...fields }, optional);
+  spec({ kind: "string", ok: "boolean", ...fields }, optional, optional ? ["kind", "ok"] : undefined);
 
 /** Marks a tool output as supporting the shared structured error envelope. */
-const fallible = (outputSpec: OutputSpec): OutputSpec => ({ ...outputSpec, errorEnvelope: true });
+const fallible = (outputSpec: OutputSpec, optionalFields?: OutputSpec["fields"]): OutputSpec =>
+  ({ ...outputSpec, optionalFields, errorEnvelope: true });
 
 const documentCreationFailureFields: OutputSpec["fields"] = {
   status: "string",
@@ -73,16 +77,16 @@ const OUTPUT_SPECS = {
   create_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   create_comment: receipt({ workspaceId: "string", docId: "string", commentId: "string", id: "string", comment: "object" }),
   create_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", type: "string", index: "string", created: "boolean" }),
-  create_doc: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", folderId: "nullableString", folderLinked: "boolean", folderNodeId: "nullableString", warnings: "stringArray", ...documentCreationFailureFields })),
-  create_doc_from_markdown: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object", ...documentCreationFailureFields })),
+  create_doc: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", folderId: "nullableString", folderLinked: "boolean", folderNodeId: "nullableString", warnings: "stringArray" }), documentCreationFailureFields),
+  create_doc_from_markdown: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object" }), documentCreationFailureFields),
   create_folder: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string", storageDocId: "string" }),
-  create_semantic_page: fallible(spec({ workspaceId: "string", docId: "string", title: "string", pageType: "string", pageId: "string", noteId: "string", sectionCount: "number", sectionHeadingIds: "stringArray", blockIds: "stringArray", parentLinked: "boolean", warnings: "stringArray", ...documentCreationFailureFields })),
+  create_semantic_page: fallible(spec({ workspaceId: "string", docId: "string", title: "string", pageType: "string", pageId: "string", noteId: "string", sectionCount: "number", sectionHeadingIds: "stringArray", blockIds: "stringArray", parentLinked: "boolean", warnings: "stringArray" }), documentCreationFailureFields),
   create_tag: spec({ workspaceId: "string", tag: "string", created: "boolean" }),
   create_workspace: fallible(receipt({ workspaceId: "string", id: "string", name: "string", avatar: "string", firstDocId: "string", syncStatus: "string", status: "string", message: "string", url: "string", error: "string" }, true)),
   create_workspace_blueprint: spec({ workspaceId: "string", rootFolderId: "string", rootFolderName: "string", childFolders: "unknownArray", childFolderCount: "number", storageDocId: "string" }),
   current_user: spec({ id: "string", name: "string", email: "string", emailVerified: "boolean", avatarUrl: "nullableString", disabled: "boolean" }),
   delete_blob: fallible(receipt({ status: "string", success: "boolean", key: "string", workspaceId: "string", permanently: "boolean", deleted: "boolean" }, true)),
-  delete_block: spec({ deleted: "boolean", blockId: "string", reason: "string", deletedIds: "stringArray", deletedBlock: "nullableObject", deletedBlocks: "unknownArray", prunedConnectors: "stringArray" }, true),
+  delete_block: spec({ deleted: "boolean", blockId: "string", reason: "string", deletedIds: "stringArray", deletedBlock: "nullableObject", deletedBlocks: "unknownArray", prunedConnectors: "stringArray" }, true, ["deleted", "blockId"]),
   delete_collection: spec({ success: "boolean", collectionId: "string" }),
   delete_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
   delete_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", deleted: "boolean" }),
@@ -90,9 +94,9 @@ const OUTPUT_SPECS = {
   delete_doc: fallible(receipt({ workspaceId: "string", docId: "string", deleted: "boolean" })),
   delete_folder: spec({ success: "boolean", deletedIds: "stringArray" }),
   delete_organize_link: spec({ success: "boolean", nodeId: "string" }),
-  delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", prunedConnectors: "stringArray" }, true),
+  delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", prunedConnectors: "stringArray" }, true, ["deleted", "elementId"]),
   delete_tag: spec({ workspaceId: "string", tag: "string", tagId: "string", value: "string", deleted: "boolean", affectedDocs: "number", docMetaSynced: "number", warnings: "stringArray" }),
-  delete_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", deleted: "boolean", success: "boolean", message: "string", error: "string" }, true)),
+  delete_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", deleted: "boolean", success: "boolean", message: "string", error: "string" }, true, ["kind", "ok"])),
   export_doc_markdown: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", markdown: "string", warnings: "stringArray", lossy: "boolean", stats: "object" }),
   export_with_fidelity_report: spec({ docId: "string", exists: "boolean", markdown: "string", fidelity: "object" }),
   find_doc_by_title: spec({ query: "string", caseInsensitive: "boolean", matches: "unknownArray", workspaceDocCount: "number", truncated: "boolean" }),
@@ -105,7 +109,7 @@ const OUTPUT_SPECS = {
   get_orphan_docs: spec({ count: "number", orphans: "unknownArray" }, true),
   get_workspace: fallible(spec({ id: "string", public: "boolean", enableAi: "boolean", createdAt: "string", permissions: "object", error: "string" }, true)),
   inspect_template_structure: spec({ workspaceId: "string", templateDocId: "string", title: "string", tags: "stringArray", pageId: "nullableString", surfaceId: "nullableString", noteId: "nullableString", rootBlockIds: "stringArray", blockCount: "number", blocks: "unknownArray", nativeCloneSupported: "boolean", fallbackReasons: "stringArray" }),
-  instantiate_template_native: fallible(spec({ workspaceId: "string", sourceTemplateDocId: "string", docId: "string", title: "string", mode: "string", nativeCloneSupported: "boolean", linkedToParent: "boolean", preservedTags: "stringArray", replacedVariableCount: "number", unresolvedVariables: "stringArray", warnings: "stringArray", blockCount: "number", rootBlockIds: "stringArray", ...documentCreationFailureFields }, true)),
+  instantiate_template_native: fallible(spec({ workspaceId: "string", sourceTemplateDocId: "string", docId: "string", title: "string", mode: "string", nativeCloneSupported: "boolean", linkedToParent: "boolean", preservedTags: "stringArray", replacedVariableCount: "number", unresolvedVariables: "stringArray", warnings: "stringArray", blockCount: "number", rootBlockIds: "stringArray" }, true, ["workspaceId", "docId"]), documentCreationFailureFields),
   list_children: spec({ docId: "string", count: "number", children: "unknownArray" }, true),
   list_collections: spec({ items: "unknownArray" }),
   list_comments: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
@@ -113,20 +117,20 @@ const OUTPUT_SPECS = {
   list_docs: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
   list_docs_by_tag: spec({ workspaceId: "string", tag: "string", ignoreCase: "boolean", totalDocs: "number", docs: "unknownArray" }),
   list_histories: spec({ items: "unknownArray" }),
-  list_notifications: fallible(spec({ items: "unknownArray", error: "string" }, true)),
+  list_notifications: fallible(spec({ kind: "string", items: "unknownArray", error: "string" }, true, ["kind"])),
   list_organize_nodes: spec({ workspaceId: "string", storageDocId: "string", nodes: "unknownArray" }),
   list_surface_elements: spec({ docId: "string", exists: "boolean", surfaceBlockId: "nullableString", count: "number", elements: "unknownArray" }),
   list_tags: spec({ workspaceId: "string", totalTags: "number", tags: "unknownArray" }),
   list_workspace_tree: spec({ workspaceId: "string", totalDocs: "number", rootCount: "number", tree: "unknownArray" }, true),
-  list_workspaces: fallible(spec({ items: "unknownArray", error: "string" }, true)),
+  list_workspaces: fallible(spec({ items: "unknownArray", error: "string" }, true, ["items"])),
   move_block: spec({ moved: "boolean", blockId: "string", fromParentId: "nullableString", toParentId: "string", fromIndex: "number", toIndex: "number", block: "object" }),
   move_doc: fallible(receipt({ workspaceId: "string", moved: "boolean", docId: "string", toParentDocId: "string", removedFromParent: "boolean" })),
   move_organize_node: spec({ id: "string", parentId: "nullableString", index: "string" }),
   publish_doc: receipt({ workspaceId: "string", docId: "string" }),
-  read_all_notifications: fallible(spec({ success: "boolean", message: "string", error: "string" }, true)),
+  read_all_notifications: fallible(spec({ kind: "string", success: "boolean", message: "string", error: "string" }, true, ["kind"])),
   read_database_cells: spec({ rows: "unknownArray" }),
   read_database_columns: spec({ databaseBlockId: "string", title: "nullableString", rowCount: "number", columnCount: "number", titleColumnId: "nullableString", columns: "unknownArray", views: "unknownArray" }),
-  read_doc: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", revision: "nullableString", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true),
+  read_doc: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", revision: "nullableString", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true, ["docId", "exists", "revision"]),
   remove_doc_from_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   remove_tag_from_doc: spec({ workspaceId: "string", docId: "string", tag: "string", removed: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   rename_folder: spec({ id: "string", name: "string" }),
@@ -147,13 +151,13 @@ const OUTPUT_SPECS = {
   update_doc_title: receipt({ workspaceId: "string", updated: "boolean", docId: "string", title: "string" }),
   update_edgeless_block: spec({ updated: "boolean", blockId: "string", flavour: "string", changed: "stringArray", ignored: "stringArray" }),
   update_folder_icon: receipt({ workspaceId: "string", folderId: "string", icon: "icon", cleared: "boolean" }),
-  update_frame_children: spec({ updated: "boolean", blockId: "string", flavour: "string", ownedIds: "stringArray", missing: "stringArray", resized: "boolean", xywh: "object" }, true),
-  update_profile: fallible(spec({ id: "string", name: "string", avatarUrl: "nullableString", error: "string" }, true)),
-  update_settings: fallible(spec({ success: "boolean", error: "string" }, true)),
+  update_frame_children: spec({ updated: "boolean", blockId: "string", flavour: "string", ownedIds: "stringArray", missing: "stringArray", resized: "boolean", xywh: "object" }, true, ["updated", "blockId"]),
+  update_profile: fallible(spec({ id: "string", name: "string", avatarUrl: "nullableString", error: "string" }, true, ["id"])),
+  update_settings: fallible(spec({ success: "boolean", error: "string" }, true, ["success"])),
   update_surface_element: spec({ updated: "boolean", elementId: "string", type: "nullableString", changed: "stringArray", ignored: "stringArray" }),
   update_table_cell: spec({ updated: "boolean", blockId: "string", row: "number", column: "number", rowId: "string", columnId: "string", previous: "object", cell: "object" }),
-  update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true)),
-  upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true)),
+  update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true, ["kind", "ok"])),
+  upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true, ["id", "key"])),
 } satisfies Record<ToolName, OutputSpec>;
 
 /** Coordinated handlers can reject a call before tool-specific result fields exist. */
@@ -169,7 +173,7 @@ export const TOOLS_WITH_ERROR_OUTPUT = Object.freeze(
 );
 
 /** Converts a compact field kind into its runtime Zod schema. */
-function fieldSchema(kind: FieldKind): ZodTypeAny {
+function fieldSchema(kind: FieldKind): ZodType {
   switch (kind) {
     case "string": return z.string();
     case "number": return z.number();
@@ -197,22 +201,44 @@ function fieldSchema(kind: FieldKind): ZodTypeAny {
 }
 
 /** Returns the declared structured-result schema for a canonical MCP tool. */
-export function toolOutputSchemaFor(name: string): ZodTypeAny | undefined {
+export function toolOutputSchemaFor(name: string) {
   const outputSpec = OUTPUT_SPECS[name as ToolName];
   if (!outputSpec) return undefined;
 
   const errorEnvelope = hasErrorOutput(name, outputSpec);
-  const shape: ZodRawShape = {};
+  const successShape: Record<string, ZodType> = {};
   for (const [field, kind] of Object.entries(outputSpec.fields)) {
     const schema = fieldSchema(kind);
-    shape[field] = outputSpec.optional || errorEnvelope ? schema.optional() : schema;
+    successShape[field] = outputSpec.optional && !outputSpec.requiredFields?.includes(field) ? schema.optional() : schema;
   }
-  if (errorEnvelope) {
-    shape.ok ??= z.boolean().optional();
-    shape.error ??= z.string().optional();
-    shape.code ??= z.string().optional();
-    shape.retryable ??= z.boolean().optional();
-    shape.details ??= z.record(z.string(), z.unknown()).optional();
+  for (const [field, kind] of Object.entries(outputSpec.optionalFields || {})) {
+    successShape[field] = fieldSchema(kind).optional();
   }
-  return z.object(shape).passthrough();
+  if (!errorEnvelope) return z.object(successShape).passthrough();
+
+  const shape: Record<string, ZodType> = Object.fromEntries(
+    Object.entries(successShape).map(([field, schema]) => [field, schema.optional()]),
+  );
+  shape.ok = z.boolean().optional();
+  shape.error ??= z.string().optional();
+  shape.code = z.string().optional();
+  shape.retryable = z.boolean().optional();
+  shape.details = z.record(z.string(), z.unknown()).optional();
+  const success = z.object({
+    ...successShape,
+    ok: successShape.ok && !successShape.ok.isOptional() ? z.literal(true) : z.literal(true).optional(),
+  }).passthrough();
+  const error = z.object({
+    ...shape, ok: z.literal(false), error: z.string(), code: z.string(), retryable: z.boolean(),
+  }).passthrough();
+  const alternatives = z.union([success, error]);
+  // The SDK requires an object. Zod v4 keeps refinements on that object; metadata
+  // advertises the same branches to clients. Root properties already type every field.
+  const anyOf = [success, error].map(branch => {
+    const json = z.toJSONSchema(branch);
+    return { required: json.required, properties: { ok: json.properties?.ok } };
+  });
+  return z.object(shape).passthrough()
+    .refine(value => alternatives.safeParse(value).success, "Expected a complete success result or a structured error")
+    .meta({ anyOf });
 }
