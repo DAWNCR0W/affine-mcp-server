@@ -193,6 +193,34 @@ Always send the MCP bearer token in the `Authorization` header. The server
 rejects `?token=` by default because URL credentials can leak through logs and
 browser history.
 
+## Reuse a local HTTP listener from stdio clients
+
+For multiple writing agents, start one authenticated HTTP MCP server as described
+in the [private bridge setup](configuration-and-deployment.md#private-stdio-bridge-for-a-local-http-listener).
+Configure each local stdio client to launch the proxy instead of a full server:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp-http-proxy",
+      "env": {
+        "AFFINE_MCP_HTTP_PROXY_URL": "http://127.0.0.1:3000/mcp"
+      }
+    }
+  }
+}
+```
+
+The proxy must inherit `AFFINE_MCP_HTTP_TOKEN` from the trusted host environment
+that launches it. Keep the token out of command arguments and copied client
+configuration. Each proxy creates its own session, while the listener coordinates writes across
+all of them. Direct HTTP clients can share the same listener. Use the same
+server version for the listener and proxies, and follow the
+[concurrency contract](configuration-and-deployment.md#concurrent-writes) when
+editing the same document. Starting a separate `affine-mcp` server for every
+agent does not provide coordination between those processes.
+
 ## Setup tips
 
 - Prefer `affine-mcp login` for local development

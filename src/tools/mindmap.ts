@@ -345,7 +345,7 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
   }, run("update"));
   server.registerTool("reparent_mindmap_node", {
     title: "Reparent Native Mindmap Node",
-    description: "Move a node with all descendants to a parent in the SAME native mindmap; beforeId optionally reorders siblings. Rejects root moves, cycles, missing/foreign IDs. Preserve collapsed state. Run hierarchy mutations sequentially; concurrent clients have no server-side compare-and-swap.",
+    description: "Move a node with all descendants to a parent in the SAME native mindmap; beforeId optionally reorders siblings. Rejects root moves, cycles, missing/foreign IDs. Preserve collapsed state. One shared MCP server serializes workspace mutations; independent servers and native editors have no compare-and-swap protection.",
     inputSchema: { ...target, nodeId: Id, parentId: Id, beforeId: Id.optional() },
   }, run("reparent"));
   server.registerTool("set_mindmap_style", {

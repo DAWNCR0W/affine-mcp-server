@@ -141,9 +141,13 @@ rejected before any update is pushed. Mutations use a request-local Yjs document
 validation failure discards that document. A successful push is subsequently
 verifiable with `get_mindmap` from another connection.
 
-Run hierarchy changes sequentially. Independent concurrent clients can race
-because AFFiNE's push API has no compare-and-swap; this implementation does not
-claim cross-process isolation. After a transport error, first read back the
+One shared MCP server serializes hierarchy changes per workspace across its
+sessions, including clients using separate stdio HTTP proxies. Use
+`read_doc.revision` as `expectedRevision` to reject edits based on stale document
+content. Independent server processes and native editors can still race because
+AFFiNE's push API has no compare-and-swap; this implementation does not claim
+cross-process isolation. See [concurrent writes](configuration-and-deployment.md#concurrent-writes).
+After a transport error, first read back the
 document: the push may have succeeded despite a lost acknowledgement. Do not
 blindly retry `create_mindmap`, `add_mindmap_node`, or `create_doc`.
 

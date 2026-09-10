@@ -37,6 +37,7 @@ Highlights:
 
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
+- Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
 - Exposes 105 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
@@ -57,6 +58,7 @@ Scope boundaries:
 | Set up a local stdio server with the least friction | [docs/getting-started.md](docs/getting-started.md) |
 | Run the server in Docker or another OCI runtime | [docs/getting-started.md#path-c-run-from-the-docker-image](docs/getting-started.md#path-c-run-from-the-docker-image) |
 | Configure Claude Code, Claude Desktop, Codex CLI, or Cursor | [docs/client-setup.md](docs/client-setup.md) |
+| Let multiple agents write through one coordinated server | [Concurrent writes](docs/configuration-and-deployment.md#concurrent-writes) |
 | Run the server remotely over HTTP or behind OAuth | [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md) |
 | Lock down tool exposure for least-privilege deployments | [docs/configuration-and-deployment.md#least-privilege-tool-exposure](docs/configuration-and-deployment.md#least-privilege-tool-exposure) |
 | Learn common AFFiNE workflows and tool sequences | [docs/workflow-recipes.md](docs/workflow-recipes.md) |

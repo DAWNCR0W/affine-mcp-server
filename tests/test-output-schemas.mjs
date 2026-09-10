@@ -8,7 +8,7 @@ import { ALL_TOOLS } from "../src/toolSurface.ts";
 import { registerBlobTools } from "../src/tools/blobStorage.ts";
 import { registerDocTools } from "../src/tools/docs.ts";
 import { TOOLS_WITH_ERROR_OUTPUT, toolOutputSchemaFor } from "../src/toolOutputSchemas.ts";
-import { stripSchemaDialect, text } from "../src/util/mcp.ts";
+import { stripSchemaDialect, text, toolError } from "../src/util/mcp.ts";
 
 function installOutputSchemaRegistration(server) {
   const registerTool = server.registerTool.bind(server);
@@ -59,6 +59,27 @@ const representativeError = {
 for (const name of TOOLS_WITH_ERROR_OUTPUT) {
   const parsed = toolOutputSchemaFor(name).safeParse(representativeError);
   assert.equal(parsed.success, true, `${name} rejected the shared error envelope`);
+}
+
+// Client.callTool validates structuredContent against cached output schemas
+// even for isError responses. Exercise the wire contract after tools/list.
+const queueErrorServer = new McpServer({ name: "queue-error-schema-test", version: "1.0.0" });
+for (const name of TOOLS_WITH_ERROR_OUTPUT) {
+  queueErrorServer.registerTool(name, { inputSchema: {}, outputSchema: toolOutputSchemaFor(name) }, async () =>
+    toolError("The queued operation did not run", { code: "WRITE_QUEUE_FULL", retryable: true }),
+  );
+}
+const queueErrorClient = await connectInMemory(queueErrorServer, "queue-error-schema-test");
+try {
+  await queueErrorClient.listTools();
+  for (const name of TOOLS_WITH_ERROR_OUTPUT) {
+    const result = await queueErrorClient.callTool({ name, arguments: {} });
+    assert.equal(result.isError, true, `${name} must deliver its structured error to schema-validating clients`);
+    assert.equal(result.structuredContent.code, "WRITE_QUEUE_FULL");
+  }
+} finally {
+  await queueErrorClient.close();
+  await queueErrorServer.close();
 }
 
 const deleteTagOutput = {

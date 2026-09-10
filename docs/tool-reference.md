@@ -275,8 +275,11 @@ mutations reject locked maps/nodes. Unlock keeps independent node locks intact.
 
 Create a document with its intended `folderId` first and verify its sidebar link,
 then create a root, add project children to `rootId`, and add tasks to the returned
-project `nodeId`. Run hierarchy mutations sequentially. The upstream persistence
-API has no compare-and-swap: simultaneous edits by independent clients can still
-race; read back the map after a batch. A failed push may have an uncertain outcome,
+project `nodeId`. One shared MCP server serializes hierarchy mutations per
+workspace. Document writes accept optional `expectedRevision` from `read_doc`
+to reject stale content before mutation. The upstream persistence API has no
+compare-and-swap: independent server processes or native editors can still race;
+read back the map after a batch. See [concurrent writes](configuration-and-deployment.md#concurrent-writes).
+A failed push may have an uncertain outcome,
 so inspect the document before retrying creation. Existing malformed or shared
 node ownership is rejected before persistence.

@@ -1,6 +1,6 @@
 import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 
-import type { ToolName } from "./toolSurface.js";
+import { toolAnnotationsFor, type ToolName } from "./toolSurface.js";
 
 type FieldKind =
   | "string"
@@ -126,7 +126,7 @@ const OUTPUT_SPECS = {
   read_all_notifications: fallible(spec({ success: "boolean", message: "string", error: "string" }, true)),
   read_database_cells: spec({ rows: "unknownArray" }),
   read_database_columns: spec({ databaseBlockId: "string", title: "nullableString", rowCount: "number", columnCount: "number", titleColumnId: "nullableString", columns: "unknownArray", views: "unknownArray" }),
-  read_doc: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true),
+  read_doc: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", revision: "nullableString", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true),
   remove_doc_from_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   remove_tag_from_doc: spec({ workspaceId: "string", docId: "string", tag: "string", removed: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   rename_folder: spec({ id: "string", name: "string" }),
@@ -156,10 +156,15 @@ const OUTPUT_SPECS = {
   upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true)),
 } satisfies Record<ToolName, OutputSpec>;
 
+/** Coordinated handlers can reject a call before tool-specific result fields exist. */
+function hasErrorOutput(name: string, outputSpec: OutputSpec): boolean {
+  return Boolean(outputSpec.errorEnvelope) || !toolAnnotationsFor(name).readOnlyHint || name === "read_doc";
+}
+
 /** Canonical tools whose handlers can return the shared structured error envelope. */
 export const TOOLS_WITH_ERROR_OUTPUT = Object.freeze(
   Object.entries(OUTPUT_SPECS)
-    .filter(([, outputSpec]) => outputSpec.errorEnvelope)
+    .filter(([name, outputSpec]) => hasErrorOutput(name, outputSpec))
     .map(([name]) => name as ToolName),
 );
 
@@ -196,12 +201,13 @@ export function toolOutputSchemaFor(name: string): ZodTypeAny | undefined {
   const outputSpec = OUTPUT_SPECS[name as ToolName];
   if (!outputSpec) return undefined;
 
+  const errorEnvelope = hasErrorOutput(name, outputSpec);
   const shape: ZodRawShape = {};
   for (const [field, kind] of Object.entries(outputSpec.fields)) {
     const schema = fieldSchema(kind);
-    shape[field] = outputSpec.optional || outputSpec.errorEnvelope ? schema.optional() : schema;
+    shape[field] = outputSpec.optional || errorEnvelope ? schema.optional() : schema;
   }
-  if (outputSpec.errorEnvelope) {
+  if (errorEnvelope) {
     shape.ok ??= z.boolean().optional();
     shape.error ??= z.string().optional();
     shape.code ??= z.string().optional();
