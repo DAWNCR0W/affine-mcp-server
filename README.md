@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.6.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.7.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -159,6 +159,9 @@ affine-mcp doctor
 ```
 
 If you want to expose the server remotely over HTTP instead of stdio, start with [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md).
+If an HTTP server already runs on the same host as your stdio client, use the
+private [stdio HTTP bridge](docs/configuration-and-deployment.md#private-stdio-bridge-for-a-local-http-listener)
+instead of starting another full server process.
 
 ## Compatibility Matrix
 

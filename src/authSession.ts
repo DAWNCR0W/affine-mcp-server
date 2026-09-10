@@ -18,6 +18,8 @@ type AuthSessionOptions = {
   /** Extra headers (e.g. from AFFINE_HEADERS_JSON) forwarded to email/password sign-in. */
   headers?: Record<string, string>;
   login?: LoginFunction;
+  retryDelayMs?: number;
+  now?: () => number;
 };
 
 export function parseLoginMode(raw: string | undefined): LoginMode {
@@ -36,6 +38,11 @@ export class AuthSession {
   private password?: string;
   private immediate: AuthSnapshot;
   private pending?: Promise<AuthSnapshot>;
+  private failedAt = 0;
+  private lastError?: Error;
+  private refreshAt = Infinity;
+  private readonly retryDelayMs: number;
+  private readonly now: () => number;
 
   constructor(options: AuthSessionOptions) {
     const hasImmediateAuth = Boolean(options.bearer || options.cookie);
@@ -46,6 +53,8 @@ export class AuthSession {
     this.baseUrl = options.baseUrl;
     this.login = options.login || loginWithPassword;
     this.headers = options.headers;
+    this.retryDelayMs = options.retryDelayMs ?? 5_000;
+    this.now = options.now ?? Date.now;
     this.email = hasImmediateAuth ? undefined : options.email;
     this.password = hasImmediateAuth ? undefined : options.password;
 
@@ -75,34 +84,47 @@ export class AuthSession {
   /** Begin authentication without delaying transport startup. */
   start(): void {
     void this.ready().catch(() => {
-      // The shared promise remains rejected so every backend consumer receives the failure.
+      // Consumers receive the error; a later request can retry after cooldown.
     });
   }
 
-  /** Resolve the single shared authentication attempt. Rejections are never downgraded to anonymous access. */
+  /** Share each attempt and retry failures after a cooldown, never as anonymous. */
   ready(): Promise<AuthSnapshot> {
     if (this.pending) return this.pending;
+    if (this.immediate.kind === "cookie" && this.email && this.password && this.now() >= this.refreshAt) {
+      this.immediate = { kind: "none" };
+    }
     if (this.immediate.kind !== "none" || !this.requiresLogin) {
       return Promise.resolve(this.immediate);
+    }
+    if (this.lastError && this.now() - this.failedAt < this.retryDelayMs) {
+      return Promise.reject(this.lastError);
     }
 
     const email = this.email!;
     const password = this.password!;
-    this.email = undefined;
-    this.password = undefined;
     console.error("[affine-mcp] Authenticating with email/password...");
 
     this.pending = Promise.resolve()
       .then(() => this.login(this.baseUrl, email, password, this.headers))
-      .then(({ cookieHeader }) => {
+      .then(({ cookieHeader, expiresAt }) => {
         this.immediate = { kind: "cookie", cookie: cookieHeader };
+        const now = this.now();
+        const lifetime = expiresAt === undefined ? 12 * 60 * 60 * 1000 : Math.max(0, expiresAt - now);
+        this.refreshAt = now + Math.min(12 * 60 * 60 * 1000, lifetime - Math.min(60_000, lifetime / 2));
+        this.lastError = undefined;
         console.error("[affine-mcp] Email/password authentication succeeded");
         return this.immediate;
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[affine-mcp] Email/password authentication failed: ${message}`);
-        throw new Error(`Email/password authentication failed: ${message}`, { cause: error });
+        this.failedAt = this.now();
+        this.lastError = new Error(`Email/password authentication failed: ${message}`, { cause: error });
+        throw this.lastError;
+      })
+      .finally(() => {
+        this.pending = undefined;
       });
 
     // Attach a handler immediately so an asynchronously started login cannot emit an unhandled rejection.

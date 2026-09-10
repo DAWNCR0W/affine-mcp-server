@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "3.6.0",
+  "version": "3.7.0",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -24,7 +24,8 @@
   ],
   "main": "dist/index.js",
   "bin": {
-    "affine-mcp": "bin/affine-mcp"
+    "affine-mcp": "bin/affine-mcp",
+    "affine-mcp-http-proxy": "bin/affine-mcp-http-proxy"
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{ recursive: true, force: true })\"",

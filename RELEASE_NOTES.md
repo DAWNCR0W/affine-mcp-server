@@ -1,5 +1,27 @@
 # Release Notes
 
+## Version 3.7.0 (2026-09-10)
+
+### Highlights
+- Added an opt-in `affine-mcp-http-proxy` command for local stdio clients that share an existing HTTP server.
+- Improved session recovery and managed authentication renewal for long-running clients.
+
+### What Changed
+- The bridge forwards one stdio session to a loopback `/mcp` listener, uses the host's `AFFINE_MCP_HTTP_TOKEN`, and deletes its HTTP session on EOF.
+- Explicitly expired MCP sessions can be recreated before a rejected request is replayed. Network failures, timeouts, ordinary HTTP 404 responses, and failed reinitialization never trigger automatic write replay.
+- Concurrent email/password logins share one attempt. Failed logins can retry after five seconds, and managed cookies renew before expiry, with a twelve-hour fallback when no expiry is supplied.
+- Native stdio processes close on EOF. Proxy shutdown and response reads are bounded, and malformed input receives a JSON-RPC error without preventing later requests.
+- Failed initialized notifications clear the restored session ID before another request can use it. Already expired login cookies retain their deadlines, while unrelated cleared cookies do not force premature renewal.
+- Updated the locked Hono dependency to 4.13.7 to address reported security advisories.
+- Added packed-proxy and real-listener coverage alongside authentication and session recovery regressions.
+
+### Compatibility
+- The canonical MCP surface remains at 105 tools. No tool names or existing required inputs changed.
+- The bridge is opt-in and requires a loopback HTTP listener and an inherited `AFFINE_MCP_HTTP_TOKEN`. See the private stdio bridge section in the deployment guide.
+- Default loopback HTTP assumes a trusted host or container. Use isolation or authenticated TLS when untrusted local processes can replace the listener; loopback alone does not authenticate the server.
+- Explicit cookies and bearer tokens remain caller-managed. Automatic renewal applies only to sessions established with email/password.
+- Node.js 20.18.1 or newer remains required. Release validation targets AFFiNE 0.27.4.
+
 ## Version 3.6.0 (2026-09-08)
 
 ### Highlights

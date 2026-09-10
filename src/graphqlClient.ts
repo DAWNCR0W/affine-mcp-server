@@ -179,6 +179,10 @@ export class GraphQLClient {
           this.resolvedAuth = provided;
         }
         return this.resolvedAuth;
+      }).finally(() => {
+        // AuthSession owns caching/recovery. Do not pin a rejected or stale
+        // provider promise to an otherwise long-lived MCP transport session.
+        this.authResolution = undefined;
       });
     }
     return this.authResolution;

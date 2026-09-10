@@ -205,6 +205,20 @@ async function start() {
     const server = await buildServer();
     const transport = new StdioServerTransport();
     await server.connect(transport);
+    // The SDK's stdio transport listens for data but does not close itself on
+    // EOF. Remote launchers such as `ssh ... docker exec -i` rely on EOF to
+    // release the per-client process, so close the server explicitly.
+    let shutdown: Promise<void> | undefined;
+    const closeOnInputEnd = () => {
+      if (!shutdown) {
+        shutdown = server.close().catch((error) => {
+          console.error("[affine-mcp] Failed to close stdio server:", error);
+        });
+      }
+      return shutdown;
+    };
+    process.stdin.once("end", closeOnInputEnd);
+    process.stdin.once("close", closeOnInputEnd);
   }
 }
 
