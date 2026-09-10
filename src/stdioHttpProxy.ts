@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import process from "node:process";
+import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import { fetchResponseBody } from "./util/httpResponse.js";
 
 const DEFAULT_ENDPOINT = `http://127.0.0.1:${process.env.PORT || "3000"}/mcp`;
@@ -51,12 +52,12 @@ function shutdownDeadline(): Promise<void> {
   });
 }
 
-function protocolError(id: JsonRpcId | undefined, message: string): void {
+function protocolError(id: JsonRpcId | undefined, message: string, code = -32603): void {
   if (id === undefined) return;
   writeMessage({
     jsonrpc: "2.0",
     id,
-    error: { code: -32603, message },
+    error: { code, message },
   });
 }
 
@@ -221,19 +222,19 @@ async function main(): Promise<void> {
 
   input.on("line", (line) => {
     if (!line.trim()) return;
-    let message: JsonRpcMessage;
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(line);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("MCP stdio message must be a JSON object");
-      }
-      message = parsed as JsonRpcMessage;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "invalid JSON";
-      protocolError(undefined, detail);
+      parsed = JSON.parse(line);
+    } catch {
+      protocolError(null, "Parse error: invalid JSON", -32700);
       return;
     }
-    proxy.forward(message);
+    const message = JSONRPCMessageSchema.safeParse(parsed);
+    if (!message.success) {
+      protocolError(null, "Invalid Request: expected an MCP JSON-RPC message", -32600);
+      return;
+    }
+    proxy.forward(message.data);
   });
 
   input.once("close", () => {

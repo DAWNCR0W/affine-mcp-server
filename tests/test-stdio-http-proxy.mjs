@@ -131,6 +131,7 @@ async function main() {
   });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
 
+  child.stdin.write('{\nnull\n[]\n{"jsonrpc":"2.0","id":50,"method":123}\n');
   child.stdin.write(`${JSON.stringify({
     jsonrpc: "2.0",
     id: 1,
@@ -141,7 +142,10 @@ async function main() {
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
 
   try {
-    await waitFor(() => responses.length === 2);
+    await waitFor(() => responses.length === 6);
+    assert.deepEqual(responses.splice(0, 4).map(({ id, error }) => [id, error.code]), [
+      [null, -32700], [null, -32600], [null, -32600], [null, -32600],
+    ], "invalid input must return protocol errors without blocking later requests");
     assert.deepEqual(responses.map((response) => response.id), [1, 2], "proxy must preserve JSON-RPC response ids");
     assert.equal(responses[1].result.tools[0].name, "example", "proxy must parse streamable HTTP SSE responses");
 
