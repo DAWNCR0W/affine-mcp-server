@@ -9,6 +9,7 @@ const requests = [];
 let generation = 1;
 let writes = 0;
 let failInitialize = false;
+let failInitialized = "";
 const server = createServer(async (req, res) => {
   if (req.method === "DELETE") {
     res.writeHead(204).end();
@@ -35,6 +36,19 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (message.method === "notifications/initialized") {
+    if (failInitialized === "disconnect") {
+      req.socket.destroy();
+      return;
+    }
+    if (failInitialized === "timeout") {
+      res.writeHead(202);
+      res.flushHeaders();
+      return;
+    }
+    if (failInitialized === "status") {
+      res.writeHead(503).end();
+      return;
+    }
     res.writeHead(202).end();
     return;
   }
@@ -110,6 +124,19 @@ try {
   failInitialize = false;
   assert((await call("tools/call", { name: "write", arguments: {} })).result);
   assert.equal(writes, 3, "a later request can recover after failed initialization");
+  for (const failure of ["disconnect", "timeout", "status"]) {
+    generation++;
+    const previousWrites = writes;
+    const previousInitializations = requests.filter(method => method === "initialize").length;
+    failInitialized = failure;
+    assert((await call("tools/call", { name: "write", arguments: {} })).error);
+    assert.equal(writes, previousWrites, `${failure}: incomplete initialization must not dispatch a write`);
+    failInitialized = "";
+    assert((await call("tools/call", { name: "write", arguments: {} })).result);
+    assert.equal(writes, previousWrites + 1, `${failure}: a later request executes once`);
+    assert.equal(requests.filter(method => method === "initialize").length, previousInitializations + 2,
+      `${failure}: a later request must establish a fully initialized session`);
+  }
   child.stdin.end();
   const [code] = await once(child, "exit");
   assert.equal(code, 0, "EOF cleans up after recovery");

@@ -160,12 +160,16 @@ class StdioHttpProxy {
     this.sessionId = undefined;
     if (!this.initializeMessage) throw new Error("MCP session is not initialized");
     await this.forwardOne(this.initializeMessage, false, false);
-    const { response } = await this.exchange({
-      jsonrpc: "2.0", method: "notifications/initialized",
-    });
-    if (!response.ok) {
+    try {
+      const { response } = await this.exchange({
+        jsonrpc: "2.0", method: "notifications/initialized",
+      });
+      if (!response.ok) {
+        throw new Error(`MCP reinitialization failed with status ${response.status}`);
+      }
+    } catch (error) {
       this.sessionId = undefined;
-      throw new Error(`MCP reinitialization failed with status ${response.status}`);
+      throw error;
     }
   }
 
