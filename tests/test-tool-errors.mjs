@@ -1,3 +1,5 @@
+import './require-destructive-test-safety.mjs';
+
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -8,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { GraphQLClient } from '../dist/graphqlClient.js';
-import { ToolFailure, toolError, withToolErrors } from '../dist/util/mcp.js';
+import { ToolFailure, text, toolError, withToolErrors } from '../dist/util/mcp.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = mkdtempSync(path.join(tmpdir(), 'affine-tool-errors-'));
@@ -65,6 +67,16 @@ try {
     const result = checkFailure(await client.callTool({ name: 'current_user', arguments: {} }), code);
     assert.equal(result.retryable, retryable);
   }
+  for (const [httpStatus, causeCode] of [[429, 'rate_limited'], [503, 'upstream_unavailable']]) {
+    status = httpStatus;
+    const result = checkFailure(
+      await client.callTool({ name: 'list_workspaces', arguments: {} }),
+      'workspace_list_failed',
+    );
+    assert.equal(result.causeCode, causeCode);
+    assert.equal(result.retryable, true, 'read-only pre-normalized transient failures should be retryable');
+    assert.equal(typeof result.retryable, 'boolean');
+  }
   status = 200;
   errors = [{ message: 'Session ended', extensions: { code: 'UNAUTHENTICATED' } }];
   checkFailure(await client.callTool({ name: 'list_comments', arguments: { workspaceId: 'workspace', docId: 'document' } }), 'auth_required');
@@ -76,11 +88,68 @@ try {
   assert.equal(checkFailure(uncertain, 'upstream_unavailable').retryable, false);
   assert.match(uncertain.structuredContent.recoveryGuidance, /read the target before retrying/);
 
+  const opaqueDomain = toolError(new ToolFailure('opaque backend failure', 'upstream_unavailable'), {
+    code: 'workspace_list_failed',
+  });
+  const normalizedOpaqueDomain = await withToolErrors(async () => opaqueDomain, {
+    toolName: 'list_workspaces', authMode: 'bearer', readOnly: true,
+  })();
+  assert.equal(checkFailure(normalizedOpaqueDomain, 'workspace_list_failed').retryable, true);
+  assert.equal(normalizedOpaqueDomain.structuredContent.causeCode, 'upstream_unavailable');
+
+  const opaqueCause = toolError(new ToolFailure('opaque backend failure', 'upstream_unavailable'));
+  const normalizedOpaqueCause = await withToolErrors(async () => opaqueCause, {
+    toolName: 'list_workspaces', authMode: 'bearer', readOnly: true,
+  })();
+  assert.equal(checkFailure(normalizedOpaqueCause, 'upstream_unavailable').retryable, true);
+  assert.equal(normalizedOpaqueCause.structuredContent.causeCode, undefined);
+
+  const omittedWrite = toolError(new Error('HTTP 503: write outcome unknown'), {
+    code: 'workspace_create_failed',
+  });
+  const normalizedOmittedWrite = await withToolErrors(async () => omittedWrite, writeContext)();
+  assert.equal(checkFailure(normalizedOmittedWrite, 'workspace_create_failed').retryable, false);
+
+  const explicitFalse = toolError(new Error('HTTP 503: retry later'), {
+    code: 'workspace_list_failed',
+    retryable: false,
+  });
+  const preservedFalse = await withToolErrors(async () => explicitFalse, {
+    toolName: 'list_workspaces', authMode: 'bearer', readOnly: true,
+  })();
+  assert.equal(checkFailure(preservedFalse, 'workspace_list_failed').retryable, false);
+  assert.equal(preservedFalse.structuredContent.causeCode, 'upstream_unavailable');
+
+  const explicitTrue = toolError(new Error('HTTP 503: retry later'), {
+    code: 'workspace_list_failed',
+    retryable: true,
+  });
+  const preservedTrue = await withToolErrors(async () => explicitTrue, {
+    toolName: 'create_workspace', authMode: 'bearer', readOnly: false,
+  })();
+  assert.equal(checkFailure(preservedTrue, 'workspace_list_failed').retryable, true);
+
+  const manualFalsePayload = {
+    ok: false,
+    error: 'HTTP 503: manually returned failure',
+    code: 'workspace_list_failed',
+    causeCode: 'upstream_unavailable',
+    retryable: false,
+  };
+  const manualFalse = await withToolErrors(async () => ({
+    ...text(manualFalsePayload),
+    isError: true,
+  }), {
+    toolName: 'list_workspaces', authMode: 'bearer', readOnly: true,
+  })();
+  assert.equal(checkFailure(manualFalse, 'workspace_list_failed').retryable, false);
+
   const partial = toolError('Placement failed', { code: 'placement_failed', data: { docId: 'existing-doc', contentPersisted: true }, recoveryGuidance: 'Keep existing-doc; repair its placement without creating it again.' });
   const preserved = await withToolErrors(async () => partial, writeContext)();
   assert.equal(preserved.structuredContent.docId, 'existing-doc');
   assert.equal(preserved.structuredContent.contentPersisted, true);
   assert.equal(preserved.structuredContent.recoveryGuidance, partial.structuredContent.recoveryGuidance);
+  assert.equal(preserved.structuredContent.retryable, false, 'partial write receipts must remain conservative');
   const embeddedGuidance = toolError('Write timed out', {
     code: 'document_create_failed',
     data: { recoveryGuidance: 'Do not retry document creation; inspect the existing document ID first.' },

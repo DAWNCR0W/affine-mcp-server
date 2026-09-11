@@ -71,6 +71,10 @@ export type ToolErrorOptions = {
   details?: Record<string, unknown>;
 };
 
+// Keep omitted retryability distinguishable from an explicit false without
+// changing the serialized MCP error contract.
+const retryabilityOmitted = new WeakSet<object>();
+
 /** A failure whose cause is known without asking clients to parse backend text. */
 export class ToolFailure extends Error {
   constructor(message: string, readonly code: string, readonly recoveryGuidance?: string) {
@@ -122,6 +126,7 @@ function recoveryFor(code: string): string {
 export function toolError(error: unknown, options: ToolErrorOptions = {}) {
   const classified = failureCode(error);
   const code = options.code || classified;
+  const retryableExplicit = typeof options.retryable === "boolean";
   const result = text({
     ...(options.data || {}),
     ok: false,
@@ -135,6 +140,9 @@ export function toolError(error: unknown, options: ToolErrorOptions = {}) {
       || recoveryFor(classified === "tool_error" ? code : classified),
     ...(options.details ? { details: cloneJsonValue(options.details) } : {}),
   });
+  if (!retryableExplicit && result.structuredContent && typeof result.structuredContent === "object") {
+    retryabilityOmitted.add(result.structuredContent);
+  }
   return {
     ...result,
     isError: true,
@@ -157,11 +165,21 @@ export function withToolErrors<T extends (...args: any[]) => any>(
     }
 
     function normalize(error: unknown, payload?: Record<string, any>) {
-      const classified = failureCode(error);
+      const classified = typeof payload?.causeCode === "string" && payload.causeCode.trim()
+        ? payload.causeCode
+        : payload?.code === "upstream_unavailable" || payload?.code === "rate_limited"
+          ? payload.code
+          : failureCode(error);
+      const transientReadOnlyFailure = context.readOnly && ["upstream_unavailable", "rate_limited"].includes(classified);
+      const retryable = payload && retryabilityOmitted.has(payload)
+        ? transientReadOnlyFailure
+        : typeof payload?.retryable === "boolean"
+          ? payload.retryable
+          : transientReadOnlyFailure;
       const result = toolError(error, {
         code: payload?.code,
         data: payload,
-        retryable: payload?.retryable ?? (context.readOnly && ["upstream_unavailable", "rate_limited"].includes(classified)),
+        retryable,
         recoveryGuidance: payload?.recoveryGuidance,
         details: payload?.details,
       });
@@ -170,6 +188,7 @@ export function withToolErrors<T extends (...args: any[]) => any>(
         return toolError(error, {
           code: normalized.code,
           data: normalized,
+          retryable: normalized.retryable === true,
           recoveryGuidance: "Ask the MCP server operator to refresh its AFFiNE service credentials and restart the server. If the MCP connection itself requests authorization, reconnect using your client's OAuth flow.",
         });
       }
