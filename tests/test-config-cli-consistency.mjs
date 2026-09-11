@@ -658,8 +658,51 @@ try {
     `piped cookie was consumed by a URL prompt: ${configuredUrlLogin.stderr}`,
   );
   expect(
-    configuredUrlLogin.stderr.includes("Verified workspace: workspace-env"),
+    configuredUrlLogin.stderr.includes("Verified workspace: Workspace name unavailable (workspace-env)"),
     "non-TTY cookie login did not use the configured URL before validating the workspace",
+  );
+  expect(
+    configuredUrlLogin.stderr.includes("Selected workspace")
+      && configuredUrlLogin.stderr.includes("Restart or reconnect"),
+    "login did not explain the selected workspace and MCP restart step",
+  );
+
+  const listedWorkspaces = await runNode(
+    [DIST_ENTRY, "workspaces", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: configuredUrlHome,
+      AFFINE_WS_CONNECT_TIMEOUT_MS: "20",
+    }),
+  );
+  expect(listedWorkspaces.code === 0, `workspace listing failed: ${listedWorkspaces.stderr}`);
+  const listedWorkspacePayload = JSON.parse(listedWorkspaces.stdout);
+  expect(Array.isArray(listedWorkspacePayload), "workspaces --json should return a JSON list");
+  expect(
+    listedWorkspacePayload.some((workspace) => workspace.id === "workspace-env" && workspace.url.endsWith("/workspace/workspace-env")),
+    "workspace listing did not include the membership URL",
+  );
+
+  const beforeEnvironmentWorkspaceSwitch = readFileSync(
+    path.join(configuredUrlHome, "affine-mcp", "config"),
+    "utf8",
+  );
+  const environmentWorkspaceSwitch = await runNode(
+    [DIST_ENTRY, "workspace", "workspace-env"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: configuredUrlHome,
+      AFFINE_WORKSPACE_ID: "workspace-other",
+      AFFINE_WS_CONNECT_TIMEOUT_MS: "20",
+    }),
+  );
+  expect(environmentWorkspaceSwitch.code !== 0, "workspace switch silently ignored an environment workspace override");
+  expect(
+    environmentWorkspaceSwitch.stderr.includes("overrides saved config")
+      && environmentWorkspaceSwitch.stderr.includes("unset AFFINE_WORKSPACE_ID"),
+    "workspace override recovery did not name the exact next step",
+  );
+  expect(
+    readFileSync(path.join(configuredUrlHome, "affine-mcp", "config"), "utf8") === beforeEnvironmentWorkspaceSwitch,
+    "environment workspace override changed saved config",
   );
 
   const missingForce = await runNode([

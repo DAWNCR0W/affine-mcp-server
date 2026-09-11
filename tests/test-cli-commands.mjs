@@ -96,6 +96,19 @@ const commandHelp = run("help doctor", [DIST_ENTRY, "help", "doctor"]);
 expectSuccess(commandHelp);
 expect(commandHelp.stdout.includes("affine-mcp doctor"), "help doctor should print command usage");
 
+const workspaceHelp = run("help workspaces", [DIST_ENTRY, "help", "workspaces"]);
+expectSuccess(workspaceHelp);
+expect(workspaceHelp.stdout.includes("affine-mcp workspaces [--json]"), "help workspaces should print command usage");
+
+const switchHelp = run("help workspace", [DIST_ENTRY, "help", "workspace"]);
+expectSuccess(switchHelp);
+expect(switchHelp.stdout.includes("affine-mcp workspace [workspace-id]"), "help workspace should print command usage");
+
+expect(claudeSnippet.stderr.includes("copies credentials"), "--env snippet should warn about copied secrets");
+const defaultSnippet = run("snippet claude", [DIST_ENTRY, "snippet", "claude"]);
+expectSuccess(defaultSnippet);
+expect(defaultSnippet.stderr.includes("omit --env"), "default snippet should recommend saved config");
+
 console.log(JSON.stringify({
   ok: true,
   cases: [
@@ -108,5 +121,8 @@ console.log(JSON.stringify({
     "snippet all --env",
     "unknown command",
     "help doctor",
+    "help workspaces",
+    "help workspace",
+    "snippet snapshot warning",
   ],
 }, null, 2));

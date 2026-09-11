@@ -5,6 +5,7 @@ Thanks for contributing to `affine-mcp-server`.
 ## Before You Start
 
 - Node.js `20+` is required. Use the version in `.nvmrc` for local development.
+- Python 3 is required for the real-terminal CLI regression test on macOS and Linux; it uses only the standard library. This is a test prerequisite, not a server runtime dependency.
 - You need one AFFiNE instance to run end-to-end checks.
 - Read the project docs first:
   - `README.md`
