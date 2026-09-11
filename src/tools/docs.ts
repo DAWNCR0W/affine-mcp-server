@@ -598,6 +598,71 @@ type UpdateTableCellInput = {
   text: string | TextDelta[];
 };
 
+type UpdateTableColumnWidthsInput = {
+  workspaceId?: string;
+  docId: string;
+  blockId: string;
+  widths: Array<number | null>;
+};
+
+export const TABLE_COLUMN_MIN_WIDTH = 60;
+export const TABLE_COLUMN_MAX_WIDTH = 4096;
+
+export function totalTableColumnWidth(
+  widths: Array<number | null>,
+): number | null {
+  return widths.every(width => width !== null)
+    ? widths.reduce((sum, width) => sum + (width ?? 0), 0)
+    : null;
+}
+
+export function readTableColumnWidth(
+  block: Y.Map<any>,
+  columnId: string,
+): number | null {
+  const columns = block.get("prop:columns");
+  if (columns instanceof Y.Map) {
+    const column = columns.get(columnId);
+    const width = column instanceof Y.Map
+      ? column.get("width")
+      : column && typeof column === "object"
+        ? (column as Record<string, unknown>).width
+        : undefined;
+    return typeof width === "number" && Number.isFinite(width) ? width : null;
+  }
+
+  const width = block.get(`prop:columns.${columnId}.width`);
+  return typeof width === "number" && Number.isFinite(width) ? width : null;
+}
+
+export function writeTableColumnWidth(
+  block: Y.Map<any>,
+  columnId: string,
+  width: number | null,
+): void {
+  const columns = block.get("prop:columns");
+  if (columns instanceof Y.Map) {
+    const column = columns.get(columnId);
+    if (column instanceof Y.Map) {
+      if (width === null) column.delete("width");
+      else column.set("width", width);
+      return;
+    }
+    if (column && typeof column === "object") {
+      const next = { ...(column as Record<string, unknown>) };
+      if (width === null) delete next.width;
+      else next.width = width;
+      columns.set(columnId, next);
+      return;
+    }
+    throw new Error(`Table column '${columnId}' has an unsupported storage shape.`);
+  }
+
+  const key = `prop:columns.${columnId}.width`;
+  if (width === null) block.delete(key);
+  else block.set(key, width);
+}
+
 type NormalizedAppendBlockInput = {
   workspaceId?: string;
   docId: string;
@@ -3306,6 +3371,7 @@ export function registerDocTools(
     tableCellDeltas: TextDelta[][][];
     rowIds: string[];
     columnIds: string[];
+    columnWidths: Array<number | null>;
   } | null {
     const compareOrder = (left: string, right: string) => {
       if (left < right) return -1;
@@ -3338,6 +3404,7 @@ export function registerDocTools(
           typeof mapField(payload, "order") === "string"
             ? mapField(payload, "order") as string
             : columnId,
+        width: readTableColumnWidth(block, columnId),
       }))
       .sort((a, b) => compareOrder(a.order, b.order));
 
@@ -3378,7 +3445,11 @@ export function registerDocTools(
           .map(([rowId, order]) => ({ rowId, order }))
           .sort((a, b) => compareOrder(a.order, b.order));
         columnEntries = Array.from(flatColumns.entries())
-          .map(([columnId, order]) => ({ columnId, order }))
+          .map(([columnId, order]) => ({
+            columnId,
+            order,
+            width: readTableColumnWidth(block, columnId),
+          }))
           .sort((a, b) => compareOrder(a.order, b.order));
         cells = flatCells;
       }
@@ -3432,6 +3503,7 @@ export function registerDocTools(
       tableCellDeltas,
       rowIds: rowEntries.map(({ rowId }) => rowId),
       columnIds: columnEntries.map(({ columnId }) => columnId),
+      columnWidths: columnEntries.map(({ width }) => width),
     };
   }
 
@@ -5805,6 +5877,7 @@ export function registerDocTools(
         deltas: TextDelta[];
         tableData?: string[][];
         tableCellDeltas?: TextDelta[][][];
+        tableColumnWidths?: Array<number | null>;
         linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
@@ -5849,6 +5922,7 @@ export function registerDocTools(
           ...(table ? {
             tableData: table.tableData,
             tableCellDeltas: table.tableCellDeltas,
+            tableColumnWidths: table.columnWidths,
           } : {}),
           linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
@@ -10139,6 +10213,95 @@ export function registerDocTools(
     }
   };
 
+  const updateTableColumnWidthsHandler = async (
+    params: UpdateTableColumnWidthsInput,
+  ) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+      const flavour = block.get("sys:flavour");
+      if (flavour !== "affine:table") {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(flavour)}' — update_table_column_widths only mutates affine:table blocks.`
+        );
+      }
+
+      const table = extractTableData(block);
+      if (!table) {
+        throw new Error(`Table block '${params.blockId}' has no readable row/column layout.`);
+      }
+      if (params.widths.length !== table.columnIds.length) {
+        throw new Error(
+          `widths length must match table column count (${table.columnIds.length}).`
+        );
+      }
+
+      const changedColumns: Array<{
+        column: number;
+        columnId: string;
+        previousWidth: number | null;
+        width: number | null;
+      }> = [];
+      params.widths.forEach((width, column) => {
+        const previousWidth = table.columnWidths[column];
+        if (previousWidth === width) return;
+        const columnId = table.columnIds[column];
+        writeTableColumnWidth(block, columnId, width);
+        changedColumns.push({ column, columnId, previousWidth, width });
+      });
+
+      if (changedColumns.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
+
+      return text({
+        updated: changedColumns.length > 0,
+        blockId: params.blockId,
+        rowCount: table.rowIds.length,
+        columnCount: table.columnIds.length,
+        columnIds: table.columnIds,
+        changedColumns,
+        previous: {
+          widths: table.columnWidths,
+          totalWidth: totalTableColumnWidth(table.columnWidths),
+        },
+        table: {
+          widths: params.widths,
+          totalWidth: totalTableColumnWidth(params.widths),
+        },
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
   const moveBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10786,6 +10949,29 @@ export function registerDocTools(
       },
     },
     updateTableCellHandler as any
+  );
+
+  server.registerTool(
+    "update_table_column_widths",
+    {
+      title: "Update Table Column Widths",
+      description:
+        "Set every column width in an AFFiNE table while preserving rows and cell content. Pass null for a column to restore AFFiNE's automatic width.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Table block id (flavour affine:table)."),
+        widths: z.array(
+          z.union([
+            z.number().finite().min(TABLE_COLUMN_MIN_WIDTH).max(TABLE_COLUMN_MAX_WIDTH),
+            z.null(),
+          ])
+        ).min(1).describe(
+          "Widths in pixels, in current column order. Provide exactly one entry per column; null restores automatic width."
+        ),
+      },
+    },
+    updateTableColumnWidthsHandler as any
   );
 
   server.registerTool(

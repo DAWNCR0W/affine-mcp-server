@@ -156,6 +156,7 @@ const OUTPUT_SPECS = {
   update_settings: fallible(spec({ success: "boolean", error: "string" }, true, ["success"])),
   update_surface_element: spec({ updated: "boolean", elementId: "string", type: "nullableString", changed: "stringArray", ignored: "stringArray" }),
   update_table_cell: spec({ updated: "boolean", blockId: "string", row: "number", column: "number", rowId: "string", columnId: "string", previous: "object", cell: "object" }),
+  update_table_column_widths: spec({ updated: "boolean", blockId: "string", rowCount: "number", columnCount: "number", columnIds: "stringArray", changedColumns: "unknownArray", previous: "object", table: "object" }),
   update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true, ["kind", "ok"])),
   upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true, ["id", "key"])),
 } satisfies Record<ToolName, OutputSpec>;
