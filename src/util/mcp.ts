@@ -66,9 +66,22 @@ export function stripSchemaDialect(server: { server?: unknown }): void {
 export type ToolErrorOptions = {
   code?: string;
   retryable?: boolean;
+  recoveryGuidance?: string;
   data?: Record<string, unknown>;
   details?: Record<string, unknown>;
 };
+
+// Keep omitted retryability distinguishable from an explicit false without
+// changing the serialized MCP error contract.
+const retryabilityOmitted = new WeakSet<object>();
+
+/** A failure whose cause is known without asking clients to parse backend text. */
+export class ToolFailure extends Error {
+  constructor(message: string, readonly code: string, readonly recoveryGuidance?: string) {
+    super(message);
+    this.name = "ToolFailure";
+  }
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -76,19 +89,111 @@ function errorMessage(error: unknown): string {
   return "Unknown tool error";
 }
 
+function failureCode(error: unknown): string {
+  if (error instanceof ToolFailure) return error.code;
+  const message = errorMessage(error);
+  if (/(?:HTTP|status|sign-in failed:)\s*401\b|UNAUTHENTICATED|AUTHENTICATION_REQUIRED|SESSION_EXPIRED|INVALID_TOKEN|no authentication configured|GraphQL error: (?:unauthorized|authentication required|not authenticated|session expired)\b/i.test(message)) return "auth_required";
+  if (/(?:HTTP|status|sign-in failed:)\s*403\b|FORBIDDEN|ACCESS_DENIED|PERMISSION_DENIED/i.test(message)) return "access_denied";
+  if (/workspaceId.*required|workspace id.*required/i.test(message)) return "workspace_required";
+  if (/(?:HTTP|status)\s*429\b|rate limit|too many requests/i.test(message)) return "rate_limited";
+  if (/timeout|timed out|fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|(?:HTTP|status)\s*50[0234]\b/i.test(message)) return "upstream_unavailable";
+  if (error instanceof Error && error.name === "ZodError") return "invalid_arguments";
+  return "tool_error";
+}
+
+function recoveryFor(code: string): string {
+  switch (code) {
+    case "auth_required":
+      return "Run affine-mcp login, then restart or reconnect this MCP server. If your client embeds AFFINE_COOKIE or another credential, remove or refresh that copied value; environment credentials override saved login settings.";
+    case "access_denied":
+      return "Check the active account and workspace with affine-mcp status and affine-mcp workspaces. Confirm that the account has permission for this operation; logging in again does not grant missing permissions.";
+    case "workspace_required":
+      return "Call list_workspaces and pass the chosen workspaceId, or run affine-mcp workspace to set a default and then restart or reconnect the MCP server.";
+    case "workspace_root_unavailable":
+      return "The workspace contents could not be confirmed. Check the workspace in AFFiNE and run affine-mcp doctor; do not treat this as an empty workspace.";
+    case "rate_limited":
+      return "Wait before retrying. For a write, inspect the target first to determine whether it already completed.";
+    case "upstream_unavailable":
+      return "Check AFFiNE connectivity with affine-mcp doctor. For a write, read the target before retrying because the server may have applied it before the connection failed.";
+    case "invalid_arguments":
+      return "Check this tool's input schema, correct the indicated fields, and try again.";
+    default:
+      return "Check the error details and active workspace. For a write, inspect the target before retrying to avoid duplicating a completed change.";
+  }
+}
+
 /** Return a machine-readable MCP failure while preserving the legacy error string. */
 export function toolError(error: unknown, options: ToolErrorOptions = {}) {
+  const classified = failureCode(error);
+  const code = options.code || classified;
+  const retryableExplicit = typeof options.retryable === "boolean";
   const result = text({
     ...(options.data || {}),
     ok: false,
     error: errorMessage(error),
-    code: options.code || "tool_error",
+    code,
+    ...(classified !== "tool_error" && classified !== code ? { causeCode: classified } : {}),
     retryable: options.retryable ?? false,
+    recoveryGuidance: options.recoveryGuidance
+      || (typeof options.data?.recoveryGuidance === "string" ? options.data.recoveryGuidance : undefined)
+      || (error instanceof ToolFailure ? error.recoveryGuidance : undefined)
+      || recoveryFor(classified === "tool_error" ? code : classified),
     ...(options.details ? { details: cloneJsonValue(options.details) } : {}),
   });
+  if (!retryableExplicit && result.structuredContent && typeof result.structuredContent === "object") {
+    retryabilityOmitted.add(result.structuredContent);
+  }
   return {
     ...result,
     isError: true,
+  };
+}
+
+/** Normalize every handler failure while preserving specific partial-write receipts. */
+export function withToolErrors<T extends (...args: any[]) => any>(
+  handler: T,
+  context: { toolName: string; authMode: "bearer" | "oauth"; readOnly: boolean },
+) {
+  return async (...args: Parameters<T>) => {
+    try {
+      const result = await handler(...args);
+      if (!result?.isError || !result.structuredContent) return result;
+      const payload = result.structuredContent;
+      return normalize(payload.error || "Tool operation failed", payload);
+    } catch (error) {
+      return normalize(error);
+    }
+
+    function normalize(error: unknown, payload?: Record<string, any>) {
+      const classified = typeof payload?.causeCode === "string" && payload.causeCode.trim()
+        ? payload.causeCode
+        : payload?.code === "upstream_unavailable" || payload?.code === "rate_limited"
+          ? payload.code
+          : failureCode(error);
+      const transientReadOnlyFailure = context.readOnly && ["upstream_unavailable", "rate_limited"].includes(classified);
+      const retryable = payload && retryabilityOmitted.has(payload)
+        ? transientReadOnlyFailure
+        : typeof payload?.retryable === "boolean"
+          ? payload.retryable
+          : transientReadOnlyFailure;
+      const result = toolError(error, {
+        code: payload?.code,
+        data: payload,
+        retryable,
+        recoveryGuidance: payload?.recoveryGuidance,
+        details: payload?.details,
+      });
+      const normalized = result.structuredContent as Record<string, unknown> & { code: string };
+      if (context.authMode === "oauth" && (normalized.code === "auth_required" || normalized.causeCode === "auth_required")) {
+        return toolError(error, {
+          code: normalized.code,
+          data: normalized,
+          retryable: normalized.retryable === true,
+          recoveryGuidance: "Ask the MCP server operator to refresh its AFFiNE service credentials and restart the server. If the MCP connection itself requests authorization, reconnect using your client's OAuth flow.",
+        });
+      }
+      return result;
+    }
   };
 }
 

@@ -32,6 +32,7 @@ assert.deepEqual(parsed(failure), {
   retryable: true,
   details: { attempt: 2 },
   operation: "workspace.list",
+  recoveryGuidance: "Check the error details and active workspace. For a write, inspect the target before retrying to avoid duplicating a completed change.",
 });
 
 const legacyCompatibleFailure = parsed(toolError("invalid input", { code: "invalid_arguments" }));

@@ -119,6 +119,14 @@ affine-mcp login
 
 This stores credentials in `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise in `~/.config/affine-mcp/config`, with mode `600`.
 
+The login flow reuses the configured or saved AFFiNE URL when you press Enter at
+the URL prompt. After authentication, workspace discovery displays the workspace
+name first and falls back to `Workspace name unavailable` when profile metadata
+has no name; the full ID remains visible. An invalid numeric selection is rejected
+and prompted again. Enter `q` or send end-of-file to cancel without writing a new
+config. A failed discovery request is reported as a failure; it is not treated as
+a completed login.
+
 - For AFFiNE Cloud, paste the Cookie request header from a signed-in browser session
 - For self-hosted AFFiNE, use email/password (recommended) or a signed-in session cookie
 - `AFFINE_API_TOKEN` remains available only for deployments that still accept a compatible GraphQL bearer token
@@ -130,6 +138,20 @@ affine-mcp login --url https://app.affine.pro --cookie-stdin --workspace-id your
 ```
 
 Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The CLI verifies `--workspace-id` against the authenticated account before saving it. Piped input requires `--force` when existing credentials would be replaced.
+
+After login, inspect and switch the saved default workspace without signing in
+again:
+
+```bash
+affine-mcp workspaces
+affine-mcp workspaces --json
+affine-mcp workspace <workspace-id>
+```
+
+`workspaces` lists names first and marks the current default. `workspace` validates
+the requested ID with the active credentials and changes only the local default
+(`AFFINE_WORKSPACE_ID`); it does not grant access to a workspace or change the
+authenticated account. With no ID, it uses the same validated selection flow.
 
 ### 4. Register the server with your client
 
@@ -158,7 +180,19 @@ More client-specific setup is in [docs/client-setup.md](docs/client-setup.md).
 ```bash
 affine-mcp status
 affine-mcp doctor
+affine-mcp snippet codex
 ```
+
+The recommended Codex form is a command-only registration line that keeps using
+the current saved login. `snippet claude` and `snippet cursor` print JSON
+configuration instead. Apply the generated snippet, then restart or reconnect
+the MCP client so it starts a fresh server process.
+
+For an explicit environment snapshot, add `--env` to any snippet command. It
+copies the currently resolved URL, authentication, headers, workspace, and
+relevant OAuth settings; client environment variables win over saved config at
+runtime. Remove or regenerate copied credentials when they expire instead of
+expecting a saved login to override them.
 
 If you want to expose the server remotely over HTTP instead of stdio, start with [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md).
 If an HTTP server already runs on the same host as your stdio client, use the
@@ -185,6 +219,12 @@ Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20, 2
 `tool-manifest.json` is the source of truth for canonical tool names. The MCP server exposes those tools through `tools/list` and `tools/call`; tool definitions returned by `tools/list` include MCP annotations that mark read-only, destructive, idempotent, and external-world behavior for client-side tool selection.
 
 Every canonical tool also declares an MCP `outputSchema` for its `structuredContent`. Object results retain their existing top-level fields, while array and scalar results use stable `{ items }`, `{ text }`, or `{ value }` envelopes. The existing text `content` remains unchanged for compatibility with clients that do not consume structured results.
+
+`get_capabilities` exposes the full implemented list in
+`server.supportedTools` and the currently enabled surface in
+`server.effective.profile` and `server.effective.enabledTools`, after profiles,
+disabled groups or tools, and auth-mode policy. Inspect `tools/list` when you
+need the final set of callable tools.
 
 Advertised input and output schemas omit the SDK-generated draft-07 `$schema` marker. Schema interpretation follows the client context, allowing clients that reject an explicit draft-07 declaration to consume the tool surface.
 
@@ -226,12 +266,23 @@ Useful CLI commands:
 - `affine-mcp status` - test the effective configuration
 - `affine-mcp status --json` - machine-readable status output
 - `affine-mcp doctor` - diagnose config and connectivity issues
+- `affine-mcp workspaces [--json]` - list accessible workspaces by name and mark the default
+- `affine-mcp workspace [id]` - validate and set the local default workspace
 - `affine-mcp show-config` - print the effective config with secrets redacted
 - `affine-mcp config-path` - print the config file path
 - `affine-mcp snippet <claude|cursor|codex|all> [--env]` - generate ready-to-paste client config
 - `affine-mcp logout` - remove stored credentials
 
-`status`, `doctor`, and the server runtime use the same `environment > saved config > defaults` resolution. For a self-hosted deployment with a non-standard GraphQL route, use `affine-mcp login --graphql-path /your/graphql/path` or set `AFFINE_GRAPHQL_PATH`; `show-config --json` prints the exact resolved `graphqlEndpoint` without exposing secrets.
+Core configuration uses `environment > saved config > defaults`. HTTP body/session
+limits, proxy settings, WebSocket timeouts, and the HTTP compatibility escape
+hatches are environment-only runtime flags; they are not read from the saved
+`KEY=value` file. See [configuration precedence and environment scope](docs/configuration-and-deployment.md#configuration-precedence).
+For a self-hosted deployment with a non-standard GraphQL route, use
+`affine-mcp login --graphql-path /your/graphql/path` or set
+`AFFINE_GRAPHQL_PATH`; `show-config --json` prints the exact resolved
+`graphqlEndpoint` without exposing secrets. Generated workspace and document URLs
+use the configured AFFiNE base URL, so a custom GraphQL path does not become part
+of a browser link.
 
 For common failures, see:
 
@@ -247,6 +298,9 @@ For common failures, see:
 - Keep remote HTTP MCP listeners authenticated; bearer mode refuses a non-loopback bind without `AFFINE_MCP_HTTP_TOKEN`
 - Send MCP bearer tokens in the `Authorization` header, never in the URL
 - Re-run `affine-mcp login` when a saved browser session expires
+- For GUI clients, verify `command -v affine-mcp` and `command -v node`; an absolute
+  script path does not fix a `#!/usr/bin/env node` shebang when the GUI process has
+  no Node.js directory in `PATH`. See [GUI client PATH troubleshooting](docs/client-setup.md#gui-client-path-troubleshooting).
 - Restrict exposed tools with `AFFINE_DISABLED_GROUPS` and `AFFINE_DISABLED_TOOLS` for least-privilege setups
 - Treat OAuth mode as a shared AFFiNE service-account deployment: it defaults to `read_only`, and write-capable profiles require `AFFINE_OAUTH_ALLOW_SERVICE_WRITES=true`
 - Use `/healthz` and `/readyz` when running the HTTP server behind a container platform or load balancer

@@ -123,7 +123,7 @@ async function main() {
       undefined,
       { timeout: TOOL_TIMEOUT_MS },
     );
-    const text = result?.content?.[0]?.text || '';
+    const text = result?.structuredContent?.error || result?.content?.[0]?.text || '';
     if (!result?.isError) {
       throw new Error(`${toolName} was expected to fail but succeeded`);
     }
