@@ -21,7 +21,9 @@ import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
+import { coordinateTool } from "./toolCoordination.js";
 import { stripSchemaDialect } from "./util/mcp.js";
+import { resolveConfiguredAuth } from "./util/configuredAuth.js";
 import {
   assertOAuthServiceWritePolicy,
   createToolFilterEnvironment,
@@ -81,39 +83,16 @@ const loginMode = config.authMode === "oauth"
   ? "async"
   : parseLoginMode(process.env.AFFINE_LOGIN_AT_START);
 
-function findConfiguredHeader(name: string): string | undefined {
-  let value: string | undefined;
-  for (const [headerName, headerValue] of Object.entries(config.headers || {})) {
-    if (headerName.toLowerCase() === name) value = headerValue;
-  }
-  return value;
-}
-
-const configuredAuthorization = findConfiguredHeader("authorization");
-const configuredCookie = findConfiguredHeader("cookie");
-let headerBearer: string | undefined;
-if (!config.apiToken && configuredAuthorization !== undefined) {
-  if (/[\r\n]/.test(configuredAuthorization)) {
-    throw new Error("Configured Authorization header contains illegal CR/LF characters.");
-  }
-  const match = /^Bearer\s+(.+)$/i.exec(configuredAuthorization);
-  if (!match) {
-    throw new Error("Configured Authorization header must use the Bearer scheme.");
-  }
-  headerBearer = match[1];
-}
-
-const sessionBearer = config.apiToken || headerBearer;
-const sessionCookie = sessionBearer
-  ? undefined
-  : config.cookie || configuredCookie;
+const configuredAuth = resolveConfiguredAuth(config);
+const sessionBearer = configuredAuth.apiToken;
+const sessionCookie = configuredAuth.cookie;
 const authSession = new AuthSession({
   baseUrl: config.baseUrl,
   bearer: sessionBearer,
   cookie: sessionCookie,
-  email: sessionBearer || sessionCookie ? undefined : config.email,
-  password: sessionBearer || sessionCookie ? undefined : config.password,
-  headers: config.headers,
+  email: sessionBearer || sessionCookie ? undefined : configuredAuth.email,
+  password: sessionBearer || sessionCookie ? undefined : configuredAuth.password,
+  headers: configuredAuth.headers,
 });
 
 if (config.authMode === "oauth" && !authSession.hasConfiguredAuth) {
@@ -182,14 +161,18 @@ async function buildServer() {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
       const outputSchema = options?.outputSchema ?? toolOutputSchemaFor(name);
+      const coordinated = coordinateTool(name, options?.inputSchema || {}, handler, {
+        gql, endpoint: config.graphqlEndpoint, workspaceId: config.defaultWorkspaceId,
+      });
       return originalRegisterTool(name, {
         ...options,
+        inputSchema: coordinated.inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         annotations: {
           ...toolAnnotationsFor(name),
           ...(options?.annotations || {}),
         },
-      }, handler);
+      }, coordinated.handler);
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
@@ -227,6 +210,20 @@ async function start() {
     const server = await buildServer();
     const transport = new StdioServerTransport();
     await server.connect(transport);
+    // The SDK's stdio transport listens for data but does not close itself on
+    // EOF. Remote launchers such as `ssh ... docker exec -i` rely on EOF to
+    // release the per-client process, so close the server explicitly.
+    let shutdown: Promise<void> | undefined;
+    const closeOnInputEnd = () => {
+      if (!shutdown) {
+        shutdown = server.close().catch((error) => {
+          console.error("[affine-mcp] Failed to close stdio server:", error);
+        });
+      }
+      return shutdown;
+    };
+    process.stdin.once("end", closeOnInputEnd);
+    process.stdin.once("close", closeOnInputEnd);
   }
 }
 

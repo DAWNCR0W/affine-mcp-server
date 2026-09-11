@@ -11,7 +11,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { AuthSession, parseLoginMode } from "../src/authSession.ts";
+import { loginWithPassword } from "../src/auth.ts";
 import { GraphQLClient } from "../src/graphqlClient.ts";
+import { resolveConfiguredAuth } from "../src/util/configuredAuth.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
@@ -98,7 +100,10 @@ async function startMockAffine(options = {}) {
           return;
         }
         state.loginCompletedAt = Date.now();
-        jsonResponse(res, 200, { ok: true }, { "Set-Cookie": `${COOKIE}; Path=/; HttpOnly` });
+        jsonResponse(res, 200, { ok: true }, { "Set-Cookie": [
+          `${COOKIE}; Path=/; HttpOnly${options.cookieAttributes || ""}`,
+          ...(options.additionalCookies || []),
+        ] });
         return;
       }
 
@@ -299,6 +304,63 @@ async function testSingleFlightPrimitive() {
   assertEqual((await bearerPriority.ready()).kind, "bearer", "bearer ignores incomplete lower-priority credentials");
 }
 
+async function testConfiguredAuthResolution() {
+  const bearerHeaders = resolveConfiguredAuth({
+    headers: {
+      AUTHORIZATION: "Bearer header-token",
+      Cookie: "stale-cookie=1",
+      "X-Tenant": "header-tenant",
+    },
+    source: "env",
+  });
+  assertEqual(bearerHeaders.kind, "api-token", "case-insensitive Authorization header kind");
+  assertEqual(bearerHeaders.apiToken, "header-token", "header bearer token");
+  assertEqual(bearerHeaders.source, "env", "header auth source");
+  assertEqual(bearerHeaders.headers?.["X-Tenant"], "header-tenant", "header auth preserves non-auth headers");
+  assert(!Object.keys(bearerHeaders.headers || {}).some((name) => /^(authorization|cookie)$/i.test(name)), "header auth is canonicalized");
+
+  const cookieHeaders = resolveConfiguredAuth({
+    headers: { cOoKiE: "affine_session=header-cookie" },
+    source: "config",
+  });
+  assertEqual(cookieHeaders.kind, "cookie", "case-insensitive Cookie header kind");
+  assertEqual(cookieHeaders.cookie, "affine_session=header-cookie", "header cookie");
+  assertEqual(cookieHeaders.headers?.Cookie, "affine_session=header-cookie", "canonical cookie header");
+
+  const explicitToken = resolveConfiguredAuth({
+    apiToken: "explicit-token",
+    cookie: "cookie=\ninvalid-lower-priority",
+    email: EMAIL,
+    password: PASSWORD,
+    headers: { Authorization: "Basic ignored" },
+  });
+  assertEqual(explicitToken.kind, "api-token", "explicit token precedence");
+  assertEqual(explicitToken.apiToken, "explicit-token", "explicit token value");
+  assertEqual(explicitToken.cookie, undefined, "ignored lower-priority cookie is not exposed");
+  assertEqual(explicitToken.email, undefined, "ignored lower-priority email is not exposed");
+  assertEqual(explicitToken.password, undefined, "ignored lower-priority password is not exposed");
+
+  const explicitCookie = resolveConfiguredAuth({
+    cookie: "cookie=explicit",
+    headers: { Authorization: "Bearer lower-priority" },
+  });
+  assertEqual(explicitCookie.kind, "cookie", "explicit cookie precedence");
+  assertEqual(explicitCookie.cookie, "cookie=explicit", "explicit cookie value");
+  assertEqual(explicitCookie.apiToken, undefined, "ignored lower-priority token is not exposed");
+
+  const emailAuth = resolveConfiguredAuth({ email: EMAIL, password: PASSWORD });
+  assertEqual(emailAuth.kind, "email-password", "email/password fallback");
+  const partialEmail = resolveConfiguredAuth({ email: EMAIL });
+  assertEqual(partialEmail.kind, "none", "partial email does not select authentication");
+  assertEqual(partialEmail.email, EMAIL, "partial email remains available for configuration warnings");
+  assertEqual(partialEmail.password, undefined, "missing partial password remains unset");
+  assertThrows(
+    () => resolveConfiguredAuth({ headers: { Authorization: "Basic invalid" } }),
+    "Bearer scheme",
+    "invalid Authorization scheme",
+  );
+}
+
 async function testExclusiveAuthState() {
   const client = new GraphQLClient({
     endpoint: "http://127.0.0.1:1/graphql",
@@ -341,6 +403,119 @@ async function testExclusiveAuthState() {
   await assertRejects(rejectedProviderClient.getConnectionAuth(), "provider failed", "provider failure");
   rejectedProviderClient.setCookie("recovered-cookie=1");
   assertEqual((await rejectedProviderClient.getConnectionAuth()).cookie, "recovered-cookie=1", "explicit sign-in overrides failed provider");
+}
+
+async function testTransientLoginRecovery() {
+  let calls = 0;
+  let now = 1000;
+  const session = new AuthSession({
+    baseUrl: "http://127.0.0.1:1", email: EMAIL, password: PASSWORD,
+    now: () => now, retryDelayMs: 5000,
+    login: async () => {
+      calls++;
+      if (calls === 1) throw new Error("backend unavailable");
+      return { cookieHeader: COOKIE };
+    },
+  });
+  const client = new GraphQLClient({ endpoint: "http://127.0.0.1:1/graphql", authProvider: () => session.ready() });
+  await assertRejects(client.getConnectionAuth(), "backend unavailable", "initial outage");
+  await assertRejects(client.getConnectionAuth(), "backend unavailable", "cooldown retains the failure");
+  assertEqual(calls, 1, "no login storm during cooldown");
+  now += 5000;
+  const recovered = await Promise.all(Array.from({ length: 20 }, () => client.getConnectionAuth()));
+  assertEqual(calls, 2, "one recovery login in the same client session");
+  assert(recovered.every(value => value.cookie === COOKIE), "every consumer recovers without restart");
+}
+
+async function testCookieRenewal() {
+  let now = 1_000;
+  let calls = 0;
+  let unavailable = false;
+  const session = new AuthSession({
+    baseUrl: "http://127.0.0.1:1", email: EMAIL, password: PASSWORD,
+    now: () => now,
+    login: async () => {
+      calls++;
+      if (unavailable) throw new Error("renewal unavailable");
+      return { cookieHeader: `session=${calls}`, expiresAt: now + 120_000 };
+    },
+  });
+  const client = new GraphQLClient({ endpoint: "http://127.0.0.1:1/graphql", authProvider: () => session.ready() });
+  assertEqual((await client.getConnectionAuth()).cookie, "session=1", "first cookie");
+  now += 59_000;
+  assertEqual((await client.getConnectionAuth()).cookie, "session=1", "valid cookie reused");
+  now += 1_000;
+  const renewed = await Promise.all(Array.from({ length: 20 }, () => client.getConnectionAuth()));
+  assertEqual(calls, 2, "one renewal shared by all consumers");
+  assert(renewed.every(value => value.cookie === "session=2"), "same long-lived client sees renewed cookie");
+  now += 60_000;
+  unavailable = true;
+  await assertRejects(client.getConnectionAuth(), "renewal unavailable", "renewal outage is visible");
+  assert(session.requiresLogin, "renewal failure does not fall back to stale or anonymous auth");
+  unavailable = false;
+  now += 5_000;
+  assertEqual((await client.getConnectionAuth()).cookie, "session=4", "renewal recovers after cooldown");
+
+  const mock = await startMockAffine({ cookieAttributes: "; Max-Age=120; Expires=Thu, 01 Jan 2099 00:00:00 GMT" });
+  try {
+    const before = Date.now();
+    const result = await loginWithPassword(mock.baseUrl, EMAIL, PASSWORD);
+    assert(result.expiresAt >= before + 120_000 && result.expiresAt <= Date.now() + 120_000,
+      "Max-Age takes precedence over Expires and is preserved for renewal");
+  } finally {
+    await mock.close();
+  }
+}
+
+async function testExpiredCookieRenewal() {
+  for (const cookieAttributes of [
+    "; Max-Age=0", "; Max-Age=-1", "; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+  ]) {
+    const mock = await startMockAffine({ cookieAttributes });
+    try {
+      const result = await loginWithPassword(mock.baseUrl, EMAIL, PASSWORD);
+      assert(Number.isFinite(result.expiresAt) && result.expiresAt <= Date.now(),
+        `${cookieAttributes} must retain an expired deadline`);
+      let calls = 0;
+      const session = new AuthSession({
+        baseUrl: mock.baseUrl, email: EMAIL, password: PASSWORD,
+        login: async () => ++calls === 1 ? result : { cookieHeader: "session=renewed" },
+      });
+      await session.ready();
+      assertEqual((await session.ready()).cookie, "session=renewed", "expired cookie renews on the next request");
+      assertEqual(calls, 2, "expired cookie must not receive the no-expiry fallback");
+    } finally {
+      await mock.close();
+    }
+  }
+
+  for (const cookieAttributes of ["", "; Max-Age=120"]) {
+    const mock = await startMockAffine({
+      cookieAttributes, additionalCookies: ["obsolete=; Max-Age=0; Path=/"],
+    });
+    try {
+      const result = await loginWithPassword(mock.baseUrl, EMAIL, PASSWORD);
+      if (cookieAttributes) assert(result.expiresAt > Date.now(), "cleared cookie must not expire a live cookie");
+      else assertEqual(result.expiresAt, undefined, "cleared cookie must not change a session cookie's fallback");
+    } finally {
+      await mock.close();
+    }
+  }
+
+  let now = 0;
+  let calls = 0;
+  const session = new AuthSession({
+    baseUrl: "http://127.0.0.1:1", email: EMAIL, password: PASSWORD,
+    now: () => now,
+    login: async () => ({ cookieHeader: `session=${++calls}` }),
+  });
+  await session.ready();
+  now = 11 * 60 * 60 * 1000;
+  await session.ready();
+  assertEqual(calls, 1, "no-expiry cookies retain the twelve-hour fallback");
+  now = 12 * 60 * 60 * 1000;
+  await session.ready();
+  assertEqual(calls, 2, "no-expiry cookies renew by twelve hours");
 }
 
 async function testFailureNeverFallsBack() {
@@ -496,6 +671,10 @@ async function testConcurrentHttpSessionsAndDirectMultipart() {
 async function main() {
   assert(existsSync(MCP_SERVER_PATH), "dist/index.js is missing; run npm run build first");
   await testSingleFlightPrimitive();
+  await testConfiguredAuthResolution();
+  await testTransientLoginRecovery();
+  await testCookieRenewal();
+  await testExpiredCookieRenewal();
   await testExclusiveAuthState();
   await testFailureNeverFallsBack();
   await testEnvironmentCredentialsOverrideSavedAuthentication();

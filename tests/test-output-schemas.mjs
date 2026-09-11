@@ -1,14 +1,17 @@
+import "./require-destructive-test-safety.mjs";
 import assert from "node:assert/strict";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 
-import { ALL_TOOLS } from "../src/toolSurface.ts";
+import { ALL_TOOLS, toolAnnotationsFor } from "../src/toolSurface.ts";
 import { registerBlobTools } from "../src/tools/blobStorage.ts";
 import { registerDocTools } from "../src/tools/docs.ts";
 import { TOOLS_WITH_ERROR_OUTPUT, toolOutputSchemaFor } from "../src/toolOutputSchemas.ts";
-import { stripSchemaDialect, text } from "../src/util/mcp.ts";
+import { stripSchemaDialect, text, toolError } from "../src/util/mcp.ts";
 
 function installOutputSchemaRegistration(server) {
   const registerTool = server.registerTool.bind(server);
@@ -59,6 +62,50 @@ const representativeError = {
 for (const name of TOOLS_WITH_ERROR_OUTPUT) {
   const parsed = toolOutputSchemaFor(name).safeParse(representativeError);
   assert.equal(parsed.success, true, `${name} rejected the shared error envelope`);
+  if (!toolAnnotationsFor(name).readOnlyHint || name === "read_doc") {
+    assert.equal(toolOutputSchemaFor(name).safeParse({}).success, false, `${name} accepted an empty success result`);
+  }
+}
+
+const columnOutput = { added: true, columnId: "col-1", name: "Status", type: "select" };
+const columnSchema = toolOutputSchemaFor("add_database_column");
+const invalidColumnOutputs = [
+  {},
+  { ok: true },
+  { ...columnOutput, columnId: undefined },
+  { ...columnOutput, columnId: 42 },
+  { ok: false, error: "Missing error metadata" },
+  { ...representativeError, ok: true },
+];
+for (const result of invalidColumnOutputs) {
+  assert.equal(columnSchema.safeParse(result).success, false, "incomplete success/error results must be rejected");
+}
+assert.equal(columnSchema.safeParse(columnOutput).success, true);
+assert.equal(columnSchema.safeParse({ ...columnOutput, futureField: "compatible" }).success, true);
+assert.equal(toolOutputSchemaFor("create_doc").safeParse({
+  kind: "doc.create", ok: true, workspaceId: "workspace-1", docId: "doc-1", title: "Example",
+  parentDocId: null, linkedToParent: false, folderId: null, folderLinked: false, folderNodeId: null, warnings: [],
+}).success, true, "successful document creation must not require failure-only recovery metadata");
+
+// Client.callTool validates structuredContent against cached output schemas
+// even for isError responses. Exercise the wire contract after tools/list.
+const queueErrorServer = new McpServer({ name: "queue-error-schema-test", version: "1.0.0" });
+for (const name of TOOLS_WITH_ERROR_OUTPUT) {
+  queueErrorServer.registerTool(name, { inputSchema: {}, outputSchema: toolOutputSchemaFor(name) }, async () =>
+    toolError("The queued operation did not run", { code: "WRITE_QUEUE_FULL", retryable: true }),
+  );
+}
+const queueErrorClient = await connectInMemory(queueErrorServer, "queue-error-schema-test");
+try {
+  await queueErrorClient.listTools();
+  for (const name of TOOLS_WITH_ERROR_OUTPUT) {
+    const result = await queueErrorClient.callTool({ name, arguments: {} });
+    assert.equal(result.isError, true, `${name} must deliver its structured error to schema-validating clients`);
+    assert.equal(result.structuredContent.code, "WRITE_QUEUE_FULL");
+  }
+} finally {
+  await queueErrorClient.close();
+  await queueErrorServer.close();
 }
 
 const deleteTagOutput = {
@@ -80,6 +127,33 @@ assert.equal(
   toolOutputSchemaFor("delete_tag").safeParse({ ...deleteTagOutput, docMetaSynced: true }).success,
   false,
   "delete_tag must not advertise docMetaSynced as a boolean",
+);
+
+const trashStateOutput = {
+  kind: "doc.trash",
+  ok: true,
+  status: "trashed",
+  workspaceId: "workspace-1",
+  docId: "doc-1",
+  title: "Example",
+  changed: true,
+  previouslyInTrash: false,
+  inTrash: true,
+  trashDate: Date.now(),
+  readBackVerified: true,
+};
+assert.equal(toolOutputSchemaFor("trash_doc").safeParse(trashStateOutput).success, true);
+assert.equal(toolOutputSchemaFor("restore_doc").safeParse({
+  ...trashStateOutput,
+  kind: "doc.restore",
+  status: "restored",
+  inTrash: false,
+  trashDate: null,
+}).success, true);
+assert.equal(
+  toolOutputSchemaFor("trash_doc").safeParse({ ...trashStateOutput, readBackVerified: "yes" }).success,
+  false,
+  "trash_doc must advertise readBackVerified as a boolean",
 );
 
 assert.equal(toolOutputSchemaFor("get_doc").safeParse({ id: "doc-1" }).success, true);
@@ -104,13 +178,14 @@ assert.equal(
 
 const server = new McpServer({ name: "output-schema-test", version: "1.0.0" });
 installOutputSchemaRegistration(server);
+let columnPayload = columnOutput;
 server.registerTool(
   "add_database_column",
   {
     inputSchema: {},
     outputSchema: toolOutputSchemaFor("add_database_column"),
   },
-  async () => text({ added: true, columnId: "col-1", name: "Status", type: "select" }),
+  async () => text(columnPayload),
 );
 server.registerTool(
   "list_collections",
@@ -152,6 +227,9 @@ for (const tool of listed.tools) {
   assert.equal(tool.outputSchema.$schema, undefined, `${tool.name} advertised a JSON Schema dialect on its output schema`);
 }
 const listedByName = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
+assert.equal(listedByName.add_database_column.outputSchema.anyOf.length, 2);
+assert.deepEqual(listedByName.add_database_column.outputSchema.anyOf[0].required,
+  ["added", "columnId", "name", "type"]);
 assert.equal(listedByName.upload_blob.outputSchema.properties.encoding.type, "string");
 for (const field of ["kind", "status", "ok", "deleted", "success"]) {
   assert.ok(
@@ -177,6 +255,37 @@ assert.deepEqual(columnResult.structuredContent, {
   name: "Status",
   type: "select",
 });
+
+for (const payload of [{}, { ...columnOutput, columnId: undefined }]) {
+  columnPayload = payload;
+  const rejected = await client.callTool({ name: "add_database_column", arguments: {} });
+  assert.equal(rejected.isError, true, "the server must reject an incomplete successful write result");
+}
+columnPayload = columnOutput;
+
+// A low-level server deliberately bypasses server-side output validation so
+// this independently proves that tools/list preserves the client-side branches.
+const wireServer = new Server({ name: "output-schema-wire-test", version: "1.0.0" }, { capabilities: { tools: {} } });
+let wireResult = text(columnOutput);
+wireServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [listedByName.add_database_column] }));
+wireServer.setRequestHandler(CallToolRequestSchema, async () => wireResult);
+const wireClient = await connectInMemory(wireServer, "output-schema-wire-test");
+try {
+  await wireClient.listTools();
+  for (const payload of invalidColumnOutputs) {
+    wireResult = { ...text(payload), ...(payload.ok === false ? { isError: true } : {}) };
+    await assert.rejects(wireClient.callTool({ name: "add_database_column", arguments: {} }),
+      error => error instanceof McpError && error.code === ErrorCode.InvalidParams,
+      "the client must reject invalid success and error branches");
+  }
+  wireResult = text(columnOutput);
+  assert.deepEqual((await wireClient.callTool({ name: "add_database_column", arguments: {} })).structuredContent, columnOutput);
+  wireResult = toolError("Queued write did not run", { code: "WRITE_QUEUE_FULL", retryable: true });
+  assert.equal((await wireClient.callTool({ name: "add_database_column", arguments: {} })).isError, true);
+} finally {
+  await wireClient.close();
+  await wireServer.close();
+}
 
 const collectionListResult = await client.callTool({ name: "list_collections", arguments: {} });
 assert.deepEqual(collectionListResult.content, [{
@@ -287,6 +396,12 @@ registerDocTools(docServer, docGql, { workspaceId: "workspace-1" });
 const docClient = await connectInMemory(docServer, "get-doc-output-schema-test");
 
 const listedDocTools = await docClient.listTools();
+for (const name of ["create_mindmap", "add_mindmap_node", "update_mindmap_node", "reparent_mindmap_node"]) {
+  const definition = listedDocTools.tools.find(tool => tool.name === name);
+  assert.equal(definition?.outputSchema?.properties?.nodeId?.type, "string", `${name} must advertise nodeId`);
+  assert.equal(toolOutputSchemaFor(name).safeParse({ ok: true, nodeId: 42 }).success, false);
+  assert.equal(toolOutputSchemaFor(name).safeParse(representativeError).success, true);
+}
 const getDocDefinition = listedDocTools.tools.find(tool => tool.name === "get_doc");
 assert.equal(getDocDefinition.outputSchema?.type, "object");
 assert.equal(getDocDefinition.outputSchema?.properties?.value?.type, "null");

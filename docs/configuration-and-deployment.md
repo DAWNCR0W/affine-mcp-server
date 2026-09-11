@@ -25,11 +25,15 @@ Auth priority within the active configuration:
 
 1. `AFFINE_API_TOKEN`
 2. `AFFINE_COOKIE`
-3. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
+3. A Bearer `Authorization` header in `AFFINE_HEADERS_JSON`
+4. A `Cookie` header in `AFFINE_HEADERS_JSON`
+5. `AFFINE_EMAIL` and `AFFINE_PASSWORD`
 
 This priority is applied only within the selected environment or saved-config
 group. For example, environment email/password credentials take precedence
 over an older saved API token or session cookie.
+
+Header names are case-insensitive. The MCP runtime, `status`, `doctor`, and `show-config` use the same resolution, including header-only credentials. Diagnostic output redacts credential values.
 
 Email/password authentication is process-scoped. Concurrent HTTP MCP sessions
 share one sign-in attempt and the resulting cookie. In the default `async`
@@ -66,6 +70,13 @@ cookie, while setting a bearer credential removes any cookie header.
 
 `upload_blob` treats content as UTF-8 by default and preserves it exactly, including leading and trailing whitespace. Binary callers must pass `encoding: "base64"`; Base64 input is validated for canonical padding before it is decoded. ASCII whitespace inside explicit Base64 input is ignored.
 
+### Upstream response safeguards
+
+GraphQL, sign-in, workspace creation, and readiness requests keep their timeout
+active until the complete response body is consumed. Non-upload response bodies
+are limited to 16 MiB. `upload_blob` uses the separately configurable timeout
+and response limit above.
+
 ### Authentication
 
 | Variable | Use when | Notes |
@@ -94,6 +105,8 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | none | Comma-separated list for browser clients |
 | `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS` | No | `false` | Testing only; rejected in OAuth mode |
 | `AFFINE_MCP_HTTP_TOKEN` | Required for non-loopback bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
+| `AFFINE_MCP_HTTP_PROXY_URL` | No | `http://127.0.0.1:${PORT:-3000}/mcp` | Loopback Streamable HTTP endpoint used by `affine-mcp-http-proxy` |
+| `AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS` | No | `60000` | Deadline for the complete proxy response, including its body; integer from `100` to `300000` |
 | `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer-mode listener |
 | `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
 | `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
@@ -181,6 +194,65 @@ transports concurrently. If a connection prevents graceful shutdown beyond
 forcibly closed. Invalid runtime limit values and listen errors fail startup
 instead of leaving a partially running process.
 
+### Concurrent writes
+
+Run one HTTP MCP server and point every writing client at that listener. Clients
+that require stdio can each run the existing `affine-mcp-http-proxy` bridge; see
+[client setup](client-setup.md#reuse-a-local-http-listener-from-stdio-clients).
+All sessions in that server share a FIFO queue per AFFiNE workspace. The queue
+covers the entire tool operation, including loading snapshots, validation,
+workspace metadata changes, and persistence. `read_doc` uses the same queue so
+its content and revision follow earlier coordinated writes. Different
+workspaces can run concurrently.
+
+This boundary is one MCP server process. Separate full stdio servers, multiple
+HTTP replicas, and the native AFFiNE editor do not share this queue. Route all
+coordinated writers through one listener; session affinity alone is insufficient
+when writers for a workspace can reach different replicas. Yjs still merges
+external updates, but the upstream push API provides no compare-and-swap or
+cross-process isolation. Composite operations are serialized, not database
+transactions: existing partial/uncertain-write responses still apply.
+
+For edits derived from a previous read, pass `read_doc.revision` as
+`expectedRevision` on a document content mutation, such as block, table,
+database, mindmap, title, Markdown, or document deletion tools. Supported tools
+advertise the optional field in `tools/list`:
+
+```json
+{
+  "name": "update_block",
+  "arguments": {
+    "workspaceId": "workspace-id",
+    "docId": "document-id",
+    "blockId": "paragraph-id",
+    "text": "Revised text",
+    "expectedRevision": "<64-character revision returned by read_doc>"
+  }
+}
+```
+
+The comparison occurs inside the workspace queue before the tool runs. A
+mismatch returns `isError: true`, code `STALE_DOCUMENT_REVISION`, and
+`retryable: false`, with the expected/current revision in `details`. Read again
+and reconcile the edit before resubmitting. The token covers the primary
+document's full Yjs state, including deletions, and its presence in the workspace
+document registry. Removing that entry invalidates old tokens even if AFFiNE
+retains the deleted content snapshot. The token does not cover workspace
+tags, folders, collections, or other documents touched by a composite tool.
+Workspace metadata, comments, custom properties, publication, and document
+hierarchy tools are still serialized but do not advertise this content token.
+It is a content precondition within the shared server, not upstream CAS.
+Without `expectedRevision`, explicit replacements apply in queue order and a
+later replacement can intentionally supersede earlier text. A missing document
+has `revision: null` and cannot satisfy a supplied revision.
+
+The queue permits at most 100 waiting calls per workspace and waits at most
+60 seconds before execution starts. Queue overflow or timeout reports a
+structured error without invoking the tool. Cancellation removes a waiting
+call; an already executing call retains its slot until it settles, even if its
+caller disconnects. If an active request loses its response, read back before
+retrying because persistence may already have succeeded.
+
 ### Bearer mode
 
 ```bash
@@ -194,6 +266,38 @@ export AFFINE_MCP_HTTP_TOKEN="your-super-secret-token"
 export PORT=3000
 
 npm run start:http
+```
+
+### Private stdio bridge for a local HTTP listener
+
+When a managed host already runs the HTTP transport, use
+`affine-mcp-http-proxy` for a local stdio client instead of starting another
+full MCP server process. The bridge forwards one stdio session to the existing
+loopback `/mcp` listener and sends `DELETE /mcp` when stdin closes.
+
+It requires `AFFINE_MCP_HTTP_TOKEN` in its inherited environment. Keep that
+token in the host/container environment: do not put it in a command line or
+copy it to the client. `AFFINE_MCP_HTTP_PROXY_URL` defaults to
+`http://127.0.0.1:${PORT:-3000}/mcp` and accepts loopback URLs only.
+
+The default HTTP connection assumes a trusted host or container where untrusted
+processes cannot replace the listener or claim its port. Loopback limits network
+reachability; it does not authenticate the listener to the bridge. On a shared
+host with untrusted processes, use an `https://` loopback endpoint with a trusted
+certificate and an authenticated TLS terminator, or isolate the bridge and
+listener together. Do not disable TLS certificate verification.
+
+The bridge reinitializes an expired HTTP session only when the listener explicitly
+rejects its session ID before dispatch. It never retries an ambiguous request
+after a network failure or timeout, which avoids duplicating document writes.
+Email/password login failures can recover on a later request after a five-second
+cooldown; concurrent sessions share the same login attempt.
+Sessions established with email/password renew before cookie expiry, or after
+twelve hours when the server omits an expiry. Explicit cookies and bearer tokens
+remain managed by the caller.
+
+```bash
+affine-mcp-http-proxy
 ```
 
 Use bearer mode when:
@@ -271,6 +375,8 @@ Available profiles:
 - `read_only`: expose discovery, reading, export, fidelity, and inspection tools, plus `sign_in`
 - `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
 - `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
+
+`replace_doc_with_markdown` removes the existing main-note content and is classified as destructive. It is available in `full`, but excluded from `core`, `authoring`, and deployments with `AFFINE_DISABLED_GROUPS=destructive`. Use `append_markdown` or `update_block` for incremental edits in those profiles.
 
 Profile, group, and tool names are validated at startup. An unknown value stops the server instead of falling back to a broader tool surface. This prevents a configuration typo from silently enabling tools that an operator intended to hide.
 

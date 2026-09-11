@@ -204,9 +204,9 @@ acquire_credentials_with_retry() {
   for ((attempt = 1; attempt <= AFFINE_CREDENTIAL_ACQUIRE_RETRIES; attempt++)); do
     if node "$SCRIPT_DIR/acquire-credentials.mjs"; then
       return 0
+    else
+      exit_code=$?
     fi
-
-    exit_code=$?
     echo "[e2e] Credential acquisition failed (attempt ${attempt}/${AFFINE_CREDENTIAL_ACQUIRE_RETRIES}, exit ${exit_code})"
     docker_diagnostics
 

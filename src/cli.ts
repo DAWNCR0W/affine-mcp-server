@@ -17,6 +17,12 @@ import {
 import { loginWithPassword } from "./auth.js";
 import { probeOAuthReadiness, validateOAuthConfig } from "./oauth.js";
 import { parseBooleanFlag } from "./networkSecurity.js";
+import {
+  resolveConfiguredAuth,
+  type ConfiguredAuthKind,
+  type ConfiguredAuthSource,
+} from "./util/configuredAuth.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const CLI_FETCH_TIMEOUT_MS = 30_000;
 
@@ -126,26 +132,17 @@ async function gql(
   const body: any = { query };
   if (variables) body.variables = variables;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CLI_FETCH_TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch(graphqlEndpoint, {
+  const { response: res, body: responseBody } = await fetchResponseBody(
+    signal => fetch(graphqlEndpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      throw new Error(`Request timed out after ${CLI_FETCH_TIMEOUT_MS / 1000}s`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+    { label: "Request", timeoutMs: CLI_FETCH_TIMEOUT_MS },
+  );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json() as any;
+  const json = JSON.parse(responseBody) as any;
   if (json.errors) throw new Error(json.errors.map((e: any) => e.message).join("; "));
   return json.data;
 }
@@ -211,20 +208,17 @@ function getEffectiveAuthValueSource(
   name: string,
   value: string | undefined,
   file: Record<string, string>,
+  fallback?: ConfiguredAuthSource,
 ): "env" | "config" | "unset" {
   if (!value) return "unset";
+  if (fallback === "env" || fallback === "config") return fallback;
   return process.env[name] ? "env" : file[name] ? "config" : "unset";
 }
 
 function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
   const stored = loadConfigFile();
-  const authKind = effective.apiToken
-    ? "api-token"
-    : effective.cookie
-      ? "cookie"
-      : effective.email && effective.password
-        ? "email-password"
-        : "none";
+  const auth = resolveConfiguredAuth(effective);
+  const authKind: ConfiguredAuthKind = auth.kind;
 
   return {
     configFile: CONFIG_FILE,
@@ -236,9 +230,9 @@ function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
     workspaceId: effective.defaultWorkspaceId || null,
     authMode: effective.authMode,
     authKind,
-    apiToken: effective.apiToken ? redactSecret(effective.apiToken) : null,
-    cookie: effective.cookie ? "(set)" : null,
-    email: effective.email || null,
+    apiToken: auth.apiToken ? redactSecret(auth.apiToken) : null,
+    cookie: auth.cookie ? "(set)" : null,
+    email: auth.email || null,
     publicBaseUrl: effective.publicBaseUrl || null,
     oauthIssuerUrl: effective.oauthIssuerUrl || null,
     oauthScopes: effective.oauthScopes,
@@ -256,10 +250,10 @@ function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
       baseUrl: getConfigValueSource("AFFINE_BASE_URL", stored, "http://localhost:3010"),
       graphqlPath: getConfigValueSource("AFFINE_GRAPHQL_PATH", stored, "/graphql"),
       additionalHeaders: getConfigValueSource("AFFINE_HEADERS_JSON", stored),
-      apiToken: getEffectiveAuthValueSource("AFFINE_API_TOKEN", effective.apiToken, stored),
-      cookie: getEffectiveAuthValueSource("AFFINE_COOKIE", effective.cookie, stored),
-      email: getEffectiveAuthValueSource("AFFINE_EMAIL", effective.email, stored),
-      password: getEffectiveAuthValueSource("AFFINE_PASSWORD", effective.password, stored),
+      apiToken: getEffectiveAuthValueSource("AFFINE_API_TOKEN", auth.apiToken, stored, effective.authSource),
+      cookie: getEffectiveAuthValueSource("AFFINE_COOKIE", auth.cookie, stored, effective.authSource),
+      email: getEffectiveAuthValueSource("AFFINE_EMAIL", auth.email, stored, effective.authSource),
+      password: getEffectiveAuthValueSource("AFFINE_PASSWORD", auth.password, stored, effective.authSource),
       workspaceId: getConfigValueSource("AFFINE_WORKSPACE_ID", stored),
       authMode: getConfigValueSource("AFFINE_MCP_AUTH_MODE", stored, "bearer"),
       publicBaseUrl: getConfigValueSource("AFFINE_MCP_PUBLIC_BASE_URL", stored),
@@ -278,22 +272,28 @@ function buildEffectiveConfigSummary(effective: ServerConfig = loadConfig()) {
 }
 
 async function resolveCliAuth(effective: ServerConfig): Promise<{ auth: CliAuth; authKind: string }> {
-  if (effective.apiToken) {
+  const configured = resolveConfiguredAuth(effective);
+  if (configured.apiToken) {
     return {
-      auth: { token: effective.apiToken, headers: effective.headers },
+      auth: { token: configured.apiToken, headers: configured.headers },
       authKind: "api-token",
     };
   }
-  if (effective.cookie) {
+  if (configured.cookie) {
     return {
-      auth: { cookie: effective.cookie, headers: effective.headers },
+      auth: { cookie: configured.cookie, headers: configured.headers },
       authKind: "cookie",
     };
   }
-  if (effective.email && effective.password) {
-    const { cookieHeader } = await loginWithPassword(effective.baseUrl, effective.email, effective.password, effective.headers);
+  if (configured.email && configured.password) {
+    const { cookieHeader } = await loginWithPassword(
+      effective.baseUrl,
+      configured.email,
+      configured.password,
+      configured.headers,
+    );
     return {
-      auth: { cookie: cookieHeader, headers: effective.headers },
+      auth: { cookie: cookieHeader, headers: configured.headers },
       authKind: "email-password",
     };
   }
@@ -792,6 +792,7 @@ async function doctor(args: string[]) {
   const healthTimer = setTimeout(() => healthController.abort(), CLI_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(summary.baseUrl, { signal: healthController.signal });
+    await response.body?.cancel();
     checks.push({
       name: "base-url",
       ok: true,

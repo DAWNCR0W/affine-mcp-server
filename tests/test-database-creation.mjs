@@ -15,6 +15,10 @@ import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import * as Y from 'yjs';
+
+import { acquireCredentials } from './acquire-credentials.mjs';
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, wsUrlFromGraphQLEndpoint } from '../dist/ws.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
@@ -34,6 +38,94 @@ function parseContent(result) {
   } catch {
     return text;
   }
+}
+
+async function mutateDatabaseViews(workspaceId, docId, databaseBlockId, mutate) {
+  const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+  const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie, undefined);
+  try {
+    await joinWorkspace(socket, workspaceId);
+    const snapshot = await loadDoc(socket, workspaceId, docId);
+    if (!snapshot.missing) throw new Error(`Document ${docId} not found`);
+
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, 'base64'));
+    const previousState = Y.encodeStateVector(doc);
+    const blocks = doc.getMap('blocks');
+    let databaseBlock = blocks.get(databaseBlockId);
+    if (!(databaseBlock instanceof Y.Map)) {
+      for (const block of blocks.values()) {
+        if (block instanceof Y.Map && block.get('sys:id') === databaseBlockId) {
+          databaseBlock = block;
+          break;
+        }
+      }
+    }
+    if (!(databaseBlock instanceof Y.Map)) {
+      throw new Error(`Database block ${databaseBlockId} not found`);
+    }
+
+    const views = databaseBlock.get('prop:views');
+    if (!(views instanceof Y.Array)) throw new Error('Database views are not a Y.Array');
+    const changed = mutate(views);
+    if (changed === 0) throw new Error('Expected database views to change');
+
+    const delta = Y.encodeStateAsUpdate(doc, previousState);
+    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(delta).toString('base64'));
+  } finally {
+    socket.disconnect();
+  }
+}
+
+async function seedDatabaseViewRepresentations(workspaceId, docId, databaseBlockId) {
+  await mutateDatabaseViews(workspaceId, docId, databaseBlockId, views => {
+    const yMapHeader = new Y.Map();
+    yMapHeader.set('titleColumn', null);
+    yMapHeader.set('iconColumn', null);
+
+    const yMapView = new Y.Map();
+    yMapView.set('id', `y-map-plain-columns-${databaseBlockId}`);
+    yMapView.set('name', 'Y.Map Plain Columns');
+    yMapView.set('mode', 'table');
+    yMapView.set('columns', []);
+    yMapView.set('filter', { type: 'group', op: 'and', conditions: [] });
+    yMapView.set('groupBy', null);
+    yMapView.set('sort', null);
+    yMapView.set('header', yMapHeader);
+
+    const plainView = {
+      id: `plain-view-${databaseBlockId}`,
+      name: 'Plain Object View',
+      mode: 'table',
+      columns: [],
+      filter: { type: 'group', op: 'and', conditions: [] },
+      groupBy: null,
+      sort: null,
+      header: { titleColumn: null, iconColumn: null },
+    };
+    views.push([yMapView, plainView]);
+    return 2;
+  });
+}
+
+async function convertDatabaseHeadersToYMaps(workspaceId, docId, databaseBlockId) {
+  await mutateDatabaseViews(workspaceId, docId, databaseBlockId, views => {
+    let converted = 0;
+    views.forEach(view => {
+      if (!(view instanceof Y.Map)) return;
+      const header = view.get('header');
+      if (header instanceof Y.Map) return;
+      const yHeader = new Y.Map();
+      if (header && typeof header === 'object') {
+        for (const [key, value] of Object.entries(header)) {
+          yHeader.set(key, value);
+        }
+      }
+      view.set('header', yHeader);
+      converted += 1;
+    });
+    return converted;
+  });
 }
 
 async function main() {
@@ -111,16 +203,19 @@ async function main() {
     return parsed;
   }
 
-  function assertParentIdsAreNull(readDocPayload, context) {
+  function assertDerivedParentIds(readDocPayload, context) {
     const blocks = Array.isArray(readDocPayload?.blocks) ? readDocPayload.blocks : [];
-    const trackedFlavours = new Set(["affine:page", "affine:surface", "affine:note", "affine:paragraph"]);
-    for (const block of blocks) {
-      if (!trackedFlavours.has(block?.flavour)) {
-        continue;
+    const expectedParents = new Map();
+    for (const parent of blocks) {
+      for (const childId of parent?.childIds || []) {
+        expectedParents.set(childId, parent.id);
       }
-      if (block.parentId !== null) {
+    }
+    for (const block of blocks) {
+      const expectedParentId = expectedParents.get(block.id) ?? null;
+      if (block.parentId !== expectedParentId) {
         throw new Error(
-          `${context}: expected parentId=null for ${block.flavour} block ${block.id}, got ${JSON.stringify(block.parentId)}`
+          `${context}: expected parentId=${JSON.stringify(expectedParentId)} for ${block.flavour} block ${block.id}, got ${JSON.stringify(block.parentId)}`
         );
       }
     }
@@ -150,12 +245,12 @@ async function main() {
     if (!state.docId) throw new Error('create_doc did not return docId');
     console.log(`  Doc ID: ${state.docId}`);
 
-    // Regression guard: keep AFFiNE-compatible parentId (null) shape.
+    // read_doc should expose the hierarchy represented by each block's childIds.
     const readAfterCreate = await call('read_doc', {
       workspaceId: state.workspaceId,
       docId: state.docId,
     });
-    assertParentIdsAreNull(readAfterCreate, 'after create_doc');
+    assertDerivedParentIds(readAfterCreate, 'after create_doc');
 
     const appendedParagraph = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -169,20 +264,30 @@ async function main() {
       workspaceId: state.workspaceId,
       docId: state.docId,
     });
-    assertParentIdsAreNull(readAfterAppendParagraph, 'after append_block paragraph');
+    assertDerivedParentIds(readAfterAppendParagraph, 'after append_block paragraph');
 
+    const punctuationMarkdown = [
+      '- [ ] second item (appended)',
+      '- [ ] Call the bank about a refund. notes are elsewhere',
+      '- [ ] Cancel the card; try to get the $95 annual fee waived',
+      '- [ ] Unlock the spare phone, then check email',
+    ].join('\n');
     const markdownDoc = await call('create_doc_from_markdown', {
       workspaceId: state.workspaceId,
       title: 'ParentId Markdown Structure Check',
-      markdown: '# Heading from markdown\n\nBody from markdown import.',
+      markdown: `# Heading from markdown\n\n${punctuationMarkdown}`,
     });
     if (!markdownDoc?.docId) throw new Error('create_doc_from_markdown did not return docId');
 
     const readMarkdownDoc = await call('read_doc', {
       workspaceId: state.workspaceId,
       docId: markdownDoc.docId,
+      includeMarkdown: true,
     });
-    assertParentIdsAreNull(readMarkdownDoc, 'after create_doc_from_markdown');
+    assertDerivedParentIds(readMarkdownDoc, 'after create_doc_from_markdown');
+    if (!readMarkdownDoc?.markdown?.includes(punctuationMarkdown)) {
+      throw new Error(`read_doc over-escaped sentence punctuation: ${JSON.stringify(readMarkdownDoc?.markdown)}`);
+    }
 
     // 3. Create database block
     const dbBlock = await call('append_block', {
@@ -194,13 +299,13 @@ async function main() {
     if (!state.databaseBlockId) throw new Error('append_block(database) did not return blockId');
     console.log(`  Database Block ID: ${state.databaseBlockId}`);
     await settle();
+    await seedDatabaseViewRepresentations(state.workspaceId, state.docId, state.databaseBlockId);
+    await settle();
 
     // 4. Add columns
     const columnDefs = [
-      { name: 'Name', type: 'rich-text' },
+      { name: 'Title', type: 'title' },
       { name: 'Status', type: 'select', options: ['Active', 'Inactive', 'Pending'] },
-      { name: 'Priority', type: 'number' },
-      { name: 'Done', type: 'checkbox' },
     ];
 
     for (const colDef of columnDefs) {
@@ -223,11 +328,62 @@ async function main() {
       await settle();
     }
 
+    let duplicateTitleRejected = false;
+    try {
+      await call('add_database_column', {
+        workspaceId: state.workspaceId,
+        docId: state.docId,
+        databaseBlockId: state.databaseBlockId,
+        name: 'Another Title',
+        type: 'title',
+      });
+    } catch (err) {
+      if (!String(err?.message || err).includes('already has a title column')) {
+        throw err;
+      }
+      duplicateTitleRejected = true;
+    }
+    if (!duplicateTitleRejected) {
+      throw new Error('add_database_column accepted a second title column');
+    }
+
+    await convertDatabaseHeadersToYMaps(state.workspaceId, state.docId, state.databaseBlockId);
+    await settle();
+
+    const schema = await call('read_database_columns', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+    });
+    const titleColumn = schema?.columns?.find(column => column.type === 'title');
+    const statusColumn = schema?.columns?.find(column => column.name === 'Status');
+    if (!titleColumn?.id) throw new Error('read_database_columns did not return a title column');
+    if (statusColumn?.type !== 'select') {
+      throw new Error('read_database_columns did not return a select Status column');
+    }
+    if (schema.titleColumnId !== titleColumn.id) {
+      throw new Error(`titleColumnId mismatch: expected ${titleColumn.id}, got ${schema.titleColumnId}`);
+    }
+    if (schema.columnCount !== 2) {
+      throw new Error(`expected a minimal two-column database, got ${schema.columnCount} columns`);
+    }
+    if (!Array.isArray(schema.views) || schema.views.length !== 3) {
+      throw new Error(`expected all three database view representations, got ${JSON.stringify(schema.views)}`);
+    }
+    for (const view of schema.views) {
+      if (view.header?.titleColumn !== titleColumn.id) {
+        throw new Error(`view ${view.id} is not bound to title column ${titleColumn.id}`);
+      }
+      if (!view.columnIds?.includes(titleColumn.id) || !view.columnIds?.includes(statusColumn.id)) {
+        throw new Error(`view ${view.id} does not expose both minimal database columns`);
+      }
+    }
+
     // 5. Add rows
     const rowDefs = [
-      { Name: 'Build feature', Status: 'Active', Priority: 1, Done: true },
-      { Name: 'Write tests', Status: 'Pending', Priority: 2, Done: false },
-      { Name: 'Deploy release', Status: 'Inactive', Priority: 3, Done: false },
+      { Title: 'Build feature', Status: 'Active' },
+      { Title: 'Write tests', Status: 'Pending' },
+      { Title: 'Deploy release', Status: 'Inactive' },
     ];
 
     for (const rowDef of rowDefs) {

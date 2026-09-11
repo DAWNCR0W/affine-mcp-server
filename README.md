@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.2.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.7.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -37,8 +37,9 @@ Highlights:
 
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
+- Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 92 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Exposes 105 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage
 
@@ -57,6 +58,7 @@ Scope boundaries:
 | Set up a local stdio server with the least friction | [docs/getting-started.md](docs/getting-started.md) |
 | Run the server in Docker or another OCI runtime | [docs/getting-started.md#path-c-run-from-the-docker-image](docs/getting-started.md#path-c-run-from-the-docker-image) |
 | Configure Claude Code, Claude Desktop, Codex CLI, or Cursor | [docs/client-setup.md](docs/client-setup.md) |
+| Let multiple agents write through one coordinated server | [Concurrent writes](docs/configuration-and-deployment.md#concurrent-writes) |
 | Run the server remotely over HTTP or behind OAuth | [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md) |
 | Lock down tool exposure for least-privilege deployments | [docs/configuration-and-deployment.md#least-privilege-tool-exposure](docs/configuration-and-deployment.md#least-privilege-tool-exposure) |
 | Learn common AFFiNE workflows and tool sequences | [docs/workflow-recipes.md](docs/workflow-recipes.md) |
@@ -159,10 +161,13 @@ affine-mcp doctor
 ```
 
 If you want to expose the server remotely over HTTP instead of stdio, start with [docs/configuration-and-deployment.md](docs/configuration-and-deployment.md).
+If an HTTP server already runs on the same host as your stdio client, use the
+private [stdio HTTP bridge](docs/configuration-and-deployment.md#private-stdio-bridge-for-a-local-http-listener)
+instead of starting another full server process.
 
 ## Compatibility Matrix
 
-Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20 and 24 release lines.
+Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20, 22, 24, and 26 release lines.
 
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |
@@ -196,6 +201,8 @@ Domains:
 - Blob storage: upload, delete, and cleanup blobs
 
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
+
+Full-note replacement with `replace_doc_with_markdown` is destructive and requires `full` without disabling the `destructive` group. `core` and `authoring` retain incremental editing through `append_markdown` and `update_block`.
 
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 

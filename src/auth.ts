@@ -1,6 +1,7 @@
 import { fetch } from "undici";
 
 import { AFFINE_CLIENT_VERSION } from "./config.js";
+import { fetchResponseBody } from "./util/httpResponse.js";
 
 const AUTH_FETCH_TIMEOUT_MS = 30_000;
 
@@ -11,6 +12,22 @@ function extractCookiePairs(setCookies: string[]): string {
     if (first) pairs.push(first.trim());
   }
   return pairs.join("; ");
+}
+
+function cookieExpiresAt(setCookies: string[]): number | undefined {
+  const now = Date.now();
+  const deadlines = setCookies.map(cookie => {
+    const maxAge = cookie.match(/;\s*max-age=(-?\d+)(?:;|$)/i);
+    const expires = cookie.match(/;\s*expires=([^;]+)/i);
+    const deadline = maxAge ? now + Number(maxAge[1]) * 1000
+      : expires ? Date.parse(expires[1]) : NaN;
+    return Number.isFinite(deadline) ? deadline : undefined;
+  });
+  // A cleared cookie must not expire another usable cookie from the same login.
+  const active = deadlines.filter(deadline => deadline === undefined || deadline > now);
+  const finite = (active.length ? active : deadlines)
+    .filter((deadline): deadline is number => deadline !== undefined);
+  return finite.length ? Math.min(...finite) : undefined;
 }
 
 /** Reject cookie values containing CR/LF to prevent header injection. */
@@ -49,7 +66,7 @@ export async function loginWithPassword(
   email: string,
   password: string,
   configuredHeaders?: Record<string, string>,
-): Promise<{ cookieHeader: string }> {
+): Promise<{ cookieHeader: string; expiresAt?: number }> {
   const url = `${baseUrl.replace(/\/$/, "")}/api/auth/sign-in`;
   // Configured headers first so an explicit override wins; only supply the
   // default version when the caller did not set one in any casing, so Fetch
@@ -61,25 +78,17 @@ export async function loginWithPassword(
   if (!hasHeader(headers, "x-affine-version")) {
     headers["x-affine-version"] = AFFINE_CLIENT_VERSION;
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AUTH_FETCH_TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch(url, {
+  const { response: res, body } = await fetchResponseBody(
+    signal => fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({ email, password }),
-      signal: controller.signal,
-    });
-  } catch (err: any) {
-    if (err.name === "AbortError") throw new Error(`Sign-in request timed out after ${AUTH_FETCH_TIMEOUT_MS / 1000}s`);
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+    { label: "Sign-in request", timeoutMs: AUTH_FETCH_TIMEOUT_MS },
+  );
   if (!res.ok) {
-    const raw = await res.text().catch(() => "");
-    const sanitized = raw.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+    const sanitized = body.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
     const truncated = sanitized.length > 200 ? sanitized.slice(0, 200) + "..." : sanitized;
     throw new Error(`Sign-in failed: ${res.status} ${truncated}`);
   }
@@ -96,6 +105,5 @@ export async function loginWithPassword(
   }
   const cookieHeader = extractCookiePairs(setCookies);
   assertNoCRLF(cookieHeader, "Cookie header from sign-in");
-  return { cookieHeader };
+  return { cookieHeader, expiresAt: cookieExpiresAt(setCookies) };
 }
-

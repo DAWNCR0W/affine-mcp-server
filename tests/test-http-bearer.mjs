@@ -18,6 +18,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
@@ -180,6 +181,25 @@ async function main() {
       expectEqual(currentUser?.email, EMAIL, "current_user via http bearer");
     } finally {
       await transport.close();
+    }
+
+    const proxyClient = new Client({ name: "http-proxy-client", version: "1.0.0" });
+    const proxyTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.join(PROJECT_DIR, "bin", "affine-mcp-http-proxy")],
+      cwd: PROJECT_DIR,
+      env: {
+        AFFINE_MCP_HTTP_TOKEN: staticToken,
+        AFFINE_MCP_HTTP_PROXY_URL: server.mcpUrl,
+      },
+      stderr: "pipe",
+    });
+    try {
+      await proxyClient.connect(proxyTransport);
+      const currentUser = parseContent(await proxyClient.callTool({ name: "current_user", arguments: {} }));
+      expectEqual(currentUser?.email, EMAIL, "current_user via stdio HTTP proxy");
+    } finally {
+      await proxyTransport.close();
     }
 
     console.log();
