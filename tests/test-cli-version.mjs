@@ -39,6 +39,22 @@ runVersionCheck("bin -v", [BIN_ENTRY, "-v"]);
 runVersionCheck("bin version", [BIN_ENTRY, "version"]);
 runVersionCheck("bin -- --version", [BIN_ENTRY, "--", "--version"]);
 
+// Exercise the Web Storage probe after module evaluation, without process.exit
+// hiding queued warnings. Explicitly installed polyfills must remain intact.
+for (const [label, setup, assertion] of [
+  ["native storage", "", ""],
+  ["explicit polyfill", 'const storage = { getItem() { return null; } }; Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });', 'if (globalThis.localStorage !== storage) throw new Error("polyfill was replaced");'],
+  ["lazy storage", 'let reads = 0; Object.defineProperty(globalThis, "localStorage", { get() { reads += 1; throw new Error("unused getter called"); }, configurable: true });', 'if (reads !== 0) throw new Error("unused getter was read");'],
+]) {
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `${setup}\nawait import('./dist/nodeRuntime.js');\nawait import('yjs');\n${assertion}`], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0 || /localStorage|ExperimentalWarning/.test(result.stderr)) {
+    throw new Error(`${label} bootstrap failed: ${result.stderr}`);
+  }
+}
+
 console.log(JSON.stringify({
   ok: true,
   version: expectedVersion,
