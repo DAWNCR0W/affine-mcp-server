@@ -68,7 +68,7 @@ docker_diagnostics() {
   echo "=== Docker diagnostics (on failure) ==="
   compose ps || true
   echo ""
-  compose logs --no-color --tail=200 affine affine_migration postgres redis || true
+  compose logs --no-color --tail=200 affine affine_gateway affine_migration postgres redis || true
 }
 
 wait_for_auth_ready() {
