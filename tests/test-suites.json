@@ -122,6 +122,7 @@
       "test-write-coordinator.mjs"
     ],
     "e2e": [
+      "test-cli-live.mjs",
       "test-concurrent-writes.mjs",
       "test-block-editing.mjs",
       "test-database-creation.mjs",
@@ -168,7 +169,6 @@
       "test-supporting-tools.mjs"
     ],
     "manual": [
-      "test-cli-live.mjs",
       "test-create-doc-folder-placement.mjs",
       "test-database-schema.mjs",
       "test-database-ui-rows.mjs",

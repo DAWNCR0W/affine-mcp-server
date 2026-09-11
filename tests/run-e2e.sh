@@ -193,7 +193,7 @@ start_docker_stack() {
   docker_compose_with_retry "migration startup" up -d --no-deps affine_migration
   wait_for_container_exit_zero affine_migration 45 2
 
-  docker_compose_with_retry "app startup" up -d --no-deps affine
+  docker_compose_with_retry "app startup" up -d --no-deps affine affine_gateway
   wait_for_container_running affine 45 2
 }
 
@@ -276,7 +276,7 @@ ensure_affine_ui_ready() {
   echo "[e2e] AFFiNE UI is not reachable before Playwright; attempting service recovery..."
   docker_diagnostics
 
-  compose up -d --no-deps affine
+  compose up -d --no-deps affine affine_gateway
   acquire_credentials_with_retry
   wait_for_auth_ready
 }
