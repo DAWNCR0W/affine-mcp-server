@@ -10,7 +10,14 @@ The server resolves configuration in this order:
 2. Saved config file at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/affine-mcp/config`
 3. Built-in defaults
 
-The saved config file uses the same `KEY=value` names shown below. Environment variables always override saved values, and the CLI diagnostics report the source selected for each runtime option.
+This precedence applies to the settings loaded by `loadConfig`. Those settings
+can be supplied as environment variables or saved as `KEY=value` lines in the
+config file. Some consumers intentionally read environment variables directly
+at process start; the tables below label those environment-only flags. An
+environment-only flag never comes from the saved config, even when its name
+looks like a core setting. Environment values override saved values for
+`loadConfig` keys, and the CLI diagnostics report the source selected for each
+resolved core option.
 
 Authentication credentials are resolved as one source-scoped group. If the
 environment provides any of `AFFINE_API_TOKEN`, `AFFINE_COOKIE`,
@@ -45,9 +52,22 @@ Bearer and cookie credentials are mutually exclusive on outbound requests.
 Explicit `sign_in` replaces the current client credential with its session
 cookie, while setting a bearer credential removes any cookie header.
 
+### Diagnostic scope
+
+`affine-mcp doctor` checks the resolved config source, base URL reachability,
+authentication, an authenticated GraphQL request, the selected workspace's
+membership and realtime root access when a default workspace is configured,
+effective tool-filter settings, HTTP exposure when `MCP_TRANSPORT=http`, and
+OAuth configuration/discovery when OAuth is enabled. It does not preflight
+every environment-only proxy, WebSocket, body-limit, session-limit, or
+shutdown flag. Those values are validated by the component that starts with
+them. A successful doctor run confirms the observed checks at that moment; it
+does not grant workspace access or replace a client restart after configuration
+changes.
+
 ## Environment variables
 
-### Core configuration
+### Core configuration (`loadConfig` and saved config)
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
@@ -55,12 +75,22 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_ALLOW_INSECURE_HTTP` | No | `false` | Explicitly allow a remote plain-HTTP AFFiNE URL on a trusted private network only |
 | `AFFINE_GRAPHQL_PATH` | No | `/graphql` | Override only if your AFFiNE deployment uses a custom GraphQL path |
 | `AFFINE_HEADERS_JSON` | No | none | JSON object of additional string headers sent to AFFiNE; built-in token/cookie auth takes priority |
-| `AFFINE_WORKSPACE_ID` | No | Auto-detected when possible | Pins the active workspace |
+| `AFFINE_WORKSPACE_ID` | No | unset | Sets the default workspace used when a tool call omits `workspaceId`; login may save a selected workspace, and an explicit per-call `workspaceId` can override it |
 | `AFFINE_LOGIN_AT_START` | No | `async` | `async` starts one shared login without blocking transport startup; `sync` requires login before startup |
+
+### Environment-only process controls
+
+These values are read directly from the process environment and are not read
+from the saved config file:
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
 | `AFFINE_CLIENT_VERSION` | No | `0.26.0` | AFFiNE web-client version sent as the `x-affine-version` header on GraphQL/REST requests. Servers that gate on client version reject sign-in with `403 UNSUPPORTED_CLIENT_VERSION` when it is too low; raise this if your deployment pins a higher minimum. Also used as the fallback default for `AFFINE_WS_CLIENT_VERSION` |
 | `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
 
 ### Blob upload safeguards
+
+These controls are environment-only and are not read from the saved config file.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
@@ -88,6 +118,8 @@ and response limit above.
 
 ### Tool filtering
 
+These controls are environment-only and are not read from the saved config file.
+
 | Variable | Purpose |
 | --- | --- |
 | `AFFINE_TOOL_PROFILE` | Environment-only predefined tool surface profile (`full`, `read_only`, `core`, `authoring`) |
@@ -95,6 +127,11 @@ and response limit above.
 | `AFFINE_DISABLED_TOOLS` | Environment-only exact canonical tool names to disable |
 
 ### HTTP mode
+
+These HTTP mode settings are `loadConfig` keys and can be supplied in the
+saved config file. The environment-only HTTP and runtime controls are listed in
+the separate environment-only controls table immediately below. This includes
+the transport, HTTP bind/auth/origin values, and all OAuth settings shown here.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
@@ -105,21 +142,30 @@ and response limit above.
 | `AFFINE_MCP_HTTP_ALLOWED_ORIGINS` | No | none | Comma-separated list for browser clients |
 | `AFFINE_MCP_HTTP_ALLOW_ALL_ORIGINS` | No | `false` | Testing only; rejected in OAuth mode |
 | `AFFINE_MCP_HTTP_TOKEN` | Required for non-loopback bearer mode | none | Shared bearer token for `/mcp`, `/sse`, and `/messages` |
-| `AFFINE_MCP_HTTP_PROXY_URL` | No | `http://127.0.0.1:${PORT:-3000}/mcp` | Loopback Streamable HTTP endpoint used by `affine-mcp-http-proxy` |
-| `AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS` | No | `60000` | Deadline for the complete proxy response, including its body; integer from `100` to `300000` |
-| `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer-mode listener |
-| `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
-| `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
-| `AFFINE_MCP_HTTP_MAX_SESSIONS` | No | `32` | Maximum combined Streamable HTTP and legacy SSE sessions |
-| `AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | No | `1800000` | Close sessions that receive no MCP activity for this duration |
-| `AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS` | No | `10000` | Deadline before remaining HTTP connections are forcibly closed |
 | `AFFINE_MCP_PUBLIC_BASE_URL` | Required in OAuth mode | none | Public base URL for this MCP server |
 | `AFFINE_OAUTH_ISSUER_URL` | Required in OAuth mode | none | OAuth issuer discovery URL |
 | `AFFINE_OAUTH_SCOPES` | No | `mcp` | Scopes advertised for OAuth-protected access |
 | `AFFINE_OAUTH_CLOCK_SKEW_SECONDS` | No | `60` | Positive integer tolerance for OAuth token timestamps |
 | `AFFINE_OAUTH_ALLOW_SERVICE_WRITES` | No | `false` | Explicitly acknowledge write-capable tools using the shared AFFiNE service identity |
 
+The following HTTP, proxy, and runtime controls are environment-only. They are
+read when the HTTP server, proxy, or WebSocket client starts and are not read
+from the saved config file:
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AFFINE_MCP_HTTP_PROXY_URL` | No | `http://127.0.0.1:${PORT:-3000}/mcp` | Loopback Streamable HTTP endpoint used by `affine-mcp-http-proxy` |
+| `AFFINE_MCP_HTTP_PROXY_TIMEOUT_MS` | No | `60000` | Complete proxy response deadline, including its body; integer from `100` to `300000` |
+| `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer listener |
+| `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
+| `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
+| `AFFINE_MCP_HTTP_MAX_SESSIONS` | No | `32` | Maximum combined Streamable HTTP and legacy SSE sessions |
+| `AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | No | `1800000` | Close sessions that receive no MCP activity for this duration |
+| `AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS` | No | `10000` | Deadline before remaining HTTP connections are forcibly closed |
+
 ### WebSocket compatibility
+
+These controls are environment-only and are not read from the saved config file.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
@@ -146,7 +192,7 @@ Important note for AFFiNE Cloud:
 Prebuilt images are published to GHCR:
 
 - `ghcr.io/dawncr0w/affine-mcp-server:latest`
-- `ghcr.io/dawncr0w/affine-mcp-server:3.0.0`
+- `ghcr.io/dawncr0w/affine-mcp-server:3.7.0`
 
 Example:
 
@@ -476,7 +522,7 @@ Before exposing the server remotely, confirm:
 - Browser CORS failures: verify `AFFINE_MCP_HTTP_ALLOWED_ORIGINS`
 - OAuth failures: verify issuer discovery metadata and JWKS availability
 - Custom GraphQL deployments: run `affine-mcp show-config --json` and confirm `graphqlEndpoint`, then run `affine-mcp doctor --json`
-- `doctor` also rejects an unprotected non-loopback HTTP bind and validates OAuth transport, discovery metadata, and JWKS reachability
+- `doctor` also checks selected-workspace membership, realtime root access, effective tool filters, rejects an unprotected non-loopback HTTP bind, and validates OAuth transport, discovery metadata, and JWKS reachability
 - Invalid transport, port, origin, or boolean values now fail at startup instead of silently falling back
 - Remote plain-HTTP AFFiNE URL rejected: use HTTPS, or set `AFFINE_ALLOW_INSECURE_HTTP=true` only for a trusted private network
 - Non-loopback bearer listener rejected: set `AFFINE_MCP_HTTP_TOKEN` or configure OAuth
