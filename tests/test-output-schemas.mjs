@@ -55,10 +55,13 @@ const representativeError = {
   ok: false,
   error: "Operation failed",
   code: "operation_failed",
+  causeCode: "upstream_unavailable",
   retryable: false,
+  recoveryGuidance: "Inspect the error and follow the suggested recovery action.",
   details: { attempt: 1 },
   operation: "test",
 };
+assert.equal(TOOLS_WITH_ERROR_OUTPUT.length, ALL_TOOLS.length, "every canonical tool must support the shared error envelope");
 for (const name of TOOLS_WITH_ERROR_OUTPUT) {
   const parsed = toolOutputSchemaFor(name).safeParse(representativeError);
   assert.equal(parsed.success, true, `${name} rejected the shared error envelope`);
@@ -66,6 +69,18 @@ for (const name of TOOLS_WITH_ERROR_OUTPUT) {
     assert.equal(toolOutputSchemaFor(name).safeParse({}).success, false, `${name} accepted an empty success result`);
   }
 }
+
+assert.equal(
+  toolOutputSchemaFor("list_tags").safeParse({
+    ok: false,
+    error: "Workspace root unavailable",
+    code: "workspace_root_unavailable",
+    retryable: false,
+    recoveryGuidance: "Check the workspace before treating it as empty.",
+  }).success,
+  true,
+  "discovery tools must accept workspace-root recovery guidance",
+);
 
 const columnOutput = { added: true, columnId: "col-1", name: "Status", type: "select" };
 const columnSchema = toolOutputSchemaFor("add_database_column");
@@ -97,7 +112,13 @@ for (const name of TOOLS_WITH_ERROR_OUTPUT) {
 }
 const queueErrorClient = await connectInMemory(queueErrorServer, "queue-error-schema-test");
 try {
-  await queueErrorClient.listTools();
+  const advertised = (await queueErrorClient.listTools()).tools;
+  const workspaceSchema = advertised.find(tool => tool.name === "get_workspace").outputSchema;
+  for (const field of ["name", "avatar", "url", "profileStatus"]) {
+    assert.ok(workspaceSchema.properties[field], `get_workspace must advertise ${field}`);
+    assert.ok(advertised.find(tool => tool.name === "list_workspaces")
+      .outputSchema.properties.items.items.properties[field], `workspace list items must advertise ${field}`);
+  }
   for (const name of TOOLS_WITH_ERROR_OUTPUT) {
     const result = await queueErrorClient.callTool({ name, arguments: {} });
     assert.equal(result.isError, true, `${name} must deliver its structured error to schema-validating clients`);
@@ -329,6 +350,7 @@ assert.deepEqual(failedDeleteBlobResult.structuredContent, {
   error: "AFFiNE did not confirm blob deletion.",
   code: "blob_delete_failed",
   retryable: false,
+  recoveryGuidance: "Check the error details and active workspace. For a write, inspect the target before retrying to avoid duplicating a completed change.",
 });
 
 const successfulCleanupBlobsResult = await client.callTool({
@@ -360,6 +382,7 @@ assert.deepEqual(failedCleanupBlobsResult.structuredContent, {
   error: "AFFiNE did not confirm deleted blob cleanup.",
   code: "blob_cleanup_failed",
   retryable: false,
+  recoveryGuidance: "Check the error details and active workspace. For a write, inspect the target before retrying to avoid duplicating a completed change.",
 });
 
 await client.close();
@@ -407,8 +430,15 @@ assert.equal(getDocDefinition.outputSchema?.type, "object");
 assert.equal(getDocDefinition.outputSchema?.properties?.value?.type, "null");
 const listDocsDefinition = listedDocTools.tools.find(tool => tool.name === "list_docs");
 assert.deepEqual(Object.keys(listDocsDefinition.outputSchema.properties).sort(), [
+  "causeCode",
+  "code",
+  "details",
   "edges",
+  "error",
+  "ok",
   "pageInfo",
+  "recoveryGuidance",
+  "retryable",
   "totalCount",
 ]);
 

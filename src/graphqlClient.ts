@@ -3,6 +3,7 @@ import { fetch } from "undici";
 import type { AuthSnapshot } from "./authSession.js";
 import { VERSION, AFFINE_CLIENT_VERSION } from "./config.js";
 import { fetchResponseBody } from "./util/httpResponse.js";
+import { ToolFailure } from "./util/mcp.js";
 
 const GQL_FETCH_TIMEOUT_MS = 30_000;
 
@@ -15,6 +16,7 @@ export type ConnectionAuth = {
 
 type GraphQLClientOptions = {
   authProvider?: () => Promise<AuthSnapshot>;
+  baseUrl?: string;
   bearer?: string;
   endpoint: string;
   headers?: Record<string, string>;
@@ -108,6 +110,11 @@ export class GraphQLClient {
   /** The GraphQL endpoint URL. */
   get endpoint(): string {
     return this.opts.endpoint;
+  }
+
+  /** Browser-facing AFFiNE URL, independent of its configurable GraphQL route. */
+  get baseUrl(): string {
+    return (this.opts.baseUrl || new URL(this.opts.endpoint).origin).replace(/\/+$/, "");
   }
 
   /**
@@ -243,7 +250,12 @@ export class GraphQLClient {
         const json = JSON.parse(body) as any;
         detail = json.errors?.map((e: any) => e.message).join("; ") || JSON.stringify(json);
       } catch {}
-      throw new Error(`GraphQL HTTP ${res.status}: ${sanitizeErrorBody(detail)}`);
+      const message = `GraphQL HTTP ${res.status}: ${sanitizeErrorBody(detail)}`;
+      if (res.status === 401) throw new ToolFailure(message, "auth_required");
+      if (res.status === 403) throw new ToolFailure(message, "access_denied");
+      if (res.status === 429) throw new ToolFailure(message, "rate_limited");
+      if (res.status >= 500) throw new ToolFailure(message, "upstream_unavailable");
+      throw new Error(message);
     }
 
     let json: any;
@@ -254,7 +266,15 @@ export class GraphQLClient {
     }
     if (json.errors) {
       const msg = json.errors.map((e: any) => e.message).join("; ");
-      throw new Error(`GraphQL error: ${sanitizeErrorBody(msg)}`);
+      const codes = json.errors.map((e: any) => e.extensions?.code || e.extensions?.name || e.name || "").join(" ");
+      const message = `GraphQL error: ${sanitizeErrorBody(msg)}`;
+      if (/UNAUTHENTICATED|AUTHENTICATION_REQUIRED|SESSION_EXPIRED|INVALID_TOKEN/i.test(codes)) {
+        throw new ToolFailure(message, "auth_required");
+      }
+      if (/FORBIDDEN|ACCESS_DENIED|PERMISSION_DENIED/i.test(codes)) {
+        throw new ToolFailure(message, "access_denied");
+      }
+      throw new Error(message);
     }
     return json.data as T;
   }
