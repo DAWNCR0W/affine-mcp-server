@@ -11,9 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serialize complete MCP write operations per workspace across sessions in one server process. Separate workspaces remain independent, and queued requests have bounded waits and cancellation handling.
 - Return a document content `revision` from `read_doc` and accept optional `expectedRevision` on document content mutations to reject stale edits before mutation.
 
+### Changed
+- Add name-first `workspaces [--json]` discovery and validated `workspace [id]` default selection without re-authentication; selection changes only the local default workspace.
+- Make login reuse the configured URL, fall back from missing workspace names to `Workspace name unavailable`, retry invalid selections, and cancel safely on `q` or end-of-file without writing credentials.
+- Generate client snippets from the resolved configuration, with `--env` preserving credentials and workspace selection while keeping environment precedence explicit.
+- Separate supported capabilities from the effective enabled tool surface and expose pagination state for `search_docs` through `offset`, `hasMore`, `truncated`, and `nextOffset`.
+- Clarify saved-config precedence versus environment-only HTTP, proxy, WebSocket, and runtime controls, and document the actual `doctor` checks.
+
+### Fixed
+- Suppress the Node 26 unused Web Storage startup warning without replacing an explicitly installed polyfill, and report an unavailable workspace-root snapshot instead of a false empty workspace.
+- Preserve header-only Authorization/Cookie credentials and saved non-authentication headers during relogin while normalizing authentication, network, and uncertain-write failures with actionable recovery guidance.
+- Make `doctor` validate selected-workspace membership, realtime root access, effective tool filters, HTTP exposure, and OAuth readiness before reporting success.
+- Keep workspace and document browser links based on the configured AFFiNE base URL when `AFFINE_GRAPHQL_PATH` uses a custom route, and document manual recovery for partial workspace creation without duplicate creates.
+
 ### Tests
 - Cover workspace queue ordering, cancellation, failure recovery, overload, and deletion-aware document revisions.
 - Verify concurrent writes through multiple HTTP sessions and independent stdio proxy processes against a local AFFiNE instance.
+- Cover CLI workspace selection, safe login cancellation, discovery failure handling, snippet propagation, search pagination, capability-surface reporting, and partial workspace recovery.
+- Add regression coverage for Node 26 startup warnings, doctor membership/realtime/filter checks, header-only relogin, and shared handler error envelopes.
 
 ## [3.7.0] - 2026-09-10
 

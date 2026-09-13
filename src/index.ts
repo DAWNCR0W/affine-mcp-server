@@ -1,3 +1,4 @@
+import "./nodeRuntime.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
@@ -22,7 +23,7 @@ import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
 import { coordinateTool } from "./toolCoordination.js";
-import { stripSchemaDialect } from "./util/mcp.js";
+import { stripSchemaDialect, withToolErrors } from "./util/mcp.js";
 import { resolveConfiguredAuth } from "./util/configuredAuth.js";
 import {
   assertOAuthServiceWritePolicy,
@@ -146,6 +147,7 @@ async function buildServer() {
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
     endpoint: config.graphqlEndpoint,
+    baseUrl: config.baseUrl,
     headers: gqlHeaders,
     authProvider: () => authSession.ready(),
   });
@@ -172,7 +174,11 @@ async function buildServer() {
           ...toolAnnotationsFor(name),
           ...(options?.annotations || {}),
         },
-      }, coordinated.handler);
+      }, withToolErrors(coordinated.handler, {
+        toolName: name,
+        authMode: config.authMode,
+        readOnly: Boolean(toolAnnotationsFor(name).readOnlyHint),
+      }));
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
@@ -181,7 +187,10 @@ async function buildServer() {
   console.error(`[affine-mcp] Enabled tools: ${toolFilter.enabledTools.length}/${toolFilter.totalToolCount}`);
 
   registerWorkspaceTools(server, gql);
-  registerDocTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerDocTools(server, gql, {
+    workspaceId: config.defaultWorkspaceId,
+    toolSurface: { profile: toolFilter.profile, enabledTools: toolFilter.enabledTools },
+  });
   registerCommentTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });

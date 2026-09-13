@@ -42,8 +42,6 @@ services:
   affine:
     image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
     restart: unless-stopped
-    ports:
-      - '${PORT:-3010}:3010'
     environment:
       AFFINE_CONFIG_PATH: /root/.affine/config
       DATABASE_URL: postgresql://${DB_USERNAME:-affine}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-affine}
@@ -61,13 +59,35 @@ services:
       affine_migration:
         condition: service_completed_successfully
     healthcheck:
-      test: ['CMD-SHELL', 'curl -f http://localhost:3010/ || exit 1']
+      test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:3010/", {signal: AbortSignal.timeout(3000)}).then(r => {r.body?.cancel(); process.exit(r.ok ? 0 : 1)}).catch(() => process.exit(1))']
       interval: 15s
       timeout: 10s
       retries: 10
       start_period: 60s
 
+  # Docker Desktop does not publish ports directly from internal networks.
+  # Only this fixed-destination relay joins the host-facing network.
+  affine_gateway:
+    image: node:20-bookworm
+    command: ['node', '/forward-port.mjs']
+    volumes:
+      - './forward-port.mjs:/forward-port.mjs:ro'
+    ports:
+      - '127.0.0.1:${PORT:-3010}:3010'
+    networks:
+      - default
+      - ingress
+    depends_on:
+      affine:
+        condition: service_started
+
 volumes:
   affine_postgres_data:
   affine_config:
   affine_storage:
+
+# Disposable integration services must not contact external AFFiNE deployments.
+networks:
+  default:
+    internal: true
+  ingress:
