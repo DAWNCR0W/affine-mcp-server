@@ -176,8 +176,30 @@ writeTableColumnWidth(nestedTable, "column-1", 528);
 assert.equal(readTableColumnWidth(nestedTable, "column-1"), 528);
 writeTableColumnWidth(nestedTable, "column-1", null);
 assert.equal(nestedColumn.has("width"), false);
+
+const objectDoc = new Y.Doc();
+const objectTable = objectDoc.getMap("object-table");
+objectTable.set("prop:columns", {
+  "column-1": { columnId: "column-1", order: "a0", width: 196, custom: "preserved" },
+  "column-2": { columnId: "column-2", order: "a1", width: 420 },
+});
+assert.equal(readTableColumnWidth(objectTable, "column-1"), 196);
+writeTableColumnWidth(objectTable, "column-1", 320);
+assert.deepEqual(objectTable.get("prop:columns"), {
+  "column-1": { columnId: "column-1", order: "a0", width: 320, custom: "preserved" },
+  "column-2": { columnId: "column-2", order: "a1", width: 420 },
+});
+assert.equal(objectTable.has("prop:columns.column-1.width"), false);
+writeTableColumnWidth(objectTable, "column-1", null);
+assert.deepEqual(objectTable.get("prop:columns"), {
+  "column-1": { columnId: "column-1", order: "a0", custom: "preserved" },
+  "column-2": { columnId: "column-2", order: "a1", width: 420 },
+});
+assert.equal(readTableColumnWidth(objectTable, "column-1"), null);
 assert.equal(totalTableColumnWidth([272, 528]), 800);
 assert.equal(totalTableColumnWidth([272, null]), null);
+
+for (const doc of [flatDoc, nestedDoc, objectDoc]) doc.destroy();
 
 const appendBlockSchema = toolSchema("append_block");
 const tableCell = { docId: "doc-1", type: "table", rows: 1, columns: 2 };

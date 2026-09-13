@@ -609,6 +609,14 @@ type UpdateTableColumnWidthsInput = {
 export const TABLE_COLUMN_MIN_WIDTH = 60;
 export const TABLE_COLUMN_MAX_WIDTH = 4096;
 
+/** Narrow unknown JSON values to plain records without matching Yjs shared types. */
+function isPlainObjectRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Sum explicit table widths, or return null while any column uses automatic sizing. */
 export function totalTableColumnWidth(
   widths: Array<number | null>,
 ): number | null {
@@ -617,6 +625,7 @@ export function totalTableColumnWidth(
     : null;
 }
 
+/** Read a native table width without changing its nested, object, or flat storage shape. */
 export function readTableColumnWidth(
   block: Y.Map<any>,
   columnId: string,
@@ -632,10 +641,19 @@ export function readTableColumnWidth(
     return typeof width === "number" && Number.isFinite(width) ? width : null;
   }
 
+  if (isPlainObjectRecord(columns)) {
+    const column = columns[columnId];
+    const width = isPlainObjectRecord(column)
+      ? column.width
+      : undefined;
+    return typeof width === "number" && Number.isFinite(width) ? width : null;
+  }
+
   const width = block.get(`prop:columns.${columnId}.width`);
   return typeof width === "number" && Number.isFinite(width) ? width : null;
 }
 
+/** Write a native table width while preserving the column container's storage shape. */
 export function writeTableColumnWidth(
   block: Y.Map<any>,
   columnId: string,
@@ -657,6 +675,22 @@ export function writeTableColumnWidth(
       return;
     }
     throw new Error(`Table column '${columnId}' has an unsupported storage shape.`);
+  }
+
+  if (isPlainObjectRecord(columns)) {
+    const currentColumns = columns;
+    const column = currentColumns[columnId];
+    if (!isPlainObjectRecord(column)) {
+      throw new Error(`Table column '${columnId}' has an unsupported storage shape.`);
+    }
+    const nextColumn = { ...column };
+    if (width === null) delete nextColumn.width;
+    else nextColumn.width = width;
+    block.set("prop:columns", {
+      ...currentColumns,
+      [columnId]: nextColumn,
+    });
+    return;
   }
 
   const key = `prop:columns.${columnId}.width`;
@@ -10237,6 +10271,7 @@ export function registerDocTools(
     }
   };
 
+  /** Apply an ordered width snapshot to an existing native AFFiNE table. */
   const updateTableColumnWidthsHandler = async (
     params: UpdateTableColumnWidthsInput,
   ) => {

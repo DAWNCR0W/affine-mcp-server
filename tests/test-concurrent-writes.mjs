@@ -327,6 +327,7 @@ async function main() {
       "append_block",
       "update_block",
       "update_table_cell",
+      "update_table_column_widths",
       "replace_doc_with_markdown",
       "delete_block",
       "move_block",

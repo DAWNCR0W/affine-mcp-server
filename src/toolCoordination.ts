@@ -18,7 +18,7 @@ const DOCUMENT_CONTENT_MUTATIONS = new Set<ToolName>([
   "move_block", "reparent_mindmap_node", "replace_doc_with_markdown", "set_mindmap_layout",
   "set_mindmap_lock", "set_mindmap_style", "update_block", "update_database_row", "update_doc_title",
   "update_edgeless_block", "update_frame_children", "update_mindmap_node", "update_surface_element",
-  "update_table_cell",
+  "update_table_cell", "update_table_column_widths",
 ]);
 
 async function currentDocumentRevision(gql: GraphQLClient, workspaceId: string, docId: string) {
