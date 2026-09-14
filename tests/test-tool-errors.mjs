@@ -16,12 +16,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = mkdtempSync(path.join(tmpdir(), 'affine-tool-errors-'));
 let status = 200;
 let errors;
+let responseContentType = 'application/json';
+let responseBody;
 let requests = 0;
 const backend = createServer(async (request, response) => {
   for await (const _chunk of request) { /* consume the bounded test request */ }
   requests += 1;
-  response.writeHead(status, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({ errors: errors || [{ message: 'Mock backend failure' }] }));
+  response.writeHead(status, { 'Content-Type': responseContentType });
+  response.end(responseBody ?? JSON.stringify({ errors: errors || [{ message: 'Mock backend failure' }] }));
 });
 backend.listen(0, '127.0.0.1');
 await once(backend, 'listening');
@@ -67,6 +69,21 @@ try {
     const result = checkFailure(await client.callTool({ name: 'current_user', arguments: {} }), code);
     assert.equal(result.retryable, retryable);
   }
+  for (const [httpStatus, code, retryable] of [
+    [401, 'auth_required', false], [403, 'access_denied', false],
+    [429, 'rate_limited', true], [503, 'upstream_unavailable', true],
+  ]) {
+    status = httpStatus;
+    responseContentType = 'text/html';
+    responseBody = `<html><body>Gateway ${httpStatus} failure ${'x'.repeat(240)}</body></html>`;
+    const result = checkFailure(await client.callTool({ name: 'current_user', arguments: {} }), code);
+    assert.equal(result.retryable, retryable);
+    assert.match(result.error, new RegExp(`GraphQL HTTP ${httpStatus}: Gateway ${httpStatus} failure`));
+    assert.doesNotMatch(result.error, /<html>|<\/body>/);
+    assert.ok(result.error.length < 240, 'non-JSON error bodies must remain bounded');
+  }
+  responseContentType = 'application/json';
+  responseBody = undefined;
   for (const [httpStatus, causeCode] of [[429, 'rate_limited'], [503, 'upstream_unavailable']]) {
     status = httpStatus;
     const result = checkFailure(
@@ -82,6 +99,15 @@ try {
   checkFailure(await client.callTool({ name: 'list_comments', arguments: { workspaceId: 'workspace', docId: 'document' } }), 'auth_required');
   errors = [{ message: 'Unauthorized' }];
   checkFailure(await client.callTool({ name: 'current_user', arguments: {} }), 'auth_required');
+
+  const gql = new GraphQLClient({ endpoint: `${baseUrl}/api/gql`, baseUrl: `${baseUrl}/affine/` });
+  status = 200;
+  responseContentType = 'text/html';
+  responseBody = '<html><body>Gateway success page</body></html>';
+  await assert.rejects(
+    gql.request('query { __typename }'),
+    /GraphQL endpoint returned non-JSON response \(200 OK, Content-Type: text\/html\)\. Body: Gateway success page/,
+  );
 
   const writeContext = { toolName: 'create_comment', authMode: 'bearer', readOnly: false };
   const uncertain = await withToolErrors(async () => { throw new Error('fetch failed'); }, writeContext)();
@@ -166,7 +192,6 @@ try {
     assert.equal(domainError.causeCode, causeCode);
   }
 
-  const gql = new GraphQLClient({ endpoint: `${baseUrl}/api/gql`, baseUrl: `${baseUrl}/affine/` });
   assert.equal(gql.baseUrl, `${baseUrl}/affine`);
   assert.equal(new GraphQLClient({ endpoint: `${baseUrl}/api/gql` }).baseUrl, baseUrl);
   assert.doesNotMatch(diagnostics, /localStorage|ExperimentalWarning/, 'normal startup must not emit the unused Web Storage warning');
