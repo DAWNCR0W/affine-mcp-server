@@ -289,6 +289,67 @@ class ComprehensiveRunner {
     await this.callTool('append_block', { workspaceId, docId, type: 'todo', text: 'Todo item from append_block', checked: true });
     await this.callTool('append_block', { workspaceId, docId, type: 'code', text: 'console.log(\"append_block\");', language: 'javascript' });
     await this.callTool('append_block', { workspaceId, docId, type: 'divider' });
+    const tableData = [['Width header', 'Keep this cell'], ['Width row', 'Keep this content']];
+    let tableBlockId = null;
+    await this.callTool('append_block', {
+      workspaceId,
+      docId,
+      type: 'table',
+      rows: tableData.length,
+      columns: tableData[0].length,
+      tableData,
+    }, parsed => {
+      tableBlockId = parsed?.blockId || null;
+    });
+    if (!tableBlockId) {
+      throw new Error('append_block(table) did not return blockId');
+    }
+    const explicitWidths = [240, 360];
+    await this.callTool('update_table_column_widths', {
+      workspaceId,
+      docId,
+      blockId: tableBlockId,
+      widths: explicitWidths,
+    }, parsed => {
+      if (parsed?.updated !== true || JSON.stringify(parsed.table?.widths) !== JSON.stringify(explicitWidths)) {
+        throw new Error('update_table_column_widths did not apply explicit widths');
+      }
+    });
+    await this.callTool('read_doc', { workspaceId, docId }, parsed => {
+      const table = parsed?.blocks?.find(block => block.id === tableBlockId);
+      if (!table) {
+        throw new Error('read_doc did not return the resized table');
+      }
+      if (JSON.stringify(table.tableColumnWidths) !== JSON.stringify(explicitWidths)) {
+        throw new Error('read_doc did not persist explicit table column widths');
+      }
+      if (JSON.stringify(table.tableData) !== JSON.stringify(tableData)) {
+        throw new Error('table column widths changed table cell content');
+      }
+    });
+    const automaticWidths = [null, null];
+    await this.callTool('update_table_column_widths', {
+      workspaceId,
+      docId,
+      blockId: tableBlockId,
+      widths: automaticWidths,
+    }, parsed => {
+      if (parsed?.updated !== true || JSON.stringify(parsed.table?.widths) !== JSON.stringify(automaticWidths)) {
+        throw new Error('update_table_column_widths did not restore automatic widths');
+      }
+    });
+    await this.callTool('read_doc', { workspaceId, docId }, parsed => {
+      const table = parsed?.blocks?.find(block => block.id === tableBlockId);
+      if (!table) {
+        throw new Error('read_doc did not return the restored table');
+      }
+      if (JSON.stringify(table.tableColumnWidths) !== JSON.stringify(automaticWidths)) {
+        throw new Error('read_doc did not restore automatic table column widths');
+      }
+      if (JSON.stringify(table.tableData) !== JSON.stringify(tableData)) {
+        throw new Error('restoring automatic widths changed table cell content');
+      }
+    });
     let databaseBlockId = null;
     await this.callTool('append_block', { workspaceId, docId, type: 'database' }, parsed => {
       databaseBlockId = parsed?.blockId || null;

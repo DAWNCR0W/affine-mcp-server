@@ -96,7 +96,10 @@ const upstream = createServer(async (request, response) => {
     response.end("{}");
     return;
   }
-  if (request.method !== "POST" || request.url !== "/graphql") {
+  if (
+    request.method !== "POST"
+    || (request.url !== "/graphql" && request.url !== "/other/graphql")
+  ) {
     response.writeHead(404);
     response.end();
     return;
@@ -128,7 +131,7 @@ const baseUrl = `http://127.0.0.1:${address.port}`;
 try {
   const savedHome = path.join(tempRoot, "saved");
   writeConfig(savedHome, {
-    AFFINE_BASE_URL: baseUrl,
+    AFFINE_BASE_URL: `${baseUrl.toUpperCase()}/`,
     AFFINE_API_TOKEN: "saved-token",
     AFFINE_WORKSPACE_ID: "workspace-one",
     AFFINE_HEADERS_JSON: JSON.stringify({ "X-Tenant": "preserve-me" }),
@@ -196,6 +199,16 @@ try {
   const invalid = await runCli(["workspace", "not-a-member"], savedEnv);
   expect(invalid.code !== 0 && invalid.stderr.includes("No config was changed"), "invalid workspace should fail safely");
   expect(readConfig(savedHome) === beforeInvalid, "invalid workspace changed config");
+
+  const differentDeployment = await runCli(
+    ["workspace", "workspace-one"],
+    cleanEnvironment(savedHome, { AFFINE_BASE_URL: `${baseUrl}/other/` }),
+  );
+  expect(
+    differentDeployment.code !== 0 && differentDeployment.stderr.includes("saved config targets"),
+    "workspace switch should reject a different environment deployment",
+  );
+  expect(readConfig(savedHome) === beforeInvalid, "different deployment changed config");
 
   const envOverride = await runCli(
     ["workspace", "workspace-one"],
@@ -312,6 +325,7 @@ try {
     cases: [
       "workspaces --json fallback labels and URLs",
       "workspace switch membership and config preservation",
+      "workspace URL normalization and different deployment safety",
       "workspace invalid selector and environment override safety",
       "snippet snapshot warning",
       "strict auth-method retry",

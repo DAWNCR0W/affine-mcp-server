@@ -236,26 +236,31 @@ export class GraphQLClient {
     }
 
     const contentType = res.headers.get("content-type") || "";
-    if (!contentType.includes("application/json") && !contentType.includes("application/graphql")) {
-      const snippet = sanitizeErrorBody(body);
-      throw new Error(
-        `GraphQL endpoint returned non-JSON response (${res.status} ${res.statusText}, ` +
-        `Content-Type: ${contentType || "(none)"}). Body: ${snippet}`,
-      );
-    }
+    const normalizedContentType = contentType.toLowerCase();
+    const isJsonResponse = normalizedContentType.includes("application/json") || normalizedContentType.includes("application/graphql");
 
     if (!res.ok) {
       let detail = body;
-      try {
-        const json = JSON.parse(body) as any;
-        detail = json.errors?.map((e: any) => e.message).join("; ") || JSON.stringify(json);
-      } catch {}
+      if (isJsonResponse) {
+        try {
+          const json = JSON.parse(body) as any;
+          detail = json.errors?.map((e: any) => e.message).join("; ") || JSON.stringify(json);
+        } catch {}
+      }
       const message = `GraphQL HTTP ${res.status}: ${sanitizeErrorBody(detail)}`;
       if (res.status === 401) throw new ToolFailure(message, "auth_required");
       if (res.status === 403) throw new ToolFailure(message, "access_denied");
       if (res.status === 429) throw new ToolFailure(message, "rate_limited");
       if (res.status >= 500) throw new ToolFailure(message, "upstream_unavailable");
       throw new Error(message);
+    }
+
+    if (!isJsonResponse) {
+      const snippet = sanitizeErrorBody(body);
+      throw new Error(
+        `GraphQL endpoint returned non-JSON response (${res.status} ${res.statusText}, ` +
+        `Content-Type: ${contentType || "(none)"}). Body: ${snippet}`,
+      );
     }
 
     let json: any;

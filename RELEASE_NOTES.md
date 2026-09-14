@@ -1,5 +1,27 @@
 # Release Notes
 
+## Version 3.8.0 (2026-09-14)
+
+### Highlights
+- Added per-workspace write coordination in one server process, with a FIFO queue of up to 100 waiting calls and a 60-second start deadline.
+- Added optional document revisions for stale-edit checks and native table column sizing, raising the canonical MCP tool surface from 105 to 106 tools.
+- Expanded CLI onboarding with workspace discovery and selection, generated snippets, actionable recovery, and `doctor` diagnostics.
+
+### What Changed
+- `read_doc` returns a content `revision`; document content mutations can pass `expectedRevision` to reject stale edits before mutation. The check is process-local and is not distributed compare-and-swap.
+- Added reversible, content-preserving `update_table_column_widths` support with `read_doc.tableColumnWidths` readback.
+- Login now honors plain-HTTP opt-in, uses complete AFFiNE Cloud hostname matching, preserves header-only authentication and saved non-authentication headers during relogin, and optionally saves email/password credentials for renewal.
+- Structured error envelopes, `search_docs` pagination state, and supported-versus-effective capability reporting make recovery and tool exposure explicit.
+- Workspace selection accepts equivalent normalized deployment URLs, and HTTP authentication, permission, rate-limit, and server failures keep their recovery codes even when the upstream returns HTML or plain text.
+- Updated locked `jose` to 6.2.12, `undici` to 7.29.1, and Playwright to 1.63.0; raised the minimum `zod` version to 3.25.76.
+
+### Compatibility
+- Existing tools and required inputs remain available; the canonical MCP surface is now 106 tools.
+- Node.js 20.18.1 or newer remains required, and release behavior targets AFFiNE 0.27.4.
+- All coordinated writers for a workspace must share one HTTP server process. Separate processes or replicas do not share the queue, and revisions do not provide distributed CAS.
+- `login --save-credentials` is opt-in and stores the password unencrypted in the owner-only mode-600 config file. Generated snippets with `--env` may contain secrets.
+- Remote plain HTTP still requires explicit opt-in.
+
 ## Version 3.7.0 (2026-09-10)
 
 ### Highlights

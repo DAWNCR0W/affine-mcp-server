@@ -79,7 +79,7 @@ services:
       - ingress
     depends_on:
       affine:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   affine_postgres_data:
