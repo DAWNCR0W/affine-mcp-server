@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-09-14
+
 ### Added
 - Added `update_table_column_widths` plus `read_doc.tableColumnWidths` for reversible, content-preserving native table sizing.
 - Serialize complete MCP write operations per workspace across sessions in one server process. Separate workspaces remain independent, and queued requests have bounded waits and cancellation handling.
@@ -31,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep workspace and document browser links based on the configured AFFiNE base URL when `AFFINE_GRAPHQL_PATH` uses a custom route, and document manual recovery for partial workspace creation without duplicate creates.
 
 ### Tests
+- Verify native table width changes and automatic sizing restoration against a live AFFiNE instance while preserving cell content.
 - Cover workspace queue ordering, cancellation, failure recovery, overload, and deletion-aware document revisions.
 - Verify concurrent writes through multiple HTTP sessions and independent stdio proxy processes against a local AFFiNE instance.
 - Added `tests/test-insecure-http-opt-in.mjs` covering opt-in forwarding through `buildGraphqlEndpoint`, Cloud/self-hosted hostname classification, and the `login` CLI path with the opt-in supplied by the environment and by the config file.
@@ -818,6 +821,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
 [3.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.7.0
 [3.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.6.0
 [3.5.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.1
@@ -858,4 +862,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.7.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.0...HEAD
