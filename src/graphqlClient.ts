@@ -236,7 +236,8 @@ export class GraphQLClient {
     }
 
     const contentType = res.headers.get("content-type") || "";
-    const isJsonResponse = contentType.includes("application/json") || contentType.includes("application/graphql");
+    const normalizedContentType = contentType.toLowerCase();
+    const isJsonResponse = normalizedContentType.includes("application/json") || normalizedContentType.includes("application/graphql");
 
     if (!res.ok) {
       let detail = body;

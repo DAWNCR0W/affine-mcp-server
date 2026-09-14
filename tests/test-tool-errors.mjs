@@ -108,6 +108,21 @@ try {
     gql.request('query { __typename }'),
     /GraphQL endpoint returned non-JSON response \(200 OK, Content-Type: text\/html\)\. Body: Gateway success page/,
   );
+  responseContentType = 'Application/JSON; charset=utf-8';
+  responseBody = '{"data":{"__typename":"Query"}}';
+  assert.deepEqual(await gql.request('query { __typename }'), { __typename: 'Query' });
+  responseContentType = 'Application/GraphQL-Response+JSON; charset=utf-8';
+  responseBody = '{"data":{"__typename":"Query"}}';
+  assert.deepEqual(await gql.request('query { __typename }'), { __typename: 'Query' });
+  status = 403;
+  responseContentType = 'Application/JSON; charset=utf-8';
+  responseBody = JSON.stringify({ errors: [{ message: 'Permission denied' }] });
+  await assert.rejects(gql.request('query { __typename }'), error => {
+    assert.equal(error instanceof ToolFailure, true);
+    assert.equal(error.code, 'access_denied');
+    assert.match(error.message, /GraphQL HTTP 403: Permission denied/);
+    return true;
+  });
 
   const writeContext = { toolName: 'create_comment', authMode: 'bearer', readOnly: false };
   const uncertain = await withToolErrors(async () => { throw new Error('fetch failed'); }, writeContext)();
