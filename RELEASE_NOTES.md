@@ -12,6 +12,7 @@
 - Added reversible, content-preserving `update_table_column_widths` support with `read_doc.tableColumnWidths` readback.
 - Login now honors plain-HTTP opt-in, uses complete AFFiNE Cloud hostname matching, preserves header-only authentication and saved non-authentication headers during relogin, and optionally saves email/password credentials for renewal.
 - Structured error envelopes, `search_docs` pagination state, and supported-versus-effective capability reporting make recovery and tool exposure explicit.
+- Workspace selection accepts equivalent normalized deployment URLs, and HTTP authentication, permission, rate-limit, and server failures keep their recovery codes even when the upstream returns HTML or plain text.
 - Updated locked `jose` to 6.2.12, `undici` to 7.29.1, and Playwright to 1.63.0; raised the minimum `zod` version to 3.25.76.
 
 ### Compatibility
