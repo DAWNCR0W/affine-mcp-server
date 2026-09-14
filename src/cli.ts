@@ -1180,7 +1180,17 @@ async function switchWorkspace(args: string[]) {
     || stored.AFFINE_PASSWORD
     || hasAuthenticationHeader(parseConfiguredHeaders(stored.AFFINE_HEADERS_JSON)),
   );
-  if (stored.AFFINE_BASE_URL && stored.AFFINE_BASE_URL !== effective.baseUrl) {
+  const storedBaseUrl = stored.AFFINE_BASE_URL
+    ? validateBaseUrl(stored.AFFINE_BASE_URL, {
+        allowInsecureHttp: parseBooleanFlag(
+          "AFFINE_ALLOW_INSECURE_HTTP",
+          process.env.AFFINE_ALLOW_INSECURE_HTTP || stored.AFFINE_ALLOW_INSECURE_HTTP,
+        ),
+        insecureHttpOptInName: "AFFINE_ALLOW_INSECURE_HTTP",
+        label: "Saved AFFINE_BASE_URL",
+      })
+    : undefined;
+  if (storedBaseUrl && storedBaseUrl !== effective.baseUrl) {
     throw new CliError(
       `Workspace membership was verified at ${effective.baseUrl}, but saved config targets ${stored.AFFINE_BASE_URL}. ` +
       "No config was changed. Next step: run 'affine-mcp login --url <url>' for the account you want to save, " +
