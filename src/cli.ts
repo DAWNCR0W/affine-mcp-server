@@ -8,6 +8,7 @@ import {
   CONFIG_FILE,
   loadConfig,
   loadConfigFile,
+  type BaseUrlValidationOptions,
   type ServerConfig,
   validateBaseUrl,
   validateGraphqlPath,
@@ -16,7 +17,7 @@ import {
 } from "./config.js";
 import { loginWithPassword } from "./auth.js";
 import { probeOAuthReadiness, validateOAuthConfig } from "./oauth.js";
-import { parseBooleanFlag } from "./networkSecurity.js";
+import { isAffineCloudUrl, parseBooleanFlag } from "./networkSecurity.js";
 import { connectWorkspaceSocket, wsUrlFromGraphQLEndpoint, type WorkspaceSocket } from "./ws.js";
 import { readWorkspaceProfile } from "./workspaceProfile.js";
 import { createToolFilter } from "./toolSurface.js";
@@ -82,6 +83,9 @@ type CliAuth = {
 type LoginResult = {
   token?: string;
   cookie?: string;
+  /** Present only for the email/password method; used by --save-credentials. */
+  email?: string;
+  password?: string;
   workspaceId: string;
   workspaceName: string;
   workspaceUrl: string;
@@ -804,6 +808,8 @@ async function loginWithEmail(
   const workspace = await detectWorkspace(graphqlEndpoint, baseUrl, auth, preferredWorkspaceId);
   return {
     cookie: cookieHeader,
+    email,
+    password,
     workspaceId: workspace.id,
     workspaceName: workspace.displayName,
     workspaceUrl: workspace.url,
@@ -889,6 +895,7 @@ async function login(args: string[]) {
   const useCookieStdin = consumeFlags(parsedArgs, "--cookie-stdin");
   const providedWorkspaceId = consumeOption(parsedArgs, "--workspace-id");
   const force = consumeFlags(parsedArgs, "--force", "-f");
+  const saveCredentials = consumeFlags(parsedArgs, "--save-credentials");
   ensureNoUnexpectedArgs(parsedArgs, "login");
   if (providedToken && useCookieStdin) {
     throw new CliError("Use either --token or --cookie-stdin, not both.");
@@ -933,18 +940,23 @@ async function login(args: string[]) {
       ? configuredUrl
       : (await ask(`Affine URL [${configuredUrl}]: `)) || configuredUrl
   );
-  const baseUrl = validateBaseUrl(rawUrl, {
+  // Resolve the plain-HTTP opt-in the same way the runtime does (environment
+  // first, then the saved config file) and reuse the resolved options for both
+  // validations below. `buildGraphqlEndpoint` re-validates the URL, so a
+  // missing opt-in there would reject a URL that was just accepted.
+  const baseUrlOptions: BaseUrlValidationOptions = {
     allowInsecureHttp: parseBooleanFlag(
       "AFFINE_ALLOW_INSECURE_HTTP",
-      process.env.AFFINE_ALLOW_INSECURE_HTTP,
+      process.env.AFFINE_ALLOW_INSECURE_HTTP || existing.AFFINE_ALLOW_INSECURE_HTTP,
     ),
     insecureHttpOptInName: "AFFINE_ALLOW_INSECURE_HTTP",
     label: "AFFINE URL",
-  });
+  };
+  const baseUrl = validateBaseUrl(rawUrl, baseUrlOptions);
   const graphqlPath = validateGraphqlPath(
     providedGraphqlPath || process.env.AFFINE_GRAPHQL_PATH || existing.AFFINE_GRAPHQL_PATH || "/graphql",
   );
-  const graphqlEndpoint = buildGraphqlEndpoint(baseUrl, graphqlPath);
+  const graphqlEndpoint = buildGraphqlEndpoint(baseUrl, graphqlPath, baseUrlOptions);
   const providedCookie = nonInteractiveCookieStdin
     ? pipedCookie
     : useCookieStdin
@@ -989,7 +1001,7 @@ async function login(args: string[]) {
       workspaceUrl: workspace.url,
     };
   } else {
-    const isSelfHosted = !baseUrl.includes("affine.pro");
+    const isSelfHosted = !isAffineCloudUrl(baseUrl);
     if (isSelfHosted) {
       const method = await askAuthMethod(
         "\nAuth method — [1] Email/password (recommended)  [2] Paste session cookie  [3] Compatible API token: ",
@@ -1013,18 +1025,43 @@ async function login(args: string[]) {
     }
   }
 
+  // `--save-credentials` keeps the email/password that produced the session so
+  // the server can sign in again on its own. The session cookie is deliberately
+  // not persisted in that mode: configured cookie auth takes priority over
+  // email/password, which would disable renewal before expiry.
+  const persistEmailPassword = saveCredentials && Boolean(result.email && result.password);
+  if (saveCredentials && !persistEmailPassword) {
+    console.error(
+      "\nNote: --save-credentials only applies to the email/password method; " +
+      "the session credential was saved instead.\n",
+    );
+  }
+  if (persistEmailPassword) {
+    console.error(
+      "\nWarning: --save-credentials stores the account password in " +
+      `${CONFIG_FILE} (mode 600). Use a dedicated least-privilege AFFiNE account.\n`,
+    );
+  }
+
   writeConfigFile(stripAuthenticationHeadersFromConfig({
     ...existing,
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: graphqlPath === "/graphql" ? "" : graphqlPath,
     AFFINE_API_TOKEN: result.token || "",
-    AFFINE_COOKIE: result.cookie || "",
-    AFFINE_EMAIL: "",
-    AFFINE_PASSWORD: "",
+    AFFINE_COOKIE: persistEmailPassword ? "" : result.cookie || "",
+    AFFINE_EMAIL: persistEmailPassword ? result.email! : "",
+    AFFINE_PASSWORD: persistEmailPassword ? result.password! : "",
     AFFINE_WORKSPACE_ID: result.workspaceId,
   }));
 
   console.error(`\n✓ Saved to ${CONFIG_FILE} (mode 600)`);
+  if (persistEmailPassword) {
+    console.error(
+      "The MCP server signs in with the saved email/password and renews the session before it expires.",
+    );
+  } else {
+    console.error("The MCP server will use these credentials automatically. Re-run login if the session expires.");
+  }
   console.error(`Selected workspace: ${result.workspaceName} (${result.workspaceId})`);
   console.error(`Open in AFFiNE: ${result.workspaceUrl}`);
   console.error("The selected workspace is the default scope when an MCP call omits workspaceId.");
@@ -1726,7 +1763,7 @@ const COMMANDS: Record<string, CliCommandDefinition> = {
   },
   login: {
     summary: "Interactive login and config bootstrap",
-    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token> | --cookie-stdin] [--workspace-id <id>] [--force]",
+    usage: "affine-mcp login [--url <url>] [--graphql-path <path>] [--token <token> | --cookie-stdin] [--workspace-id <id>] [--save-credentials] [--force]",
     handler: login,
   },
   workspaces: {
