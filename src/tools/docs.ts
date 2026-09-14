@@ -5,7 +5,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text, toolError } from "../util/mcp.js";
+import { receipt, text, toolError, ToolFailure } from "../util/mcp.js";
 import {
   type DocumentMoveOutcome,
   type DocumentCreationErrorInput,
@@ -47,6 +47,7 @@ import { richTextValueToDeltas, richTextValueToString } from "../markdown/richTe
 import { buildMarkdownFrontmatter } from "../markdown/safety.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
+import { ALL_TOOLS } from "../toolSurface.js";
 import {
   type Bound,
   DEFAULT_NOTE_XYWH,
@@ -1049,10 +1050,35 @@ type DocumentCreationTransport = {
   pushDocUpdate?: typeof pushDocUpdate;
 };
 
+type DocumentToolSurface = {
+  profile: string;
+  enabledTools: readonly string[];
+};
+
+type DocumentToolDefaults = {
+  workspaceId?: string;
+  toolSurface?: DocumentToolSurface;
+};
+
+function affineBaseUrl(endpoint: string, configuredBaseUrl?: string): string {
+  const explicitBaseUrl = configuredBaseUrl?.trim() || process.env.AFFINE_BASE_URL?.trim();
+  return (explicitBaseUrl || new URL(endpoint).origin).replace(/\/+$/, "");
+}
+
+function requireWorkspaceRootSnapshot(workspaceId: string, snapshot: { missing?: string }): string {
+  if (typeof snapshot.missing !== "string") {
+    throw new ToolFailure(
+      `Workspace root document is unavailable for workspace ${workspaceId}.`,
+      "workspace_root_unavailable",
+    );
+  }
+  return snapshot.missing;
+}
+
 export function registerDocTools(
   server: McpServer,
   gql: GraphQLClient,
-  defaults: { workspaceId?: string },
+  defaults: DocumentToolDefaults,
   documentCreationTransport: DocumentCreationTransport = {},
 ) {
   registerMindmapTools(server, gql, defaults, { getSurfaceElementsValueMap, buildSurfaceElementData, writeSurfaceElement, nextSurfaceElementIndex });
@@ -5021,12 +5047,10 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({ workspaceId, totalTags: 0, tags: [] });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
 
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
       const { options, byId } = getWorkspaceTagOptionMaps(meta);
@@ -5100,12 +5124,14 @@ export function registerDocTools(
     tag?: string;
     sortBy?: "relevance" | "updatedAt";
     sortDirection?: "asc" | "desc";
+    offset?: number;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
     const q = (parsed.query ?? "").toLocaleLowerCase().trim();
     if (!q) throw new Error("query is required.");
     const limit = parsed.limit ?? 20;
+    const offset = parsed.offset ?? 0;
     const matchMode = parsed.matchMode ?? "substring";
     const sortBy = parsed.sortBy ?? "relevance";
     const sortDirection = parsed.sortDirection ?? "desc";
@@ -5117,16 +5143,14 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({ query: q, results: [], totalCount: 0 });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
       const { byId } = getWorkspaceTagOptionMaps(meta);
 
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
       const filtered = pages
         .map((page) => {
           const rank = getSearchMatchRank(page.title, q, matchMode);
@@ -5162,12 +5186,13 @@ export function registerDocTools(
         } else if (a.updatedTimestamp !== b.updatedTimestamp) {
           return b.updatedTimestamp - a.updatedTimestamp;
         }
-        return (a.title ?? "").localeCompare(b.title ?? "");
+        const titleOrder = (a.title ?? "").localeCompare(b.title ?? "");
+        return titleOrder !== 0 ? titleOrder : a.docId.localeCompare(b.docId);
       });
 
       const totalCount = filtered.length;
       const matches = filtered
-        .slice(0, limit)
+        .slice(offset, offset + limit)
         .map((entry) => ({
           docId: entry.docId,
           title: entry.title,
@@ -5176,6 +5201,7 @@ export function registerDocTools(
           url: entry.url,
           inTrash: entry.inTrash,
         }));
+      const hasMore = offset + matches.length < totalCount;
 
       return text({
         query: parsed.query,
@@ -5183,8 +5209,13 @@ export function registerDocTools(
         matchMode,
         sortBy,
         sortDirection,
+        limit,
         totalCount,
         results: matches,
+        offset,
+        hasMore,
+        truncated: hasMore,
+        nextOffset: hasMore ? offset + matches.length : null,
       });
     } finally {
       socket.disconnect();
@@ -5195,11 +5226,12 @@ export function registerDocTools(
     "search_docs",
     {
       title: "Search Documents by Title",
-      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, direct URL, and inTrash for each match.",
+      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, direct URL, and inTrash for each match, plus offset/limit pagination state (hasMore, truncated, and nextOffset).",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
         limit: BoundedSearchLimit.optional().describe("Max results to return (default: 20, maximum: 200)."),
+        offset: BoundedOffset.optional().describe("Zero-based result offset for paging through matches (default: 0)."),
         matchMode: z.enum(["substring", "prefix", "exact"]).optional().describe("How to match titles (default: substring)."),
         tag: z.string().optional().describe("Optional tag filter (case-insensitive substring match against resolved tag names)."),
         sortBy: z.enum(["relevance", "updatedAt"]).optional().describe("Sort by match relevance (default) or by updatedAt."),
@@ -5233,17 +5265,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({
-          query: title,
-          caseInsensitive,
-          matches: [],
-          workspaceDocCount: 0,
-          truncated: false,
-        });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
 
@@ -5332,12 +5356,10 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({ workspaceId, tag, ignoreCase, totalDocs: 0, docs: [] });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
 
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
       const { byId } = getWorkspaceTagOptionMaps(meta);
@@ -5918,6 +5940,11 @@ export function registerDocTools(
       server: {
         name: "affine-mcp",
         capabilityVersion: 1,
+        supportedTools: [...ALL_TOOLS],
+        effective: {
+          profile: defaults.toolSurface?.profile ?? "full",
+          enabledTools: [...(defaults.toolSurface?.enabledTools ?? ALL_TOOLS)],
+        },
         writeCoordination: {
           scope: "workspace",
           boundary: "single MCP server process",
@@ -5985,7 +6012,7 @@ export function registerDocTools(
     "get_capabilities",
     {
       title: "Get Capabilities",
-      description: "Return machine-readable capability flags for this MCP server, including block, database, collaboration, and export support.",
+      description: "Return machine-readable capability flags for this MCP server, including static feature support and the effective enabled tool surface.",
       inputSchema: {},
     },
     getCapabilitiesHandler as any
@@ -7182,9 +7209,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ workspaceId, tree: [] });
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, wsSnap);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
       const trashById = new Map(pages.map(p => [p.id, p.inTrash]));
@@ -7205,7 +7232,7 @@ export function registerDocTools(
         }
         if (kids.length) childrenOf.set(page.id, kids);
       }
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
       const roots = pages.filter(p => !allChildren.has(p.id)).map(p => p.id);
       const buildNode = (id: string, depth: number): any => ({
         docId: id, title: titleById.get(id) ?? "Untitled",
@@ -7235,9 +7262,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ orphans: [] });
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, wsSnap);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
       const allChildren = new Set<string>();
@@ -7251,7 +7278,7 @@ export function registerDocTools(
           allChildren.add(pageId);
         }
       }
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, "")).replace(/\/$/, "");
+      const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
       const orphans = pages
         .filter(p => !allChildren.has(p.id))
         .map(p => ({
@@ -7280,17 +7307,14 @@ export function registerDocTools(
       const titleById = new Map<string, string>();
       const trashById = new Map<string, boolean>();
       const workspacePageIds = new Set<string>();
-      let hasWorkspaceMetadata = false;
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (wsSnap.missing) {
-        hasWorkspaceMetadata = true;
-        const wsDoc = new Y.Doc();
-        Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
-        for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
-          workspacePageIds.add(page.id);
-          trashById.set(page.id, page.inTrash);
-          if (page.title) titleById.set(page.id, page.title);
-        }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, wsSnap);
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
+      for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
+        workspacePageIds.add(page.id);
+        trashById.set(page.id, page.inTrash);
+        if (page.title) titleById.set(page.id, page.title);
       }
       const snap = await loadDoc(socket, workspaceId, parsed.docId);
       if (!snap.missing) return text({ docId: parsed.docId, children: [] });
@@ -7300,11 +7324,11 @@ export function registerDocTools(
       const children: Array<{ docId: string; title: string | null; url: string; inTrash: boolean }> = [];
       const seen = new Set<string>();
       for (const pageId of collectLinkedChildIds(blocks)) {
-        if (hasWorkspaceMetadata && !workspacePageIds.has(pageId)) continue;
+        if (!workspacePageIds.has(pageId)) continue;
         if (seen.has(pageId)) continue;
         seen.add(pageId);
         children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
-          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}`,
+          url: `${affineBaseUrl(endpoint, gql.baseUrl)}/workspace/${workspaceId}/${pageId}`,
           inTrash: trashById.get(pageId) ?? false });
       }
       return text({ docId: parsed.docId, count: children.length, children });

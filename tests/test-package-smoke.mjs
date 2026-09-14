@@ -208,6 +208,13 @@ try {
   assert.match(help.stdout, /Usage:/);
   assert.match(help.stdout, /affine-mcp login/);
 
+  for (const test of ["test-cli-onboarding.mjs", "test-cli-tty.mjs"]) {
+    run(process.execPath, [path.join(rootDirectory, "tests", test)], {
+      env: { ...serverEnvironment, AFFINE_CLI_TEST_ENTRY: binEntry },
+      timeout: 120_000,
+    });
+  }
+
   await verifyServerSurface(installedDirectory, installedManifest);
   await verifyProxySurface(installedDirectory, installedManifest);
 
@@ -216,7 +223,7 @@ try {
     tarball: tarballPath,
     package: `${installedPackage.name}@${installedPackage.version}`,
     tools: installedManifest.tools.length,
-    checks: ["installed package", "bin version", "dist version", "CLI help", "MCP tools/list", "installed proxy to HTTP tools/list"],
+    checks: ["installed package", "bin version", "dist version", "CLI help", "installed CLI onboarding", "installed CLI TTY login", "MCP tools/list", "installed proxy to HTTP tools/list"],
   }, null, 2));
 } finally {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });

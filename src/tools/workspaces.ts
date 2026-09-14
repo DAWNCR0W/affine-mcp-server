@@ -7,6 +7,7 @@ import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
 import { secureAffineId } from "../util/random.js";
 import { fetchResponseBody } from "../util/httpResponse.js";
+import { readWorkspaceProfile } from "../workspaceProfile.js";
 import {
   connectWorkspaceSocket,
   joinWorkspace,
@@ -41,14 +42,14 @@ const DEFAULT_WORKSPACE_TOOL_DEPENDENCIES: WorkspaceToolDependencies = {
 
 const WORKSPACE_CREATE_TIMEOUT_MS = 30_000;
 
-function affineBaseUrl(endpoint: string): string {
-  const configuredBaseUrl = process.env.AFFINE_BASE_URL?.trim();
-  return (configuredBaseUrl || new URL(endpoint).origin).replace(/\/+$/, "");
+function affineBaseUrl(endpoint: string, configuredBaseUrl?: string): string {
+  const explicitBaseUrl = configuredBaseUrl?.trim() || process.env.AFFINE_BASE_URL?.trim();
+  return (explicitBaseUrl || new URL(endpoint).origin).replace(/\/+$/, "");
 }
 
 function summarizeWorkspace(
   workspace: WorkspaceRecord,
-  endpoint: string,
+  baseUrl: string,
   profileStatus: WorkspaceProfileStatus,
   profile?: { name: string | null; avatar: string | null },
 ): WorkspaceSummary {
@@ -58,30 +59,8 @@ function summarizeWorkspace(
     ...workspace,
     name: profile?.name ?? existingName,
     avatar: profile?.avatar ?? existingAvatar,
-    url: `${affineBaseUrl(endpoint)}/workspace/${encodeURIComponent(workspace.id)}`,
+    url: `${baseUrl}/workspace/${encodeURIComponent(workspace.id)}`,
     profileStatus,
-  };
-}
-
-async function readWorkspaceProfile(
-  socket: WorkspaceSocket,
-  workspaceId: string,
-  dependencies: WorkspaceToolDependencies,
-): Promise<{ name: string | null; avatar: string | null }> {
-  await dependencies.joinWorkspace(socket, workspaceId);
-  const snapshot = await dependencies.loadDoc(socket, workspaceId, workspaceId);
-  if (!snapshot.missing) {
-    throw new Error(`Workspace profile metadata is unavailable for ${workspaceId}.`);
-  }
-
-  const workspaceDoc = new Y.Doc();
-  Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, "base64"));
-  const meta = workspaceDoc.getMap("meta");
-  const name = meta.get("name");
-  const avatar = meta.get("avatar");
-  return {
-    name: typeof name === "string" ? name : null,
-    avatar: typeof avatar === "string" ? avatar : null,
   };
 }
 
@@ -92,8 +71,9 @@ async function enrichWorkspaceProfiles(
   dependencies: WorkspaceToolDependencies,
 ): Promise<WorkspaceSummary[]> {
   const endpoint = gql.endpoint;
+  const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
   if (!includeProfile) {
-    return workspaces.map(workspace => summarizeWorkspace(workspace, endpoint, "skipped"));
+    return workspaces.map(workspace => summarizeWorkspace(workspace, baseUrl, "skipped"));
   }
   if (workspaces.length === 0) {
     return [];
@@ -108,17 +88,20 @@ async function enrichWorkspaceProfiles(
       bearer,
     );
   } catch {
-    return workspaces.map(workspace => summarizeWorkspace(workspace, endpoint, "unavailable"));
+    return workspaces.map(workspace => summarizeWorkspace(workspace, baseUrl, "unavailable"));
   }
 
   try {
     const enriched: WorkspaceSummary[] = [];
     for (const workspace of workspaces) {
       try {
-        const profile = await readWorkspaceProfile(socket, workspace.id, dependencies);
-        enriched.push(summarizeWorkspace(workspace, endpoint, "available", profile));
+        const profile = await readWorkspaceProfile(socket, workspace.id, {
+          joinWorkspace: dependencies.joinWorkspace,
+          loadDoc: dependencies.loadDoc,
+        });
+        enriched.push(summarizeWorkspace(workspace, baseUrl, "available", profile));
       } catch {
-        enriched.push(summarizeWorkspace(workspace, endpoint, "unavailable"));
+        enriched.push(summarizeWorkspace(workspace, baseUrl, "unavailable"));
       }
     }
     return enriched;
@@ -397,7 +380,7 @@ export function registerWorkspaceTools(
         
         const workspace = result.data.createWorkspace;
         const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-        const baseUrl = affineBaseUrl(endpoint);
+        const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
 
         try {
           const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
@@ -418,7 +401,9 @@ export function registerWorkspaceTools(
             firstDocId,
             syncStatus: "partial",
             status: "partial",
-            message: "Workspace created (document sync may be pending)",
+            message: "Workspace created; initial document sync failed. No automatic retry is scheduled.",
+            requiresManualRepair: true,
+            recoveryGuidance: `Workspace ${workspace.id} was created, but initial document synchronization did not complete. Read workspace ${workspace.id} and document ${firstDocId} before any repair because the timed-out write may have persisted. Repair the existing document manually if needed; do not call create_workspace again. No automatic retry is scheduled.`,
             url: `${baseUrl}/workspace/${workspace.id}`
           });
         }

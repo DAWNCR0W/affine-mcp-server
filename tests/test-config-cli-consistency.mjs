@@ -124,6 +124,7 @@ expect(
 
 let upstreamReady = true;
 const graphqlRequests = [];
+const signInRequests = [];
 const upstream = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/") {
     response.writeHead(404, { "Content-Type": "text/plain" });
@@ -131,10 +132,12 @@ const upstream = createServer(async (request, response) => {
     return;
   }
   if (request.method === "POST" && request.url === "/api/auth/sign-in") {
-    for await (const _chunk of request) {
-      // Drain the request body before returning the synthetic session cookie.
-    }
-    graphqlRequests.push({
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    signInRequests.push({
+      email: body.email || null,
+      passwordProvided: typeof body.password === "string" && body.password.length > 0,
       authorization: request.headers.authorization || null,
       cookie: request.headers.cookie || null,
       tenant: request.headers["x-tenant"] || null,
@@ -301,7 +304,7 @@ try {
     "environment email/password status auth kind mismatch",
   );
   expect(
-    graphqlRequests.some(
+    signInRequests.some(
       (entry) => entry.url === "/api/auth/sign-in"
         && entry.authorization === null
         && entry.cookie === null
@@ -571,6 +574,102 @@ try {
     "stdin cookie was not used to authenticate and validate the workspace",
   );
 
+  const savedEmail = "login@example.test";
+  const savedPassword = "login-password";
+  const emailPasswordHome = path.join(TEMP_ROOT, "email-password-login");
+  writeConfig(emailPasswordHome, {
+    AFFINE_BASE_URL: baseUrl,
+    AFFINE_GRAPHQL_PATH: "/custom/graphql",
+    AFFINE_HEADERS_JSON: JSON.stringify({
+      Authorization: "Bearer stale-login-header-token",
+      Cookie: "affine_session=stale-login-header-cookie",
+      "X-Tenant": "email-password-tenant",
+    }),
+    MCP_TRANSPORT: "stdio",
+    PORT: "3002",
+  });
+  const emailPasswordEnv = cleanEnvironment({
+    XDG_CONFIG_HOME: emailPasswordHome,
+    AFFINE_WS_CONNECT_TIMEOUT_MS: "20",
+  });
+  const emailPasswordLogin = await runNode([
+    DIST_ENTRY,
+    "login",
+    "--url",
+    baseUrl,
+    "--graphql-path",
+    "/custom/graphql",
+    "--workspace-id",
+    "workspace-env",
+    "--save-credentials",
+    "--force",
+  ], emailPasswordEnv, { input: `1\n${savedEmail}\n${savedPassword}\n` });
+  expect(
+    emailPasswordLogin.code === 0,
+    `email/password login failed: ${emailPasswordLogin.stderr}`,
+  );
+  const emailPasswordConfig = readFileSync(
+    path.join(emailPasswordHome, "affine-mcp", "config"),
+    "utf8",
+  );
+  expect(emailPasswordConfig.includes(`AFFINE_EMAIL=${savedEmail}`), "login did not save the email");
+  expect(emailPasswordConfig.includes(`AFFINE_PASSWORD=${savedPassword}`), "login did not save the password");
+  expect(!emailPasswordConfig.includes("AFFINE_COOKIE="), "email/password login left a session cookie in config");
+  const emailPasswordHeadersLine = emailPasswordConfig
+    .split("\n")
+    .find((line) => line.startsWith("AFFINE_HEADERS_JSON="));
+  const emailPasswordHeaders = emailPasswordHeadersLine
+    ? JSON.parse(emailPasswordHeadersLine.slice("AFFINE_HEADERS_JSON=".length))
+    : {};
+  expect(
+    !emailPasswordConfig.includes("stale-login-header-token")
+      && !emailPasswordConfig.includes("stale-login-header-cookie")
+      && emailPasswordHeaders["X-Tenant"] === "email-password-tenant"
+      && !Object.keys(emailPasswordHeaders).some((name) => /^(authorization|cookie)$/i.test(name)),
+    "email/password login did not strip stale auth headers while retaining the tenant header",
+  );
+  expect(
+    signInRequests.some(
+      (entry) => entry.email === savedEmail
+        && entry.passwordProvided
+        && entry.authorization === null
+        && entry.cookie === null
+        && entry.tenant === "email-password-tenant",
+    ),
+    "email/password login did not send credentials with stale auth headers removed",
+  );
+
+  const emailPasswordConfigSummary = await runNode(
+    [DIST_ENTRY, "show-config", "--json"],
+    emailPasswordEnv,
+  );
+  expect(
+    emailPasswordConfigSummary.code === 0,
+    `saved email/password config could not be loaded: ${emailPasswordConfigSummary.stderr}`,
+  );
+  const emailPasswordSummary = JSON.parse(emailPasswordConfigSummary.stdout);
+  expect(emailPasswordSummary.authKind === "email-password", "saved config did not select email/password auth");
+  expect(emailPasswordSummary.apiToken === null && emailPasswordSummary.cookie === null, "saved stale session auth remained effective");
+  expect(
+    emailPasswordSummary.sources.email === "config"
+      && emailPasswordSummary.sources.password === "config",
+    "saved email/password sources were not reported as config",
+  );
+  const emailPasswordStatus = await runNode(
+    [DIST_ENTRY, "status", "--json"],
+    emailPasswordEnv,
+  );
+  expect(
+    emailPasswordStatus.code === 0,
+    `runtime did not sign in with saved email/password: ${emailPasswordStatus.stderr}`,
+  );
+  const emailPasswordStatusPayload = JSON.parse(emailPasswordStatus.stdout);
+  expect(
+    emailPasswordStatusPayload.authKind === "email-password"
+      && emailPasswordStatusPayload.userEmail === "config@example.test",
+    "runtime status did not select saved email/password auth successfully",
+  );
+
   const headerAuthScenarios = [
     {
       label: "Authorization header",
@@ -658,8 +757,51 @@ try {
     `piped cookie was consumed by a URL prompt: ${configuredUrlLogin.stderr}`,
   );
   expect(
-    configuredUrlLogin.stderr.includes("Verified workspace: workspace-env"),
+    configuredUrlLogin.stderr.includes("Verified workspace: Workspace name unavailable (workspace-env)"),
     "non-TTY cookie login did not use the configured URL before validating the workspace",
+  );
+  expect(
+    configuredUrlLogin.stderr.includes("Selected workspace")
+      && configuredUrlLogin.stderr.includes("Restart or reconnect"),
+    "login did not explain the selected workspace and MCP restart step",
+  );
+
+  const listedWorkspaces = await runNode(
+    [DIST_ENTRY, "workspaces", "--json"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: configuredUrlHome,
+      AFFINE_WS_CONNECT_TIMEOUT_MS: "20",
+    }),
+  );
+  expect(listedWorkspaces.code === 0, `workspace listing failed: ${listedWorkspaces.stderr}`);
+  const listedWorkspacePayload = JSON.parse(listedWorkspaces.stdout);
+  expect(Array.isArray(listedWorkspacePayload), "workspaces --json should return a JSON list");
+  expect(
+    listedWorkspacePayload.some((workspace) => workspace.id === "workspace-env" && workspace.url.endsWith("/workspace/workspace-env")),
+    "workspace listing did not include the membership URL",
+  );
+
+  const beforeEnvironmentWorkspaceSwitch = readFileSync(
+    path.join(configuredUrlHome, "affine-mcp", "config"),
+    "utf8",
+  );
+  const environmentWorkspaceSwitch = await runNode(
+    [DIST_ENTRY, "workspace", "workspace-env"],
+    cleanEnvironment({
+      XDG_CONFIG_HOME: configuredUrlHome,
+      AFFINE_WORKSPACE_ID: "workspace-other",
+      AFFINE_WS_CONNECT_TIMEOUT_MS: "20",
+    }),
+  );
+  expect(environmentWorkspaceSwitch.code !== 0, "workspace switch silently ignored an environment workspace override");
+  expect(
+    environmentWorkspaceSwitch.stderr.includes("overrides saved config")
+      && environmentWorkspaceSwitch.stderr.includes("unset AFFINE_WORKSPACE_ID"),
+    "workspace override recovery did not name the exact next step",
+  );
+  expect(
+    readFileSync(path.join(configuredUrlHome, "affine-mcp", "config"), "utf8") === beforeEnvironmentWorkspaceSwitch,
+    "environment workspace override changed saved config",
   );
 
   const missingForce = await runNode([
@@ -831,6 +973,7 @@ try {
       "POSIX-safe Codex snippet quoting",
       "login and logout setting preservation",
       "stdin cookie authentication",
+      "email/password credential save and runtime reload",
       "non-TTY cookie prompt isolation",
       "workspace override validation",
       "legacy cookie argument redaction",

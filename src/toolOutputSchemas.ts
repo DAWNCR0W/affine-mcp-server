@@ -1,6 +1,6 @@
 import { z, type ZodType } from "zod/v4";
 
-import { toolAnnotationsFor, type ToolName } from "./toolSurface.js";
+import { type ToolName } from "./toolSurface.js";
 
 type FieldKind =
   | "string"
@@ -11,6 +11,7 @@ type FieldKind =
   | "nullableBoolean"
   | "stringArray"
   | "unknownArray"
+  | "workspaceArray"
   | "object"
   | "nullableObject"
   | "icon"
@@ -82,7 +83,7 @@ const OUTPUT_SPECS = {
   create_folder: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string", storageDocId: "string" }),
   create_semantic_page: fallible(spec({ workspaceId: "string", docId: "string", title: "string", pageType: "string", pageId: "string", noteId: "string", sectionCount: "number", sectionHeadingIds: "stringArray", blockIds: "stringArray", parentLinked: "boolean", warnings: "stringArray" }), documentCreationFailureFields),
   create_tag: spec({ workspaceId: "string", tag: "string", created: "boolean" }),
-  create_workspace: fallible(receipt({ workspaceId: "string", id: "string", name: "string", avatar: "string", firstDocId: "string", syncStatus: "string", status: "string", message: "string", url: "string", error: "string" }, true)),
+  create_workspace: fallible(receipt({ workspaceId: "string", id: "string", name: "string", avatar: "string", firstDocId: "string", syncStatus: "string", status: "string", message: "string", url: "string", error: "string", requiresManualRepair: "boolean", recoveryGuidance: "string" }, true)),
   create_workspace_blueprint: spec({ workspaceId: "string", rootFolderId: "string", rootFolderName: "string", childFolders: "unknownArray", childFolderCount: "number", storageDocId: "string" }),
   current_user: spec({ id: "string", name: "string", email: "string", emailVerified: "boolean", avatarUrl: "nullableString", disabled: "boolean" }),
   delete_blob: fallible(receipt({ status: "string", success: "boolean", key: "string", workspaceId: "string", permanently: "boolean", deleted: "boolean" }, true)),
@@ -107,7 +108,7 @@ const OUTPUT_SPECS = {
   get_edgeless_canvas: spec({ docId: "string", exists: "boolean", surfaceBlockId: "nullableString", edgelessBlocks: "unknownArray", surfaceElements: "unknownArray", bounds: "nullableObject", elementCounts: "object" }),
   get_folder_icon: receipt({ workspaceId: "string", folderId: "string", icon: "icon", hasIcon: "boolean" }),
   get_orphan_docs: spec({ count: "number", orphans: "unknownArray" }, true),
-  get_workspace: fallible(spec({ id: "string", public: "boolean", enableAi: "boolean", createdAt: "string", permissions: "object", error: "string" }, true)),
+  get_workspace: fallible(spec({ id: "string", name: "nullableString", avatar: "nullableString", url: "string", profileStatus: "string", public: "boolean", enableAi: "boolean", createdAt: "string", permissions: "object", value: "null", error: "string" }, true)),
   inspect_template_structure: spec({ workspaceId: "string", templateDocId: "string", title: "string", tags: "stringArray", pageId: "nullableString", surfaceId: "nullableString", noteId: "nullableString", rootBlockIds: "stringArray", blockCount: "number", blocks: "unknownArray", nativeCloneSupported: "boolean", fallbackReasons: "stringArray" }),
   instantiate_template_native: fallible(spec({ workspaceId: "string", sourceTemplateDocId: "string", docId: "string", title: "string", mode: "string", nativeCloneSupported: "boolean", linkedToParent: "boolean", preservedTags: "stringArray", replacedVariableCount: "number", unresolvedVariables: "stringArray", warnings: "stringArray", blockCount: "number", rootBlockIds: "stringArray" }, true, ["workspaceId", "docId"]), documentCreationFailureFields),
   list_children: spec({ docId: "string", count: "number", children: "unknownArray" }, true),
@@ -122,7 +123,7 @@ const OUTPUT_SPECS = {
   list_surface_elements: spec({ docId: "string", exists: "boolean", surfaceBlockId: "nullableString", count: "number", elements: "unknownArray" }),
   list_tags: spec({ workspaceId: "string", totalTags: "number", tags: "unknownArray" }),
   list_workspace_tree: spec({ workspaceId: "string", totalDocs: "number", rootCount: "number", tree: "unknownArray" }, true),
-  list_workspaces: fallible(spec({ items: "unknownArray", error: "string" }, true, ["items"])),
+  list_workspaces: fallible(spec({ items: "workspaceArray", error: "string" }, true, ["items"])),
   move_block: spec({ moved: "boolean", blockId: "string", fromParentId: "nullableString", toParentId: "string", fromIndex: "number", toIndex: "number", block: "object" }),
   move_doc: fallible(receipt({ workspaceId: "string", moved: "boolean", docId: "string", toParentDocId: "string", removedFromParent: "boolean" })),
   move_organize_node: spec({ id: "string", parentId: "nullableString", index: "string" }),
@@ -138,7 +139,7 @@ const OUTPUT_SPECS = {
   resolve_comment: fallible(receipt({ commentId: "string", id: "string", resolved: "boolean", success: "boolean" })),
   restore_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
   revoke_doc: receipt({ workspaceId: "string", docId: "string" }),
-  search_docs: spec({ query: "string", tag: "nullableString", matchMode: "string", sortBy: "string", sortDirection: "string", totalCount: "number", results: "unknownArray" }, true),
+  search_docs: spec({ query: "string", tag: "nullableString", matchMode: "string", sortBy: "string", sortDirection: "string", limit: "number", totalCount: "number", results: "unknownArray", offset: "number", hasMore: "boolean", truncated: "boolean", nextOffset: "nullableNumber" }, true),
   set_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", name: "string", type: "string", value: "unknown", stored: "unknown", updated: "boolean" }),
   sign_in: spec({ signedIn: "boolean" }),
   trash_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
@@ -160,16 +161,9 @@ const OUTPUT_SPECS = {
   upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true, ["id", "key"])),
 } satisfies Record<ToolName, OutputSpec>;
 
-/** Coordinated handlers can reject a call before tool-specific result fields exist. */
-function hasErrorOutput(name: string, outputSpec: OutputSpec): boolean {
-  return Boolean(outputSpec.errorEnvelope) || !toolAnnotationsFor(name).readOnlyHint || name === "read_doc";
-}
-
 /** Canonical tools whose handlers can return the shared structured error envelope. */
 export const TOOLS_WITH_ERROR_OUTPUT = Object.freeze(
-  Object.entries(OUTPUT_SPECS)
-    .filter(([name, outputSpec]) => hasErrorOutput(name, outputSpec))
-    .map(([name]) => name as ToolName),
+  Object.keys(OUTPUT_SPECS) as ToolName[],
 );
 
 /** Converts a compact field kind into its runtime Zod schema. */
@@ -183,6 +177,13 @@ function fieldSchema(kind: FieldKind): ZodType {
     case "nullableBoolean": return z.boolean().nullable();
     case "stringArray": return z.array(z.string());
     case "unknownArray": return z.array(z.unknown());
+    case "workspaceArray": return z.array(z.object({
+      id: z.string(),
+      name: z.string().nullable(),
+      avatar: z.string().nullable(),
+      url: z.string(),
+      profileStatus: z.enum(["available", "unavailable", "skipped"]),
+    }).passthrough());
     case "object": return z.record(z.string(), z.unknown());
     case "nullableObject": return z.record(z.string(), z.unknown()).nullable();
     case "icon": return z.union([
@@ -205,7 +206,6 @@ export function toolOutputSchemaFor(name: string) {
   const outputSpec = OUTPUT_SPECS[name as ToolName];
   if (!outputSpec) return undefined;
 
-  const errorEnvelope = hasErrorOutput(name, outputSpec);
   const successShape: Record<string, ZodType> = {};
   for (const [field, kind] of Object.entries(outputSpec.fields)) {
     const schema = fieldSchema(kind);
@@ -214,15 +214,15 @@ export function toolOutputSchemaFor(name: string) {
   for (const [field, kind] of Object.entries(outputSpec.optionalFields || {})) {
     successShape[field] = fieldSchema(kind).optional();
   }
-  if (!errorEnvelope) return z.object(successShape).passthrough();
-
   const shape: Record<string, ZodType> = Object.fromEntries(
     Object.entries(successShape).map(([field, schema]) => [field, schema.optional()]),
   );
   shape.ok = z.boolean().optional();
   shape.error ??= z.string().optional();
   shape.code = z.string().optional();
+  shape.causeCode = z.string().optional();
   shape.retryable = z.boolean().optional();
+  shape.recoveryGuidance = z.string().optional();
   shape.details = z.record(z.string(), z.unknown()).optional();
   const success = z.object({
     ...successShape,

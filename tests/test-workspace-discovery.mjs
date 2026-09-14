@@ -168,7 +168,8 @@ async function testGetWorkspaceUsesTheSameProfileContract() {
   const socket = makeSocket();
   const requests = [];
   const gql = {
-    endpoint: "https://affine.example/graphql",
+    endpoint: "https://api.example/custom/graphql",
+    baseUrl: "https://affine.example/tenant/",
     async request(query, variables) {
       requests.push({ query, variables });
       return {
@@ -208,7 +209,7 @@ async function testGetWorkspaceUsesTheSameProfileContract() {
     permissions: { Workspace_Read: true, Workspace_CreateDoc: true },
     name: "Detailed Workspace",
     avatar: "",
-    url: "https://affine.example/workspace/workspace-detail",
+    url: "https://affine.example/tenant/workspace/workspace-detail",
     profileStatus: "available",
   });
   assert.deepEqual(requests[0].variables, { id: "workspace-detail" });

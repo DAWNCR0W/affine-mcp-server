@@ -52,8 +52,9 @@ function captureWarnings(fn) {
 function runCli(args, environment = {}, input = "") {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
-    delete env.AFFINE_ALLOW_INSECURE_HTTP;
-    delete env.AFFINE_BASE_URL;
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("AFFINE_") || key === "MCP_TRANSPORT" || key === "PORT") delete env[key];
+    }
     const child = spawn(process.execPath, [CLI_ENTRY, ...args], {
       cwd: PROJECT_DIR,
       env: {
@@ -65,17 +66,24 @@ function runCli(args, environment = {}, input = "") {
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       child.kill("SIGKILL");
       reject(new Error(`CLI timed out: ${args.join(" ")}`));
     }, 20_000);
     child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       reject(error);
     });
-    child.once("exit", (code) => {
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       resolve({ code, stdout, stderr });
     });
@@ -194,6 +202,7 @@ async function testLoginCliHonorsInsecureOptIn() {
     ["login", "--url", PLAIN_HTTP_REMOTE, "--token", "regression-test-token", "--force"],
     { AFFINE_ALLOW_INSECURE_HTTP: "false" },
   );
+  assert.equal(fromConfigFile.code, 1, "an explicit false opt-in must fail login");
   assert.ok(
     fromConfigFile.stderr.includes(HTTPS_REJECTION),
     `an explicit false opt-in must keep plain HTTP rejected: ${fromConfigFile.stderr}`,
@@ -220,6 +229,11 @@ async function testLoginCliReadsOptInFromConfigFile() {
     ["login", "--token", "regression-test-token", "--workspace-id", "w", "--force"],
     { XDG_CONFIG_HOME: configHome },
     "\n",
+  );
+  assert.equal(result.code, 1, "the configured unreachable host must fail the connection");
+  assert.ok(
+    result.stderr.includes("Authentication failed"),
+    `the config-file opt-in must reach the network call: ${result.stderr}`,
   );
   assert.ok(
     !result.stderr.includes(HTTPS_REJECTION),
