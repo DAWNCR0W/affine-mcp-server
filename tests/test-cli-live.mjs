@@ -82,12 +82,15 @@ async function createRemoteArtifacts() {
     const workspace = JSON.parse(workspaceResult.content[0].text);
     workspaceId = workspace.id;
     expect(workspaceId, 'create_workspace did not return an id');
+    const workspaceName = workspace.name;
+    expect(workspaceName, 'create_workspace did not return a name');
 
     const { cookieHeader } = await loginWithPassword(BASE_URL, EMAIL, PASSWORD);
 
     return {
       cookie: cookieHeader,
       workspaceId,
+      workspaceName,
       async cleanup() {
         try {
           await cleanupTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
@@ -115,7 +118,7 @@ mkdirSync(xdgConfigHome, { recursive: true });
 let remoteArtifacts;
 try {
   remoteArtifacts = await createRemoteArtifacts();
-  const { cookie, workspaceId } = remoteArtifacts;
+  const { cookie, workspaceId, workspaceName } = remoteArtifacts;
 
   const login = runCli("login", [
     "login",
@@ -125,6 +128,7 @@ try {
     "--force",
   ], xdgConfigHome, `${cookie}\n`);
   expect(login.status === 0, `login failed: ${login.stderr || login.stdout}`);
+  expect(login.stderr.includes(`Selected workspace: ${workspaceName} (${workspaceId})`), "login should print the actual workspace name");
 
   const configPath = path.join(xdgConfigHome, "affine-mcp", "config");
   const configContent = readFileSync(configPath, "utf8");
@@ -136,11 +140,29 @@ try {
   const statusJson = JSON.parse(status.stdout);
   expect(statusJson.userEmail === EMAIL, `status user email mismatch: ${status.stdout}`);
   expect(statusJson.workspaceId === workspaceId, `status workspace mismatch: ${status.stdout}`);
+  expect(statusJson.workspaceName === workspaceName, `status workspace name mismatch: ${status.stdout}`);
+  expect(statusJson.workspaceMembership === "member", `status did not validate workspace membership: ${status.stdout}`);
+
+  const workspaces = runCli("workspaces --json", ["workspaces", "--json"], xdgConfigHome);
+  expect(workspaces.status === 0, `workspaces --json failed: ${workspaces.stderr || workspaces.stdout}`);
+  const workspacesJson = JSON.parse(workspaces.stdout);
+  expect(
+    workspacesJson.some((workspace) => workspace.id === workspaceId && workspace.name === workspaceName && workspace.displayName === workspaceName),
+    `workspace listing did not preserve the actual workspace name: ${workspaces.stdout}`,
+  );
 
   const doctor = runCli("doctor --json", ["doctor", "--json"], xdgConfigHome);
   expect(doctor.status === 0, `doctor --json failed: ${doctor.stderr || doctor.stdout}`);
   const doctorJson = JSON.parse(doctor.stdout);
   expect(doctorJson.ok === true, `doctor should be ok: ${doctor.stdout}`);
+  expect(
+    doctorJson.checks.some((check) => check.name === "workspace-membership" && check.ok),
+    `doctor did not confirm workspace membership: ${doctor.stdout}`,
+  );
+  expect(
+    doctorJson.checks.some((check) => check.name === "realtime-root-read" && check.ok),
+    `doctor did not confirm realtime root read: ${doctor.stdout}`,
+  );
 
   const snippet = runCli("snippet all --env", ["snippet", "all", "--env"], xdgConfigHome);
   expect(snippet.status === 0, `snippet all failed: ${snippet.stderr || snippet.stdout}`);

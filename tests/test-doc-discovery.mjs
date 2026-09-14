@@ -226,6 +226,30 @@ async function main() {
     });
     expectEqual(sortedByUpdatedAt?.results?.[0]?.title, "Task Tracker", "search_docs updatedAt sort");
 
+    const firstSearchPage = await call("search_docs", {
+      workspaceId: workspace.id,
+      query: "Task",
+      limit: 1,
+      offset: 0,
+    });
+    expectEqual(firstSearchPage?.results?.length, 1, "search_docs first page size");
+    expectEqual(firstSearchPage?.limit, 1, "search_docs first page limit");
+    expectEqual(firstSearchPage?.offset, 0, "search_docs first page offset");
+    expectEqual(firstSearchPage?.hasMore, true, "search_docs first page hasMore");
+    expectEqual(firstSearchPage?.truncated, true, "search_docs first page truncated");
+    expectEqual(firstSearchPage?.nextOffset, 1, "search_docs nextOffset");
+
+    const secondSearchPage = await call("search_docs", {
+      workspaceId: workspace.id,
+      query: "Task",
+      limit: 1,
+      offset: 1,
+    });
+    expectEqual(secondSearchPage?.results?.length, 1, "search_docs second page size");
+    expectEqual(secondSearchPage?.hasMore, false, "search_docs second page hasMore");
+    expectEqual(secondSearchPage?.truncated, false, "search_docs second page truncated");
+    expectEqual(secondSearchPage?.nextOffset, null, "search_docs final nextOffset");
+
     await waitForListDocs(
       workspace.id,
       result => {

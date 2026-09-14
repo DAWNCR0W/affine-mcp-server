@@ -1,3 +1,4 @@
+import "./nodeRuntime.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
@@ -21,7 +22,8 @@ import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
 import { createToolFilter, toolAnnotationsFor } from "./toolSurface.js";
 import { toolOutputSchemaFor } from "./toolOutputSchemas.js";
-import { stripSchemaDialect } from "./util/mcp.js";
+import { coordinateTool } from "./toolCoordination.js";
+import { stripSchemaDialect, withToolErrors } from "./util/mcp.js";
 import { resolveConfiguredAuth } from "./util/configuredAuth.js";
 import {
   assertOAuthServiceWritePolicy,
@@ -145,6 +147,7 @@ async function buildServer() {
   // Initialize GraphQL client with authentication
   const gql = new GraphQLClient({
     endpoint: config.graphqlEndpoint,
+    baseUrl: config.baseUrl,
     headers: gqlHeaders,
     authProvider: () => authSession.ready(),
   });
@@ -160,14 +163,22 @@ async function buildServer() {
     (server as any).registerTool = (name: string, options: any, handler: any) => {
       if (!toolFilter.isEnabled(name)) return;
       const outputSchema = options?.outputSchema ?? toolOutputSchemaFor(name);
+      const coordinated = coordinateTool(name, options?.inputSchema || {}, handler, {
+        gql, endpoint: config.graphqlEndpoint, workspaceId: config.defaultWorkspaceId,
+      });
       return originalRegisterTool(name, {
         ...options,
+        inputSchema: coordinated.inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         annotations: {
           ...toolAnnotationsFor(name),
           ...(options?.annotations || {}),
         },
-      }, handler);
+      }, withToolErrors(coordinated.handler, {
+        toolName: name,
+        authMode: config.authMode,
+        readOnly: Boolean(toolAnnotationsFor(name).readOnlyHint),
+      }));
     };
   }
   console.error(`[affine-mcp] Tool profile: ${toolFilter.profile}`);
@@ -176,7 +187,10 @@ async function buildServer() {
   console.error(`[affine-mcp] Enabled tools: ${toolFilter.enabledTools.length}/${toolFilter.totalToolCount}`);
 
   registerWorkspaceTools(server, gql);
-  registerDocTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerDocTools(server, gql, {
+    workspaceId: config.defaultWorkspaceId,
+    toolSurface: { profile: toolFilter.profile, enabledTools: toolFilter.enabledTools },
+  });
   registerCommentTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });

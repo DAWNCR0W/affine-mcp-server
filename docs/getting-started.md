@@ -32,10 +32,19 @@ affine-mcp login
 
 What happens:
 
-- The CLI asks for your AFFiNE base URL
+- The CLI asks for your AFFiNE base URL, defaulting to the existing environment
+  or saved URL when one is already configured
 - For AFFiNE Cloud, it guides you to paste the Cookie request header from a signed-in browser session
 - For self-hosted AFFiNE, it signs in with email/password and saves the resulting session cookie
+- Workspace discovery displays the workspace name first and falls back to
+  `Workspace name unavailable` when no name is available; the full workspace ID
+  remains visible
 - The effective config is stored at `$XDG_CONFIG_HOME/affine-mcp/config` when `XDG_CONFIG_HOME` is set, otherwise at `~/.config/affine-mcp/config`
+
+An invalid numeric selection is rejected and prompted again. Enter `q` or send
+end-of-file to cancel login without changing the saved config. If workspace
+discovery fails, login reports the failure and does not claim completion or write
+a partial credential set.
 
 For automation, pass browser-session cookies through stdin instead of process arguments:
 
@@ -45,11 +54,25 @@ affine-mcp login --url https://app.affine.pro --cookie-stdin --workspace-id your
 
 Paste the cookie at the hidden prompt, or pipe it from a trusted secret source. The requested workspace must be available to the authenticated account. Piped input requires `--force` when existing credentials would be replaced.
 
+Once credentials are saved, list and switch workspaces without another login:
+
+```bash
+affine-mcp workspaces
+affine-mcp workspaces --json
+affine-mcp workspace <workspace-id>
+```
+
+`workspaces` marks the saved default. `workspace` validates access using the
+current credentials and changes only `AFFINE_WORKSPACE_ID`; it is a local
+selection and does not expand the account's access boundary. With no ID,
+`workspace` prompts for the same validated selection.
+
 ### 3. Verify the saved config
 
 ```bash
 affine-mcp status
 affine-mcp doctor
+affine-mcp snippet codex
 ```
 
 ### 4. Register the server with a client
@@ -67,6 +90,16 @@ Minimal stdio config:
 ```
 
 See [client setup](client-setup.md) for full client-specific snippets.
+
+The recommended Codex snippet is a command-only registration line that keeps
+using the current saved login. Claude and Cursor snippets are JSON. After
+applying a snippet, restart or reconnect the client so it launches a fresh MCP
+process.
+
+For an explicit environment snapshot, add `--env` to a snippet command. It
+copies the currently resolved credentials, headers, URL, workspace, and relevant
+OAuth settings; client environment variables take precedence over saved config,
+so remove or regenerate copied credentials when they need renewal.
 
 ## Path B: Explicit environment variables
 
@@ -172,10 +205,14 @@ affine-mcp --version
 Use this sequence after any first-run setup:
 
 ```bash
-affine-mcp status
-affine-mcp show-config
+affine-mcp login
 affine-mcp doctor
+affine-mcp snippet codex
 ```
+
+For an already configured installation, `login` can be replaced with
+`affine-mcp status`. Apply the generated client configuration, then restart or
+reconnect that client.
 
 If you are running the Docker image, also verify:
 
@@ -188,18 +225,29 @@ Expected results:
 
 - `status` confirms the active base URL, auth source, and connection result
 - `show-config` prints the effective configuration with secrets redacted
-- `doctor` checks config shape and connectivity and points to the failing layer
+- `doctor` checks the resolved base URL, authentication, GraphQL access, selected
+  workspace membership, realtime workspace-root access, effective tool filters,
+  HTTP exposure when HTTP mode is selected, and OAuth configuration/discovery
+  when OAuth is selected. It does not validate every environment-only proxy,
+  WebSocket, or HTTP runtime limit; those are checked when their runtime starts.
 - `healthz` reports process liveness; `readyz` succeeds only when OAuth discovery (if enabled) and the configured AFFiNE GraphQL endpoint are reachable
 
 OAuth metadata requests have a five-second timeout covering headers and the complete response body. Failed discovery entries are removed from the cache so the next readiness check or token verification can retry after the issuer recovers.
 
-If you are onboarding another client, these helpers can generate snippets from the current config:
+### Advanced: explicit environment snapshot
+
+If you are onboarding another client and need an explicit environment snapshot,
+these helpers copy the current config into the generated snippets:
 
 ```bash
 affine-mcp snippet claude --env
 affine-mcp snippet codex --env
 affine-mcp snippet all --env
 ```
+
+Use `command -v affine-mcp` and `command -v node` when a GUI client cannot find
+the executable. See [GUI client PATH troubleshooting](client-setup.md#gui-client-path-troubleshooting)
+for absolute-path examples and the Node.js shebang requirement.
 
 ## Common first-run failures
 

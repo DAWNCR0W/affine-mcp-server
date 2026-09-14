@@ -41,6 +41,40 @@ async function listToolEntries(env = {}) {
   return result.tools;
 }
 
+async function inspectAdvertisedSurface(env = {}) {
+  const client = new Client(
+    { name: "capability-surface-test-client", version: "1.0.0" },
+    { capabilities: {} }
+  );
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [TSX_CLI_PATH, SRC_PATH],
+    env: {
+      ...process.env,
+      ...env,
+      AFFINE_BASE_URL: "http://localhost:3000",
+      AFFINE_API_TOKEN: "dummy_token",
+      XDG_CONFIG_HOME: "/tmp/affine-capabilities-" + Date.now(),
+    },
+  });
+
+  try {
+    await client.connect(transport);
+    const tools = await client.listTools();
+    const capabilitiesResult = await client.callTool({ name: "get_capabilities", arguments: {} });
+    const capabilities = capabilitiesResult?.structuredContent ?? JSON.parse(
+      capabilitiesResult?.content?.[0]?.text || "{}",
+    );
+    return { toolNames: tools.tools.map(tool => tool.name), capabilities };
+  } finally {
+    await transport.close();
+  }
+}
+
+function sameToolNames(left, right) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
 async function testFiltering(env = {}) {
   const tools = await listToolEntries(env);
   return tools.map((t) => t.name);
@@ -177,6 +211,40 @@ async function run() {
       console.log("✅ Success: All default tools expose object-shaped output schemas.");
     } else {
       console.error(`❌ Failed: Output schemas missing or invalid. tools=${missingOutputSchemas.map(t => t.name).join(", ")}`);
+      hasFailures = true;
+    }
+
+    // 0c. Capabilities must distinguish static support from the effective MCP surface.
+    console.log("\nCase 0c: Capabilities effective tools match tools/list");
+    const capabilityCases = [
+      ["full", { AFFINE_TOOL_PROFILE: "full", AFFINE_DISABLED_GROUPS: "", AFFINE_DISABLED_TOOLS: "" }],
+      ["read_only", { AFFINE_TOOL_PROFILE: "read_only", AFFINE_DISABLED_GROUPS: "", AFFINE_DISABLED_TOOLS: "" }],
+      ["disabled", { AFFINE_TOOL_PROFILE: "full", AFFINE_DISABLED_GROUPS: "", AFFINE_DISABLED_TOOLS: "create_doc" }],
+    ];
+    const capabilityFailures = [];
+    for (const [label, env] of capabilityCases) {
+      const surface = await inspectAdvertisedSurface(env);
+      const server = surface.capabilities?.server;
+      const effective = server?.effective;
+      const supportedMatchesManifest = sameToolNames(server?.supportedTools || [], MANIFEST_TOOLS);
+      const effectiveMatchesToolsList = sameToolNames(effective?.enabledTools || [], surface.toolNames);
+      const profileMatches = effective?.profile === (label === "disabled" ? "full" : label);
+      if (!supportedMatchesManifest || !effectiveMatchesToolsList || !profileMatches) {
+        capabilityFailures.push({
+          label,
+          supportedMatchesManifest,
+          effectiveMatchesToolsList,
+          profile: effective?.profile,
+          toolCount: surface.toolNames.length,
+          enabledCount: effective?.enabledTools?.length,
+        });
+      }
+    }
+    if (capabilityFailures.length === 0) {
+      console.log("✅ Success: Full, read-only, and disabled surfaces report effective tools/list accurately.");
+    } else {
+      console.error("❌ Failed: Capability effective surface diverged from tools/list.");
+      console.error(JSON.stringify(capabilityFailures, null, 2));
       hasFailures = true;
     }
 

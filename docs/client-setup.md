@@ -132,6 +132,28 @@ codex mcp add affine \
   -- affine-mcp
 ```
 
+To generate a registration command from the current saved or environment
+configuration, run:
+
+```bash
+affine-mcp login
+affine-mcp doctor
+affine-mcp snippet codex
+```
+
+The recommended Codex output is a command-only line that keeps using the current
+saved login. `snippet claude` and `snippet cursor` output JSON for their
+respective configuration files. After applying the output, restart or reconnect
+the client to launch a new MCP process.
+
+### Advanced: explicit environment snapshot
+
+For an explicit environment snapshot, add `--env` to a snippet command. This
+copies the currently resolved AFFiNE URL, authentication, headers, workspace,
+and relevant OAuth settings. Environment variables supplied by the client win
+over the saved config, so a copied cookie, token, or password must be removed or
+regenerated when it expires.
+
 ## Cursor
 
 Project-local `.cursor/mcp.json`:
@@ -193,6 +215,34 @@ Always send the MCP bearer token in the `Authorization` header. The server
 rejects `?token=` by default because URL credentials can leak through logs and
 browser history.
 
+## Reuse a local HTTP listener from stdio clients
+
+For multiple writing agents, start one authenticated HTTP MCP server as described
+in the [private bridge setup](configuration-and-deployment.md#private-stdio-bridge-for-a-local-http-listener).
+Configure each local stdio client to launch the proxy instead of a full server:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp-http-proxy",
+      "env": {
+        "AFFINE_MCP_HTTP_PROXY_URL": "http://127.0.0.1:3000/mcp"
+      }
+    }
+  }
+}
+```
+
+The proxy must inherit `AFFINE_MCP_HTTP_TOKEN` from the trusted host environment
+that launches it. Keep the token out of command arguments and copied client
+configuration. Each proxy creates its own session, while the listener coordinates writes across
+all of them. Direct HTTP clients can share the same listener. Use the same
+server version for the listener and proxies, and follow the
+[concurrency contract](configuration-and-deployment.md#concurrent-writes) when
+editing the same document. Starting a separate `affine-mcp` server for every
+agent does not provide coordination between those processes.
+
 ## Setup tips
 
 - Prefer `affine-mcp login` for local development
@@ -202,3 +252,49 @@ browser history.
 - If your shell treats `!` specially, wrap passwords in single quotes
 - When using MCP Inspector, pass `--config` and `--server` or supply the required `AFFINE_*` values with `-e`
 - Use `affine-mcp doctor` whenever a client config looks correct but the connection still fails
+
+## GUI client PATH troubleshooting
+
+GUI applications often start with a shorter `PATH` than an interactive shell.
+Check the paths in the same shell where the installation works:
+
+```bash
+command -v affine-mcp
+command -v node
+affine-mcp --version
+```
+
+If `affine-mcp` is found there but not by the GUI client, use the absolute path
+reported by `command -v affine-mcp` in the client's `command` field. For example:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "/Users/you/.nvm/versions/node/v22.15.0/bin/affine-mcp"
+    }
+  }
+}
+```
+
+Replace the illustrative version and path with the exact path printed on your machine.
+The installed launcher uses a `#!/usr/bin/env node` shebang,
+so an absolute script path still requires the GUI process's `PATH` to contain
+the directory that holds `node`. If the GUI cannot inherit that `PATH`, invoke
+the absolute Node executable and pass the absolute `affine-mcp` path as its
+argument instead:
+
+```json
+{
+  "mcpServers": {
+    "affine": {
+      "command": "/Users/you/.nvm/versions/node/v22.15.0/bin/node",
+      "args": ["/Users/you/.nvm/versions/node/v22.15.0/bin/affine-mcp"]
+    }
+  }
+}
+```
+
+Use exact paths in both examples. If the client still fails, run
+`affine-mcp doctor` from the same environment and inspect the client's MCP
+process log.

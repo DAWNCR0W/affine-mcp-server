@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-09-14
+
+### Added
+- Added `update_table_column_widths` plus `read_doc.tableColumnWidths` for reversible, content-preserving native table sizing.
+- Serialize complete MCP write operations per workspace across sessions in one server process. Separate workspaces remain independent, and queued requests have bounded waits and cancellation handling.
+- Return a document content `revision` from `read_doc` and accept optional `expectedRevision` on document content mutations to reject stale edits before mutation.
+- Added `login --save-credentials`, which stores the email/password used to sign in instead of the session cookie, so the server can sign in on its own and renew the session before it expires.
+
+### Changed
+- Add name-first `workspaces [--json]` discovery and validated `workspace [id]` default selection without re-authentication; selection changes only the local default workspace.
+- Make login reuse the configured URL, fall back from missing workspace names to `Workspace name unavailable`, retry invalid selections, and cancel safely on `q` or end-of-file without writing credentials.
+- Generate client snippets from the resolved configuration, with `--env` preserving credentials and workspace selection while keeping environment precedence explicit.
+- Separate supported capabilities from the effective enabled tool surface and expose pagination state for `search_docs` through `offset`, `hasMore`, `truncated`, and `nextOffset`.
+- Clarify saved-config precedence versus environment-only HTTP, proxy, WebSocket, and runtime controls, and document the actual `doctor` checks.
+
+### Fixed
+- Accept equivalent normalized saved URLs when selecting a default workspace, and classify non-JSON HTTP failures before validating successful GraphQL response content types.
+- Wait for the AFFiNE healthcheck before publishing the disposable Docker gateway during standard Compose startup.
+- Honor `AFFINE_ALLOW_INSECURE_HTTP` in `affine-mcp login`. The CLI granted the plain-HTTP opt-in to `validateBaseUrl` and then re-validated the same URL through `buildGraphqlEndpoint`, which dropped the option, so login always failed with "must use HTTPS for non-loopback destinations" on a self-hosted instance reached over plain HTTP. Runtime configuration was unaffected because `loadConfig` builds the endpoint itself.
+- Default the `login` URL prompt to the configured `AFFINE_BASE_URL` from the environment or the saved config file. The prompt displayed and fell back to `https://app.affine.pro`, so pressing Enter silently replaced a configured self-hosted URL with the AFFiNE Cloud URL.
+- Read the `AFFINE_ALLOW_INSECURE_HTTP` opt-in from the saved config file during `login`, matching runtime precedence (environment first, then config file).
+- Classify AFFiNE Cloud by complete hostname labels instead of substring-matching `affine.pro`. Self-hosted deployments such as `https://affine.proxy.internal` or `https://affine.pro.example.com` previously received the Cloud login menu, which offers no email/password option.
+- Suppress the Node 26 unused Web Storage startup warning without replacing an explicitly installed polyfill, and report an unavailable workspace-root snapshot instead of a false empty workspace.
+- Preserve header-only Authorization/Cookie credentials and saved non-authentication headers during relogin while normalizing authentication, network, and uncertain-write failures with actionable recovery guidance.
+- Make `doctor` validate selected-workspace membership, realtime root access, effective tool filters, HTTP exposure, and OAuth readiness before reporting success.
+- Keep workspace and document browser links based on the configured AFFiNE base URL when `AFFINE_GRAPHQL_PATH` uses a custom route, and document manual recovery for partial workspace creation without duplicate creates.
+
+### Tests
+- Verify native table width changes and automatic sizing restoration against a live AFFiNE instance while preserving cell content.
+- Cover workspace queue ordering, cancellation, failure recovery, overload, and deletion-aware document revisions.
+- Verify concurrent writes through multiple HTTP sessions and independent stdio proxy processes against a local AFFiNE instance.
+- Added `tests/test-insecure-http-opt-in.mjs` covering opt-in forwarding through `buildGraphqlEndpoint`, Cloud/self-hosted hostname classification, and the `login` CLI path with the opt-in supplied by the environment and by the config file.
+- Cover CLI workspace selection, safe login cancellation, discovery failure handling, snippet propagation, search pagination, capability-surface reporting, and partial workspace recovery.
+- Add regression coverage for Node 26 startup warnings, doctor membership/realtime/filter checks, header-only relogin, email/password credential saving with stale authentication headers, and shared handler error envelopes.
+
 ## [3.7.0] - 2026-09-10
 
 ### Added
@@ -788,6 +823,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
 [3.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.7.0
 [3.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.6.0
 [3.5.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.5.1
@@ -828,4 +864,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.7.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.0...HEAD

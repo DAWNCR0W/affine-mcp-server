@@ -5,7 +5,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text, toolError } from "../util/mcp.js";
+import { receipt, text, toolError, ToolFailure } from "../util/mcp.js";
 import {
   type DocumentMoveOutcome,
   type DocumentCreationErrorInput,
@@ -30,6 +30,7 @@ import {
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
 import { secureAffineId, secureRandomInt31 } from "../util/random.js";
+import { documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -46,6 +47,7 @@ import { richTextValueToDeltas, richTextValueToString } from "../markdown/richTe
 import { buildMarkdownFrontmatter } from "../markdown/safety.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
+import { ALL_TOOLS } from "../toolSurface.js";
 import {
   type Bound,
   DEFAULT_NOTE_XYWH,
@@ -597,6 +599,105 @@ type UpdateTableCellInput = {
   text: string | TextDelta[];
 };
 
+type UpdateTableColumnWidthsInput = {
+  workspaceId?: string;
+  docId: string;
+  blockId: string;
+  widths: Array<number | null>;
+};
+
+export const TABLE_COLUMN_MIN_WIDTH = 60;
+export const TABLE_COLUMN_MAX_WIDTH = 4096;
+
+/** Narrow unknown JSON values to plain records without matching Yjs shared types. */
+function isPlainObjectRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Sum explicit table widths, or return null while any column uses automatic sizing. */
+export function totalTableColumnWidth(
+  widths: Array<number | null>,
+): number | null {
+  return widths.every(width => width !== null)
+    ? widths.reduce((sum, width) => sum + (width ?? 0), 0)
+    : null;
+}
+
+/** Read a native table width without changing its nested, object, or flat storage shape. */
+export function readTableColumnWidth(
+  block: Y.Map<any>,
+  columnId: string,
+): number | null {
+  const columns = block.get("prop:columns");
+  if (columns instanceof Y.Map) {
+    const column = columns.get(columnId);
+    const width = column instanceof Y.Map
+      ? column.get("width")
+      : column && typeof column === "object"
+        ? (column as Record<string, unknown>).width
+        : undefined;
+    return typeof width === "number" && Number.isFinite(width) ? width : null;
+  }
+
+  if (isPlainObjectRecord(columns)) {
+    const column = columns[columnId];
+    const width = isPlainObjectRecord(column)
+      ? column.width
+      : undefined;
+    return typeof width === "number" && Number.isFinite(width) ? width : null;
+  }
+
+  const width = block.get(`prop:columns.${columnId}.width`);
+  return typeof width === "number" && Number.isFinite(width) ? width : null;
+}
+
+/** Write a native table width while preserving the column container's storage shape. */
+export function writeTableColumnWidth(
+  block: Y.Map<any>,
+  columnId: string,
+  width: number | null,
+): void {
+  const columns = block.get("prop:columns");
+  if (columns instanceof Y.Map) {
+    const column = columns.get(columnId);
+    if (column instanceof Y.Map) {
+      if (width === null) column.delete("width");
+      else column.set("width", width);
+      return;
+    }
+    if (column && typeof column === "object") {
+      const next = { ...(column as Record<string, unknown>) };
+      if (width === null) delete next.width;
+      else next.width = width;
+      columns.set(columnId, next);
+      return;
+    }
+    throw new Error(`Table column '${columnId}' has an unsupported storage shape.`);
+  }
+
+  if (isPlainObjectRecord(columns)) {
+    const currentColumns = columns;
+    const column = currentColumns[columnId];
+    if (!isPlainObjectRecord(column)) {
+      throw new Error(`Table column '${columnId}' has an unsupported storage shape.`);
+    }
+    const nextColumn = { ...column };
+    if (width === null) delete nextColumn.width;
+    else nextColumn.width = width;
+    block.set("prop:columns", {
+      ...currentColumns,
+      [columnId]: nextColumn,
+    });
+    return;
+  }
+
+  const key = `prop:columns.${columnId}.width`;
+  if (width === null) block.delete(key);
+  else block.set(key, width);
+}
+
 type NormalizedAppendBlockInput = {
   workspaceId?: string;
   docId: string;
@@ -1048,10 +1149,35 @@ type DocumentCreationTransport = {
   pushDocUpdate?: typeof pushDocUpdate;
 };
 
+type DocumentToolSurface = {
+  profile: string;
+  enabledTools: readonly string[];
+};
+
+type DocumentToolDefaults = {
+  workspaceId?: string;
+  toolSurface?: DocumentToolSurface;
+};
+
+function affineBaseUrl(endpoint: string, configuredBaseUrl?: string): string {
+  const explicitBaseUrl = configuredBaseUrl?.trim() || process.env.AFFINE_BASE_URL?.trim();
+  return (explicitBaseUrl || new URL(endpoint).origin).replace(/\/+$/, "");
+}
+
+function requireWorkspaceRootSnapshot(workspaceId: string, snapshot: { missing?: string }): string {
+  if (typeof snapshot.missing !== "string") {
+    throw new ToolFailure(
+      `Workspace root document is unavailable for workspace ${workspaceId}.`,
+      "workspace_root_unavailable",
+    );
+  }
+  return snapshot.missing;
+}
+
 export function registerDocTools(
   server: McpServer,
   gql: GraphQLClient,
-  defaults: { workspaceId?: string },
+  defaults: DocumentToolDefaults,
   documentCreationTransport: DocumentCreationTransport = {},
 ) {
   registerMindmapTools(server, gql, defaults, { getSurfaceElementsValueMap, buildSurfaceElementData, writeSurfaceElement, nextSurfaceElementIndex });
@@ -3305,6 +3431,7 @@ export function registerDocTools(
     tableCellDeltas: TextDelta[][][];
     rowIds: string[];
     columnIds: string[];
+    columnWidths: Array<number | null>;
   } | null {
     const compareOrder = (left: string, right: string) => {
       if (left < right) return -1;
@@ -3337,6 +3464,7 @@ export function registerDocTools(
           typeof mapField(payload, "order") === "string"
             ? mapField(payload, "order") as string
             : columnId,
+        width: readTableColumnWidth(block, columnId),
       }))
       .sort((a, b) => compareOrder(a.order, b.order));
 
@@ -3377,7 +3505,11 @@ export function registerDocTools(
           .map(([rowId, order]) => ({ rowId, order }))
           .sort((a, b) => compareOrder(a.order, b.order));
         columnEntries = Array.from(flatColumns.entries())
-          .map(([columnId, order]) => ({ columnId, order }))
+          .map(([columnId, order]) => ({
+            columnId,
+            order,
+            width: readTableColumnWidth(block, columnId),
+          }))
           .sort((a, b) => compareOrder(a.order, b.order));
         cells = flatCells;
       }
@@ -3431,6 +3563,7 @@ export function registerDocTools(
       tableCellDeltas,
       rowIds: rowEntries.map(({ rowId }) => rowId),
       columnIds: columnEntries.map(({ columnId }) => columnId),
+      columnWidths: columnEntries.map(({ width }) => width),
     };
   }
 
@@ -5020,12 +5153,10 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({ workspaceId, totalTags: 0, tags: [] });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
 
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
       const { options, byId } = getWorkspaceTagOptionMaps(meta);
@@ -5099,12 +5230,14 @@ export function registerDocTools(
     tag?: string;
     sortBy?: "relevance" | "updatedAt";
     sortDirection?: "asc" | "desc";
+    offset?: number;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required.");
     const q = (parsed.query ?? "").toLocaleLowerCase().trim();
     if (!q) throw new Error("query is required.");
     const limit = parsed.limit ?? 20;
+    const offset = parsed.offset ?? 0;
     const matchMode = parsed.matchMode ?? "substring";
     const sortBy = parsed.sortBy ?? "relevance";
     const sortDirection = parsed.sortDirection ?? "desc";
@@ -5116,16 +5249,14 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({ query: q, results: [], totalCount: 0 });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
       const { byId } = getWorkspaceTagOptionMaps(meta);
 
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
       const filtered = pages
         .map((page) => {
           const rank = getSearchMatchRank(page.title, q, matchMode);
@@ -5161,12 +5292,13 @@ export function registerDocTools(
         } else if (a.updatedTimestamp !== b.updatedTimestamp) {
           return b.updatedTimestamp - a.updatedTimestamp;
         }
-        return (a.title ?? "").localeCompare(b.title ?? "");
+        const titleOrder = (a.title ?? "").localeCompare(b.title ?? "");
+        return titleOrder !== 0 ? titleOrder : a.docId.localeCompare(b.docId);
       });
 
       const totalCount = filtered.length;
       const matches = filtered
-        .slice(0, limit)
+        .slice(offset, offset + limit)
         .map((entry) => ({
           docId: entry.docId,
           title: entry.title,
@@ -5175,6 +5307,7 @@ export function registerDocTools(
           url: entry.url,
           inTrash: entry.inTrash,
         }));
+      const hasMore = offset + matches.length < totalCount;
 
       return text({
         query: parsed.query,
@@ -5182,8 +5315,13 @@ export function registerDocTools(
         matchMode,
         sortBy,
         sortDirection,
+        limit,
         totalCount,
         results: matches,
+        offset,
+        hasMore,
+        truncated: hasMore,
+        nextOffset: hasMore ? offset + matches.length : null,
       });
     } finally {
       socket.disconnect();
@@ -5194,11 +5332,12 @@ export function registerDocTools(
     "search_docs",
     {
       title: "Search Documents by Title",
-      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, direct URL, and inTrash for each match.",
+      description: "Fast search for documents by title using workspace metadata. Much faster than exporting each doc. Returns docId, title, direct URL, and inTrash for each match, plus offset/limit pagination state (hasMore, truncated, and nextOffset).",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)."),
         query: z.string().describe("Search query — matched case-insensitively against doc titles."),
         limit: BoundedSearchLimit.optional().describe("Max results to return (default: 20, maximum: 200)."),
+        offset: BoundedOffset.optional().describe("Zero-based result offset for paging through matches (default: 0)."),
         matchMode: z.enum(["substring", "prefix", "exact"]).optional().describe("How to match titles (default: substring)."),
         tag: z.string().optional().describe("Optional tag filter (case-insensitive substring match against resolved tag names)."),
         sortBy: z.enum(["relevance", "updatedAt"]).optional().describe("Sort by match relevance (default) or by updatedAt."),
@@ -5232,17 +5371,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({
-          query: title,
-          caseInsensitive,
-          matches: [],
-          workspaceDocCount: 0,
-          truncated: false,
-        });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
 
@@ -5331,12 +5462,10 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-      if (!snapshot.missing) {
-        return text({ workspaceId, tag, ignoreCase, totalDocs: 0, docs: [] });
-      }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, snapshot);
 
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const meta = wsDoc.getMap("meta");
       const pages = getWorkspacePageEntries(meta);
       const { byId } = getWorkspaceTagOptionMaps(meta);
@@ -5760,11 +5889,14 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      let registered = false;
       const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
       if (workspaceSnapshot.missing) {
         const workspaceDoc = new Y.Doc();
         Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
         tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+        registered = isDocumentRegistered(workspaceDoc, parsed.docId);
+        workspaceDoc.destroy();
       }
 
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
@@ -5775,6 +5907,7 @@ export function registerDocTools(
           title: null,
           tags: [],
           exists: false,
+          revision: null,
           blockCount: 0,
           blocks: [],
           plainText: "",
@@ -5783,6 +5916,7 @@ export function registerDocTools(
 
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const revision = documentRevision(doc, registered);
 
       const meta = doc.getMap("meta");
       const tags = resolveTagLabels(getStringArray(getTagArray(meta)), tagOptionsById);
@@ -5799,6 +5933,7 @@ export function registerDocTools(
         deltas: TextDelta[];
         tableData?: string[][];
         tableCellDeltas?: TextDelta[][][];
+        tableColumnWidths?: Array<number | null>;
         linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
@@ -5843,6 +5978,7 @@ export function registerDocTools(
           ...(table ? {
             tableData: table.tableData,
             tableCellDeltas: table.tableCellDeltas,
+            tableColumnWidths: table.columnWidths,
           } : {}),
           linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
@@ -5883,6 +6019,7 @@ export function registerDocTools(
         title: title || null,
         tags,
         exists: true,
+        revision,
         blockCount: blockRows.length,
         blocks: blockRows,
         plainText: plainTextLines.join("\n"),
@@ -5896,7 +6033,7 @@ export function registerDocTools(
     "read_doc",
     {
       title: "Read Document Content",
-      description: "Read document block content via WebSocket snapshot. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
+      description: "Read document block content and its revision via WebSocket snapshot. Pass revision as expectedRevision on a document write to reject stale edits through a shared MCP server. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -5911,6 +6048,16 @@ export function registerDocTools(
       server: {
         name: "affine-mcp",
         capabilityVersion: 1,
+        supportedTools: [...ALL_TOOLS],
+        effective: {
+          profile: defaults.toolSurface?.profile ?? "full",
+          enabledTools: [...(defaults.toolSurface?.enabledTools ?? ALL_TOOLS)],
+        },
+        writeCoordination: {
+          scope: "workspace",
+          boundary: "single MCP server process",
+          staleWritePrecondition: "read_doc.revision -> expectedRevision",
+        },
       },
       docs: {
         canonicalBlockTypes: [...APPEND_BLOCK_CANONICAL_TYPE_VALUES],
@@ -5973,7 +6120,7 @@ export function registerDocTools(
     "get_capabilities",
     {
       title: "Get Capabilities",
-      description: "Return machine-readable capability flags for this MCP server, including block, database, collaboration, and export support.",
+      description: "Return machine-readable capability flags for this MCP server, including static feature support and the effective enabled tool surface.",
       inputSchema: {},
     },
     getCapabilitiesHandler as any
@@ -7170,9 +7317,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ workspaceId, tree: [] });
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, wsSnap);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
       const trashById = new Map(pages.map(p => [p.id, p.inTrash]));
@@ -7193,7 +7340,7 @@ export function registerDocTools(
         }
         if (kids.length) childrenOf.set(page.id, kids);
       }
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+      const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
       const roots = pages.filter(p => !allChildren.has(p.id)).map(p => p.id);
       const buildNode = (id: string, depth: number): any => ({
         docId: id, title: titleById.get(id) ?? "Untitled",
@@ -7223,9 +7370,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (!wsSnap.missing) return text({ orphans: [] });
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, wsSnap);
       const wsDoc = new Y.Doc();
-      Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
       const pages = getWorkspacePageEntries(wsDoc.getMap("meta"));
       const titleById = new Map(pages.map(p => [p.id, p.title ?? "Untitled"]));
       const allChildren = new Set<string>();
@@ -7239,7 +7386,7 @@ export function registerDocTools(
           allChildren.add(pageId);
         }
       }
-      const baseUrl = (process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, "")).replace(/\/$/, "");
+      const baseUrl = affineBaseUrl(endpoint, gql.baseUrl);
       const orphans = pages
         .filter(p => !allChildren.has(p.id))
         .map(p => ({
@@ -7268,17 +7415,14 @@ export function registerDocTools(
       const titleById = new Map<string, string>();
       const trashById = new Map<string, boolean>();
       const workspacePageIds = new Set<string>();
-      let hasWorkspaceMetadata = false;
       const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (wsSnap.missing) {
-        hasWorkspaceMetadata = true;
-        const wsDoc = new Y.Doc();
-        Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
-        for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
-          workspacePageIds.add(page.id);
-          trashById.set(page.id, page.inTrash);
-          if (page.title) titleById.set(page.id, page.title);
-        }
+      const workspaceRoot = requireWorkspaceRootSnapshot(workspaceId, wsSnap);
+      const wsDoc = new Y.Doc();
+      Y.applyUpdate(wsDoc, Buffer.from(workspaceRoot, "base64"));
+      for (const page of getWorkspacePageEntries(wsDoc.getMap("meta"))) {
+        workspacePageIds.add(page.id);
+        trashById.set(page.id, page.inTrash);
+        if (page.title) titleById.set(page.id, page.title);
       }
       const snap = await loadDoc(socket, workspaceId, parsed.docId);
       if (!snap.missing) return text({ docId: parsed.docId, children: [] });
@@ -7288,11 +7432,11 @@ export function registerDocTools(
       const children: Array<{ docId: string; title: string | null; url: string; inTrash: boolean }> = [];
       const seen = new Set<string>();
       for (const pageId of collectLinkedChildIds(blocks)) {
-        if (hasWorkspaceMetadata && !workspacePageIds.has(pageId)) continue;
+        if (!workspacePageIds.has(pageId)) continue;
         if (seen.has(pageId)) continue;
         seen.add(pageId);
         children.push({ docId: pageId, title: titleById.get(pageId) ?? null,
-          url: `${(process.env.AFFINE_BASE_URL || endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '')}/workspace/${workspaceId}/${pageId}`,
+          url: `${affineBaseUrl(endpoint, gql.baseUrl)}/workspace/${workspaceId}/${pageId}`,
           inTrash: trashById.get(pageId) ?? false });
       }
       return text({ docId: parsed.docId, count: children.length, children });
@@ -10127,6 +10271,96 @@ export function registerDocTools(
     }
   };
 
+  /** Apply an ordered width snapshot to an existing native AFFiNE table. */
+  const updateTableColumnWidthsHandler = async (
+    params: UpdateTableColumnWidthsInput,
+  ) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const prevSV = Y.encodeStateVector(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+      const flavour = block.get("sys:flavour");
+      if (flavour !== "affine:table") {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(flavour)}' — update_table_column_widths only mutates affine:table blocks.`
+        );
+      }
+
+      const table = extractTableData(block);
+      if (!table) {
+        throw new Error(`Table block '${params.blockId}' has no readable row/column layout.`);
+      }
+      if (params.widths.length !== table.columnIds.length) {
+        throw new Error(
+          `widths length must match table column count (${table.columnIds.length}).`
+        );
+      }
+
+      const changedColumns: Array<{
+        column: number;
+        columnId: string;
+        previousWidth: number | null;
+        width: number | null;
+      }> = [];
+      params.widths.forEach((width, column) => {
+        const previousWidth = table.columnWidths[column];
+        if (previousWidth === width) return;
+        const columnId = table.columnIds[column];
+        writeTableColumnWidth(block, columnId, width);
+        changedColumns.push({ column, columnId, previousWidth, width });
+      });
+
+      if (changedColumns.length > 0) {
+        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        await pushDocUpdate(
+          socket,
+          workspaceId,
+          params.docId,
+          Buffer.from(delta).toString("base64")
+        );
+      }
+
+      return text({
+        updated: changedColumns.length > 0,
+        blockId: params.blockId,
+        rowCount: table.rowIds.length,
+        columnCount: table.columnIds.length,
+        columnIds: table.columnIds,
+        changedColumns,
+        previous: {
+          widths: table.columnWidths,
+          totalWidth: totalTableColumnWidth(table.columnWidths),
+        },
+        table: {
+          widths: params.widths,
+          totalWidth: totalTableColumnWidth(params.widths),
+        },
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
   const moveBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10774,6 +11008,29 @@ export function registerDocTools(
       },
     },
     updateTableCellHandler as any
+  );
+
+  server.registerTool(
+    "update_table_column_widths",
+    {
+      title: "Update Table Column Widths",
+      description:
+        "Set every column width in an AFFiNE table while preserving rows and cell content. Pass null for a column to restore AFFiNE's automatic width.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Table block id (flavour affine:table)."),
+        widths: z.array(
+          z.union([
+            z.number().finite().min(TABLE_COLUMN_MIN_WIDTH).max(TABLE_COLUMN_MAX_WIDTH),
+            z.null(),
+          ])
+        ).min(1).describe(
+          "Widths in pixels, in current column order. Provide exactly one entry per column; null restores automatic width."
+        ),
+      },
+    },
+    updateTableColumnWidthsHandler as any
   );
 
   server.registerTool(

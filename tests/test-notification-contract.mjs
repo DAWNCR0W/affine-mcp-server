@@ -388,6 +388,7 @@ expectEqual(notAppliedResult, {
   error: "AFFiNE did not report applying the read-all mutation; notification state may be unchanged.",
   code: "notification_update_failed",
   retryable: false,
+  recoveryGuidance: "Check the error details and active workspace. For a write, inspect the target before retrying to avoid duplicating a completed change.",
 }, "truthful false read-all contract");
 expect(
   !/all notifications marked as read/i.test(notAppliedResult.error),
