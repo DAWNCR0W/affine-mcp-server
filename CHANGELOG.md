@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Accept case-insensitive JSON and GraphQL response media types while preserving `application/graphql-response+json` support.
+- Pin the runnable Docker deployment example to the verified 3.8.0 image.
+
 ## [3.8.0] - 2026-09-14
 
 ### Added

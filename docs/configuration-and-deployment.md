@@ -205,7 +205,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:latest
+  ghcr.io/dawncr0w/affine-mcp-server:3.8.0
 ```
 
 Health endpoints:
