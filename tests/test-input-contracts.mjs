@@ -8,6 +8,7 @@ import * as Y from "yjs";
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
 import {
+  createDocContentWarnings,
   readTableColumnWidth,
   registerDocTools,
   totalTableColumnWidth,
@@ -248,6 +249,25 @@ assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
+
+const createDocDefinition = registry.tools.get("create_doc")?.definition;
+assert.match(createDocDefinition?.description ?? "", /plain-text content stored as one paragraph/);
+assert.match(createDocDefinition?.inputSchema?.content?.description ?? "", /structured Markdown/);
+assert.deepEqual(createDocContentWarnings("A plain paragraph."), []);
+assert.deepEqual(createDocContentWarnings("## Heading\n\n- List item"), [
+  "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
+]);
+assert.equal(createDocContentWarnings("Read [the guide](https://example.com).").length, 1);
+
+const createDocFromMarkdownDefinition = registry.tools.get("create_doc_from_markdown")?.definition;
+assert.match(createDocFromMarkdownDefinition?.description ?? "", /folderId/);
+const createDocFromMarkdownSchema = toolSchema("create_doc_from_markdown");
+const markdownWithFolder = createDocFromMarkdownSchema.safeParse({
+  markdown: "## Heading",
+  folderId: "folder-1",
+});
+assert.equal(markdownWithFolder.success, true, "create_doc_from_markdown must accept folderId");
+assert.equal(markdownWithFolder.data.folderId, "folder-1");
 assert.equal(toolSchema("list_comments").safeParse({ docId: "d", first: 1.5 }).success, false);
 assert.equal(toolSchema("list_notifications").safeParse({ offset: -1 }).success, false);
 assert.equal(toolSchema("list_histories").safeParse({ guid: "d", take: 0 }).success, false);

@@ -134,14 +134,19 @@ check.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `create_doc` | Create a new document | WebSocket-backed |
-| `create_doc_from_markdown` | Create a document from Markdown content | `[label](LinkedPage:<docId>)` links become native inline linked-doc references |
+| `create_doc` | Create a new document | `content` is stored as one plain paragraph; accepts `folderId` for immediate organize-folder placement |
+| `create_doc_from_markdown` | Create a document from Markdown content | Creates native blocks, accepts `folderId` for immediate organize-folder placement, and converts `[label](LinkedPage:<docId>)` links to native inline linked-doc references |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
 | `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
 | `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
 | `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
+
+Use `create_doc_from_markdown` when the initial content contains headings, lists,
+links, quotes, tables, or code fences. `create_doc.content` does not parse Markdown;
+when structured Markdown is detected, its receipt warns that the content was
+stored as one plain paragraph.
 
 ### Content editing
 
