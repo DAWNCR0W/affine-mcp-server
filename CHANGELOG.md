@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Accept case-insensitive JSON and GraphQL response media types while preserving `application/graphql-response+json` support.
 - Pin the runnable Docker deployment example to the verified 3.8.0 image.
+- Allow `create_doc_from_markdown` to place the new document directly in an organize folder, and warn when structured Markdown is passed to the plain-text `create_doc.content` field.
+
+### Tests
+- Verify the Markdown creation folder contract, native block materialization, and the plain-text Markdown warning.
 
 ## [3.8.0] - 2026-09-14
 

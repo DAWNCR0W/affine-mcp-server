@@ -252,6 +252,10 @@ Domains:
 - Notifications: list and mark notifications as read
 - Blob storage: upload, delete, and cleanup blobs
 
+For new document content, use `create_doc` for an optional single plain-text
+paragraph and `create_doc_from_markdown` for native headings, lists, links, and
+code blocks. Both tools accept `folderId` for immediate organize-folder placement.
+
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
 Full-note replacement with `replace_doc_with_markdown` is destructive and requires `full` without disabling the `destructive` group. `core` and `authoring` retain incremental editing through `append_markdown` and `update_block`.

@@ -44,7 +44,7 @@ Use when:
 Typical tool sequence:
 
 1. `search_docs` to find the parent
-2. `create_doc` or `create_doc_from_markdown`
+2. `create_doc` for one plain paragraph, or `create_doc_from_markdown` for formatted content; pass `folderId` to either tool for organize-folder placement
 3. `move_doc` if you created the doc before deciding its final parent
 4. `list_children` to verify placement
 

@@ -79,7 +79,7 @@ const OUTPUT_SPECS = {
   create_comment: receipt({ workspaceId: "string", docId: "string", commentId: "string", id: "string", comment: "object" }),
   create_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", type: "string", index: "string", created: "boolean" }),
   create_doc: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", folderId: "nullableString", folderLinked: "boolean", folderNodeId: "nullableString", warnings: "stringArray" }), documentCreationFailureFields),
-  create_doc_from_markdown: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object" }), documentCreationFailureFields),
+  create_doc_from_markdown: fallible(receipt({ workspaceId: "string", docId: "string", title: "string", parentDocId: "nullableString", linkedToParent: "boolean", folderId: "nullableString", folderLinked: "boolean", folderNodeId: "nullableString", warnings: "stringArray", lossy: "boolean", stats: "object" }), documentCreationFailureFields),
   create_folder: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string", storageDocId: "string" }),
   create_semantic_page: fallible(spec({ workspaceId: "string", docId: "string", title: "string", pageType: "string", pageId: "string", noteId: "string", sectionCount: "number", sectionHeadingIds: "stringArray", blockIds: "stringArray", parentLinked: "boolean", warnings: "stringArray" }), documentCreationFailureFields),
   create_tag: spec({ workspaceId: "string", tag: "string", created: "boolean" }),
