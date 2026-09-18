@@ -52,6 +52,7 @@ function expectArray(value, message) {
   }
 }
 
+/** Require a warning substring without coupling the test to unrelated diagnostic messages. */
 function expectWarningIncludes(warnings, expected, message) {
   expectArray(warnings, `${message} warnings`);
   if (!warnings.some(warning => typeof warning === 'string' && warning.includes(expected))) {
@@ -83,6 +84,7 @@ async function main() {
 
   transport.stderr?.on('data', chunk => process.stderr.write(`[mcp-server] ${chunk}`));
 
+  /** Call a test tool and reject MCP, GraphQL, or structured application failures. */
   async function call(toolName, args = {}) {
     console.log(`  -> ${toolName}(${JSON.stringify(args)})`);
     const result = await client.callTool(

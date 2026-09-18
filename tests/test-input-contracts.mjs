@@ -262,6 +262,9 @@ for (const content of [
   "Read [the guide](https://example.com).",
   "Read [link [foo]](/uri).",
   "Read [outer [middle [inner]]](/uri).",
+  "Read [label\\]](url).",
+  "\\".repeat(2) + "[label](url)",
+  "[label](url\\))",
   "![diagram](https://example.com/image.png)",
   "First line.\r\n## Heading",
   "> A quote",
@@ -278,8 +281,12 @@ for (const content of [
   "[label\n](url)",
   "[outer [inner]](unclosed",
   "[outer [inner]\n](url)",
+  "\\" + "[label](url)",
+  "\\".repeat(3) + "[label](url)",
+  "[label\\](url)",
+  "[label](url\\)",
 ]) {
-  assert.deepEqual(createDocContentWarnings(content), [], "incomplete inline links should not warn");
+  assert.deepEqual(createDocContentWarnings(content), [], "literal or incomplete inline-link syntax should not warn");
 }
 
 // Run adversarial inputs in a killable child so a synchronous regression cannot

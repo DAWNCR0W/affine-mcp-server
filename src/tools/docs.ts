@@ -1185,6 +1185,11 @@ function hasInlineMarkdownLink(content: string): boolean {
       destinationStart = -1;
       continue;
     }
+    // Consume escape pairs once; odd backslash runs escape the next delimiter.
+    if (char === "\\") {
+      if (content[index + 1] !== "\n" && content[index + 1] !== "\r") index += 1;
+      continue;
+    }
     if (destinationStart >= 0) {
       if (char === ")") {
         if (index > destinationStart) return true;
@@ -6505,6 +6510,7 @@ export function registerDocTools(
   );
 
   // CREATE DOC (high-level)
+  /** Create a plain-text document and return placement metadata plus recoverable warnings. */
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -7102,6 +7108,7 @@ export function registerDocTools(
     };
   };
 
+  /** Wrap native Markdown creation in its MCP receipt and preserve structured failure results. */
   const createDocFromMarkdownHandler = async (parsed: {
     workspaceId?: string;
     title?: string;
