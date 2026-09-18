@@ -1174,10 +1174,42 @@ function requireWorkspaceRootSnapshot(workspaceId: string, snapshot: { missing?:
   return snapshot.missing;
 }
 
+/** Detect inline-link syntax in one pass without retrying unmatched openers. */
+function hasInlineMarkdownLink(content: string): boolean {
+  let labelStart = -1;
+  let destinationStart = -1;
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    if (char === "\n" || char === "\r") {
+      labelStart = -1;
+      destinationStart = -1;
+      continue;
+    }
+    if (destinationStart >= 0) {
+      if (char === ")") {
+        if (index > destinationStart) return true;
+        destinationStart = -1;
+      }
+      continue;
+    }
+    if (char === "[") {
+      labelStart = index;
+    } else if (char === "]") {
+      if (labelStart >= 0 && index > labelStart + 1 && content[index + 1] === "(") {
+        destinationStart = index + 2;
+        index += 1;
+      }
+      labelStart = -1;
+    }
+  }
+  return false;
+}
+
+/** Warn about structured Markdown while preserving create_doc's plain-text behavior. */
 export function createDocContentWarnings(content: string | undefined): string[] {
   if (!content) return [];
-  const structuredMarkdown = /(?:^|\n)[ \t]{0,3}(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+|>[ \t]+|`{3,}|~{3,})|!?\[[^\]\n]+\]\([^)\n]+\)/m;
-  if (!structuredMarkdown.test(content)) return [];
+  const blockMarkdown = /^[ \t]{0,3}(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+|>[ \t]+|`{3,}|~{3,})/m;
+  if (!blockMarkdown.test(content) && !hasInlineMarkdownLink(content)) return [];
   return [
     "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
   ];

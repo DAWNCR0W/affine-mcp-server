@@ -2,6 +2,7 @@
 import "./require-destructive-test-safety.mjs";
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import * as Y from "yjs";
 
@@ -257,7 +258,36 @@ assert.deepEqual(createDocContentWarnings("A plain paragraph."), []);
 assert.deepEqual(createDocContentWarnings("## Heading\n\n- List item"), [
   "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
 ]);
-assert.equal(createDocContentWarnings("Read [the guide](https://example.com).").length, 1);
+for (const content of [
+  "Read [the guide](https://example.com).",
+  "![diagram](https://example.com/image.png)",
+  "First line.\r\n## Heading",
+  "> A quote",
+  "```ts\nconst value = 1;\n```",
+]) {
+  assert.equal(createDocContentWarnings(content).length, 1, `${content} should warn about Markdown`);
+}
+for (const content of [undefined, "", "[unclosed label", "[label](unclosed", "[label]()", "[label\n](url)"]) {
+  assert.deepEqual(createDocContentWarnings(content), [], "incomplete inline links should not warn");
+}
+
+// Run adversarial inputs in a killable child so a synchronous regression cannot
+// hang the fast suite. The former regex took quadratic time on both forms.
+const markdownDetectionRegression = spawnSync(process.execPath, [
+  "--input-type=module",
+  "-e",
+  `import assert from "node:assert/strict";
+   import { createDocContentWarnings } from ${JSON.stringify(new URL("../dist/tools/docs.js", import.meta.url).href)};
+   for (const content of ["[".repeat(1048576), "[label](".repeat(131072)]) {
+     assert.deepEqual(createDocContentWarnings(content), []);
+   }`,
+], { encoding: "utf8", timeout: 5000 });
+assert.ifError(markdownDetectionRegression.error);
+assert.equal(
+  markdownDetectionRegression.status,
+  0,
+  `Markdown warning detection must complete for long unmatched delimiters: ${markdownDetectionRegression.stderr}`,
+);
 
 const createDocFromMarkdownDefinition = registry.tools.get("create_doc_from_markdown")?.definition;
 assert.match(createDocFromMarkdownDefinition?.description ?? "", /folderId/);
