@@ -260,6 +260,8 @@ assert.deepEqual(createDocContentWarnings("## Heading\n\n- List item"), [
 ]);
 for (const content of [
   "Read [the guide](https://example.com).",
+  "Read [link [foo]](/uri).",
+  "Read [outer [middle [inner]]](/uri).",
   "![diagram](https://example.com/image.png)",
   "First line.\r\n## Heading",
   "> A quote",
@@ -267,7 +269,16 @@ for (const content of [
 ]) {
   assert.equal(createDocContentWarnings(content).length, 1, `${content} should warn about Markdown`);
 }
-for (const content of [undefined, "", "[unclosed label", "[label](unclosed", "[label]()", "[label\n](url)"]) {
+for (const content of [
+  undefined,
+  "",
+  "[unclosed label",
+  "[label](unclosed",
+  "[label]()",
+  "[label\n](url)",
+  "[outer [inner]](unclosed",
+  "[outer [inner]\n](url)",
+]) {
   assert.deepEqual(createDocContentWarnings(content), [], "incomplete inline links should not warn");
 }
 

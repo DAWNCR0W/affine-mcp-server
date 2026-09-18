@@ -1176,12 +1176,12 @@ function requireWorkspaceRootSnapshot(workspaceId: string, snapshot: { missing?:
 
 /** Detect inline-link syntax in one pass without retrying unmatched openers. */
 function hasInlineMarkdownLink(content: string): boolean {
-  let labelStart = -1;
+  const labelOpeners: number[] = [];
   let destinationStart = -1;
   for (let index = 0; index < content.length; index += 1) {
     const char = content[index];
     if (char === "\n" || char === "\r") {
-      labelStart = -1;
+      labelOpeners.length = 0;
       destinationStart = -1;
       continue;
     }
@@ -1193,13 +1193,13 @@ function hasInlineMarkdownLink(content: string): boolean {
       continue;
     }
     if (char === "[") {
-      labelStart = index;
+      labelOpeners.push(index);
     } else if (char === "]") {
-      if (labelStart >= 0 && index > labelStart + 1 && content[index + 1] === "(") {
+      const labelStart = labelOpeners.pop();
+      if (labelStart !== undefined && index > labelStart + 1 && content[index + 1] === "(") {
         destinationStart = index + 2;
         index += 1;
       }
-      labelStart = -1;
     }
   }
   return false;
@@ -1215,6 +1215,7 @@ export function createDocContentWarnings(content: string | undefined): string[] 
   ];
 }
 
+/** Register document tools with shared creation transport and folder-placement behavior. */
 export function registerDocTools(
   server: McpServer,
   gql: GraphQLClient,
@@ -4411,6 +4412,7 @@ export function registerDocTools(
     }
   }
 
+  /** Link a created document into its folder, preserving creation success with warnings on failure. */
   async function finalizeDocFolderPlacement(parsed: {
     workspaceId: string;
     docId: string;
@@ -6984,8 +6986,10 @@ export function registerDocTools(
     exportWithFidelityReportHandler as any
   );
 
-  // Core logic for creating a doc from markdown — returns structured data, no MCP envelope.
-  // Used by createDocFromMarkdownHandler and internal markdown-based flows.
+  /**
+   * Create native Markdown blocks and report optional organize-folder placement.
+   * Return structured data for the MCP handler and internal flows, without an MCP envelope.
+   */
   const createDocFromMarkdownCore = async (parsed: {
     workspaceId?: string;
     title?: string;

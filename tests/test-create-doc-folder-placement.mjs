@@ -59,6 +59,7 @@ function expectWarningIncludes(warnings, expected, message) {
   }
 }
 
+/** Verify plain/Markdown creation and folder placement in a disposable workspace, then clean it up. */
 async function main() {
   console.log('=== Create Doc Folder Placement Test ===');
   console.log(`Base URL: ${BASE_URL}`);
