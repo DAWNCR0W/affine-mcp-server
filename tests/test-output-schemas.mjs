@@ -13,6 +13,7 @@ import { registerDocTools } from "../src/tools/docs.ts";
 import { TOOLS_WITH_ERROR_OUTPUT, toolOutputSchemaFor } from "../src/toolOutputSchemas.ts";
 import { stripSchemaDialect, text, toolError } from "../src/util/mcp.ts";
 
+/** Apply production output schemas to tool registrations in the contract fixture. */
 function installOutputSchemaRegistration(server) {
   const registerTool = server.registerTool.bind(server);
   server.registerTool = (name, options, handler) => registerTool(
@@ -22,6 +23,7 @@ function installOutputSchemaRegistration(server) {
   );
 }
 
+/** Connect an isolated MCP client/server pair without a network listener. */
 async function connectInMemory(server, label) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: `${label}-client`, version: "1.0.0" });

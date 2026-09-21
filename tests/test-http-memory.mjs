@@ -26,6 +26,7 @@ if (process.env.AFFINE_HTTP_MEMORY_PROBE === "1") {
   await main();
 }
 
+/** Check retained memory after session cleanup in an isolated, built HTTP server. */
 async function main() {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const configDir = await mkdtemp(path.join(tmpdir(), "affine-http-memory-"));
@@ -63,6 +64,7 @@ async function main() {
   };
   const url = `http://127.0.0.1:${port}`;
   let id = 0;
+  /** Send raw MCP requests without automatic session cleanup; decode JSON or SSE. */
   async function request(body, session, method = "POST") {
     const response = await fetch(`${url}/mcp`, {
       method, headers: { ...headers, ...(session ? { "mcp-session-id": session } : {}) },
@@ -75,6 +77,7 @@ async function main() {
       : raw;
     return { response, result: data ? JSON.parse(data) : null };
   }
+  /** Discover and call tools in a fresh session, then delete it or leave it to expire. */
   async function session(mode) {
     const initialized = await request({ method: "initialize", params: {
       protocolVersion: "2025-03-26", capabilities: {},
@@ -93,6 +96,7 @@ async function main() {
     if (mode === "delete") assert.equal((await request(null, sid, "DELETE")).response.status, 200);
     return sid;
   }
+  /** Ask the server process for its post-GC heap and retained schema count. */
   async function sample(label) {
     const pending = once(child, "message", { signal: AbortSignal.timeout(10_000) });
     child.send("sample");

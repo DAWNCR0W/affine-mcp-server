@@ -215,6 +215,7 @@ export function toolOutputSchemaFor(name: string) {
   return schema;
 }
 
+/** Build one stateless schema graph with matching validation and advertised branches. */
 function createToolOutputSchema(name: string) {
   if (!Object.hasOwn(OUTPUT_SPECS, name)) return undefined;
   const outputSpec = OUTPUT_SPECS[name as ToolName];
