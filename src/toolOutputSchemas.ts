@@ -202,8 +202,22 @@ function fieldSchema(kind: FieldKind): ZodType {
   }
 }
 
+// Zod v4 bundled with Zod 3 retains metadata schemas in a process-wide Map.
+// Share the immutable tool schemas so HTTP session churn cannot grow it.
+const outputSchemas = new Map<string, ReturnType<typeof createToolOutputSchema>>();
+
 /** Returns the declared structured-result schema for a canonical MCP tool. */
 export function toolOutputSchemaFor(name: string) {
+  const cached = outputSchemas.get(name);
+  if (cached) return cached;
+  const schema = createToolOutputSchema(name);
+  if (schema) outputSchemas.set(name, schema);
+  return schema;
+}
+
+/** Build one stateless schema graph with matching validation and advertised branches. */
+function createToolOutputSchema(name: string) {
+  if (!Object.hasOwn(OUTPUT_SPECS, name)) return undefined;
   const outputSpec = OUTPUT_SPECS[name as ToolName];
   if (!outputSpec) return undefined;
 
