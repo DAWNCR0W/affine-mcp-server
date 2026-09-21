@@ -163,16 +163,20 @@ async function main() {
     );
 
     console.log('\n[5] Warn when create_doc receives structured Markdown');
-    const markdownAsPlainText = await call('create_doc', {
-      workspaceId,
-      title: 'plain-text warning',
-      content: '## Heading\n\n- List item',
-    });
-    expectWarningIncludes(
-      markdownAsPlainText?.warnings,
-      'create_doc stores content as one plain paragraph',
-      'create_doc structured Markdown warning',
-    );
+    for (const content of ['## Heading\n\n- List item', '| Name | Status |\n| --- | --- |\n| Task | Done |']) {
+      const markdownAsPlainText = await call('create_doc', {
+        workspaceId,
+        title: 'plain-text warning',
+        content,
+      });
+      expectWarningIncludes(
+        markdownAsPlainText?.warnings,
+        'create_doc stores content as one plain paragraph',
+        'create_doc structured Markdown warning',
+      );
+      const plainRead = await call('read_doc', { workspaceId, docId: markdownAsPlainText.docId });
+      expectTruthy(plainRead?.plainText?.includes(content), 'create_doc preserves Markdown as plain text');
+    }
 
     console.log('\n[6] Create doc with missing folderId');
     const missingFolderId = testResourceName('missing-folder');
