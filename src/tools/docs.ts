@@ -1210,11 +1210,32 @@ function hasInlineMarkdownLink(content: string): boolean {
   return false;
 }
 
+/** Detect adjacent table headers and delimiter rows in linear time. */
+function hasMarkdownTable(content: string): boolean {
+  const lines = content.split(/\r\n?|\n/);
+  const indentedCode = /^(?: {4}| {0,3}\t)/;
+  for (let index = 1; index < lines.length; index += 1) {
+    const header = lines[index - 1];
+    const delimiter = lines[index];
+    if (!header.includes("|") || indentedCode.test(header) || indentedCode.test(delimiter)) continue;
+    const alignments = delimiter.trim().split("|");
+    if (alignments[0] === "") alignments.shift();
+    if (alignments[alignments.length - 1] === "") alignments.pop();
+    if (!alignments.length || !alignments.every(cell => /^:?-+:?$/.test(cell.trim()))) continue;
+    // Match markdown-it's escaped pipe handling without parsing inline content.
+    const columns = header.trim().split(/(?<!\\)\|/);
+    if (columns[0] === "") columns.shift();
+    if (columns[columns.length - 1] === "") columns.pop();
+    if (columns.length === alignments.length) return true;
+  }
+  return false;
+}
+
 /** Warn about structured Markdown while preserving create_doc's plain-text behavior. */
 export function createDocContentWarnings(content: string | undefined): string[] {
   if (!content) return [];
   const blockMarkdown = /^[ \t]{0,3}(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+|>[ \t]+|`{3,}|~{3,})/m;
-  if (!blockMarkdown.test(content) && !hasInlineMarkdownLink(content)) return [];
+  if (!blockMarkdown.test(content) && !hasInlineMarkdownLink(content) && !hasMarkdownTable(content)) return [];
   return [
     "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
   ];

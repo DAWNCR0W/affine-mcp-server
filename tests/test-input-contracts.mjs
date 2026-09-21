@@ -259,6 +259,12 @@ assert.deepEqual(createDocContentWarnings("## Heading\n\n- List item"), [
   "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
 ]);
 for (const content of [
+  "| Name | Status |\n| --- | --- |\n| Task | Done |",
+  "Name | Status\n:--- | ---:\nTask | Done",
+  "| Name |\r\n| :---: |",
+  "| Name | Status |\n:--- | ---:",
+  "| Name | Status |\r| --- | --- |",
+  String.raw`| A \| B | C |` + "\n| --- | --- |",
   "Read [the guide](https://example.com).",
   "Read [link [foo]](/uri).",
   "Read [outer [middle [inner]]](/uri).",
@@ -275,6 +281,13 @@ for (const content of [
 for (const content of [
   undefined,
   "",
+  "A | B\nordinary text",
+  "| A | B |\n| --- |",
+  "| A | B |\n| --- || --- |",
+  "A | B\n\n--- | ---",
+  "    | A | B |\n    | --- | --- |",
+  "\t| A | B |\n\t| --- | --- |",
+  String.raw`A \| B` + "\n--- | ---",
   "[unclosed label",
   "[label](unclosed",
   "[label]()",
@@ -296,7 +309,7 @@ const markdownDetectionRegression = spawnSync(process.execPath, [
   "-e",
   `import assert from "node:assert/strict";
    import { createDocContentWarnings } from ${JSON.stringify(new URL("../dist/tools/docs.js", import.meta.url).href)};
-   for (const content of ["[".repeat(1048576), "[label](".repeat(131072)]) {
+   for (const content of ["[".repeat(1048576), "[label](".repeat(131072), "A | B\\n|" + "-".repeat(1048576) + "x|", ("A | B\\n--- | invalid\\n").repeat(32768)]) {
      assert.deepEqual(createDocContentWarnings(content), []);
    }`,
 ], { encoding: "utf8", timeout: 5000 });
