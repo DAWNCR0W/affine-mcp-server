@@ -192,7 +192,7 @@ Important note for AFFiNE Cloud:
 Prebuilt images are published to GHCR:
 
 - `ghcr.io/dawncr0w/affine-mcp-server:latest`
-- `ghcr.io/dawncr0w/affine-mcp-server:3.8.0`
+- `ghcr.io/dawncr0w/affine-mcp-server:3.8.1`
 
 Example:
 
@@ -205,7 +205,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:latest
+  ghcr.io/dawncr0w/affine-mcp-server:3.8.1
 ```
 
 Health endpoints:

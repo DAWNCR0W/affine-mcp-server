@@ -35,6 +35,7 @@
     "test-find-doc-by-title.mjs": "integration",
     "test-http-bearer.mjs": "integration",
     "test-http-email-password.mjs": "integration",
+    "test-http-memory.mjs": "fast",
     "test-http-response-safety.mjs": "fast",
     "test-http-runtime-safety.mjs": "fast",
     "test-http-security.mjs": "fast",
@@ -94,6 +95,7 @@
       "test-discovery-ux.mjs",
       "test-docs-drift.mjs",
       "test-document-mutation-safety.mjs",
+      "test-http-memory.mjs",
       "test-http-response-safety.mjs",
       "test-http-runtime-safety.mjs",
       "test-http-security.mjs",
@@ -138,6 +140,7 @@
       "test-tag-deletion.mjs",
       "test-data-view.mjs",
       "test-create-placement.mjs",
+      "test-create-doc-folder-placement.mjs",
       "test-doc-discovery.mjs",
       "test-find-doc-by-title.mjs",
       "test-doc-properties.mjs",
@@ -171,7 +174,6 @@
       "test-supporting-tools.mjs"
     ],
     "manual": [
-      "test-create-doc-folder-placement.mjs",
       "test-database-schema.mjs",
       "test-database-ui-rows.mjs",
       "test-markdown-rich-text-import.mjs",

@@ -1174,6 +1174,74 @@ function requireWorkspaceRootSnapshot(workspaceId: string, snapshot: { missing?:
   return snapshot.missing;
 }
 
+/** Detect inline-link syntax in one pass without retrying unmatched openers. */
+function hasInlineMarkdownLink(content: string): boolean {
+  const labelOpeners: number[] = [];
+  let destinationStart = -1;
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    if (char === "\n" || char === "\r") {
+      labelOpeners.length = 0;
+      destinationStart = -1;
+      continue;
+    }
+    // Consume escape pairs once; odd backslash runs escape the next delimiter.
+    if (char === "\\") {
+      if (content[index + 1] !== "\n" && content[index + 1] !== "\r") index += 1;
+      continue;
+    }
+    if (destinationStart >= 0) {
+      if (char === ")") {
+        if (index > destinationStart) return true;
+        destinationStart = -1;
+      }
+      continue;
+    }
+    if (char === "[") {
+      labelOpeners.push(index);
+    } else if (char === "]") {
+      const labelStart = labelOpeners.pop();
+      if (labelStart !== undefined && index > labelStart + 1 && content[index + 1] === "(") {
+        destinationStart = index + 2;
+        index += 1;
+      }
+    }
+  }
+  return false;
+}
+
+/** Detect adjacent table headers and delimiter rows in linear time. */
+function hasMarkdownTable(content: string): boolean {
+  const lines = content.split(/\r\n?|\n/);
+  const indentedCode = /^(?: {4}| {0,3}\t)/;
+  for (let index = 1; index < lines.length; index += 1) {
+    const header = lines[index - 1];
+    const delimiter = lines[index];
+    if (!header.includes("|") || indentedCode.test(header) || indentedCode.test(delimiter)) continue;
+    const alignments = delimiter.trim().split("|");
+    if (alignments[0] === "") alignments.shift();
+    if (alignments[alignments.length - 1] === "") alignments.pop();
+    if (!alignments.length || !alignments.every(cell => /^:?-+:?$/.test(cell.trim()))) continue;
+    // Match markdown-it's escaped pipe handling without parsing inline content.
+    const columns = header.trim().split(/(?<!\\)\|/);
+    if (columns[0] === "") columns.shift();
+    if (columns[columns.length - 1] === "") columns.pop();
+    if (columns.length === alignments.length) return true;
+  }
+  return false;
+}
+
+/** Warn about structured Markdown while preserving create_doc's plain-text behavior. */
+export function createDocContentWarnings(content: string | undefined): string[] {
+  if (!content) return [];
+  const blockMarkdown = /^[ \t]{0,3}(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+|>[ \t]+|`{3,}|~{3,})/m;
+  if (!blockMarkdown.test(content) && !hasInlineMarkdownLink(content) && !hasMarkdownTable(content)) return [];
+  return [
+    "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
+  ];
+}
+
+/** Register document tools with shared creation transport and folder-placement behavior. */
 export function registerDocTools(
   server: McpServer,
   gql: GraphQLClient,
@@ -4370,6 +4438,54 @@ export function registerDocTools(
     }
   }
 
+  /** Link a created document into its folder, preserving creation success with warnings on failure. */
+  async function finalizeDocFolderPlacement(parsed: {
+    workspaceId: string;
+    docId: string;
+    folderId?: string;
+  }): Promise<{
+    folderId: string | null;
+    folderLinked: boolean;
+    folderNodeId: string | null;
+    warnings: string[];
+  }> {
+    const folderId = parsed.folderId?.trim();
+    if (!folderId) {
+      return { folderId: null, folderLinked: false, folderNodeId: null, warnings: [] };
+    }
+
+    let socket: WorkspaceSocket | undefined;
+    try {
+      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+      socket = await connectWorkspaceSocket(
+        wsUrlFromGraphQLEndpoint(endpoint),
+        cookie,
+        bearer,
+      );
+      await joinWorkspace(socket, parsed.workspaceId);
+      const link = await addOrganizeLinkToFolder(socket, parsed.workspaceId, {
+        folderId,
+        type: "doc",
+        targetId: parsed.docId,
+      });
+      return {
+        folderId: link.parentId,
+        folderLinked: true,
+        folderNodeId: link.id,
+        warnings: [],
+      };
+    } catch (err: any) {
+      return {
+        folderId: null,
+        folderLinked: false,
+        folderNodeId: null,
+        warnings: [`Doc created but could not be placed in folder "${folderId}": ${err?.message ?? "unknown error"}`],
+      };
+    } finally {
+      socket?.disconnect();
+    }
+  }
+
   function createDocSkeleton(title: string, docId: string, content = ""): {
     doc: Y.Doc;
     blocks: Y.Map<any>;
@@ -6415,6 +6531,7 @@ export function registerDocTools(
   );
 
   // CREATE DOC (high-level)
+  /** Create a plain-text document and return placement metadata plus recoverable warnings. */
   const createDocHandler = async (parsed: { workspaceId?: string; title?: string; content?: string; parentDocId?: string; folderId?: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -6428,28 +6545,17 @@ export function registerDocTools(
         parentDocId: parsed.parentDocId,
         context: "create_doc",
       });
-      const warnings = mergeWarnings(created.warnings ?? [], placement.warnings);
-      let linkedFolderId: string | null = null;
-      let folderNodeId: string | null = null;
-      if (parsed.folderId) {
-        const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-        const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-        const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-        try {
-          await joinWorkspace(socket, created.workspaceId);
-          const link = await addOrganizeLinkToFolder(socket, created.workspaceId, {
-            folderId: parsed.folderId,
-            type: "doc",
-            targetId: created.docId,
-          });
-          linkedFolderId = link.parentId;
-          folderNodeId = link.id;
-        } catch (err: any) {
-          warnings.push(`Doc created but could not be placed in folder "${parsed.folderId}": ${err?.message ?? "unknown error"}`);
-        } finally {
-          socket.disconnect();
-        }
-      }
+      const folderPlacement = await finalizeDocFolderPlacement({
+        workspaceId: created.workspaceId,
+        docId: created.docId,
+        folderId: parsed.folderId,
+      });
+      const warnings = mergeWarnings(
+        created.warnings ?? [],
+        placement.warnings,
+        folderPlacement.warnings,
+        createDocContentWarnings(parsed.content),
+      );
       return receipt("doc.create", {
         workspaceId: created.workspaceId,
         docId: created.docId,
@@ -6458,9 +6564,9 @@ export function registerDocTools(
         requiresManualRepair: warnings.length > 0,
         parentDocId: placement.parentDocId,
         linkedToParent: placement.linkedToParent,
-        folderId: linkedFolderId,
-        folderLinked: folderNodeId !== null,
-        folderNodeId,
+        folderId: folderPlacement.folderId,
+        folderLinked: folderPlacement.folderLinked,
+        folderNodeId: folderPlacement.folderNodeId,
         warnings,
       });
     } catch (error) {
@@ -6473,11 +6579,11 @@ export function registerDocTools(
     'create_doc',
     {
       title: 'Create Document',
-      description: 'Create a new AFFiNE document with optional content. If parentDocId is provided, the new doc is linked into the sidebar tree immediately. If folderId is provided, the doc is placed inside that folder in the sidebar.',
+      description: 'Create a new AFFiNE document with optional plain-text content stored as one paragraph. Use create_doc_from_markdown for native headings, lists, links, and code blocks. If parentDocId is provided, the new doc is linked into the sidebar tree immediately. If folderId is provided, the doc is placed inside that folder in the sidebar.',
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         title: z.string().optional().describe("Optional initial document title."),
-        content: z.string().optional().describe("Optional initial plain text or markdown-like content."),
+        content: z.string().optional().describe("Optional initial plain text stored as one paragraph. Use create_doc_from_markdown for structured Markdown."),
         parentDocId: z.string().optional().describe("Optional parent doc to link the new doc under in the sidebar."),
         folderId: z.string().optional().describe("Optional folder ID to place the doc in. Use list_organize_nodes to find folder IDs."),
       },
@@ -6907,14 +7013,17 @@ export function registerDocTools(
     exportWithFidelityReportHandler as any
   );
 
-  // Core logic for creating a doc from markdown — returns structured data, no MCP envelope.
-  // Used by createDocFromMarkdownHandler and internal markdown-based flows.
+  /**
+   * Create native Markdown blocks and report optional organize-folder placement.
+   * Return structured data for the MCP handler and internal flows, without an MCP envelope.
+   */
   const createDocFromMarkdownCore = async (parsed: {
     workspaceId?: string;
     title?: string;
     markdown: string;
     strict?: boolean;
     parentDocId?: string;
+    folderId?: string;
   }) => {
     const parsedMarkdown = parseMarkdownToOperations(parsed.markdown);
     let operations = [...parsedMarkdown.operations];
@@ -6980,21 +7089,34 @@ export function registerDocTools(
       parentDocId: parsed.parentDocId,
       context: "create_doc_from_markdown",
     });
+    const folderPlacement = await finalizeDocFolderPlacement({
+      workspaceId: created.workspaceId,
+      docId: created.docId,
+      folderId: parsed.folderId,
+    });
 
     const applyWarnings: string[] = [];
     if (applied.skippedCount > 0) {
       applyWarnings.push(`${applied.skippedCount} markdown block(s) could not be applied to AFFiNE and were skipped.`);
     }
 
-    const warnings = mergeWarnings(parsedMarkdown.warnings, applyWarnings, placement.warnings);
+    const warnings = mergeWarnings(
+      parsedMarkdown.warnings,
+      applyWarnings,
+      placement.warnings,
+      folderPlacement.warnings,
+    );
     return {
       workspaceId: created.workspaceId,
       docId: created.docId,
       title: created.title,
       status: warnings.length > 0 ? "created_with_warnings" : "created",
-      requiresManualRepair: placement.warnings.length > 0,
+      requiresManualRepair: placement.warnings.length > 0 || folderPlacement.warnings.length > 0,
       parentDocId: placement.parentDocId,
       linkedToParent: placement.linkedToParent,
+      folderId: folderPlacement.folderId,
+      folderLinked: folderPlacement.folderLinked,
+      folderNodeId: folderPlacement.folderNodeId,
       warnings,
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
@@ -7007,12 +7129,14 @@ export function registerDocTools(
     };
   };
 
+  /** Wrap native Markdown creation in its MCP receipt and preserve structured failure results. */
   const createDocFromMarkdownHandler = async (parsed: {
     workspaceId?: string;
     title?: string;
     markdown: string;
     strict?: boolean;
     parentDocId?: string;
+    folderId?: string;
   }) => {
     try {
       return receipt("doc.create_from_markdown", await createDocFromMarkdownCore(parsed));
@@ -7026,13 +7150,14 @@ export function registerDocTools(
     "create_doc_from_markdown",
     {
       title: "Create Document From Markdown",
-      description: "Create a new AFFiNE document and import markdown content. Use parentDocId to automatically embed the new doc into a parent, making it visible in the sidebar instead of being an orphan.",
+      description: "Create a new AFFiNE document and import Markdown as native blocks. Use parentDocId to embed the new doc into a parent, or folderId to place it in an organize folder.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         title: z.string().optional(),
         markdown: MarkdownContent.describe("Markdown content to import"),
         strict: z.boolean().optional(),
         parentDocId: z.string().optional().describe("If provided, the new doc is automatically embedded into this parent doc as a linked child (visible in sidebar)."),
+        folderId: z.string().optional().describe("Optional folder ID to place the doc in. Use list_organize_nodes to find folder IDs."),
       },
     },
     createDocFromMarkdownHandler as any

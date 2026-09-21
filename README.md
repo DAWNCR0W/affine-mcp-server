@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.8.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.8.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -90,7 +90,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:latest
+  ghcr.io/dawncr0w/affine-mcp-server:3.8.1
 ```
 
 Then point your client at:
@@ -251,6 +251,10 @@ Domains:
 - Users and authentication: current user, sign-in, and profile/settings
 - Notifications: list and mark notifications as read
 - Blob storage: upload, delete, and cleanup blobs
+
+For new document content, use `create_doc` for an optional single plain-text
+paragraph and `create_doc_from_markdown` for native headings, lists, links, and
+code blocks. Both tools accept `folderId` for immediate organize-folder placement.
 
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 

@@ -1,5 +1,24 @@
 # Release Notes
 
+## Version 3.8.1 (2026-09-21)
+
+### Highlights
+- Fix memory growth in long-running HTTP servers when clients repeatedly create MCP sessions (issue #357; PR #358).
+- Create Markdown documents directly in organize folders while preserving their native block structure.
+
+### What Changed
+- Reuse tool output schemas across sessions so Zod metadata no longer retains a new validation graph on every connection. Existing session limits, idle expiry, and output validation remain unchanged.
+- Accept case-insensitive JSON and GraphQL response media types.
+- Support folder placement in `create_doc_from_markdown` and warn when structured Markdown is passed to the plain-text `create_doc.content` field, including table-only Markdown.
+- Keep Markdown warning detection bounded for malformed or escaped link syntax.
+- Update `markdown-it` to 14.3.2 and development Node.js type definitions to 24.13.4.
+- Add HTTP memory regression coverage for explicit session termination and idle expiry, alongside the existing live integration and browser checks.
+
+### Compatibility
+- The canonical MCP surface remains at 106 tools. No existing required inputs or output contracts changed.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.1`, then restart the MCP server. No configuration migration is required.
+
 ## Version 3.8.0 (2026-09-14)
 
 ### Highlights
