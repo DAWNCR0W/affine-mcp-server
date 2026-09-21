@@ -8,10 +8,10 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  *   1. Create workspace
  *   2. Create folder "bar"
  *   3. Create doc "baz" placed in "bar" with folderId
- *   4. Create doc with a missing folderId and verify the failure contract
- *   5. Create folder "foo"
- *   6. Move "bar" into "foo"
- *   7. Verify final tree
+ *   4. Create formatted Markdown in "bar" and verify native blocks
+ *   5. Verify create_doc warns when structured Markdown is passed as plain text
+ *   6. Create doc with a missing folderId and verify the failure contract
+ *   7. Move "bar" into a new root folder and verify the final tree
  *   8. Clean up workspace
  */
 import path from 'node:path';
@@ -52,6 +52,7 @@ function expectArray(value, message) {
   }
 }
 
+/** Require a warning substring without coupling the test to unrelated diagnostic messages. */
 function expectWarningIncludes(warnings, expected, message) {
   expectArray(warnings, `${message} warnings`);
   if (!warnings.some(warning => typeof warning === 'string' && warning.includes(expected))) {
@@ -59,6 +60,7 @@ function expectWarningIncludes(warnings, expected, message) {
   }
 }
 
+/** Verify plain/Markdown creation and folder placement in a disposable workspace, then clean it up. */
 async function main() {
   console.log('=== Create Doc Folder Placement Test ===');
   console.log(`Base URL: ${BASE_URL}`);
@@ -82,6 +84,7 @@ async function main() {
 
   transport.stderr?.on('data', chunk => process.stderr.write(`[mcp-server] ${chunk}`));
 
+  /** Call a test tool and reject MCP, GraphQL, or structured application failures. */
   async function call(toolName, args = {}) {
     console.log(`  -> ${toolName}(${JSON.stringify(args)})`);
     const result = await client.callTool(
@@ -122,7 +125,56 @@ async function main() {
     expectArray(baz?.warnings, 'create_doc warnings');
     expectEqual(baz.warnings.length, 0, 'create_doc warning count');
 
-    console.log('\n[4] Create doc with missing folderId');
+    console.log('\n[4] Create formatted Markdown doc in folder "bar"');
+    const markdown = await call('create_doc_from_markdown', {
+      workspaceId,
+      title: 'formatted',
+      folderId: barFolderId,
+      markdown: [
+        '## Project brief',
+        '',
+        '- First item',
+        '',
+        '```ts',
+        'const value = 1;',
+        '```',
+      ].join('\n'),
+    });
+    const markdownDocId = markdown?.docId;
+    expectTruthy(markdownDocId, 'create_doc_from_markdown docId');
+    expectEqual(markdown?.folderId, barFolderId, 'create_doc_from_markdown folderId');
+    expectEqual(markdown?.folderLinked, true, 'create_doc_from_markdown folderLinked');
+    expectTruthy(markdown?.folderNodeId, 'create_doc_from_markdown folderNodeId');
+    expectArray(markdown?.warnings, 'create_doc_from_markdown warnings');
+
+    const markdownRead = await call('read_doc', { workspaceId, docId: markdownDocId });
+    const markdownBlocks = Array.isArray(markdownRead?.blocks) ? markdownRead.blocks : [];
+    expectTruthy(
+      markdownBlocks.some(block => block?.flavour === 'affine:paragraph' && block?.type === 'h2'),
+      'Markdown heading materialized as a native h2 block',
+    );
+    expectTruthy(
+      markdownBlocks.some(block => block?.flavour === 'affine:list'),
+      'Markdown list materialized as a native list block',
+    );
+    expectTruthy(
+      markdownBlocks.some(block => block?.flavour === 'affine:code'),
+      'Markdown code fence materialized as a native code block',
+    );
+
+    console.log('\n[5] Warn when create_doc receives structured Markdown');
+    const markdownAsPlainText = await call('create_doc', {
+      workspaceId,
+      title: 'plain-text warning',
+      content: '## Heading\n\n- List item',
+    });
+    expectWarningIncludes(
+      markdownAsPlainText?.warnings,
+      'create_doc stores content as one plain paragraph',
+      'create_doc structured Markdown warning',
+    );
+
+    console.log('\n[6] Create doc with missing folderId');
     const missingFolderId = testResourceName('missing-folder');
     const unplaced = await call('create_doc', {
       workspaceId,
@@ -145,13 +197,13 @@ async function main() {
       'unplaced missing folder warning'
     );
 
-    console.log('\n[5] Create folder "foo"');
+    console.log('\n[7] Create folder "foo"');
     const foo = await call('create_folder', { workspaceId, name: 'foo' });
     const fooFolderId = foo?.id;
     expectTruthy(fooFolderId, 'foo folder id');
     expectEqual(foo?.data, 'foo', 'foo folder name');
 
-    console.log('\n[6] Move "bar" into "foo"');
+    console.log('\n[8] Move "bar" into "foo"');
     const movedBar = await call('move_organize_node', {
       workspaceId,
       nodeId: barFolderId,
@@ -160,7 +212,7 @@ async function main() {
     expectEqual(movedBar?.id, barFolderId, 'moved bar id');
     expectEqual(movedBar?.parentId, fooFolderId, 'bar is now inside foo');
 
-    console.log('\n[7] Verify organize tree');
+    console.log('\n[9] Verify organize tree');
     const { nodes = [] } = await call('list_organize_nodes', { workspaceId });
 
     const fooNode = nodes.find(n => n?.id === fooFolderId);
@@ -174,13 +226,16 @@ async function main() {
     const bazNode = nodes.find(n => n?.type === 'doc' && n?.data === bazDocId);
     expectTruthy(bazNode, 'baz doc node present in organize tree');
     expectEqual(bazNode?.parentId, barFolderId, 'baz is inside bar');
+    const markdownNode = nodes.find(n => n?.type === 'doc' && n?.data === markdownDocId);
+    expectTruthy(markdownNode, 'formatted doc node present in organize tree');
+    expectEqual(markdownNode?.parentId, barFolderId, 'formatted doc is inside bar');
     if (nodes.some(n => n?.type === 'doc' && n?.data === unplacedDocId)) {
       throw new Error('unplaced doc should not have an organize link');
     }
 
-    console.log('\nTree confirmed: foo -> bar -> baz');
+    console.log('\nTree confirmed: foo -> bar -> baz + formatted');
 
-    console.log('\n[8] Move "baz" to under "foo"');
+    console.log('\n[10] Move "baz" to under "foo"');
     const movedBaz = await call('move_organize_node', {
       workspaceId,
       nodeId: bazNode.id,
@@ -189,7 +244,7 @@ async function main() {
     expectEqual(movedBaz?.id, bazNode.id, 'moved baz id');
     expectEqual(movedBaz?.parentId, fooFolderId, 'baz is now inside foo');
 
-    console.log('\n[9] Verify final tree');
+    console.log('\n[11] Verify final tree');
     const { nodes: finalNodes = [] } = await call('list_organize_nodes', { workspaceId });
 
     const finalBarNode = finalNodes.find(n => n?.id === barFolderId);
@@ -201,11 +256,10 @@ async function main() {
     expectEqual(finalBazNode?.parentId, fooFolderId, 'baz is now directly under foo');
 
     const barChildren = finalNodes.filter(n => n?.parentId === barFolderId);
-    if (barChildren.length !== 0) {
-      throw new Error(`bar should be empty after moving baz, found ${barChildren.length} child(ren)`);
-    }
+    expectEqual(barChildren.length, 1, 'bar child count after moving baz');
+    expectEqual(barChildren[0]?.data, markdownDocId, 'formatted doc remains inside bar');
 
-    console.log('\nTree confirmed: foo -> bar (empty), foo -> baz');
+    console.log('\nTree confirmed: foo -> bar -> formatted, foo -> baz');
 
   } finally {
     if (workspaceId && !NO_CLEANUP) {

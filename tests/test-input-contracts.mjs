@@ -2,12 +2,14 @@
 import "./require-destructive-test-safety.mjs";
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import * as Y from "yjs";
 
 import { registerBlobTools } from "../dist/tools/blobStorage.js";
 import { registerCommentTools } from "../dist/tools/comments.js";
 import {
+  createDocContentWarnings,
   readTableColumnWidth,
   registerDocTools,
   totalTableColumnWidth,
@@ -248,6 +250,72 @@ assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
+
+const createDocDefinition = registry.tools.get("create_doc")?.definition;
+assert.match(createDocDefinition?.description ?? "", /plain-text content stored as one paragraph/);
+assert.match(createDocDefinition?.inputSchema?.content?.description ?? "", /structured Markdown/);
+assert.deepEqual(createDocContentWarnings("A plain paragraph."), []);
+assert.deepEqual(createDocContentWarnings("## Heading\n\n- List item"), [
+  "create_doc stores content as one plain paragraph; structured Markdown was detected. Use create_doc_from_markdown to preserve headings, lists, links, and code blocks.",
+]);
+for (const content of [
+  "Read [the guide](https://example.com).",
+  "Read [link [foo]](/uri).",
+  "Read [outer [middle [inner]]](/uri).",
+  "Read [label\\]](url).",
+  "\\".repeat(2) + "[label](url)",
+  "[label](url\\))",
+  "![diagram](https://example.com/image.png)",
+  "First line.\r\n## Heading",
+  "> A quote",
+  "```ts\nconst value = 1;\n```",
+]) {
+  assert.equal(createDocContentWarnings(content).length, 1, `${content} should warn about Markdown`);
+}
+for (const content of [
+  undefined,
+  "",
+  "[unclosed label",
+  "[label](unclosed",
+  "[label]()",
+  "[label\n](url)",
+  "[outer [inner]](unclosed",
+  "[outer [inner]\n](url)",
+  "\\" + "[label](url)",
+  "\\".repeat(3) + "[label](url)",
+  "[label\\](url)",
+  "[label](url\\)",
+]) {
+  assert.deepEqual(createDocContentWarnings(content), [], "literal or incomplete inline-link syntax should not warn");
+}
+
+// Run adversarial inputs in a killable child so a synchronous regression cannot
+// hang the fast suite. The former regex took quadratic time on both forms.
+const markdownDetectionRegression = spawnSync(process.execPath, [
+  "--input-type=module",
+  "-e",
+  `import assert from "node:assert/strict";
+   import { createDocContentWarnings } from ${JSON.stringify(new URL("../dist/tools/docs.js", import.meta.url).href)};
+   for (const content of ["[".repeat(1048576), "[label](".repeat(131072)]) {
+     assert.deepEqual(createDocContentWarnings(content), []);
+   }`,
+], { encoding: "utf8", timeout: 5000 });
+assert.ifError(markdownDetectionRegression.error);
+assert.equal(
+  markdownDetectionRegression.status,
+  0,
+  `Markdown warning detection must complete for long unmatched delimiters: ${markdownDetectionRegression.stderr}`,
+);
+
+const createDocFromMarkdownDefinition = registry.tools.get("create_doc_from_markdown")?.definition;
+assert.match(createDocFromMarkdownDefinition?.description ?? "", /folderId/);
+const createDocFromMarkdownSchema = toolSchema("create_doc_from_markdown");
+const markdownWithFolder = createDocFromMarkdownSchema.safeParse({
+  markdown: "## Heading",
+  folderId: "folder-1",
+});
+assert.equal(markdownWithFolder.success, true, "create_doc_from_markdown must accept folderId");
+assert.equal(markdownWithFolder.data.folderId, "folder-1");
 assert.equal(toolSchema("list_comments").safeParse({ docId: "d", first: 1.5 }).success, false);
 assert.equal(toolSchema("list_notifications").safeParse({ offset: -1 }).success, false);
 assert.equal(toolSchema("list_histories").safeParse({ guid: "d", take: 0 }).success, false);
