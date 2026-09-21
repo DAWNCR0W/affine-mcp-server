@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.1] - 2026-09-21
+
 ### Fixed
 - Reuse tool output schemas across HTTP sessions to prevent Zod metadata from retaining a new schema graph on every connection and eventually exhausting the JavaScript heap.
 - Accept case-insensitive JSON and GraphQL response media types while preserving `application/graphql-response+json` support.
-- Pin the runnable Docker deployment example to the verified 3.8.0 image.
+- Update the runnable Docker deployment examples to the 3.8.1 image.
 - Allow `create_doc_from_markdown` to place the new document directly in an organize folder, and warn when structured Markdown is passed to the plain-text `create_doc.content` field.
 - Keep structured-Markdown warning detection linear for unmatched inline-link delimiters.
+
+### Changed
+- Update `markdown-it` to 14.3.2 and development Node.js type definitions to 24.13.4.
 
 ### Tests
 - Check that repeated HTTP sessions release their memory after explicit termination and idle expiry, while tool discovery and output validation remain intact.
@@ -834,6 +839,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.1
 [3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
 [3.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.7.0
 [3.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.6.0
@@ -875,4 +881,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.1...HEAD
