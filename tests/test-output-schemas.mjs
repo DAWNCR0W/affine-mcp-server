@@ -30,10 +30,14 @@ async function connectInMemory(server, label) {
 }
 
 for (const name of ALL_TOOLS) {
-  assert.ok(toolOutputSchemaFor(name), `${name} is missing an output schema`);
+  const schema = toolOutputSchemaFor(name);
+  assert.ok(schema, `${name} is missing an output schema`);
+  assert.equal(toolOutputSchemaFor(name), schema, `${name} must share its schema across sessions`);
 }
 
-assert.equal(toolOutputSchemaFor("not_a_real_tool"), undefined);
+for (const name of ["not_a_real_tool", "__proto__", "constructor", "toString"]) {
+  assert.equal(toolOutputSchemaFor(name), undefined);
+}
 
 const arrayTextResult = text(["one", "two"]);
 assert.deepEqual(arrayTextResult.content, [{ type: "text", text: '["one","two"]' }]);
