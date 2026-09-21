@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse tool output schemas across HTTP sessions to prevent Zod metadata from retaining a new schema graph on every connection and eventually exhausting the JavaScript heap.
 - Accept case-insensitive JSON and GraphQL response media types while preserving `application/graphql-response+json` support.
 - Update the runnable Docker deployment examples to the 3.8.1 image.
-- Allow `create_doc_from_markdown` to place the new document directly in an organize folder, and warn when structured Markdown is passed to the plain-text `create_doc.content` field.
+- Allow `create_doc_from_markdown` to place the new document directly in an organize folder, and warn when structured Markdown is passed to the plain-text `create_doc.content` field, including table-only Markdown.
 - Keep structured-Markdown warning detection linear for unmatched inline-link delimiters.
 
 ### Changed

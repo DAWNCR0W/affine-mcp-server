@@ -3,13 +3,13 @@
 ## Version 3.8.1 (2026-09-21)
 
 ### Highlights
-- Fix memory growth in long-running HTTP servers when clients repeatedly create MCP sessions (#357).
+- Fix memory growth in long-running HTTP servers when clients repeatedly create MCP sessions (issue #357; PR #358).
 - Create Markdown documents directly in organize folders while preserving their native block structure.
 
 ### What Changed
 - Reuse tool output schemas across sessions so Zod metadata no longer retains a new validation graph on every connection. Existing session limits, idle expiry, and output validation remain unchanged.
 - Accept case-insensitive JSON and GraphQL response media types.
-- Support folder placement in `create_doc_from_markdown` and warn when structured Markdown is passed to the plain-text `create_doc.content` field.
+- Support folder placement in `create_doc_from_markdown` and warn when structured Markdown is passed to the plain-text `create_doc.content` field, including table-only Markdown.
 - Keep Markdown warning detection bounded for malformed or escaped link syntax.
 - Update `markdown-it` to 14.3.2 and development Node.js type definitions to 24.13.4.
 - Add HTTP memory regression coverage for explicit session termination and idle expiry, alongside the existing live integration and browser checks.
