@@ -169,7 +169,7 @@ wait_for_auth_ready
 
 echo ""
 echo "=== Configuring isolated AFFiNE test instance ==="
-node "$SCRIPT_DIR/configure-comprehensive-instance.mjs"
+node "$SCRIPT_DIR/configure-test-instance.mjs"
 
 echo ""
 echo "=== Running focused comprehensive suite ==="
