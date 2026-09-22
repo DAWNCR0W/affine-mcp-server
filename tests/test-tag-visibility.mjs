@@ -65,6 +65,7 @@ async function main() {
     email: EMAIL,
     workspaceId: null,
     workspaceName: null,
+    firstDocId: null,
     docId: null,
     docTitle: null,
     tag: null,
@@ -107,6 +108,8 @@ async function main() {
     const ws = await call('create_workspace', { name: state.workspaceName });
     state.workspaceId = ws?.id;
     if (!state.workspaceId) throw new Error('create_workspace did not return workspace id');
+    state.firstDocId = ws?.firstDocId;
+    if (!state.firstDocId) throw new Error('create_workspace did not return firstDocId');
 
     const doc = await call('create_doc', {
       workspaceId: state.workspaceId,
