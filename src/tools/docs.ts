@@ -1425,6 +1425,19 @@ export function registerDocTools(
     return value as Y.Array<string>;
   }
 
+  function getExistingRootMap(doc: Y.Doc, key: string): Y.Map<any> | null {
+    const value = doc.share.get(key);
+    return value instanceof Y.Map ? value : null;
+  }
+
+  function getDocumentTagValues(doc: Y.Doc, workspaceTags?: readonly string[]): string[] {
+    if (workspaceTags !== undefined) {
+      return [...workspaceTags];
+    }
+    const legacyMeta = getExistingRootMap(doc, "meta");
+    return getStringArray(legacyMeta ? getTagArray(legacyMeta) : null);
+  }
+
   function ensureTagArray(target: Y.Map<any>, key: string = "tags"): Y.Array<string> {
     const existing = getTagArray(target, key);
     if (existing) {
@@ -3665,15 +3678,15 @@ export function registerDocTools(
 
   function collectDocForMarkdown(
     doc: Y.Doc,
-    tagOptionsById: Map<string, WorkspaceTagOption> = new Map()
+    tagOptionsById: Map<string, WorkspaceTagOption> = new Map(),
+    workspaceTags?: readonly string[],
   ): {
     title: string;
     tags: string[];
     rootBlockIds: string[];
     blocksById: Map<string, MarkdownRenderableBlock>;
   } {
-    const meta = doc.getMap("meta");
-    const tags = resolveTagLabels(getStringArray(getTagArray(meta)), tagOptionsById);
+    const tags = resolveTagLabels(getDocumentTagValues(doc, workspaceTags), tagOptionsById);
 
     const blocks = doc.getMap("blocks") as Y.Map<any>;
     const pageId = findBlockIdByFlavour(blocks, "affine:page");
@@ -3791,8 +3804,12 @@ export function registerDocTools(
     return rows;
   }
 
-  function summarizeDocFidelity(doc: Y.Doc, tagOptionsById: Map<string, WorkspaceTagOption> = new Map()) {
-    const collected = collectDocForMarkdown(doc, tagOptionsById);
+  function summarizeDocFidelity(
+    doc: Y.Doc,
+    tagOptionsById: Map<string, WorkspaceTagOption> = new Map(),
+    workspaceTags?: readonly string[],
+  ) {
+    const collected = collectDocForMarkdown(doc, tagOptionsById, workspaceTags);
     const rendered = renderBlocksToMarkdown({
       rootBlockIds: collected.rootBlockIds,
       blocksById: collected.blocksById,
@@ -4090,7 +4107,6 @@ export function registerDocTools(
     tagLabels: string[],
     supportIssues: NativeTemplateSupportIssue[]
   ): NativeTemplateStructureSummary {
-    const meta = doc.getMap("meta");
     const blocks = doc.getMap("blocks") as Y.Map<any>;
     const pageId = findBlockIdByFlavour(blocks, "affine:page");
     const surfaceId = findBlockIdByFlavour(blocks, "affine:surface");
@@ -4148,7 +4164,12 @@ export function registerDocTools(
       visit(String(id));
     }
 
-    const title = asText(meta.get("title")) || "Untitled";
+    const pageBlock = pageId ? findBlockById(blocks, pageId) : null;
+    const legacyMeta = getExistingRootMap(doc, "meta");
+    const legacyTitle = legacyMeta ? asText(legacyMeta.get("title")) : "";
+    const title = pageBlock
+      ? asText(pageBlock.get("prop:title")) || legacyTitle || "Untitled"
+      : legacyTitle || "Untitled";
 
     return {
       workspaceId,
@@ -4298,7 +4319,7 @@ export function registerDocTools(
     strict: boolean,
   ): void {
     const validationDocId = "markdown-preflight";
-    const skeleton = createDocSkeleton("Markdown preflight", validationDocId);
+    const skeleton = createDocSkeleton("Markdown preflight");
     let placement: AppendPlacement = { parentId: skeleton.noteId };
 
     for (const [operationIndex, operation] of operations.entries()) {
@@ -4345,7 +4366,7 @@ export function registerDocTools(
 
       const docId = generateId();
       const title = parsed.title || "Untitled";
-      const docShell = createDocSkeleton(title, docId, parsed.content);
+      const docShell = createDocSkeleton(title, parsed.content);
       await commitNewDocument(socket, workspaceId, docId, title, docShell.doc);
 
       return {
@@ -4486,7 +4507,7 @@ export function registerDocTools(
     }
   }
 
-  function createDocSkeleton(title: string, docId: string, content = ""): {
+  function createDocSkeleton(title: string, content = ""): {
     doc: Y.Doc;
     blocks: Y.Map<any>;
     pageId: string;
@@ -4539,12 +4560,6 @@ export function registerDocTools(
     skeletonPara.set("prop:text", makeText(content));
     blocks.set(skeletonParaId, skeletonPara);
     skeletonNoteChildren.push([skeletonParaId]);
-
-    const meta = doc.getMap("meta");
-    meta.set("id", docId);
-    meta.set("title", title);
-    meta.set("createDate", Date.now());
-    meta.set("tags", new Y.Array());
 
     return { doc, blocks, pageId, surfaceId, noteId };
   }
@@ -4976,7 +4991,7 @@ export function registerDocTools(
       const title = parsed.title || "Untitled";
       const pageType = parsed.pageType ?? "wiki_page";
       const sections = normalizeSemanticSections(pageType, parsed.sections);
-      const docShell = createDocSkeleton(title, docId);
+      const docShell = createDocSkeleton(title);
       const { blockIds, headingIds } = appendNativeBlocks(
         docShell.blocks,
         docShell.noteId,
@@ -5715,16 +5730,6 @@ export function registerDocTools(
       if (!docSnapshot.missing) {
         warning = `Document ${parsed.docId} snapshot not found; workspace tag map was updated only.`;
       } else {
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
-        const docPrevSV = Y.encodeStateVector(doc);
-        const docMeta = doc.getMap("meta");
-        const docTags = ensureTagArray(docMeta);
-        const docSync = syncTagArrayToOption(docTags, tag, option);
-        if (docSync.changed) {
-          const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
-          await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
-        }
         docMetaSynced = true;
       }
 
@@ -5747,7 +5752,7 @@ export function registerDocTools(
     "add_tag_to_doc",
     {
       title: "Add Tag To Document",
-      description: "Attach a workspace tag to a document, creating the workspace tag option if needed. This updates workspace metadata and attempts to sync the document's own metadata.",
+      description: "Attach a workspace tag to a document, creating the workspace tag option if needed. Document tags are stored in workspace metadata.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -5799,16 +5804,6 @@ export function registerDocTools(
       if (!docSnapshot.missing) {
         warning = `Document ${parsed.docId} snapshot not found; workspace tag map was updated only.`;
       } else {
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
-        const docPrevSV = Y.encodeStateVector(doc);
-        const docMeta = doc.getMap("meta");
-        const docTags = ensureTagArray(docMeta);
-        const docTagIndexes = collectMatchingTagIndexes(docTags, tag, option, true);
-        if (deleteArrayIndexes(docTags, docTagIndexes)) {
-          const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
-          await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
-        }
         docMetaSynced = true;
       }
 
@@ -5846,9 +5841,10 @@ export function registerDocTools(
    * references it, mirroring AFFiNE's TagStore.removeTagOption. Resolves the
    * tag by id or name (ambiguous names are rejected), removes the option from
    * meta.properties.tags.options, strips the tag id from each page's tag array,
-   * then syncs each affected document's own metadata. All workspace-root edits
-   * are applied to an in-memory Y.Doc and pushed as a single delta, so a failed
-   * push leaves the server unchanged and the operation safely retriable.
+   * then leaves the updated workspace page metadata as the canonical document
+   * tag state. All workspace-root edits are applied to an in-memory Y.Doc and
+   * pushed as a single delta, so a failed push leaves the server unchanged and
+   * the operation safely retriable.
    */
   const deleteTagHandler = async (parsed: { workspaceId?: string; tag: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
@@ -5910,38 +5906,9 @@ export function registerDocTools(
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
 
-      // Step 3: mirror the cleanup in each affected document's own metadata.
-      let docMetaSynced = 0;
+      // Step 3: workspace page metadata is the canonical document tag state.
+      const docMetaSynced = affectedDocIds.length;
       const warnings: string[] = [];
-      // The workspace registry is the source of truth and has already been
-      // updated; per-document metadata is a secondary sync. Treat each doc as
-      // best-effort so one failing push degrades to a warning instead of
-      // throwing and leaving a non-retriable partial state.
-      for (const docId of affectedDocIds) {
-        try {
-          const docSnapshot = await loadDoc(socket, workspaceId, docId);
-          if (!docSnapshot.missing) {
-            warnings.push(`Document ${docId} snapshot not found; workspace tag map was updated only.`);
-            continue;
-          }
-          const doc = new Y.Doc();
-          Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
-          const docPrevSV = Y.encodeStateVector(doc);
-          const docTags = getTagArray(doc.getMap("meta"));
-          if (docTags) {
-            const docIndexes = collectMatchingTagIndexes(docTags, option.id, null, false);
-            if (deleteArrayIndexes(docTags, docIndexes)) {
-              const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
-              await pushDocUpdate(socket, workspaceId, docId, Buffer.from(docDelta).toString("base64"));
-            }
-          }
-          docMetaSynced += 1;
-        } catch (err) {
-          warnings.push(
-            `Document ${docId} metadata sync failed: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      }
 
       return text({
         workspaceId,
@@ -6005,12 +5972,18 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      let workspaceTags: string[] | undefined;
       let registered = false;
       const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
       if (workspaceSnapshot.missing) {
         const workspaceDoc = new Y.Doc();
         Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-        tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+        const workspaceMeta = workspaceDoc.getMap("meta");
+        tagOptionsById = getWorkspaceTagOptionMaps(workspaceMeta).byId;
+        const workspacePage = getWorkspacePageEntries(workspaceMeta).find(page => page.id === parsed.docId);
+        if (workspacePage) {
+          workspaceTags = getStringArray(workspacePage.tagsArray);
+        }
         registered = isDocumentRegistered(workspaceDoc, parsed.docId);
         workspaceDoc.destroy();
       }
@@ -6034,8 +6007,7 @@ export function registerDocTools(
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       const revision = documentRevision(doc, registered);
 
-      const meta = doc.getMap("meta");
-      const tags = resolveTagLabels(getStringArray(getTagArray(meta)), tagOptionsById);
+      const tags = resolveTagLabels(getDocumentTagValues(doc, workspaceTags), tagOptionsById);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const pageId = findBlockIdByFlavour(blocks, "affine:page");
       const noteId = findBlockIdByFlavour(blocks, "affine:note");
@@ -6122,7 +6094,7 @@ export function registerDocTools(
       // If includeMarkdown is requested, reuse the same render path as export_doc_markdown
       let markdown: string | undefined;
       if (parsed.includeMarkdown) {
-        const collected = collectDocForMarkdown(doc, new Map());
+        const collected = collectDocForMarkdown(doc, new Map(), workspaceTags);
         const rendered = renderBlocksToMarkdown({
           rootBlockIds: collected.rootBlockIds,
           blocksById: collected.blocksById,
@@ -6254,11 +6226,17 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      let workspaceTags: string[] | undefined;
       const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
       if (workspaceSnapshot.missing) {
         const workspaceDoc = new Y.Doc();
         Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-        tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+        const workspaceMeta = workspaceDoc.getMap("meta");
+        tagOptionsById = getWorkspaceTagOptionMaps(workspaceMeta).byId;
+        const workspacePage = getWorkspacePageEntries(workspaceMeta).find(page => page.id === parsed.docId);
+        if (workspacePage) {
+          workspaceTags = getStringArray(workspacePage.tagsArray);
+        }
       }
 
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
@@ -6273,7 +6251,7 @@ export function registerDocTools(
 
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const summary = summarizeDocFidelity(doc, tagOptionsById);
+      const summary = summarizeDocFidelity(doc, tagOptionsById, workspaceTags);
 
       return text({
         docId: parsed.docId,
@@ -6853,11 +6831,17 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      let workspaceTags: string[] | undefined;
       const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
       if (workspaceSnapshot.missing) {
         const wsDoc = new Y.Doc();
         Y.applyUpdate(wsDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-        tagOptionsById = getWorkspaceTagOptionMaps(wsDoc.getMap("meta")).byId;
+        const workspaceMeta = wsDoc.getMap("meta");
+        tagOptionsById = getWorkspaceTagOptionMaps(workspaceMeta).byId;
+        const workspacePage = getWorkspacePageEntries(workspaceMeta).find(page => page.id === parsed.docId);
+        if (workspacePage) {
+          workspaceTags = getStringArray(workspacePage.tagsArray);
+        }
       }
 
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
@@ -6880,7 +6864,7 @@ export function registerDocTools(
 
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const collected = collectDocForMarkdown(doc, tagOptionsById);
+      const collected = collectDocForMarkdown(doc, tagOptionsById, workspaceTags);
       const rendered = renderBlocksToMarkdown({
         rootBlockIds: collected.rootBlockIds,
         blocksById: collected.blocksById,
@@ -6942,11 +6926,17 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       let tagOptionsById = new Map<string, WorkspaceTagOption>();
+      let workspaceTags: string[] | undefined;
       const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
       if (workspaceSnapshot.missing) {
         const wsDoc = new Y.Doc();
         Y.applyUpdate(wsDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-        tagOptionsById = getWorkspaceTagOptionMaps(wsDoc.getMap("meta")).byId;
+        const workspaceMeta = wsDoc.getMap("meta");
+        tagOptionsById = getWorkspaceTagOptionMaps(workspaceMeta).byId;
+        const workspacePage = getWorkspacePageEntries(workspaceMeta).find(page => page.id === parsed.docId);
+        if (workspacePage) {
+          workspaceTags = getStringArray(workspacePage.tagsArray);
+        }
       }
 
       const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
@@ -6966,7 +6956,7 @@ export function registerDocTools(
 
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const summary = summarizeDocFidelity(doc, tagOptionsById);
+      const summary = summarizeDocFidelity(doc, tagOptionsById, workspaceTags);
       let markdown = summary.markdown;
 
       if (parsed.includeFrontmatter) {
@@ -7177,11 +7167,22 @@ export function registerDocTools(
     const socket = await connectForDocumentCreation(wsUrl, cookie, bearer);
     try {
       await joinForDocumentCreation(socket, workspaceId);
+      const workspaceSnapshot = await loadForDocumentCreation(socket, workspaceId, workspaceId);
+      let workspaceTags: string[] | undefined;
+      if (workspaceSnapshot.missing) {
+        const workspaceDoc = new Y.Doc();
+        Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+        const sourcePage = getWorkspacePageEntries(workspaceDoc.getMap("meta"))
+          .find(page => page.id === parsed.templateDocId);
+        if (sourcePage) {
+          workspaceTags = getStringArray(sourcePage.tagsArray);
+        }
+      }
       const snap = await loadForDocumentCreation(socket, workspaceId, parsed.templateDocId);
       if (!snap.missing) throw new Error(`Template doc ${parsed.templateDocId} not found.`);
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-      const collected = collectDocForMarkdown(doc, new Map());
+      const collected = collectDocForMarkdown(doc, new Map(), workspaceTags);
       const rendered = renderBlocksToMarkdown({ rootBlockIds: collected.rootBlockIds, blocksById: collected.blocksById });
       let markdown = rendered.markdown;
       const vars = parsed.variables ?? {};
@@ -7633,7 +7634,7 @@ export function registerDocTools(
     },
   }, updateDocTitleHandler as any);
 
-  async function syncRawTagsToDoc(parsed: {
+  async function syncRawTagsToWorkspacePage(parsed: {
     workspaceId: string;
     docId: string;
     tags: string[];
@@ -7670,24 +7671,6 @@ export function registerDocTools(
 
       const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
       await pushDocUpdate(socket, parsed.workspaceId, parsed.workspaceId, Buffer.from(wsDelta).toString("base64"));
-
-      const docSnapshot = await loadDoc(socket, parsed.workspaceId, parsed.docId);
-      if (!docSnapshot.missing) {
-        throw new Error(`Document ${parsed.docId} not found in workspace ${parsed.workspaceId}`);
-      }
-
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, Buffer.from(docSnapshot.missing, "base64"));
-      const docPrevSV = Y.encodeStateVector(doc);
-      const docMeta = doc.getMap("meta");
-      const docTags = ensureTagArray(docMeta);
-      docTags.delete(0, docTags.length);
-      for (const tag of parsed.tags) {
-        docTags.push([tag]);
-      }
-
-      const docDelta = Y.encodeStateAsUpdate(doc, docPrevSV);
-      await pushDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(docDelta).toString("base64"));
     } finally {
       socket.disconnect();
     }
@@ -7711,7 +7694,12 @@ export function registerDocTools(
       }
       const workspaceDoc = new Y.Doc();
       Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-      const tagOptionsById = getWorkspaceTagOptionMaps(workspaceDoc.getMap("meta")).byId;
+      const workspaceMeta = workspaceDoc.getMap("meta");
+      const tagOptionsById = getWorkspaceTagOptionMaps(workspaceMeta).byId;
+      const sourcePage = getWorkspacePageEntries(workspaceMeta).find(page => page.id === parsed.templateDocId);
+      if (!sourcePage) {
+        throw new Error(`Template doc ${parsed.templateDocId} was not found in workspace ${workspaceId}.`);
+      }
 
       const templateSnapshot = await loadDoc(socket, workspaceId, parsed.templateDocId);
       if (!templateSnapshot.missing) {
@@ -7720,11 +7708,9 @@ export function registerDocTools(
 
       const templateDoc = new Y.Doc();
       Y.applyUpdate(templateDoc, Buffer.from(templateSnapshot.missing, "base64"));
-      const meta = templateDoc.getMap("meta");
-      const rawTags = getStringArray(getTagArray(meta));
+      const rawTags = getStringArray(sourcePage.tagsArray);
       const resolvedTags = resolveTagLabels(rawTags, tagOptionsById);
       const supportIssues: NativeTemplateSupportIssue[] = [];
-      scanNativeTemplateValue(meta, "meta", supportIssues, new WeakSet<object>());
       scanNativeTemplateValue(templateDoc.getMap("blocks"), "blocks", supportIssues, new WeakSet<object>());
 
       return text(summarizeNativeTemplateStructure(
@@ -7795,12 +7781,10 @@ export function registerDocTools(
 
       const templateDoc = new Y.Doc();
       Y.applyUpdate(templateDoc, Buffer.from(templateSnapshot.missing, "base64"));
-      const templateMeta = templateDoc.getMap("meta");
       const templateBlocks = templateDoc.getMap("blocks") as Y.Map<any>;
       const rawTags = getStringArray(sourcePage.tagsArray);
       const resolvedTags = resolveTagLabels(rawTags, tagOptionById);
       const supportIssues: NativeTemplateSupportIssue[] = [];
-      scanNativeTemplateValue(templateMeta, "meta", supportIssues, new WeakSet<object>());
       scanNativeTemplateValue(templateBlocks, "blocks", supportIssues, new WeakSet<object>());
       const nativeSummary = summarizeNativeTemplateStructure(
         templateDoc,
@@ -7851,7 +7835,6 @@ export function registerDocTools(
       const targetDoc = new Y.Doc();
       Y.applyUpdate(targetDoc, Buffer.from(targetSnapshot.missing, "base64"));
       const prevSV = Y.encodeStateVector(targetDoc);
-      const targetMeta = targetDoc.getMap("meta");
       const targetBlocks = targetDoc.getMap("blocks") as Y.Map<any>;
 
       const blockIdMap = new Map<string, string>();
@@ -7880,16 +7863,6 @@ export function registerDocTools(
         targetBlocks.set(nextBlockId, cloned);
       }
 
-      targetMeta.set("id", created.docId);
-      targetMeta.set("title", targetTitle);
-      if (preserveTags) {
-        const targetMetaTags = ensureTagArray(targetMeta);
-        targetMetaTags.delete(0, targetMetaTags.length);
-        for (const tag of rawTags) {
-          targetMetaTags.push([tag]);
-        }
-      }
-
       const pageId = findBlockIdByFlavour(targetBlocks, "affine:page");
       if (pageId) {
         const pageBlock = findBlockById(targetBlocks, pageId);
@@ -7902,7 +7875,7 @@ export function registerDocTools(
       await pushDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
 
       if (preserveTags && rawTags.length > 0) {
-        await syncRawTagsToDoc({
+        await syncRawTagsToWorkspacePage({
           workspaceId,
           docId: created.docId,
           tags: rawTags,

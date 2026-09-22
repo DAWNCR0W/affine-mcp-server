@@ -12,6 +12,7 @@ interface TagVisibilityState {
   email: string;
   workspaceId: string;
   workspaceName: string;
+  firstDocId: string;
   docId: string;
   docTitle: string;
   tag: string;
@@ -34,8 +35,8 @@ test.beforeAll(() => {
   if (state.error) {
     throw new Error(`State file contains error from MCP test: ${state.error}`);
   }
-  if (!state.workspaceId || !state.docId || !state.tag) {
-    throw new Error('State file missing workspaceId, docId, or tag');
+  if (!state.workspaceId || !state.firstDocId || !state.docId || !state.tag) {
+    throw new Error('State file missing workspaceId, firstDocId, docId, or tag');
   }
 });
 
@@ -109,6 +110,70 @@ test.describe.serial('Tag Visibility Verification', () => {
       }
 
       await expect(tagValue).toBeVisible({ timeout: 20_000 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('keep page roots compatible with AFFiNE history restore', async ({ browser }) => {
+    const context = await browser.newContext({
+      storageState: AUTH_STATE_PATH,
+    });
+    const page = await context.newPage();
+    const consoleErrors: string[] = [];
+    page.on('console', message => {
+      if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    page.on('pageerror', error => consoleErrors.push(error.message));
+
+    async function assertBlocksOnlyRoot(docId: string) {
+      await page.goto(`${state.baseUrl}/workspace/${state.workspaceId}/${docId}`);
+      await page.waitForLoadState('domcontentloaded');
+      if (page.url().includes('/sign-in')) {
+        throw new Error('Redirected to sign-in — login state was not persisted');
+      }
+      await dismissModals(page, 4);
+      await page.waitForFunction(
+        () => Boolean((globalThis as any).currentEditor?.page?.spaceDoc),
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      const roots = await page.evaluate(() => {
+        const share = (globalThis as any).currentEditor.page.spaceDoc.share;
+        return [...share.entries()].map(([key, value]) => ({
+          key,
+          type: value?.constructor?.name,
+        }));
+      });
+      expect(roots).toEqual([{ key: 'blocks', type: 'YMap' }]);
+    }
+
+    try {
+      await assertBlocksOnlyRoot(state.firstDocId);
+      await assertBlocksOnlyRoot(state.docId);
+
+      consoleErrors.length = 0;
+      const menuButton = page.locator('[data-testid="header-dropDownButton"]').first();
+      await expect(menuButton).toBeVisible({ timeout: 30_000 });
+      await menuButton.click();
+
+      const historyOption = page.locator('[data-testid="editor-option-menu-history"]').first();
+      await expect(historyOption).toBeVisible({ timeout: 10_000 });
+      await historyOption.click();
+
+      const restoreCurrent = page.getByRole('button', { name: /Restore current version/i }).first();
+      await expect(restoreCurrent).toBeVisible({ timeout: 30_000 });
+      await restoreCurrent.click();
+
+      const restoreConfirmation = page.getByRole('button', { name: /^Restore$/i }).last();
+      await expect(restoreConfirmation).toBeVisible({ timeout: 10_000 });
+      await restoreConfirmation.click();
+      await page.waitForTimeout(2_000);
+
+      expect(
+        consoleErrors.some(error => /Only expect this value is ["']blocks["']/.test(error)),
+      ).toBe(false);
     } finally {
       await context.close();
     }
