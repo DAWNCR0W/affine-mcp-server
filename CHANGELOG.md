@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.2] - 2026-09-22
+
+### Fixed
+- Keep MCP-created page documents compatible with AFFiNE version history restore by preserving the page document's canonical top-level structure.
+- Preserve canonical workspace titles and tags when collection rules evaluate documents, preventing stale legacy metadata from overriding titles or restoring removed tags.
+
+### Tests
+- Add browser and integration regression coverage for history restoration and collection-rule matching with legacy document metadata.
+
 ## [3.8.1] - 2026-09-21
 
 ### Fixed
@@ -839,6 +848,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.2
 [3.8.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.1
 [3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
 [3.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.7.0
@@ -881,4 +891,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.2...HEAD
