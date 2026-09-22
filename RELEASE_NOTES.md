@@ -1,5 +1,21 @@
 # Release Notes
 
+## Version 3.8.2 (2026-09-22)
+
+### Highlights
+- Restore AFFiNE version history for documents created or modified by `affine-mcp-server`.
+
+### What Changed
+- Keep newly created page documents limited to AFFiNE's canonical `blocks` shared type so version-history restore can apply older versions.
+- Read legacy page metadata without recreating the non-canonical top-level map.
+- Use workspace title and tags as the canonical source for collection rules, preventing stale legacy metadata from overriding title matches or resurrecting removed tags.
+
+### Compatibility
+- Existing tools and required inputs and output contracts remain unchanged; the canonical MCP surface remains at 106 tools.
+- Existing documents remain readable, and no configuration migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.2`, then restart the MCP server.
+
 ## Version 3.8.1 (2026-09-21)
 
 ### Highlights

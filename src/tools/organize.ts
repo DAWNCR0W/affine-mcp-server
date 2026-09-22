@@ -740,15 +740,12 @@ async function listWorkspaceDocsForCollectionRules(
       if (snapshot.missing) {
         const pageDoc = new Y.Doc();
         Y.applyUpdate(pageDoc, Buffer.from(snapshot.missing, "base64"));
-        const pageMeta = pageDoc.getMap("meta");
-        const docTitle = pageMeta.get("title");
-        if (typeof docTitle === "string" && docTitle.trim().length > 0) {
-          mergedTitle = docTitle;
-        }
-        const docTags = getStringArray(getTagArray(pageMeta));
-        const resolvedDocTags = resolveTagLabels(docTags, tagOptionById);
-        if (resolvedDocTags.length > 0) {
-          mergedTags = resolvedDocTags;
+        const pageMeta = pageDoc.share.get("meta");
+        if (pageMeta instanceof Y.Map) {
+          const docTitle = pageMeta.get("title");
+          if (entry.title === null && typeof docTitle === "string" && docTitle.trim().length > 0) {
+            mergedTitle = docTitle;
+          }
         }
       }
 

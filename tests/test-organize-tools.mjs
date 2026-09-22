@@ -11,6 +11,10 @@ import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import * as Y from 'yjs';
+
+import { acquireCredentials } from './acquire-credentials.mjs';
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, wsUrlFromGraphQLEndpoint } from '../dist/ws.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
@@ -46,6 +50,32 @@ function expectTruthy(value, message) {
 function expectArray(value, message) {
   if (!Array.isArray(value)) {
     throw new Error(`${message}: expected array, got ${JSON.stringify(value)}`);
+  }
+}
+
+async function seedLegacyDocumentMetadata(workspaceId, docId) {
+  const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+  const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie, undefined);
+  try {
+    await joinWorkspace(socket, workspaceId);
+    const snapshot = await loadDoc(socket, workspaceId, docId);
+    if (!snapshot.missing) {
+      throw new Error(`Document ${docId} not found while seeding legacy metadata`);
+    }
+
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, 'base64'));
+    const previousStateVector = Y.encodeStateVector(doc);
+    const meta = doc.getMap('meta');
+    meta.set('title', 'Legacy Child Doc Title');
+    const tags = new Y.Array();
+    tags.push(['blueprint']);
+    meta.set('tags', tags);
+
+    const update = Y.encodeStateAsUpdate(doc, previousStateVector);
+    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString('base64'));
+  } finally {
+    socket.disconnect();
   }
 }
 
@@ -240,8 +270,42 @@ async function main() {
       throw new Error('update_collection_rules any did not include both tagged docs');
     }
 
-    const previousRules = JSON.stringify(updatedRulesAny.rules);
-    const previousAllowList = [...updatedRulesAny.allowList].sort();
+    await seedLegacyDocumentMetadata(workspaceId, childDocId);
+    const removedCanonicalTag = await call('remove_tag_from_doc', {
+      workspaceId,
+      docId: childDocId,
+      tag: 'blueprint',
+    });
+    expectEqual(removedCanonicalTag?.removed, true, 'remove_tag_from_doc removed canonical tag');
+
+    const canonicalTitleRules = await call('update_collection_rules', {
+      workspaceId,
+      collectionId,
+      rules: {
+        match: 'all',
+        filters: [{ field: 'title', operator: 'equals', value: 'Organize Child Doc' }],
+      },
+    });
+    expectEqual(canonicalTitleRules?.matchedCount, 1, 'collection rules must preserve workspace title over legacy title');
+    if (!canonicalTitleRules.allowList.includes(childDocId)) {
+      throw new Error('collection rules did not use the canonical workspace title');
+    }
+
+    const canonicalTagRules = await call('update_collection_rules', {
+      workspaceId,
+      collectionId,
+      rules: {
+        match: 'all',
+        filters: [{ field: 'tag', operator: 'equals', value: 'blueprint' }],
+      },
+    });
+    expectEqual(canonicalTagRules?.matchedCount, 1, 'collection rules must preserve empty workspace tags over legacy tags');
+    if (canonicalTagRules.allowList.includes(childDocId)) {
+      throw new Error('collection rules used stale legacy tags after the canonical tag was removed');
+    }
+
+    const previousRules = JSON.stringify(canonicalTagRules.rules);
+    const previousAllowList = [...canonicalTagRules.allowList].sort();
     await expectFailure(
       'update_collection_rules',
       {

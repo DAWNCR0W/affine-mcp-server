@@ -208,14 +208,6 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace', ava
   blocks.set(paragraphId, paragraphBlock);
   noteChildren.push([paragraphId]);
   
-  // Set document metadata
-  const docMeta = docYDoc.getMap('meta');
-  docMeta.set('id', firstDocId);
-  docMeta.set('title', 'Welcome to ' + workspaceName);
-  docMeta.set('createDate', Date.now());
-  docMeta.set('tags', new Y.Array());
-  docMeta.set('version', 1);
-  
   // Encode document update
   const docUpdate = Y.encodeStateAsUpdate(docYDoc);
   
