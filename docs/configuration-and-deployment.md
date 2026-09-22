@@ -159,8 +159,8 @@ from the saved config file:
 | `AFFINE_MCP_HTTP_ALLOW_UNAUTHENTICATED` | No | `false` | Unsafe opt-in for an unauthenticated non-loopback bearer listener |
 | `AFFINE_MCP_HTTP_ALLOW_QUERY_TOKEN` | No | `false` | Deprecated compatibility mode for `?token=` clients; prefer the `Authorization` header |
 | `AFFINE_MCP_HTTP_BODY_LIMIT` | No | `4mb` | Maximum JSON request body size; accepts bytes, `kb`, or `mb` from `1kb` through `64mb` |
-| `AFFINE_MCP_HTTP_MAX_SESSIONS` | No | `32` | Maximum combined Streamable HTTP and legacy SSE sessions |
-| `AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | No | `1800000` | Close sessions that receive no MCP activity for this duration |
+| `AFFINE_MCP_HTTP_MAX_SESSIONS` | No | `32` | Maximum combined Streamable HTTP and legacy SSE sessions, including pending initialization |
+| `AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | No | `1800000` (30 minutes) | Close sessions that receive no MCP activity for this duration in milliseconds |
 | `AFFINE_MCP_HTTP_SHUTDOWN_TIMEOUT_MS` | No | `10000` | Deadline before remaining HTTP connections are forcibly closed |
 
 ### WebSocket compatibility
@@ -229,10 +229,26 @@ HTTP mode exposes:
 
 The HTTP transport limits JSON request bodies and the number of active sessions
 to prevent accidental resource exhaustion. Both Streamable HTTP and legacy SSE
-sessions count toward `AFFINE_MCP_HTTP_MAX_SESSIONS`. New sessions receive a
-`503` response with `Retry-After` when the limit is reached. Existing session
-traffic refreshes its idle deadline, and inactive sessions are closed after
-`AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS`.
+sessions, including pending initialization, count toward
+`AFFINE_MCP_HTTP_MAX_SESSIONS` (default `32`). New sessions receive a
+`503` response with `Retry-After` and JSON-RPC error `-32002` when the limit is
+reached. The message reports occupied slots against the configured maximum,
+with separate established and initializing session counts. Established sessions
+include idle sessions; this is a session limit, not a concurrent request limit.
+Existing session traffic refreshes its idle deadline, and inactive sessions are closed after
+`AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` (default `1800000`, or 30 minutes).
+
+For short-lived Streamable HTTP clients such as cron jobs, send `DELETE /mcp`
+with the session's `Mcp-Session-Id` and authentication headers when work finishes,
+including error cleanup. Closing the client process or an HTTP connection alone
+does not terminate its server-side session. Legacy SSE sessions are released
+when their SSE connection closes.
+
+If capacity errors occur, check that clients terminate or reuse their sessions
+and that the idle timeout matches their usage. Long idle timeouts allow abandoned
+sessions to accumulate. Increase `AFFINE_MCP_HTTP_MAX_SESSIONS` only when the
+expected concurrent session count and available memory justify it; a higher cap
+does not replace client cleanup.
 
 On `SIGINT` or `SIGTERM`, the server stops accepting connections and closes MCP
 transports concurrently. If a connection prevents graceful shutdown beyond

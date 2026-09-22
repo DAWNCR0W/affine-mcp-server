@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Include occupied, established, and initializing session counts in HTTP capacity errors while preserving HTTP 503 and JSON-RPC error -32002.
+- Document HTTP session limits and defaults in the README, with session termination and capacity troubleshooting guidance.
+
+### Tests
+- Disable rate limiting in disposable AFFiNE test instances so repeated authentication does not interrupt E2E coverage.
+
 ## [3.8.2] - 2026-09-22
 
 ### Fixed
