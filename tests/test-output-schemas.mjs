@@ -483,4 +483,32 @@ assert.deepEqual(missingDocResult.structuredContent, { value: null });
 await docClient.close();
 await docServer.close();
 
+// Explorer icons: AFFiNE's UI stores named icons as `affine-icon` with a color;
+// affine-mcp <= 3.8.2 wrote `icon`. Both must read back; malformed icons must not.
+for (const [name, kind, idField] of [
+  ["get_doc_icon", "doc.get_icon", "docId"],
+  ["get_folder_icon", "folder.get_icon", "folderId"],
+]) {
+  const iconSchema = toolOutputSchemaFor(name);
+  const base = { kind, ok: true, workspaceId: "workspace-1", [idField]: "id-1", hasIcon: true };
+  for (const icon of [
+    { type: "affine-icon", name: "DirectionSignPanel", color: "var(--affine-v2-block-callout-icon-orange)" },
+    { type: "affine-icon", name: "FlagPanel", color: "#1E96EB" },
+    { type: "affine-icon", name: "FlagPanel" },
+    { type: "icon", name: "check" },
+    { type: "emoji", unicode: "🧪" },
+    null,
+  ]) {
+    assert.equal(iconSchema.safeParse({ ...base, icon }).success, true, `${name} must accept ${JSON.stringify(icon)}`);
+  }
+  for (const icon of [
+    { type: "affine-icon" },
+    { type: "affine-icon", name: "FlagPanel", color: 1 },
+    { type: "blob", blob: {} },
+    { type: "emoji" },
+  ]) {
+    assert.equal(iconSchema.safeParse({ ...base, icon }).success, false, `${name} must reject ${JSON.stringify(icon)}`);
+  }
+}
+
 console.log(`Verified output schema coverage for ${ALL_TOOLS.length} tools.`);

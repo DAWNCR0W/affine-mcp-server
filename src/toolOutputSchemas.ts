@@ -190,7 +190,7 @@ function fieldSchema(kind: FieldKind): ZodType {
     case "icon": return z.union([
       z.string(),
       z.object({ type: z.literal("emoji"), unicode: z.string() }),
-      z.object({ type: z.literal("icon"), name: z.string() }),
+      z.object({ type: z.enum(["affine-icon", "icon"]), name: z.string(), color: z.string().optional() }),
       z.null(),
     ]);
     case "null": return z.null();

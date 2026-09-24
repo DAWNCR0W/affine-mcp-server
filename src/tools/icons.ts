@@ -20,19 +20,31 @@ import {
 
 /**
  * Zod shape for the `icon` parameter shared by both setters. Accepts an emoji
- * shorthand string, a full `{type:"emoji",unicode}` / `{type:"icon",name}`
- * object, or `null` to clear the icon.
+ * shorthand string, a full `{type:"emoji",unicode}` / `{type:"affine-icon",name,color?}`
+ * object, or `null` to clear the icon. `"icon"` is accepted as an alias for `"affine-icon"`.
  */
 const iconSchema = z
   .union([
     z.string(),
     z.object({ type: z.literal("emoji"), unicode: z.string() }),
-    z.object({ type: z.literal("icon"), name: z.string() }),
+    z.object({
+      type: z.enum(["affine-icon", "icon"]),
+      name: z.string(),
+      color: z
+        .string()
+        .optional()
+        .describe(
+          'Any CSS color, e.g. "#EB4C42". AFFiNE\'s picker palette uses theme-aware ' +
+            '"var(--affine-v2-block-callout-icon-<red|orange|yellow|green|teal|blue|purple|magenta|grey>)".',
+        ),
+    }),
     z.null(),
   ])
   .describe(
     'Emoji shorthand ("🧪"), a full object ({type:"emoji",unicode:"🧪"} or ' +
-      '{type:"icon",name:"check"}), or null to remove the icon.',
+      '{type:"affine-icon",name:"FlagPanel",color:"var(--affine-v2-block-callout-icon-red)"}), ' +
+      "or null to remove the icon. `name` must be an @blocksuite/icons export without the " +
+      '`Icon` suffix (e.g. "FlagPanel", "DirectionSignPanel"); unknown names render as no icon.',
   );
 
 /**
