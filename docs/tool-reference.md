@@ -74,7 +74,7 @@ workspace or document links. For a custom route, keep the deployment base in
 | `create_folder` | Create a root or nested folder | Experimental |
 | `create_workspace_blueprint` | Create a simple workspace folder blueprint | Good for structured onboarding setups |
 | `rename_folder` | Rename a folder | Experimental |
-| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji, or named icon with optional color) | Experimental |
+| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji, or named icon with optional color) | Experimental. See [Sidebar icons](#sidebar-icons) |
 | `get_folder_icon` | Read a folder's current sidebar icon | Experimental |
 | `delete_folder` | Delete a folder recursively | Experimental and destructive |
 | `move_organize_node` | Move a folder or link node | Experimental |
@@ -153,7 +153,7 @@ stored as one plain paragraph.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
-| `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | |
+| `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
@@ -186,6 +186,10 @@ For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `upda
 ```
 
 `read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
+
+#### Sidebar icons
+
+`update_doc_icon` and `update_folder_icon` accept an emoji or a named icon such as `{ "type": "affine-icon", "name": "FlagPanel", "color": "#EB4C42" }`. `name` must match an `@blocksuite/icons` export without the `Icon` suffix (for example `FlagPanel` for `FlagPanelIcon`); names are not validated, and unknown names render as no icon in AFFiNE. `color` is optional and accepts any CSS color.
 
 ### Tags
 
