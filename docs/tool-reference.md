@@ -74,7 +74,7 @@ workspace or document links. For a custom route, keep the deployment base in
 | `create_folder` | Create a root or nested folder | Experimental |
 | `create_workspace_blueprint` | Create a simple workspace folder blueprint | Good for structured onboarding setups |
 | `rename_folder` | Rename a folder | Experimental |
-| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji or named icon) | Experimental |
+| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji, or named icon with optional color) | Experimental |
 | `get_folder_icon` | Read a folder's current sidebar icon | Experimental |
 | `delete_folder` | Delete a folder recursively | Experimental and destructive |
 | `move_organize_node` | Move a folder or link node | Experimental |
@@ -153,7 +153,7 @@ stored as one plain paragraph.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
-| `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
+| `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |

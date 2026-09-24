@@ -16,6 +16,7 @@ import {
   writeTableColumnWidth,
 } from "../dist/tools/docs.js";
 import { registerHistoryTools } from "../dist/tools/history.js";
+import { registerIconTools } from "../dist/tools/icons.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerUserCRUDTools } from "../dist/tools/userCRUD.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
@@ -27,6 +28,7 @@ import {
   BoundedTreeDepth,
   requireMatchingConfirmation,
 } from "../dist/util/inputSchemas.js";
+import { normalizeIconInput } from "../dist/util/explorerIcon.js";
 
 class ToolRegistry {
   tools = new Map();
@@ -90,6 +92,7 @@ registerBlobTools(registry, gql);
 registerCommentTools(registry, gql, {});
 registerDocTools(registry, gql, {});
 registerHistoryTools(registry, gql, {});
+registerIconTools(registry, gql, {});
 registerNotificationTools(registry, gql);
 registerUserCRUDTools(registry, gql);
 registerWorkspaceTools(registry, gql);
@@ -393,5 +396,27 @@ assert.equal(parseResult(await cleanupBlobs({
   confirmWorkspaceId: "workspace-1",
 })).success, true);
 assert.equal(requestCount, 3, "valid confirmations should reach AFFiNE exactly once each");
+
+// Named icons must keep `color` through the input schema and be written with
+// AFFiNE's `affine-icon` discriminator (its renderer ignores `icon`).
+for (const toolName of ["update_doc_icon", "update_folder_icon"]) {
+  const iconField = registry.tools.get(toolName)?.definition?.inputSchema?.icon;
+  assert.ok(iconField, `${toolName} must declare an icon input`);
+  assert.deepEqual(
+    iconField.parse({ type: "affine-icon", name: "FlagPanel", color: "#EB4C42" }),
+    { type: "affine-icon", name: "FlagPanel", color: "#EB4C42" },
+    `${toolName} must keep icon color`,
+  );
+  assert.equal(iconField.safeParse({ type: "blob", blob: {} }).success, false);
+}
+assert.deepEqual(
+  normalizeIconInput({ type: "icon", name: " FlagPanel ", color: " #EB4C42 " }),
+  { type: "affine-icon", name: "FlagPanel", color: "#EB4C42" },
+);
+assert.deepEqual(normalizeIconInput({ type: "affine-icon", name: "FlagPanel" }), { type: "affine-icon", name: "FlagPanel" });
+assert.deepEqual(normalizeIconInput({ type: "affine-icon", name: "FlagPanel", color: "  " }), { type: "affine-icon", name: "FlagPanel" });
+assert.deepEqual(normalizeIconInput("🧪"), { type: "emoji", unicode: "🧪" });
+assert.equal(normalizeIconInput(null), null);
+assert.throws(() => normalizeIconInput({ type: "affine-icon", name: "  " }), /non-empty `name`/);
 
 console.log("Input contract tests passed");

@@ -12,8 +12,12 @@ import { loadDoc, pushDocUpdate, type WorkspaceSocket } from "../ws.js";
  * subDoc.getMap("doc:abc123") => {
  *   id:   "doc:abc123",
  *   icon: { type: "emoji", unicode: "🧪" }
+ *      | { type: "affine-icon", name: "FlagPanel", color: "var(--affine-v2-block-callout-icon-red)" }
  * }
  * ```
+ *
+ * Named icons use AFFiNE's `IconType.AffineIcon` discriminator (`"affine-icon"`),
+ * not `"icon"`; AFFiNE's renderer ignores any other type.
  *
  * Clearing an icon removes the `icon` field but keeps `id`, so the entry stays
  * referenceable. This module centralises that schema so the doc-icon and
@@ -23,9 +27,14 @@ import { loadDoc, pushDocUpdate, type WorkspaceSocket } from "../ws.js";
 /** A resolved icon value as stored by AFFiNE. */
 export type ExplorerIconValue =
   | { type: "emoji"; unicode: string }
-  | { type: "icon"; name: string };
+  | { type: "affine-icon"; name: string; color?: string }
+  // Legacy shape written by affine-mcp <= 3.8.2; AFFiNE does not render it.
+  | { type: "icon"; name: string; color?: string };
 
-/** The accepted user input: an emoji shorthand, a full value, or null to clear. */
+/**
+ * The accepted user input: an emoji shorthand, a full value, or null to clear.
+ * `"icon"` is accepted as an alias for `"affine-icon"`.
+ */
 export type ExplorerIconInput = string | ExplorerIconValue | null;
 
 /** The top-level key identifying an explorer entity. */
@@ -50,9 +59,10 @@ export function folderIconKey(folderId: string): ExplorerIconKey {
  * Coerce user input into the stored icon shape (or null to clear).
  *
  * - A bare string is treated as an emoji shorthand → `{ type: "emoji", unicode }`.
- * - A `{ type: "emoji", unicode }` or `{ type: "icon", name }` object is passed
- *   through after validation. Named-icon `name` values are not validated against
- *   AFFiNE's fixed icon set — they are written as-is.
+ * - A `{ type: "emoji", unicode }` object is passed through after validation.
+ * - A `{ type: "affine-icon" | "icon", name, color? }` object is written as
+ *   `{ type: "affine-icon", name, color? }`. Named-icon `name` and `color` values
+ *   are not validated against AFFiNE's icon set / palette — they are written as-is.
  * - `null` clears the icon.
  */
 export function normalizeIconInput(input: ExplorerIconInput): ExplorerIconValue | null {
@@ -70,10 +80,11 @@ export function normalizeIconInput(input: ExplorerIconInput): ExplorerIconValue 
     return { type: "emoji", unicode };
   }
 
-  if (input.type === "icon") {
+  if (input.type === "affine-icon" || input.type === "icon") {
     const name = input.name?.trim();
     if (!name) throw new Error("named icon requires a non-empty `name`.");
-    return { type: "icon", name };
+    const color = input.color?.trim();
+    return color ? { type: "affine-icon", name, color } : { type: "affine-icon", name };
   }
 
   throw new Error(`Unsupported icon type: ${JSON.stringify((input as any).type)}.`);
