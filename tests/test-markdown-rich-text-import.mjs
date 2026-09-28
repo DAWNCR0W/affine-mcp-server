@@ -148,6 +148,28 @@ function paragraphBlockDeltas(blocks, propType) {
   return deltas;
 }
 
+function expectSingleLinkedPageParagraph(blocks, pageId, flow) {
+  const allParagraphs = paragraphBlockDeltas(blocks, "text");
+  const importedParagraphs = allParagraphs.filter(deltas => deltas.length > 0);
+  expect(
+    importedParagraphs.length === 1,
+    `${flow} must materialize one non-empty paragraph (total=${allParagraphs.length}, imported=${importedParagraphs.length}, deltas=${JSON.stringify(allParagraphs)})`,
+  );
+
+  const paragraphDeltas = importedParagraphs[0];
+  const references = paragraphDeltas.filter(
+    delta => delta.attributes?.reference?.type === "LinkedPage",
+  );
+  expect(
+    references.length === 1 && paragraphDeltas.length === 1 && references[0].insert === " ",
+    `${flow} must store only one native LinkedPage sentinel (deltas=${JSON.stringify(paragraphDeltas)})`,
+  );
+  expect(
+    references[0].attributes.reference.pageId === pageId,
+    `${flow} changed the LinkedPage pageId (deltas=${JSON.stringify(paragraphDeltas)})`,
+  );
+}
+
 /**
  * Collect deltas from the child paragraph blocks inside affine:callout blocks.
  */
@@ -252,10 +274,11 @@ async function main() {
     // --- Paragraph ---
     const createdParagraphDeltas = paragraphBlockDeltas(createdBlocks, "text");
     expect(createdParagraphDeltas.some(delta => hasBoldRun(delta, "paragraph")), "paragraph did not preserve bold");
-    const createdReference = createdParagraphDeltas
+    const createdReferences = createdParagraphDeltas
       .flat()
-      .find(delta => delta.attributes?.reference?.type === "LinkedPage");
-    expect(createdReference, "create_doc_from_markdown did not create a LinkedPage reference");
+      .filter(delta => delta.attributes?.reference?.type === "LinkedPage");
+    expect(createdReferences.length === 1, "create_doc_from_markdown must create exactly one LinkedPage reference");
+    const createdReference = createdReferences[0];
     expect(createdReference.insert === " ", "create_doc_from_markdown must store the native space sentinel");
     expect(createdReference.attributes.reference.pageId === referenceTarget.docId, "create_doc_from_markdown changed the LinkedPage pageId");
 
@@ -266,14 +289,29 @@ async function main() {
     });
     expect(standaloneResult?.docId, "create_doc_from_markdown did not return standalone LinkedPage docId");
     const standaloneDoc = await loadLiveDoc(workspaceId, standaloneResult.docId, cookie);
-    const standaloneParagraphs = paragraphBlockDeltas(getBlocks(standaloneDoc), "text");
-    expect(standaloneParagraphs.length === 1, "standalone LinkedPage import must create one paragraph");
-    const standaloneReference = standaloneParagraphs[0].find(
-      delta => delta.attributes?.reference?.type === "LinkedPage",
+    expectSingleLinkedPageParagraph(
+      getBlocks(standaloneDoc),
+      referenceTarget.docId,
+      "standalone create_doc_from_markdown LinkedPage import",
     );
-    expect(standaloneReference, "standalone LinkedPage import did not create a reference node");
-    expect(standaloneReference.insert === " ", "standalone LinkedPage import must store the native space sentinel");
-    expect(standaloneReference.attributes.reference.pageId === referenceTarget.docId, "standalone LinkedPage import changed the pageId");
+
+    const appendDoc = await call("create_doc", {
+      workspaceId,
+      title: "Markdown Appended LinkedPage",
+      content: "",
+    });
+    expect(appendDoc?.docId, "create_doc did not return append target docId");
+    await call("append_markdown", {
+      workspaceId,
+      docId: appendDoc.docId,
+      markdown: `[appended target](LinkedPage:${referenceTarget.docId})`,
+    });
+    const appendedDoc = await loadLiveDoc(workspaceId, appendDoc.docId, cookie);
+    expectSingleLinkedPageParagraph(
+      getBlocks(appendedDoc),
+      referenceTarget.docId,
+      "append_markdown LinkedPage import",
+    );
 
     // --- Quote ---
     const createdQuoteDeltas = paragraphBlockDeltas(createdBlocks, "quote");
@@ -318,10 +356,11 @@ async function main() {
     // --- Paragraph ---
     const replacedParagraphDeltas = paragraphBlockDeltas(replacedBlocks, "text");
     expect(replacedParagraphDeltas.some(delta => hasBoldRun(delta, "paragraph")), "replace_doc_with_markdown paragraph lost bold");
-    const replacedReference = replacedParagraphDeltas
+    const replacedReferences = replacedParagraphDeltas
       .flat()
-      .find(delta => delta.attributes?.reference?.type === "LinkedPage");
-    expect(replacedReference, "replace_doc_with_markdown did not create a LinkedPage reference");
+      .filter(delta => delta.attributes?.reference?.type === "LinkedPage");
+    expect(replacedReferences.length === 1, "replace_doc_with_markdown must create exactly one LinkedPage reference");
+    const replacedReference = replacedReferences[0];
     expect(replacedReference.insert === " ", "replace_doc_with_markdown must store the native space sentinel");
     expect(replacedReference.attributes.reference.pageId === referenceTarget.docId, "replace_doc_with_markdown changed the LinkedPage pageId");
 
