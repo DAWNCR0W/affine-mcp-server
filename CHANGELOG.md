@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.3] - 2026-09-28
+
 ### Changed
 - Include occupied, established, and initializing session counts in HTTP capacity errors while preserving HTTP 503 and JSON-RPC error -32002.
 - Document HTTP session limits and defaults in the README, with session termination and capacity troubleshooting guidance.
@@ -862,6 +864,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
 [3.8.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.2
 [3.8.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.1
 [3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
@@ -905,4 +908,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.2...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.3...HEAD
