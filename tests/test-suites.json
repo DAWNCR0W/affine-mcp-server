@@ -145,6 +145,7 @@
       "test-find-doc-by-title.mjs",
       "test-doc-properties.mjs",
       "test-read-doc-linked-refs.mjs",
+      "test-markdown-rich-text-import.mjs",
       "test-structured-receipts.mjs",
       "test-icons.mjs",
       "test-surface-elements.mjs",
@@ -176,7 +177,6 @@
     "manual": [
       "test-database-schema.mjs",
       "test-database-ui-rows.mjs",
-      "test-markdown-rich-text-import.mjs",
       "test-package-smoke.mjs"
     ]
   },

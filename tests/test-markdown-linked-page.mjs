@@ -3,6 +3,10 @@
 // import/export pipeline. Runs against dist/ and needs no AFFiNE server.
 import { parseMarkdownToOperations } from "../dist/markdown/parse.js";
 import { renderBlocksToMarkdown } from "../dist/markdown/render.js";
+import {
+  AFFINE_LINKED_PAGE_REFERENCE_NODE,
+  normalizeLinkedPageReferenceDeltas,
+} from "../dist/markdown/richText.js";
 
 function expect(condition, message) {
   if (!condition) {
@@ -22,11 +26,39 @@ function referenceDeltas(operation) {
   expect(op.type === "paragraph", `expected paragraph, got ${op.type}`);
   const refs = referenceDeltas(op);
   expect(refs.length === 1, `expected one reference delta, got ${refs.length}`);
-  expect(refs[0].insert === "​", "reference delta must use a zero-width insert");
+  expect(refs[0].insert === AFFINE_LINKED_PAGE_REFERENCE_NODE, "reference delta must use AFFiNE's native space sentinel");
   const reference = refs[0].attributes.reference;
   expect(reference.type === "LinkedPage", `expected LinkedPage type, got ${reference.type}`);
   expect(reference.pageId === "abc123", `expected pageId abc123, got ${reference.pageId}`);
   expect(op.text.includes("See"), "surrounding text must be preserved");
+}
+
+// LinkedPage writes accept native and coalesced sentinels, repair only the
+// exact legacy zero-width form, and reject arbitrary visible labels or IDs.
+{
+  const reference = pageId => ({ type: "LinkedPage", pageId });
+  const normalized = normalizeLinkedPageReferenceDeltas([
+    { insert: "\u200B\u200B", attributes: { reference: reference("abc123") } },
+  ]);
+  expect(normalized[0].insert === "  ", "legacy coalesced sentinels must normalize to spaces");
+  expect(
+    normalizeLinkedPageReferenceDeltas([
+      { insert: "  ", attributes: { reference: reference("abc123") } },
+    ])[0].insert === "  ",
+    "coalesced native reference sentinels must remain valid",
+  );
+
+  for (const [insert, pageId] of [["Component register", "abc123"], [" ", " "], [" ", 123], [" ", undefined]]) {
+    let rejected = false;
+    try {
+      normalizeLinkedPageReferenceDeltas([
+        { insert, attributes: { reference: reference(pageId) } },
+      ]);
+    } catch (error) {
+      rejected = /LinkedPage reference deltas/.test(error.message);
+    }
+    expect(rejected, `malformed LinkedPage delta must be rejected: ${JSON.stringify({ insert, pageId })}`);
+  }
 }
 
 // 2. A paragraph that is only a LinkedPage link stays a paragraph (no bookmark).
@@ -35,7 +67,52 @@ function referenceDeltas(operation) {
   expect(parsed.operations.length === 1, "expected a single operation");
   const [op] = parsed.operations;
   expect(op.type === "paragraph", `standalone LinkedPage link must not become a bookmark, got ${op.type}`);
+  expect(op.text === " ", "standalone LinkedPage paragraph must retain the native sentinel text");
   expect(referenceDeltas(op).length === 1, "expected one reference delta");
+}
+
+// Reference-only blocks stay meaningful when their native sentinel is whitespace.
+{
+  const cases = [
+    { markdown: "# [ref](LinkedPage:abc123)", type: "heading" },
+    { markdown: "- [ref](LinkedPage:abc123)", type: "list" },
+    { markdown: "- [ ] [ref](LinkedPage:abc123)", type: "list", style: "todo" },
+    { markdown: "> [ref](LinkedPage:abc123)", type: "quote" },
+    { markdown: "| [ref](LinkedPage:abc123) |\n| --- |", type: "table" },
+  ];
+  for (const testCase of cases) {
+    const parsed = parseMarkdownToOperations(testCase.markdown);
+    expect(parsed.operations.length === 1, `${testCase.type} LinkedPage should produce one operation`);
+    const [operation] = parsed.operations;
+    expect(operation.type === testCase.type, `expected ${testCase.type}, got ${operation.type}`);
+    if (testCase.style) {
+      expect(operation.style === testCase.style, "task-only LinkedPage should retain todo style");
+    }
+    const deltas = operation.type === "table"
+      ? operation.tableCellDeltas.flat(2)
+      : operation.deltas ?? [];
+    const referenceDelta = deltas.find(delta => delta.attributes?.reference?.type === "LinkedPage");
+    expect(referenceDelta, `${testCase.type} LinkedPage delta must survive text trimming`);
+    expect(referenceDelta.insert === " ", `${testCase.type} reference must retain the native sentinel`);
+  }
+
+  const checkboxLookalike = parseMarkdownToOperations("- [ ][ref](LinkedPage:abc123)").operations[0];
+  expect(checkboxLookalike.type === "list", "checkbox-looking list should remain a list");
+  expect(checkboxLookalike.style === "bulleted", "reference sentinel must not turn literal [ ] into a todo");
+  expect(checkboxLookalike.text === "[ ] ", "checkbox-looking text and reference sentinel must be preserved");
+  expect(
+    checkboxLookalike.deltas.some(delta => delta.insert === "[ ]"),
+    "checkbox-looking source text must remain in the list deltas",
+  );
+  expect(
+    referenceDeltas(checkboxLookalike).length === 1,
+    "checkbox-looking list must retain its LinkedPage reference delta",
+  );
+
+  expect(
+    parseMarkdownToOperations("   ").operations.length === 0,
+    "ordinary whitespace-only Markdown must remain empty",
+  );
 }
 
 // 3. Regular links keep their existing behavior.
@@ -65,12 +142,12 @@ function referenceDeltas(operation) {
     caption: null, tableData: null,
   });
   blocks.set("para1", {
-    id: "para1", parentId: "note1", flavour: "affine:paragraph", type: "text", text: "See ​ for details.",
+    id: "para1", parentId: "note1", flavour: "affine:paragraph", type: "text", text: "See   for details.",
     checked: null, language: null, childIds: [], url: null, sourceId: null,
     caption: null, tableData: null,
     textDeltas: [
       { insert: "See " },
-      { insert: "​", attributes: { reference: { type: "LinkedPage", pageId: "abc123" } } },
+      { insert: " ", attributes: { reference: { type: "LinkedPage", pageId: "abc123" } } },
       { insert: " for details." },
     ],
   });

@@ -14,6 +14,7 @@ import {
   renderMarkdownLinkWithSafeLabel,
 } from "./safety.js";
 import { blobSourceIdToUrl } from "../urlSafety.js";
+import { isLinkedPageReferenceDelta } from "./richText.js";
 
 type RenderState = {
   blocksById: Map<string, MarkdownRenderableBlock>;
@@ -134,12 +135,14 @@ function trimTextDeltas(deltas: TextDelta[]): TextDelta[] {
   }));
 
   while (trimmed.length > 0) {
+    if (isLinkedPageReferenceDelta(trimmed[0])) break;
     trimmed[0].insert = trimmed[0].insert.replace(/^\s+/, "");
     if (trimmed[0].insert.length > 0) break;
     trimmed.shift();
   }
   while (trimmed.length > 0) {
     const last = trimmed[trimmed.length - 1];
+    if (isLinkedPageReferenceDelta(last)) break;
     last.insert = last.insert.replace(/\s+$/, "");
     if (last.insert.length > 0) break;
     trimmed.pop();
@@ -185,7 +188,10 @@ function renderTextDelta(
       recordInlineLoss(state, context, "reference", "unsafe URL scheme");
       return "";
     }
-    return link;
+    const markerCount = /^[ \u200B]+$/.test(insert)
+      ? insert.length
+      : 1;
+    return link.repeat(markerCount);
   }
 
   const codeCannotBePreserved = attributes.code && (
