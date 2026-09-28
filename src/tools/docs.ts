@@ -37,6 +37,7 @@ import {
   joinWorkspace,
   loadDoc,
   pushDocUpdate,
+  pushPageDocUpdate,
   deleteDoc as wsDeleteDoc,
   type WorkspaceSocket,
 } from "../ws.js";
@@ -3320,7 +3321,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
       // Creating an empty table is supported, but nothing on the result said the
       // cells were empty, so a caller that meant to pass cell content had no
@@ -4299,7 +4300,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return {
         appendedCount: blockIds.length,
@@ -4566,9 +4567,11 @@ export function registerDocTools(
 
   function makeWorkspacePageEntry(docId: string, title: string): Y.Map<any> {
     const entry = new Y.Map();
+    const createdAt = Date.now();
     entry.set("id", docId);
     entry.set("title", title);
-    entry.set("createDate", Date.now());
+    entry.set("createDate", createdAt);
+    entry.set("updatedDate", createdAt);
     entry.set("tags", new Y.Array());
     return entry;
   }
@@ -5083,7 +5086,7 @@ export function registerDocTools(
       );
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return {
         workspaceId,
@@ -6373,7 +6376,7 @@ export function registerDocTools(
       throw new Error(`Source parent ${parentDocId} still contains links to document ${docId}.`);
     }
     const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
-    await pushDocUpdate(
+    await pushPageDocUpdate(
       socket,
       workspaceId,
       parentDocId,
@@ -7614,7 +7617,7 @@ export function registerDocTools(
           }
         }
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+        await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
       }
       return receipt("doc.update_title", {
         workspaceId,
@@ -7872,7 +7875,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(targetDoc, prevSV);
-      await pushDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
 
       if (preserveTags && rawTags.length > 0) {
         await syncRawTagsToWorkspacePage({
@@ -8617,7 +8620,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         added: true,
@@ -8671,7 +8674,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         deleted: true,
@@ -8859,7 +8862,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         updated: true,
@@ -8951,7 +8954,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
       const finalViews = readDatabaseViewDefs(ctx.dbBlock, finalLookup);
@@ -9150,7 +9153,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         added: true,
@@ -9616,7 +9619,7 @@ export function registerDocTools(
       }
       writeSurfaceElement(ctx.value, elementId, data);
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -9854,7 +9857,7 @@ export function registerDocTools(
 
       if (changed.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -9939,7 +9942,7 @@ export function registerDocTools(
       pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -10020,7 +10023,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -10114,7 +10117,7 @@ export function registerDocTools(
 
       if (changed.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10253,7 +10256,7 @@ export function registerDocTools(
 
       if (changed.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10340,7 +10343,7 @@ export function registerDocTools(
       if (changed) {
         writeTableCellText(block, rowId, columnId, nextText);
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10430,7 +10433,7 @@ export function registerDocTools(
 
       if (changedColumns.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10540,7 +10543,7 @@ export function registerDocTools(
       block.set("sys:parent", null);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -10672,7 +10675,7 @@ export function registerDocTools(
       pruneFromFrameChildElementIds(blocks, [...deletedIds, ...prunedConnectors]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,

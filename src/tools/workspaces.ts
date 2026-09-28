@@ -128,9 +128,11 @@ function createInitialWorkspaceData(workspaceName: string = 'New Workspace', ava
   
   // Add first document metadata
   const pageMetadata = new Y.Map();
+  const createdAt = Date.now();
   pageMetadata.set('id', firstDocId);
   pageMetadata.set('title', 'Welcome to ' + workspaceName);
-  pageMetadata.set('createDate', Date.now());
+  pageMetadata.set('createDate', createdAt);
+  pageMetadata.set('updatedDate', createdAt);
   pageMetadata.set('tags', new Y.Array());
   
   pages.push([pageMetadata]);

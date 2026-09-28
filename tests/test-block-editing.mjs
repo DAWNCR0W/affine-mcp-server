@@ -65,6 +65,7 @@ async function main() {
     email: EMAIL,
     workspaceId: null,
     docId: null,
+    documentTitle: 'Block Editing E2E',
     inboxHeadingBlockId: null,
     taskBlockId: null,
     quoteBlockId: null,
@@ -187,7 +188,7 @@ async function main() {
 
     const document = await call('create_doc', {
       workspaceId: state.workspaceId,
-      title: 'Block Editing E2E',
+      title: state.documentTitle,
       content: '',
     });
     state.docId = document?.docId;

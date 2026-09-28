@@ -11,6 +11,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import * as Y from "yjs";
+
+import { acquireCredentials } from "./acquire-credentials.mjs";
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from "../dist/ws.js";
 
 import {
   testResourceName,
@@ -262,6 +266,45 @@ function stableDoc(doc) {
   };
 }
 
+async function readWorkspacePageState(workspaceId, targetDocId) {
+  const { cookie } = await acquireCredentials(BACKEND_URL, EMAIL, PASSWORD);
+  const socket = await connectWorkspaceSocket(
+    wsUrlFromGraphQLEndpoint(`${BACKEND_URL}/graphql`),
+    cookie,
+  );
+  try {
+    await joinWorkspace(socket, workspaceId);
+    const [workspaceSnapshot, pageSnapshot] = await Promise.all([
+      loadDoc(socket, workspaceId, workspaceId),
+      loadDoc(socket, workspaceId, targetDocId),
+    ]);
+    assert.ok(workspaceSnapshot.missing, "workspace root snapshot is available for metadata verification");
+    assert.ok(pageSnapshot.missing, "page snapshot is available for timestamp verification");
+
+    const workspaceDoc = new Y.Doc();
+    try {
+      Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      const pages = workspaceDoc.getMap("meta").get("pages");
+      const updatedDates = new Map();
+      if (pages instanceof Y.Array) {
+        for (const page of pages) {
+          if (page instanceof Y.Map && typeof page.get("id") === "string") {
+            updatedDates.set(page.get("id"), page.get("updatedDate"));
+          }
+        }
+      }
+      return {
+        updatedDates,
+        pageSnapshotTimestamp: pageSnapshot.timestamp,
+      };
+    } finally {
+      workspaceDoc.destroy();
+    }
+  } finally {
+    socket.disconnect();
+  }
+}
+
 function assertMindmapTree(result, expectedNodeIds, rootId, expectedRootChildren = expectedNodeIds) {
   const nodes = Array.isArray(result?.nodes) ? result.nodes : [];
   const byId = new Map(nodes.map(node => [node.nodeId, node]));
@@ -445,6 +488,23 @@ async function main() {
     assert.ok(childPositions.every(position => position >= 0), "append receipts are linked from their parent");
     assert.equal(new Set(childPositions).size, appendIds.length, "append ordering has no duplicate child links");
     assert.equal(page.id, pageBlock(afterAppends).id, "document root linkage survives concurrent appends");
+
+    const metadataAfterAppends = await readWorkspacePageState(workspaceId, docId);
+    const updatedDateAfterAppends = metadataAfterAppends.updatedDates.get(docId);
+    assert.equal(typeof updatedDateAfterAppends, "number",
+      "an MCP-created page has a numeric root meta.pages[].updatedDate");
+    assert.equal(updatedDateAfterAppends, metadataAfterAppends.pageSnapshotTimestamp,
+      "page updatedDate matches the live page snapshot timestamp rather than a list_docs fallback");
+    const noOpEdit = await call(connections[0], "update_block", {
+      workspaceId,
+      docId,
+      blockId: appendIds[0],
+      text: appendTexts[0],
+    });
+    assert.equal(noOpEdit.updated, false, "writing identical page content is a no-op");
+    const metadataAfterNoOp = await readWorkspacePageState(workspaceId, docId);
+    assert.equal(metadataAfterNoOp.updatedDates.get(docId), updatedDateAfterAppends,
+      "a no-op edit does not advance workspace updatedDate");
 
     const editedTexts = ["distinct block edit one", "distinct block edit two"];
     await runParallel("distinct block edits", editedTexts.map((text, index) => () =>

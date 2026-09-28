@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { GraphQLClient } from "../graphqlClient.js";
 import { text, toolError } from "../util/mcp.js";
 import { secureRandomInt31, secureRandomString } from "../util/random.js";
-import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushPageDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
 
 // Native BlockSuite contract, verified against AFFiNE 174ad9bc5:
 // affine/model/src/{consts/mindmap,elements/mindmap/mindmap}.ts.
@@ -316,7 +316,7 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
       else {
         result = mutateNativeMindmap(ctx.value, operation, p, helpers);
         const delta = Y.encodeStateAsUpdate(doc, previous);
-        await pushDocUpdate(socket, workspaceId, p.docId, Buffer.from(delta).toString("base64"));
+        await pushPageDocUpdate(socket, workspaceId, p.docId, Buffer.from(delta).toString("base64"));
       }
       return text({ ok: true, workspaceId, docId: p.docId, surfaceBlockId: ctx.surfaceId, ...result }) as CallToolResult;
     } catch (error) {

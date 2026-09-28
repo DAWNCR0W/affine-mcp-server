@@ -7,6 +7,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as Y from "yjs";
+import { pushDocUpdate, pushPageDocUpdate } from "../dist/ws.js";
+import { withToolErrors } from "../dist/util/mcp.js";
 
 import {
   buildWorkspaceListDocsFallbackConnection,
@@ -27,6 +29,234 @@ import {
   isDocumentMoveSuccessful,
   toDocumentMoveResult,
 } from "../dist/util/mutationSafety.js";
+
+function workspaceRootWithPages(pages) {
+  const doc = new Y.Doc();
+  const pageEntries = new Y.Array();
+  for (const { id, updatedDate } of pages) {
+    const entry = new Y.Map();
+    entry.set("id", id);
+    entry.set("createDate", updatedDate);
+    if (updatedDate !== undefined) entry.set("updatedDate", updatedDate);
+    pageEntries.push([entry]);
+  }
+  doc.getMap("meta").set("pages", pageEntries);
+  return doc;
+}
+
+function makeUpdateSocket({ workspaceId, root, pageTimestamp = 100, rootMode = "success", rootReadBarrier = 0, rootUnavailable = false } = {}) {
+  const pushes = [];
+  let rootReads = 0;
+  let rootPushes = 0;
+  let releaseRootReads;
+  const rootReadsReady = new Promise(resolve => { releaseRootReads = resolve; });
+  const socket = {
+    emit(event, payload, acknowledge) {
+      if (event === "space:load-doc") {
+        assert.equal(payload.docId, workspaceId, "page timestamp sync reads only the workspace root");
+        if (rootUnavailable) {
+          rootReads += 1;
+          acknowledge({ error: { message: "workspace root unavailable" } });
+          return;
+        }
+        const snapshot = Buffer.from(Y.encodeStateAsUpdate(root)).toString("base64");
+        if (rootReadBarrier > 0 && rootReads < rootReadBarrier) {
+          rootReads += 1;
+          if (rootReads === rootReadBarrier) releaseRootReads();
+          void rootReadsReady.then(() => acknowledge({ data: { missing: snapshot } }));
+          return;
+        }
+        rootReads += 1;
+        acknowledge({ data: { missing: snapshot } });
+        return;
+      }
+
+      assert.equal(event, "space:push-doc-update");
+      pushes.push({ docId: payload.docId, update: payload.update });
+      if (payload.docId !== workspaceId) {
+        if (pageTimestamp instanceof Error) {
+          acknowledge({ error: { message: pageTimestamp.message } });
+          return;
+        }
+        acknowledge({ data: { timestamp: pageTimestamp } });
+        return;
+      }
+
+      rootPushes += 1;
+      if (rootMode === "fail") {
+        acknowledge({ error: { message: "workspace root write failed" } });
+        return;
+      }
+      Y.applyUpdate(root, Buffer.from(payload.update, "base64"));
+      if (rootMode === "ack-lost" && rootPushes === 1) {
+        acknowledge({ error: { message: "workspace root acknowledgement timed out" } });
+        return;
+      }
+      acknowledge({ data: { timestamp: pageTimestamp } });
+    },
+  };
+
+  return { socket, pushes, get rootReads() { return rootReads; }, get rootPushes() { return rootPushes; } };
+}
+
+function pageDates(root) {
+  const pages = root.getMap("meta").get("pages");
+  return new Map([...pages].map(page => [page.get("id"), page.get("updatedDate")]));
+}
+
+function changedDocumentUpdate() {
+  const doc = new Y.Doc();
+  doc.getMap("blocks").set("paragraph", "updated");
+  return Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64");
+}
+
+{
+  const workspaceId = "workspace-updated-date";
+  const root = workspaceRootWithPages([
+    { id: "page-updated", updatedDate: 10 },
+    { id: "page-untouched", updatedDate: 15 },
+  ]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageTimestamp: 20 });
+  const returnedTimestamp = await pushPageDocUpdate(transport.socket, workspaceId, "page-updated", changedDocumentUpdate());
+  assert.equal(returnedTimestamp, 20, "page writes preserve the server acknowledgement timestamp");
+  assert.deepEqual(pageDates(root), new Map([
+    ["page-updated", 20],
+    ["page-untouched", 15],
+  ]), "only the matching workspace page entry receives updatedDate");
+  assert.equal(transport.rootPushes, 1);
+
+  const rootUpdate = changedDocumentUpdate();
+  const rootPushesBefore = transport.rootPushes;
+  await pushDocUpdate(transport.socket, workspaceId, workspaceId, rootUpdate);
+  assert.equal(transport.rootPushes, rootPushesBefore + 1, "workspace-root writes do not recurse");
+
+  const internal = await pushDocUpdate(
+    transport.socket,
+    workspaceId,
+    "internal-properties-doc",
+    changedDocumentUpdate(),
+  );
+  assert.equal(internal, 20);
+  assert.equal(transport.rootPushes, rootPushesBefore + 1, "unregistered internal docs do not change page metadata");
+  assert.equal(pageDates(root).get("page-updated"), 20);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-internal-root-unavailable";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  for (const docId of ["internal-properties-doc", "new-page-before-registration", "page-1"]) {
+    const transport = makeUpdateSocket({ workspaceId, root, rootUnavailable: true });
+    const returnedTimestamp = await pushDocUpdate(
+      transport.socket,
+      workspaceId,
+      docId,
+      changedDocumentUpdate(),
+    );
+    assert.equal(returnedTimestamp, 100, `${docId} writes preserve their ACK when root metadata is unavailable`);
+    assert.equal(transport.rootReads, 0, `${docId} raw writes never load workspace-root metadata`);
+    assert.equal(transport.rootPushes, 0);
+  }
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-noop";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageTimestamp: 20 });
+  const noOpDoc = new Y.Doc();
+  await pushPageDocUpdate(
+    transport.socket,
+    workspaceId,
+    "page-1",
+    Buffer.from(Y.encodeStateAsUpdate(noOpDoc)).toString("base64"),
+  );
+  assert.equal(transport.pushes.length, 1, "the original page update still receives its transport ACK");
+  assert.equal(transport.rootPushes, 0, "an empty Yjs update does not advance updatedDate");
+  assert.equal(pageDates(root).get("page-1"), 10);
+  noOpDoc.destroy();
+  root.destroy();
+}
+
+for (const invalidTimestamp of [0, -1]) {
+  const workspaceId = `workspace-updated-date-invalid-ack-${invalidTimestamp}`;
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageTimestamp: invalidTimestamp });
+  const returnedTimestamp = await pushPageDocUpdate(
+    transport.socket,
+    workspaceId,
+    "page-1",
+    changedDocumentUpdate(),
+  );
+  assert.ok(returnedTimestamp > 0, `an invalid ${invalidTimestamp} ACK timestamp falls back to local time`);
+  assert.equal(pageDates(root).get("page-1"), returnedTimestamp,
+    `updatedDate uses the fallback timestamp when the server returns ${invalidTimestamp}`);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-page-failure";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({
+    workspaceId,
+    root,
+    pageTimestamp: new Error("page write rejected"),
+  });
+  await assert.rejects(
+    pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate()),
+    /page write rejected/,
+  );
+  assert.equal(transport.rootReads, 0, "a rejected page write never loads or mutates workspace metadata");
+  assert.equal(transport.rootPushes, 0);
+  assert.equal(pageDates(root).get("page-1"), 10);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-concurrent";
+  const root = workspaceRootWithPages([
+    { id: "page-a", updatedDate: 10 },
+    { id: "page-b", updatedDate: 15 },
+  ]);
+  const transport = makeUpdateSocket({ workspaceId, root, rootReadBarrier: 2 });
+  await Promise.all([
+    pushPageDocUpdate(transport.socket, workspaceId, "page-a", changedDocumentUpdate()),
+    pushPageDocUpdate(transport.socket, workspaceId, "page-b", changedDocumentUpdate()),
+  ]);
+  assert.deepEqual(pageDates(root), new Map([
+    ["page-a", 100],
+    ["page-b", 100],
+  ]), "concurrent page timestamp deltas preserve both root entries");
+  assert.equal(transport.rootPushes, 2);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-failure";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageTimestamp: 20, rootMode: "ack-lost" });
+  await pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate());
+  assert.equal(pageDates(root).get("page-1"), 20, "an applied root update with a lost ACK is confirmed by readback");
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1,
+    "metadata confirmation never replays the already-committed page mutation");
+
+  const failedRoot = workspaceRootWithPages([{ id: "page-2", updatedDate: 10 }]);
+  const failedTransport = makeUpdateSocket({ workspaceId, root: failedRoot, pageTimestamp: 30, rootMode: "fail" });
+  const safeHandler = withToolErrors(
+    () => pushPageDocUpdate(failedTransport.socket, workspaceId, "page-2", changedDocumentUpdate()),
+    { toolName: "append_markdown", authMode: "bearer", readOnly: false },
+  );
+  const failure = await safeHandler();
+  assert.equal(failure.isError, true);
+  assert.equal(failure.structuredContent.code, "workspace_page_updated_date_failed");
+  assert.equal(failure.structuredContent.retryable, false, "a metadata-only failure must not invite page-mutation replay");
+  assert.match(failure.structuredContent.recoveryGuidance, /Do not retry the page mutation/);
+  assert.equal(failedTransport.pushes.filter(push => push.docId === "page-2").length, 1,
+    "metadata failure does not repeat page content");
+  assert.equal(failedTransport.rootPushes, 1);
+  root.destroy();
+  failedRoot.destroy();
+}
 
 {
   const queries = [];
@@ -328,6 +558,10 @@ import {
   assert.equal(acknowledged.isError, undefined);
   assert.equal(acknowledged.structuredContent.ok, true);
   assert.equal(workspacePages.length, 1, "metadata ACK loss must reconcile the existing page");
+  const createdPage = workspacePages.get(0);
+  assert.equal(typeof createdPage.get("updatedDate"), "number", "new pages start with an updatedDate");
+  assert.equal(createdPage.get("updatedDate"), createdPage.get("createDate"),
+    "page creation initializes updatedDate from the same creation timestamp");
   assert.equal(metadataPushCount, 2, "a stale metadata read permits one bounded replay");
   assert.equal(metadataUpdates[0], metadataUpdates[1], "metadata replay must use the exact original Yjs update");
 
