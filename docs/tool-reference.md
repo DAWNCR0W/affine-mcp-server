@@ -165,6 +165,8 @@ stored as one plain paragraph.
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
+Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
+
 #### Document creation failures
 
 Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.

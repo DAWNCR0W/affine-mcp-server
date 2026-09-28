@@ -1,4 +1,6 @@
 import { io, Socket } from "socket.io-client";
+import * as Y from "yjs";
+import { ToolFailure } from "./util/mcp.js";
 
 export type WorkspaceSocket = Socket<any, any>;
 const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
@@ -142,7 +144,31 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
   );
 }
 
-export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string, docId: string, updateBase64: string): Promise<number> {
+function findWorkspacePage(doc: Y.Doc, docId: string): Y.Map<any> | undefined {
+  const pages = doc.getMap("meta").get("pages");
+  if (!(pages instanceof Y.Array)) return undefined;
+
+  for (const page of pages) {
+    if (page instanceof Y.Map && page.get("id") === docId) return page;
+  }
+  return undefined;
+}
+
+function updateHasChanges(updateBase64: string): boolean {
+  try {
+    const update = Y.decodeUpdate(Buffer.from(updateBase64, "base64"));
+    return update.structs.length > 0 || update.ds.clients.size > 0;
+  } catch {
+    return true;
+  }
+}
+
+async function pushDocUpdateRaw(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  updateBase64: string,
+): Promise<number> {
   return emitWithAck<number>(
     socket,
     'space:push-doc-update',
@@ -150,9 +176,99 @@ export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string
     (ack) => {
       const message = ackErrorMessage(ack, "push-doc-update failed");
       if (message) throw new Error(message);
-      return ack?.data?.timestamp || Date.now();
+      const timestamp = ack?.data?.timestamp;
+      return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
+        ? timestamp
+        : Date.now();
     },
   );
+}
+
+async function workspacePageHasUpdatedDate(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  updatedDate: number,
+): Promise<boolean> {
+  const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+  if (typeof snapshot.missing !== "string") return false;
+
+  const doc = new Y.Doc();
+  try {
+    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+    const page = findWorkspacePage(doc, docId);
+    const currentDate = page?.get("updatedDate");
+    return typeof currentDate === "number" && currentDate >= updatedDate;
+  } finally {
+    doc.destroy();
+  }
+}
+
+async function updateWorkspacePageUpdatedDate(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  updatedDate: number,
+): Promise<void> {
+  try {
+    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+    if (typeof snapshot.missing !== "string") {
+      throw new Error("Workspace root document was unavailable.");
+    }
+
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const page = findWorkspacePage(doc, docId);
+      if (!page) return;
+
+      const currentDate = page.get("updatedDate");
+      if (typeof currentDate === "number" && currentDate >= updatedDate) return;
+
+      const previousState = Y.encodeStateVector(doc);
+      page.set("updatedDate", updatedDate);
+      const update = Buffer.from(Y.encodeStateAsUpdate(doc, previousState)).toString("base64");
+      try {
+        await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
+      } catch (error) {
+        try {
+          if (await workspacePageHasUpdatedDate(socket, workspaceId, docId, updatedDate)) return;
+        } catch {
+          // Preserve the write error; page content already succeeded and the
+          // caller will receive the explicit non-retryable partial-write error.
+        }
+        throw error;
+      }
+    } finally {
+      doc.destroy();
+    }
+  } catch (error) {
+    const cause = error instanceof Error ? ` ${error.message}` : "";
+    throw new ToolFailure(
+      `Document ${docId} was saved, but its workspace updatedDate could not be confirmed.${cause}`,
+      "workspace_page_updated_date_failed",
+      `Read document ${docId} in workspace ${workspaceId} before taking further action. Do not retry the page mutation; repair its workspace updatedDate separately.`,
+    );
+  }
+}
+
+/** Push an update to any workspace document without side effects on other documents. */
+export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string, docId: string, updateBase64: string): Promise<number> {
+  return pushDocUpdateRaw(socket, workspaceId, docId, updateBase64);
+}
+
+/** Push page content and mirror its acknowledgement timestamp to root page metadata. */
+export async function pushPageDocUpdate(
+  socket: WorkspaceSocket,
+  workspaceId: string,
+  docId: string,
+  updateBase64: string,
+): Promise<number> {
+  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64);
+  if (docId !== workspaceId && updateHasChanges(updateBase64)) {
+    await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp);
+  }
+  return timestamp;
 }
 
 export type DeleteDocResult = {
