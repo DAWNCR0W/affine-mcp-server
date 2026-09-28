@@ -8,7 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as Y from "yjs";
 import { pushDocUpdate, pushPageDocUpdate } from "../dist/ws.js";
-import { withToolErrors } from "../dist/util/mcp.js";
+import { ToolFailure, withToolErrors } from "../dist/util/mcp.js";
 
 import {
   buildWorkspaceListDocsFallbackConnection,
@@ -17,6 +17,7 @@ import {
   documentCreationToolResult,
   filterWorkspaceListDocsConnection,
   isWorkspaceListDocsPermissionDenied,
+  parentLinkWarningOrThrow,
   requestListDocsWithPublicFallback,
   removeEmbeddedLinkedDocumentBlocks,
   registerDocTools,
@@ -29,6 +30,23 @@ import {
   isDocumentMoveSuccessful,
   toDocumentMoveResult,
 } from "../dist/util/mutationSafety.js";
+
+{
+  const partialPageWrite = new ToolFailure(
+    "Page content was saved but its updatedDate could not be confirmed.",
+    "workspace_page_updated_date_failed",
+  );
+  assert.throws(
+    () => parentLinkWarningOrThrow(partialPageWrite, "ordinary link warning"),
+    error => error === partialPageWrite,
+    "parent-link handlers must propagate partial page timestamp failures",
+  );
+  assert.equal(
+    parentLinkWarningOrThrow(new Error("ordinary link failure"), "ordinary link warning"),
+    "ordinary link warning",
+    "parent-link handlers keep their existing warning fallback for other failures",
+  );
+}
 
 function workspaceRootWithPages(pages) {
   const doc = new Y.Doc();

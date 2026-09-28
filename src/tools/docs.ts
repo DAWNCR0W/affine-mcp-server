@@ -393,6 +393,13 @@ export function removeEmbeddedLinkedDocumentBlocks(
   return matchingBlockIds.size;
 }
 
+export function parentLinkWarningOrThrow(error: unknown, warning: string): string {
+  if (error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed") {
+    throw error;
+  }
+  return warning;
+}
+
 const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
 const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
 const TextDeltaInput = z.object({
@@ -4448,11 +4455,15 @@ export function registerDocTools(
           pageId: parsed.docId,
         });
         return { parentDocId, linkedToParent: true, warnings: [] };
-      } catch {
+      } catch (error) {
+        const warning = parentLinkWarningOrThrow(
+          error,
+          `${parsed.context}: doc created but could not be linked to parent doc "${parentDocId}". Link it manually.`,
+        );
         return {
           parentDocId,
           linkedToParent: false,
-          warnings: [`${parsed.context}: doc created but could not be linked to parent doc "${parentDocId}". Link it manually.`],
+          warnings: [warning],
         };
       }
     } finally {
@@ -5016,8 +5027,11 @@ export function registerDocTools(
             pageId: docId,
           });
           parentLinked = true;
-        } catch {
-          warnings.push(`Semantic page created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`);
+        } catch (error) {
+          warnings.push(parentLinkWarningOrThrow(
+            error,
+            `Semantic page created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`,
+          ));
         }
       }
 
