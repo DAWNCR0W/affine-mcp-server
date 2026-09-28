@@ -175,12 +175,23 @@ async function main() {
       "doc full emoji object read-back",
     );
 
-    // --- doc: named icon (passthrough, no validation) ------------------------
+    // --- doc: named icon (legacy "icon" alias is written as "affine-icon") --
     await call("update_doc_icon", { workspaceId, docId, icon: { type: "icon", name: "check" } });
     await getWithRetry(
       "get_doc_icon", { workspaceId, docId },
-      r => r?.icon?.type === "icon" && r?.icon?.name === "check",
+      r => r?.icon?.type === "affine-icon" && r?.icon?.name === "check" && r?.icon?.color === undefined,
       "doc named icon read-back",
+    );
+
+    // --- doc: colored named icon ---------------------------------------------
+    const colored = await call("update_doc_icon", {
+      workspaceId, docId, icon: { type: "affine-icon", name: "FlagPanel", color: "#EB4C42" },
+    });
+    expectDeepEqual(colored?.icon, { type: "affine-icon", name: "FlagPanel", color: "#EB4C42" }, "doc colored icon echo");
+    await getWithRetry(
+      "get_doc_icon", { workspaceId, docId },
+      r => r?.icon?.type === "affine-icon" && r?.icon?.name === "FlagPanel" && r?.icon?.color === "#EB4C42",
+      "doc colored icon read-back",
     );
 
     // --- doc: clear ----------------------------------------------------------

@@ -1,5 +1,27 @@
 # Release Notes
 
+## Version 3.8.3 (2026-09-28)
+
+### Highlights
+- Keep AFFiNE's Updated lists and sorting current after MCP page creation and editing.
+- Write native page-reference chips without accepting malformed visible-label deltas.
+- Read and write named, colored sidebar icons in AFFiNE's native format.
+
+### What Changed
+- Initialize workspace page modification dates on creation and advance them after acknowledged page-content writes. Internal workspace subdocuments retain their existing write behavior.
+- Validate LinkedPage deltas across blocks, table cells, and database cells. Generated links use AFFiNE's ASCII-space marker, and legacy zero-width markers normalize when written.
+- Preserve reference-only Markdown content, references at text boundaries, and consecutive references during import and export.
+- Accept AFFiNE's `affine-icon` shape and optional CSS color for document and folder icons while keeping legacy `icon` inputs readable.
+- Include occupied, established, and initializing HTTP session counts in capacity errors, with documented session limits and recovery guidance.
+- Update development dependencies `tsx` to 4.23.15 and Node.js type definitions to 24.13.6.
+
+### Compatibility
+- The canonical MCP surface remains at 106 tools. Existing tool names and required inputs remain available.
+- Malformed LinkedPage deltas with visible labels or missing page IDs now fail before saving. Existing stored documents remain readable; no bulk data migration is performed.
+- A saved page whose modification timestamp cannot be confirmed reports non-retryable `workspace_page_updated_date_failed`. Inspect the existing document and repair metadata instead of repeating the content edit.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.3`, then restart the MCP server. No configuration migration is required.
+
 ## Version 3.8.2 (2026-09-22)
 
 ### Highlights

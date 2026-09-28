@@ -37,13 +37,19 @@ import {
   joinWorkspace,
   loadDoc,
   pushDocUpdate,
+  pushPageDocUpdate,
   deleteDoc as wsDeleteDoc,
   type WorkspaceSocket,
 } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
-import { richTextValueToDeltas, richTextValueToString } from "../markdown/richText.js";
+import {
+  AFFINE_LINKED_PAGE_REFERENCE_NODE,
+  normalizeLinkedPageReferenceDeltas,
+  richTextValueToDeltas,
+  richTextValueToString,
+} from "../markdown/richText.js";
 import { buildMarkdownFrontmatter } from "../markdown/safety.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
@@ -392,14 +398,21 @@ export function removeEmbeddedLinkedDocumentBlocks(
   return matchingBlockIds.size;
 }
 
+export function parentLinkWarningOrThrow(error: unknown, warning: string): string {
+  if (error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed") {
+    throw error;
+  }
+  return warning;
+}
+
 const WorkspaceId = z.string().min(1, "workspaceId required").describe("AFFiNE workspace id. Omit only when AFFINE_WORKSPACE_ID is configured.");
 const DocId = z.string().min(1, "docId required").describe("AFFiNE document id.");
 const TextDeltaInput = z.object({
-  insert: z.string(),
-  attributes: z.record(z.unknown()).optional(),
+  insert: z.string().describe('Text to insert. For a LinkedPage reference, use one ASCII space per reference (insert: " ").'),
+  attributes: z.record(z.unknown()).optional().describe('Inline attributes. For a LinkedPage reference, use { reference: { type: "LinkedPage", pageId: "<docId>" } }; AFFiNE resolves the page label from pageId.'),
 });
 const RichTextInput = z.union([z.string(), z.array(TextDeltaInput)]);
-const MarkdownContent = z.string().min(1, "markdown required").describe("Markdown content to import, append, replace, or export-roundtrip.");
+const MarkdownContent = z.string().min(1, "markdown required").describe('Markdown content to import, append, replace, or export-roundtrip. Inline page references use [label](LinkedPage:<docId>) and import as native AFFiNE reference nodes.');
 const TagName = z.string().trim().min(1, "tag required").describe("Workspace tag name.");
 const TagIdOrName = z.string().trim().min(1, "tag required").describe("Workspace tag id or tag name.");
 const PageSize = BoundedPageSize.describe("Maximum number of items to return from the AFFiNE pagination connection (1-200).");
@@ -1277,7 +1290,7 @@ export function registerDocTools(
       return yText;
     }
     let offset = 0;
-    for (const delta of content) {
+    for (const delta of normalizeLinkedPageReferenceDeltas(content)) {
       if (!delta.insert) {
         continue;
       }
@@ -1297,7 +1310,7 @@ export function registerDocTools(
     }
 
     let offset = 0;
-    for (const delta of content) {
+    for (const delta of normalizeLinkedPageReferenceDeltas(content)) {
       if (!delta.insert) continue;
       const attributes = isHeader
         ? { ...(delta.attributes ?? {}), bold: true }
@@ -1320,20 +1333,20 @@ export function registerDocTools(
   }
 
   /**
-   * Build a Y.Text containing a LinkedPage reference delta.
+   * Build a Y.Text containing a LinkedPage reference delta with AFFiNE's native sentinel.
    * This is the mechanism AFFiNE uses to associate a database row with a
    * linked doc that opens in "center peek" when the row title is clicked.
    */
   function makeLinkedDocText(docId: string): Y.Text {
     const delta: TextDelta[] = [
-      { insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: docId } } },
+      { insert: AFFINE_LINKED_PAGE_REFERENCE_NODE, attributes: { reference: { type: "LinkedPage", pageId: docId } } },
     ];
     return makeText(delta);
   }
 
   /**
    * Extract inline LinkedPage reference IDs from a Y.Text value. AFFiNE stores
-   * @-mentions as zero-width text deltas whose page id lives in attributes.
+   * references as sentinel text deltas whose page id lives in attributes.
    */
   function extractLinkedPageRefs(propText: unknown): string[] {
     if (!(propText instanceof Y.Text)) return [];
@@ -3320,7 +3333,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
       // Creating an empty table is supported, but nothing on the result said the
       // cells were empty, so a caller that meant to pass cell content had no
@@ -4299,7 +4312,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return {
         appendedCount: blockIds.length,
@@ -4447,11 +4460,15 @@ export function registerDocTools(
           pageId: parsed.docId,
         });
         return { parentDocId, linkedToParent: true, warnings: [] };
-      } catch {
+      } catch (error) {
+        const warning = parentLinkWarningOrThrow(
+          error,
+          `${parsed.context}: doc created but could not be linked to parent doc "${parentDocId}". Link it manually.`,
+        );
         return {
           parentDocId,
           linkedToParent: false,
-          warnings: [`${parsed.context}: doc created but could not be linked to parent doc "${parentDocId}". Link it manually.`],
+          warnings: [warning],
         };
       }
     } finally {
@@ -4566,9 +4583,11 @@ export function registerDocTools(
 
   function makeWorkspacePageEntry(docId: string, title: string): Y.Map<any> {
     const entry = new Y.Map();
+    const createdAt = Date.now();
     entry.set("id", docId);
     entry.set("title", title);
-    entry.set("createDate", Date.now());
+    entry.set("createDate", createdAt);
+    entry.set("updatedDate", createdAt);
     entry.set("tags", new Y.Array());
     return entry;
   }
@@ -5013,8 +5032,11 @@ export function registerDocTools(
             pageId: docId,
           });
           parentLinked = true;
-        } catch {
-          warnings.push(`Semantic page created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`);
+        } catch (error) {
+          warnings.push(parentLinkWarningOrThrow(
+            error,
+            `Semantic page created but could not be linked to parent doc "${parsed.parentDocId}". Link it manually.`,
+          ));
         }
       }
 
@@ -5083,7 +5105,7 @@ export function registerDocTools(
       );
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return {
         workspaceId,
@@ -6373,7 +6395,7 @@ export function registerDocTools(
       throw new Error(`Source parent ${parentDocId} still contains links to document ${docId}.`);
     }
     const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
-    await pushDocUpdate(
+    await pushPageDocUpdate(
       socket,
       workspaceId,
       parentDocId,
@@ -6752,7 +6774,7 @@ export function registerDocTools(
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe|database|data_view|surface_ref|frame|edgeless_text|note. Legacy aliases remain supported."),
-        text: RichTextInput.optional().describe("Block content as plain text or a delta array that preserves inline attributes."),
+        text: RichTextInput.optional().describe('Block content as plain text or a delta array. For LinkedPage references, set insert to one ASCII space and pass the pageId in reference attributes; visible labels are resolved by AFFiNE.'),
         url: z.string()
           .refine(isSafeUrlInput, "url must be a safe absolute URL without control characters or embedded credentials")
           .optional()
@@ -6790,7 +6812,7 @@ export function registerDocTools(
         rows: z.number().int().min(1).max(20).optional().describe("Table row count"),
         columns: z.number().int().min(1).max(20).optional().describe("Table column count"),
         tableData: z.array(z.array(z.string())).optional().describe("Plain-text cell contents for type='table', as rows of columns. Row count must equal `rows` and every row length must equal `columns`. Omit to create an empty table."),
-        tableCellDeltas: z.array(z.array(z.array(TextDeltaInput))).optional().describe("Rich-text deltas per cell for type='table', parallel to `tableData` as [row][column][delta]. A cell with deltas here overrides the plain text at the same position in `tableData`."),
+        tableCellDeltas: z.array(z.array(z.array(TextDeltaInput))).optional().describe('Rich-text deltas per cell for type="table", parallel to `tableData` as [row][column][delta]. A cell with deltas here overrides plain text at the same position. LinkedPage references require insert: " " and a pageId in reference attributes.'),
         latex: z.string().optional().describe("Latex expression"),
         level: z.number().int().min(1).max(6).optional().describe("Heading level for type=heading"),
         style: AppendBlockListStyle.optional().describe("List style for type=list"),
@@ -7614,7 +7636,7 @@ export function registerDocTools(
           }
         }
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+        await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
       }
       return receipt("doc.update_title", {
         workspaceId,
@@ -7872,7 +7894,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(targetDoc, prevSV);
-      await pushDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
 
       if (preserveTags && rawTags.length > 0) {
         await syncRawTagsToWorkspacePage({
@@ -8617,7 +8639,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         added: true,
@@ -8639,7 +8661,7 @@ export function registerDocTools(
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value. Rich-text and title values accept strings or delta arrays with optional attributes. For select columns, pass the display label (option auto-created if new)."),
+        cells: z.record(z.unknown()).describe('Map of column name (or column ID) to cell value. Rich-text and title values accept strings or delta arrays. For LinkedPage references, use insert: " " with reference.type="LinkedPage" and the target pageId; visible labels are resolved by AFFiNE. For select columns, pass the display label (option auto-created if new).'),
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
@@ -8671,7 +8693,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         deleted: true,
@@ -8859,7 +8881,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         updated: true,
@@ -8880,7 +8902,7 @@ export function registerDocTools(
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         rowBlockId: z.string().min(1).describe("Row paragraph block ID"),
-        cells: z.record(z.unknown()).describe("Map of column name (or column ID) to new cell value. Rich-text and title values accept strings or delta arrays with optional attributes. Use `title` for the built-in row title."),
+        cells: z.record(z.unknown()).describe('Map of column name (or column ID) to new cell value. Rich-text and title values accept strings or delta arrays. For LinkedPage references, use insert: " " with reference.type="LinkedPage" and the target pageId; visible labels are resolved by AFFiNE. Use `title` for the built-in row title.'),
         createOption: z.boolean().optional().describe("For select and multi-select columns, create the option label if it does not exist (default true)"),
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
@@ -8951,7 +8973,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
-      await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
       const finalViews = readDatabaseViewDefs(ctx.dbBlock, finalLookup);
@@ -9150,7 +9172,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
         added: true,
@@ -9616,7 +9638,7 @@ export function registerDocTools(
       }
       writeSurfaceElement(ctx.value, elementId, data);
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -9854,7 +9876,7 @@ export function registerDocTools(
 
       if (changed.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -9939,7 +9961,7 @@ export function registerDocTools(
       pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -10020,7 +10042,7 @@ export function registerDocTools(
       }
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -10114,7 +10136,7 @@ export function registerDocTools(
 
       if (changed.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10253,7 +10275,7 @@ export function registerDocTools(
 
       if (changed.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10340,7 +10362,7 @@ export function registerDocTools(
       if (changed) {
         writeTableCellText(block, rowId, columnId, nextText);
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10430,7 +10452,7 @@ export function registerDocTools(
 
       if (changedColumns.length > 0) {
         const delta = Y.encodeStateAsUpdate(doc, prevSV);
-        await pushDocUpdate(
+        await pushPageDocUpdate(
           socket,
           workspaceId,
           params.docId,
@@ -10540,7 +10562,7 @@ export function registerDocTools(
       block.set("sys:parent", null);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -10672,7 +10694,7 @@ export function registerDocTools(
       pruneFromFrameChildElementIds(blocks, [...deletedIds, ...prunedConnectors]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
-      await pushDocUpdate(
+      await pushPageDocUpdate(
         socket,
         workspaceId,
         params.docId,
@@ -11080,7 +11102,7 @@ export function registerDocTools(
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         blockId: z.string().min(1).describe("Block id to update."),
-        text: RichTextInput.optional().describe("Replacement block text. A delta array preserves inline attributes. Omit to preserve the current text."),
+        text: RichTextInput.optional().describe('Replacement block text. Delta arrays preserve inline attributes. For LinkedPage references, set insert to one ASCII space and pass the pageId in reference attributes; visible labels are resolved by AFFiNE. Omit to preserve the current text.'),
         checked: z.boolean().optional().describe("Todo checked state. Only valid for a list whose resulting style is todo."),
         type: BlockEditType.optional().describe("Resulting logical block type."),
         style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),
@@ -11102,7 +11124,7 @@ export function registerDocTools(
         blockId: z.string().min(1).describe("Table block id (flavour affine:table)."),
         row: z.number().int().min(0).describe("Zero-based table row."),
         column: z.number().int().min(0).describe("Zero-based table column."),
-        text: RichTextInput.describe("Replacement cell text as plain text or a delta array that preserves inline attributes."),
+        text: RichTextInput.describe('Replacement cell text as plain text or a delta array. For LinkedPage references, set insert to one ASCII space and pass the pageId in reference attributes; visible labels are resolved by AFFiNE.'),
       },
     },
     updateTableCellHandler as any

@@ -296,6 +296,10 @@ echo ""
 echo "=== Verifying AFFiNE auth readiness ==="
 wait_for_auth_ready
 
+# Repeated test logins must not exhaust the disposable backend's rate limit.
+echo "=== Configuring isolated AFFiNE test instance ==="
+node "$SCRIPT_DIR/configure-test-instance.mjs"
+
 # --- Step 3: Build MCP server ---
 echo ""
 echo "=== Building MCP server ==="

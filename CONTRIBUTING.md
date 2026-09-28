@@ -52,6 +52,8 @@ Live integration tests create, update, and delete AFFiNE resources. They are
 allowed against loopback targets by default and fail closed for every other
 host. The Docker-backed runners use a unique Compose project, private random
 credentials, and collision-resistant resource names for each run.
+They disable rate limiting and the new-account share delay in that disposable
+AFFiNE instance so repeated test logins and sharing checks can complete.
 
 Use `npm run test:live-safety` to verify the guard without contacting AFFiNE.
 Never point a live test at production. If a non-loopback disposable test

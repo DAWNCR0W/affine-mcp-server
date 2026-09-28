@@ -61,11 +61,11 @@ function makeLinkedPageText(...pageIds) {
   let offset = 0;
   const segments = [
     { insert: "Before " },
-    { insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: pageIds[0] } } },
+    { insert: " ", attributes: { reference: { type: "LinkedPage", pageId: pageIds[0] } } },
     { insert: " between " },
     ...(pageIds[1]
       ? [
-          { insert: "\u200B", attributes: { reference: { type: "LinkedPage", pageId: pageIds[1] } } },
+          { insert: " ", attributes: { reference: { type: "LinkedPage", pageId: pageIds[1] } } },
           { insert: " after" },
         ]
       : []),

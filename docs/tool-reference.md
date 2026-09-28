@@ -74,7 +74,7 @@ workspace or document links. For a custom route, keep the deployment base in
 | `create_folder` | Create a root or nested folder | Experimental |
 | `create_workspace_blueprint` | Create a simple workspace folder blueprint | Good for structured onboarding setups |
 | `rename_folder` | Rename a folder | Experimental |
-| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji or named icon) | Experimental |
+| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji, or named icon with optional color) | Experimental. See [Sidebar icons](#sidebar-icons) |
 | `get_folder_icon` | Read a folder's current sidebar icon | Experimental |
 | `delete_folder` | Delete a folder recursively | Experimental and destructive |
 | `move_organize_node` | Move a folder or link node | Experimental |
@@ -153,7 +153,7 @@ stored as one plain paragraph.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
-| `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
+| `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
@@ -164,6 +164,8 @@ stored as one plain paragraph.
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+
+Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 
 #### Document creation failures
 
@@ -186,6 +188,12 @@ For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `upda
 ```
 
 `read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
+
+Inline page references use `{ "insert": " ", "attributes": { "reference": { "type": "LinkedPage", "pageId": "<docId>" } } }`: one ASCII space per reference, with its label resolved by AFFiNE. Block, table-cell, and database rich-text writes reject visible reference labels and missing page IDs before saving. Exact legacy zero-width-space reference markers are normalized to native spaces when written; existing stored documents remain readable.
+
+#### Sidebar icons
+
+`update_doc_icon` and `update_folder_icon` accept an emoji or a named icon such as `{ "type": "affine-icon", "name": "FlagPanel", "color": "#EB4C42" }`. `name` must match an `@blocksuite/icons` export without the `Icon` suffix (for example `FlagPanel` for `FlagPanelIcon`); names are not validated, and unknown names render as no icon in AFFiNE. `color` is optional and accepts any CSS color.
 
 ### Tags
 

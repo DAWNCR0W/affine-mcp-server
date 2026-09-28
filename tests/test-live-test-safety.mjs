@@ -98,7 +98,7 @@ assert.throws(
   /AFFINE_TEST_RUN_ID must be 8-96 characters/,
 );
 
-const mutationPattern = /\b(create_workspace|delete_workspace|create_doc|delete_doc|append_block|update_profile|ensureAdminUser)\b/;
+const mutationPattern = /\b(create_workspace|delete_workspace|create_doc|delete_doc|append_block|update_profile|ensureAdminUser|updateAppConfig)\b/;
 const staticOnlyFiles = new Set(['test-tool-filtering.mjs', 'test-oauth-service-policy.mjs']);
 const liveTestFiles = fs.readdirSync(testDirectory)
   .filter(name => name.endsWith('.mjs'))
@@ -128,6 +128,19 @@ for (const runner of ['run-e2e.sh', 'run-comprehensive.sh']) {
   assert.ok(credentialPosition > guardPosition, `${runner} must guard before generating credentials`);
   assert.ok(composePosition > guardPosition, `${runner} must guard before Docker cleanup`);
 }
+
+const unsafeConfiguration = spawnSync(process.execPath, ['tests/configure-test-instance.mjs'], {
+  cwd: repositoryRoot,
+  encoding: 'utf8',
+  env: {
+    ...process.env,
+    AFFINE_BASE_URL: remoteTarget,
+    AFFINE_ALLOW_REMOTE_DESTRUCTIVE_TESTS: '',
+    AFFINE_REMOTE_DESTRUCTIVE_TEST_CONFIRM: '',
+  },
+});
+assert.notEqual(unsafeConfiguration.status, 0, 'remote instance configuration must fail closed');
+assert.match(unsafeConfiguration.stderr, /Refusing destructive tests against non-loopback target/);
 
 const generatedEnv = spawnSync(
   'bash',

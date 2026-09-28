@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import './require-destructive-test-safety.mjs';
 import { acquireCredentials } from './acquire-credentials.mjs';
 
 const baseUrl = process.env.AFFINE_BASE_URL;
@@ -23,13 +24,18 @@ const response = await fetch(`${baseUrl.replace(/\/$/, '')}/graphql`, {
   },
   body: JSON.stringify({
     query: `
-      mutation ConfigureComprehensiveInstance {
+      mutation ConfigureTestInstance {
         updateAppConfig(
           updates: [
             {
               module: "auth"
               key: "newAccountShareActionDelay"
               value: 0
+            }
+            {
+              module: "throttle"
+              key: "enabled"
+              value: false
             }
           ]
         )
@@ -43,11 +49,12 @@ const body = await response.json().catch(() => null);
 if (!response.ok || body?.errors?.length) {
   const message = body?.errors?.map(error => error.message).join('; ')
     || `${response.status} ${response.statusText}`;
-  throw new Error(`Failed to configure the comprehensive test instance: ${message}`);
+  throw new Error(`Failed to configure the isolated test instance: ${message}`);
 }
 
-if (body?.data?.updateAppConfig?.auth?.newAccountShareActionDelay !== 0) {
-  throw new Error('AFFiNE did not confirm the comprehensive test configuration');
+const updated = body?.data?.updateAppConfig;
+if (updated?.auth?.newAccountShareActionDelay !== 0 || updated?.throttle?.enabled !== false) {
+  throw new Error('AFFiNE did not confirm the isolated test configuration');
 }
 
-console.log('[comprehensive] New-account share delay disabled for the isolated test instance');
+console.log('[test-instance] Share delay and rate limiting disabled for the isolated test instance');

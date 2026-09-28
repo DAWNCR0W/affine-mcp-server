@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.3] - 2026-09-28
+
+### Changed
+- Include occupied, established, and initializing session counts in HTTP capacity errors while preserving HTTP 503 and JSON-RPC error -32002.
+- Document HTTP session limits and defaults in the README, with session termination and capacity troubleshooting guidance.
+
+### Fixed
+- Keep workspace page modification timestamps current after MCP document creation and editing so AFFiNE's updated-date lists and sorting reflect those writes.
+- Validate inline LinkedPage reference writes across document blocks, table cells, and database cells, and use AFFiNE's native reference marker for generated links.
+- Read named sidebar icons set in the AFFiNE UI: `get_doc_icon` and `get_folder_icon` accept AFFiNE's `{ type: "affine-icon", name, color }` shape instead of failing output validation.
+- Write named icons with AFFiNE's `affine-icon` type and keep the optional CSS `color` in `update_doc_icon` and `update_folder_icon`, so they render in AFFiNE. `type: "icon"` is still accepted as input and still readable when stored by earlier versions.
+
+### Tests
+- Disable rate limiting in disposable AFFiNE test instances so repeated authentication does not interrupt E2E coverage.
+- Add offline coverage for named-icon input normalization and output validation, and a colored-icon round trip to the live icon test.
+
 ## [3.8.2] - 2026-09-22
 
 ### Fixed
@@ -848,6 +864,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
 [3.8.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.2
 [3.8.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.1
 [3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
@@ -891,4 +908,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.2...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.3...HEAD

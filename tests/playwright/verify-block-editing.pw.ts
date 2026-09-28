@@ -14,6 +14,8 @@ interface TestState {
   email: string;
   workspaceId: string;
   docId: string;
+  documentTitle: string;
+  updatedDate: number;
   taskBlockId: string;
   tableBlockId: string;
   taskText: string;
@@ -28,6 +30,9 @@ interface TestState {
   tableLinkUrl: string;
   tableSiblingHeaderText: string;
   tableSiblingDataText: string;
+  referenceBlockId: string;
+  referenceTableBlockId: string;
+  referenceTargetTitle: string;
   error?: string;
 }
 
@@ -72,6 +77,9 @@ test.beforeAll(() => {
   if (!state.workspaceId || !state.docId || !state.taskBlockId || !state.tableBlockId) {
     throw new Error('State file is missing workspaceId, docId, taskBlockId, or tableBlockId');
   }
+  if (!Number.isFinite(state.updatedDate) || state.updatedDate <= 0) {
+    throw new Error('State file is missing a valid root meta.pages[].updatedDate');
+  }
 });
 
 test.describe.serial('AFFiNE block editing verification', () => {
@@ -79,6 +87,26 @@ test.describe.serial('AFFiNE block editing verification', () => {
     test.setTimeout(180_000);
     await signInToAffine(page, { baseUrl: state.baseUrl, email: state.email, password });
     await context.storageState({ path: AUTH_STATE_PATH });
+  });
+
+  test('group the MCP-written document under its updated date before opening it', async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_STATE_PATH });
+    const page = await context.newPage();
+    try {
+      // All Docs defaults to Updated grouping. Visit it before the editor can
+      // write metadata itself and hide a missing MCP updatedDate.
+      await page.goto(`${state.baseUrl}/workspace/${state.workspaceId}/all`);
+      const dateKey = await page.evaluate((updatedDate) => {
+        const date = new Date(updatedDate);
+        return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+      }, state.updatedDate);
+      const row = page.locator(`[data-masonry-item-id="${dateKey}:${state.docId}"] [data-testid="doc-list-item"][data-doc-id="${state.docId}"]`);
+      await expect(row).toBeVisible();
+      await expect(row).toContainText(state.documentTitle);
+      await expect(page.locator(`[data-masonry-item-id="${state.docId}"]`)).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
   });
 
   test('render the updated, checked, and moved block', async ({ browser }) => {
@@ -140,6 +168,32 @@ test.describe.serial('AFFiNE block editing verification', () => {
 
       const inlineCode = tableBlock.locator('code').filter({ hasText: 'team.AI' }).first();
       await expect(inlineCode).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('render one native page reference in a paragraph and a table cell', async ({ browser }) => {
+    expect(state.referenceBlockId).toBeTruthy();
+    expect(state.referenceTableBlockId).toBeTruthy();
+    expect(state.referenceTargetTitle).toBeTruthy();
+    const context = await browser.newContext({ storageState: AUTH_STATE_PATH });
+    const page = await context.newPage();
+    const referenceErrors: string[] = [];
+    page.on('console', message => {
+      if (message.type() === 'error' && message.text().includes('Reference node must be initialized')) {
+        referenceErrors.push(message.text());
+      }
+    });
+    try {
+      await page.goto(`${state.baseUrl}/workspace/${state.workspaceId}/${state.docId}`);
+      for (const blockId of [state.referenceBlockId, state.referenceTableBlockId]) {
+        const block = page.locator(`[data-block-id="${blockId}"]`).first();
+        await expect(block).toBeVisible();
+        await expect(block.locator('.affine-reference')).toHaveCount(1);
+        await expect(block.locator('.affine-reference-title')).toHaveText(state.referenceTargetTitle);
+      }
+      expect(referenceErrors).toEqual([]);
     } finally {
       await context.close();
     }
