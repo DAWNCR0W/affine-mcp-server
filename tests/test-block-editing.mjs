@@ -71,6 +71,9 @@ async function main() {
     quoteBlockId: null,
     codeBlockId: null,
     tableBlockId: null,
+    referenceBlockId: null,
+    referenceTableBlockId: null,
+    referenceTargetTitle: 'Linked Page Reference Target',
     emptyTableBlockId: null,
     emptyOverrideTableBlockId: null,
     taskText: 'Ship the verified release',
@@ -193,6 +196,112 @@ async function main() {
     });
     state.docId = document?.docId;
     expectTruthy(state.docId, 'create_doc docId');
+
+    const referenceTarget = await call('create_doc', {
+      workspaceId: state.workspaceId,
+      title: state.referenceTargetTitle,
+      content: '',
+    });
+    expectTruthy(referenceTarget?.docId, 'LinkedPage reference target doc id');
+    const referenceAttributes = { reference: { type: 'LinkedPage', pageId: referenceTarget.docId } };
+    const appendedReferenceDeltas = [
+      { insert: 'Mention ' },
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' from append_block.' },
+    ];
+    const updatedReferenceDeltas = [
+      { insert: 'See ' },
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' in the editor.' },
+    ];
+    const appendedReferenceCellDeltas = [
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' appended' },
+    ];
+    const updatedReferenceCellDeltas = [
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' updated' },
+    ];
+
+    const referenceBlock = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'paragraph',
+      text: appendedReferenceDeltas,
+    });
+    state.referenceBlockId = referenceBlock?.blockId;
+    expectTruthy(state.referenceBlockId, 'append_block LinkedPage paragraph id');
+    await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceBlockId,
+      text: updatedReferenceDeltas,
+    });
+    const legacyReferenceUpdate = await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceBlockId,
+      text: [
+        { insert: 'See ' },
+        { insert: '\u200B', attributes: referenceAttributes },
+        { insert: ' in the editor.' },
+      ],
+    });
+    assert.deepEqual(
+      legacyReferenceUpdate?.block?.deltas,
+      updatedReferenceDeltas,
+      'update_block normalizes the exact legacy zero-width LinkedPage sentinel',
+    );
+
+    const referenceTable = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 2,
+      columns: 1,
+      tableData: [['Reference'], ['fallback']],
+      tableCellDeltas: [[[{ insert: 'Reference' }]], [appendedReferenceCellDeltas]],
+    });
+    state.referenceTableBlockId = referenceTable?.blockId;
+    expectTruthy(state.referenceTableBlockId, 'append_block LinkedPage table id');
+    await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceTableBlockId,
+      row: 1,
+      column: 0,
+      text: updatedReferenceCellDeltas,
+    });
+
+    const beforeRejectedAppend = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const blockIdsBeforeRejectedAppend = beforeRejectedAppend.blocks.map(block => block.id).sort();
+    await expectCallError('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'paragraph',
+      text: [{ insert: 'Component register', attributes: referenceAttributes }],
+    }, /native reference sentinel/);
+    await expectCallError('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 1,
+      columns: 1,
+      tableData: [['fallback']],
+      tableCellDeltas: [[[{ insert: 'Component register', attributes: referenceAttributes }]]],
+    }, /native reference sentinel/);
+    const afterRejectedAppend = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    assert.deepEqual(
+      afterRejectedAppend.blocks.map(block => block.id).sort(),
+      blockIdsBeforeRejectedAppend,
+      'rejected append_block text and tableCellDeltas do not add document blocks',
+    );
 
     const inboxHeading = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -489,6 +598,40 @@ async function main() {
       blockId: state.taskBlockId,
       type: 'paragraph',
     }, /while preserving its id/);
+    await expectCallError('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceBlockId,
+      text: [{ insert: 'Component register', attributes: referenceAttributes }],
+    }, /native reference sentinel/);
+    const afterRejectedReferenceUpdate = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const unchangedReferenceBlock = afterRejectedReferenceUpdate.blocks.find(block => block.id === state.referenceBlockId);
+    assert.deepEqual(
+      unchangedReferenceBlock?.deltas,
+      updatedReferenceDeltas,
+      'rejected LinkedPage update_block preserves the previous reference delta',
+    );
+    await expectCallError('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceTableBlockId,
+      row: 1,
+      column: 0,
+      text: [{ insert: 'Component register', attributes: referenceAttributes }],
+    }, /native reference sentinel/);
+    const afterRejectedReferenceCellUpdate = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const unchangedReferenceTable = afterRejectedReferenceCellUpdate.blocks.find(block => block.id === state.referenceTableBlockId);
+    assert.deepEqual(
+      unchangedReferenceTable?.tableCellDeltas,
+      [[[{ insert: 'Reference', attributes: { bold: true } }]], [updatedReferenceCellDeltas]],
+      'rejected LinkedPage update_table_cell preserves the previous reference delta',
+    );
     const afterRejectedUpdate = await call('read_doc', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -603,6 +746,14 @@ async function main() {
     );
     expectEqual(tableBlock.tableData[0][1], state.tableSiblingHeaderText, 'table header sibling unchanged');
     expectEqual(tableBlock.tableData[1][1], state.tableSiblingDataText, 'table data sibling unchanged');
+    const linkedReferenceBlock = blocks.find(block => block.id === state.referenceBlockId);
+    assert.deepEqual(linkedReferenceBlock?.deltas, updatedReferenceDeltas, 'read_doc returns native LinkedPage reference deltas');
+    const linkedReferenceTable = blocks.find(block => block.id === state.referenceTableBlockId);
+    assert.deepEqual(
+      linkedReferenceTable?.tableCellDeltas,
+      [[[{ insert: 'Reference', attributes: { bold: true } }]], [updatedReferenceCellDeltas]],
+      'read_doc returns native LinkedPage table-cell reference deltas',
+    );
     const emptyOverrideTableBlock = blocks.find(block => block.id === state.emptyOverrideTableBlockId);
     expectTruthy(emptyOverrideTableBlock, 'read_doc empty table delta override block');
     assert.deepEqual(emptyOverrideTableBlock.tableData, [['']], 'empty table delta overrides fallback text');

@@ -210,6 +210,19 @@ async function main() {
     state.docId = doc?.docId;
     if (!state.docId) throw new Error('create_doc did not return docId');
 
+    const referenceTarget = await call('create_doc', {
+      workspaceId: state.workspaceId,
+      title: 'Database Linked Page Target',
+      content: '',
+    });
+    if (!referenceTarget?.docId) throw new Error('create_doc did not return LinkedPage target docId');
+    const linkedPageDeltas = [
+      { insert: ' ', attributes: { reference: { type: 'LinkedPage', pageId: referenceTarget.docId } } },
+    ];
+    const malformedLinkedPageDeltas = [
+      { insert: 'Component register', attributes: { reference: { type: 'LinkedPage', pageId: referenceTarget.docId } } },
+    ];
+
     const dbBlock = await call('append_block', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -243,6 +256,75 @@ async function main() {
       state.columnIds[column.key] = result?.columnId || null;
       await settle();
     }
+
+    await expectToolFailure('add_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      cells: { title: 'Rejected row', Notes: malformedLinkedPageDeltas },
+    }, 'native reference sentinel');
+    const rowsAfterRejectedAdd = await call('read_database_cells', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+    });
+    expectEqual(rowsAfterRejectedAdd.rows.length, 0, 'rejected LinkedPage add_database_row does not add a row');
+
+    const linkedRow = await call('add_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      cells: { title: linkedPageDeltas, Notes: linkedPageDeltas },
+    });
+    await settle();
+    const linkedRowAfterAdd = await call('read_database_cells', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockIds: [linkedRow.rowBlockId],
+    });
+    expectArrayEqual(linkedRowAfterAdd.rows[0]?.titleDeltas, linkedPageDeltas, 'add_database_row preserves native LinkedPage title delta');
+    expectArrayEqual(linkedRowAfterAdd.rows[0]?.cells.Notes.deltas, linkedPageDeltas, 'add_database_row preserves native LinkedPage rich-text cell delta');
+    expectEqual(linkedRowAfterAdd.rows[0]?.linkedDocId, referenceTarget.docId, 'LinkedPage row title exposes its pageId');
+
+    await call('update_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: linkedRow.rowBlockId,
+      cells: { title: linkedPageDeltas, Notes: linkedPageDeltas },
+    });
+    await settle();
+    await expectToolFailure('update_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: linkedRow.rowBlockId,
+      cells: { Notes: malformedLinkedPageDeltas },
+    }, 'native reference sentinel');
+    await expectToolFailure('update_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: linkedRow.rowBlockId,
+      cells: { title: malformedLinkedPageDeltas },
+    }, 'native reference sentinel');
+    const linkedRowAfterRejectedUpdates = await call('read_database_cells', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockIds: [linkedRow.rowBlockId],
+    });
+    expectArrayEqual(linkedRowAfterRejectedUpdates.rows[0]?.titleDeltas, linkedPageDeltas, 'rejected LinkedPage title update preserves the row title');
+    expectArrayEqual(linkedRowAfterRejectedUpdates.rows[0]?.cells.Notes.deltas, linkedPageDeltas, 'rejected LinkedPage cell update preserves the rich-text cell');
+
+    await call('delete_database_row', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      databaseBlockId: state.databaseBlockId,
+      rowBlockId: linkedRow.rowBlockId,
+    });
+    await settle();
 
     await expectToolFailure('add_database_row', {
       workspaceId: state.workspaceId,

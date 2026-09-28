@@ -1,5 +1,9 @@
 import MarkdownIt from "markdown-it";
 import type { MarkdownListStyle, MarkdownOperation, MarkdownParseResult, TextDelta } from "./types.js";
+import {
+  AFFINE_LINKED_PAGE_REFERENCE_NODE,
+  isLinkedPageReferenceDelta,
+} from "./richText.js";
 
 type TokenLike = {
   type: string;
@@ -141,6 +145,36 @@ function deltaToString(deltas: TextDelta[]): string {
   return deltas.map(delta => delta.insert).join("");
 }
 
+function hasLinkedPageReference(deltas: TextDelta[]): boolean {
+  return deltas.some(isLinkedPageReferenceDelta);
+}
+
+function getLinkedPageTaskPrefix(
+  deltas: TextDelta[],
+): { checked: boolean; prefixLength: number } | null {
+  let leadingText = "";
+  for (const delta of deltas) {
+    if (isLinkedPageReferenceDelta(delta)) {
+      break;
+    }
+    leadingText += delta.insert;
+  }
+
+  const match = leadingText.match(/^\[(\s|x|X)\]\s+/);
+  if (!match) {
+    return null;
+  }
+  return {
+    checked: match[1].toLowerCase() === "x",
+    prefixLength: match[0].length,
+  };
+}
+
+function deltaToText(deltas: TextDelta[]): string {
+  const text = deltaToString(deltas);
+  return hasLinkedPageReference(deltas) ? text : text.trim();
+}
+
 /**
  * Strip deltas corresponding to the first line (up to and including the first
  * "\n" separator).  Used by callout parsing to remove the `[!NOTE]` marker
@@ -182,12 +216,12 @@ function linkedPageIdFromHref(href: string): string | null {
 }
 
 /**
- * Build the zero-width text delta AFFiNE uses for inline linked-doc
+ * Build the native reference-node delta AFFiNE uses for inline linked-doc
  * references (same shape as database linked-doc rows).
  */
 function linkedPageDelta(pageId: string): TextDelta {
   return {
-    insert: "\u200B",
+    insert: AFFINE_LINKED_PAGE_REFERENCE_NODE,
     attributes: { reference: { type: "LinkedPage", pageId } },
   };
 }
@@ -303,7 +337,7 @@ function extractSingleLink(children: TokenLike[]): { href: string; text: string 
   }
 
   const inner = filtered.slice(1, filtered.length - 1);
-  const text = deltaToString(renderInline(inner)).trim() || href;
+  const text = deltaToText(renderInline(inner)) || href;
   return { href, text };
 }
 
@@ -344,7 +378,7 @@ function parseTable(tokens: TokenLike[], start: number, end: number): {
           for (let k = j + 1; k < cellClose; k += 1) {
             if (tokens[k].type === "inline") {
               deltas = renderInline(tokens[k].children ?? []);
-              cellText = deltaToString(deltas).trim();
+              cellText = deltaToText(deltas);
               break;
             }
           }
@@ -405,7 +439,7 @@ function collectQuoteText(tokens: TokenLike[], start: number, end: number): { te
     const token = tokens[i];
     if (token.type === "inline") {
       const lineDeltas = renderInline(token.children ?? []);
-      const line = deltaToString(lineDeltas).trim();
+      const line = deltaToText(lineDeltas);
       if (line) {
         if (!firstLine) {
           allDeltas.push({ insert: "\n" });
@@ -473,7 +507,7 @@ function parseList(
         const current = tokens[cursor];
         if (!itemText && current.type === "inline") {
           itemDeltas = renderInline(current.children ?? []);
-          itemText = deltaToString(itemDeltas).trim();
+          itemText = deltaToText(itemDeltas);
         }
 
         if (current.type === "bullet_list_open" || current.type === "ordered_list_open") {
@@ -500,13 +534,25 @@ function parseList(
 
       let style: MarkdownListStyle = defaultStyle;
       let checked: boolean | undefined;
-      const taskMatch = itemText.match(/^\[(\s|x|X)\]\s+([\s\S]*)$/);
-      if (taskMatch) {
+      const containsLinkedPageReference = hasLinkedPageReference(itemDeltas);
+      const linkedPageTask = containsLinkedPageReference
+        ? getLinkedPageTaskPrefix(itemDeltas)
+        : null;
+      const taskMatch = containsLinkedPageReference
+        ? null
+        : itemText.match(/^\[(\s|x|X)\]\s+([\s\S]*)$/);
+      const task = linkedPageTask ?? (taskMatch
+        ? {
+            checked: taskMatch[1].toLowerCase() === "x",
+            prefixLength: deltaToString(itemDeltas).length - taskMatch[2].length,
+            text: taskMatch[2],
+          }
+        : null);
+      if (task) {
         style = "todo";
-        checked = taskMatch[1].toLowerCase() === "x";
-        itemText = taskMatch[2];
-        const prefixLen = deltaToString(itemDeltas).length - itemText.length;
-        let remaining = prefixLen;
+        checked = task.checked;
+        itemText = "text" in task ? task.text : itemText.slice(task.prefixLength);
+        let remaining = task.prefixLength;
         const trimmedDeltas: TextDelta[] = [];
         for (const delta of itemDeltas) {
           if (remaining <= 0) {
@@ -571,7 +617,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
         const level = Math.max(1, Math.min(6, levelNum)) as 1 | 2 | 3 | 4 | 5 | 6;
         const inline = tokens.slice(i + 1, close).find(inner => inner.type === "inline");
         const headingDeltas = inline ? renderInline(inline.children ?? []) : [];
-        const text = deltaToString(headingDeltas).trim();
+        const text = deltaToText(headingDeltas);
         state.operations.push({ type: "heading", level, text, deltas: headingDeltas });
         i = close + 1;
         break;
@@ -618,7 +664,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
         }
 
         const paragraphDeltas = renderInline(children);
-        const text = deltaToString(paragraphDeltas).trim();
+        const text = deltaToText(paragraphDeltas);
         if (text.length > 0) {
           state.operations.push({ type: "paragraph", text, deltas: paragraphDeltas });
         }
@@ -649,7 +695,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           break;
         }
         const quoteResult = collectQuoteText(tokens, i + 1, close);
-        const quoteText = quoteResult.text.trim();
+        const quoteText = deltaToText(quoteResult.deltas);
         const calloutText = parseCalloutAdmonition(quoteText);
         if (calloutText !== null) {
           state.operations.push({ type: "callout", text: calloutText, deltas: stripFirstDeltaLine(quoteResult.deltas) });

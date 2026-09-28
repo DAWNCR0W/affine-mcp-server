@@ -158,6 +158,8 @@ async function main() {
     const linkedRow = cells1.rows.find(r => r.rowBlockId === row1.rowBlockId);
     if (!linkedRow) throw new Error('Linked row not found in read_database_cells');
     expectEqual(linkedRow.linkedDocId, targetDocId, 'read_database_cells should return linkedDocId');
+    expectEqual(linkedRow.titleDeltas?.[0]?.insert, ' ', 'linked row title uses AFFiNE native reference sentinel');
+    expectEqual(linkedRow.titleDeltas?.[0]?.attributes?.reference?.pageId, targetDocId, 'linked row title keeps the target pageId');
     console.log('  PASS: linked row has correct linkedDocId\n');
 
     // ====================================================================
