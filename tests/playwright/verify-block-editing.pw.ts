@@ -15,6 +15,7 @@ interface TestState {
   workspaceId: string;
   docId: string;
   documentTitle: string;
+  updatedDate: number;
   taskBlockId: string;
   tableBlockId: string;
   taskText: string;
@@ -73,6 +74,9 @@ test.beforeAll(() => {
   if (!state.workspaceId || !state.docId || !state.taskBlockId || !state.tableBlockId) {
     throw new Error('State file is missing workspaceId, docId, taskBlockId, or tableBlockId');
   }
+  if (!Number.isFinite(state.updatedDate) || state.updatedDate <= 0) {
+    throw new Error('State file is missing a valid root meta.pages[].updatedDate');
+  }
 });
 
 test.describe.serial('AFFiNE block editing verification', () => {
@@ -89,10 +93,10 @@ test.describe.serial('AFFiNE block editing verification', () => {
       // All Docs defaults to Updated grouping. Visit it before the editor can
       // write metadata itself and hide a missing MCP updatedDate.
       await page.goto(`${state.baseUrl}/workspace/${state.workspaceId}/all`);
-      const dateKey = await page.evaluate(() => {
-        const now = new Date();
-        return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
-      });
+      const dateKey = await page.evaluate((updatedDate) => {
+        const date = new Date(updatedDate);
+        return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+      }, state.updatedDate);
       const row = page.locator(`[data-masonry-item-id="${dateKey}:${state.docId}"] [data-testid="doc-list-item"][data-doc-id="${state.docId}"]`);
       await expect(row).toBeVisible();
       await expect(row).toContainText(state.documentTitle);
