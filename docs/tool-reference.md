@@ -189,6 +189,8 @@ For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `upda
 
 `read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
 
+Inline page references use `{ "insert": " ", "attributes": { "reference": { "type": "LinkedPage", "pageId": "<docId>" } } }`: one ASCII space per reference, with its label resolved by AFFiNE. Block, table-cell, and database rich-text writes reject visible reference labels and missing page IDs before saving. Exact legacy zero-width-space reference markers are normalized to native spaces when written; existing stored documents remain readable.
+
 #### Sidebar icons
 
 `update_doc_icon` and `update_folder_icon` accept an emoji or a named icon such as `{ "type": "affine-icon", "name": "FlagPanel", "color": "#EB4C42" }`. `name` must match an `@blocksuite/icons` export without the `Icon` suffix (for example `FlagPanel` for `FlagPanelIcon`); names are not validated, and unknown names render as no icon in AFFiNE. `color` is optional and accepts any CSS color.
