@@ -30,6 +30,9 @@ interface TestState {
   tableLinkUrl: string;
   tableSiblingHeaderText: string;
   tableSiblingDataText: string;
+  referenceBlockId: string;
+  referenceTableBlockId: string;
+  referenceTargetTitle: string;
   error?: string;
 }
 
@@ -165,6 +168,32 @@ test.describe.serial('AFFiNE block editing verification', () => {
 
       const inlineCode = tableBlock.locator('code').filter({ hasText: 'team.AI' }).first();
       await expect(inlineCode).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('render one native page reference in a paragraph and a table cell', async ({ browser }) => {
+    expect(state.referenceBlockId).toBeTruthy();
+    expect(state.referenceTableBlockId).toBeTruthy();
+    expect(state.referenceTargetTitle).toBeTruthy();
+    const context = await browser.newContext({ storageState: AUTH_STATE_PATH });
+    const page = await context.newPage();
+    const referenceErrors: string[] = [];
+    page.on('console', message => {
+      if (message.type() === 'error' && message.text().includes('Reference node must be initialized')) {
+        referenceErrors.push(message.text());
+      }
+    });
+    try {
+      await page.goto(`${state.baseUrl}/workspace/${state.workspaceId}/${state.docId}`);
+      for (const blockId of [state.referenceBlockId, state.referenceTableBlockId]) {
+        const block = page.locator(`[data-block-id="${blockId}"]`).first();
+        await expect(block).toBeVisible();
+        await expect(block.locator('.affine-reference')).toHaveCount(1);
+        await expect(block.locator('.affine-reference-title')).toHaveText(state.referenceTargetTitle);
+      }
+      expect(referenceErrors).toEqual([]);
     } finally {
       await context.close();
     }

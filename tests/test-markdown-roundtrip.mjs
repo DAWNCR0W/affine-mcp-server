@@ -307,7 +307,7 @@ function testYTextDeltaCollection() {
   const value = doc.getText('rich-text');
   value.insert(0, 'Plain ');
   value.insert(6, 'bold', { bold: true });
-  value.insert(10, '\u200B', {
+  value.insert(10, ' ', {
     reference: { type: 'LinkedPage', pageId: 'doc-2' },
   });
 
@@ -316,7 +316,7 @@ function testYTextDeltaCollection() {
     { insert: 'Plain ' },
     { insert: 'bold', attributes: { bold: true } },
     {
-      insert: '\u200B',
+      insert: ' ',
       attributes: { reference: { type: 'LinkedPage', pageId: 'doc-2' } },
     },
   ]);
@@ -331,6 +331,37 @@ function testYTextDeltaCollection() {
   assert.deepEqual(rendered.warnings, []);
 }
 
+function testLinkedPageReferenceBoundaryExport() {
+  const attributes = { reference: { type: 'LinkedPage', pageId: 'doc-2' } };
+  const link = '[doc-2](LinkedPage:doc-2)';
+  const render = deltas => renderSingleBlock(markdownBlock({
+    text: deltas.map(delta => delta.insert).join(''),
+    textDeltas: deltas,
+  })).markdown;
+
+  assert.equal(render([
+    { insert: ' ', attributes },
+    { insert: 'after' },
+  ]), `${link}after`);
+  assert.equal(render([
+    { insert: 'before ' },
+    { insert: ' ', attributes },
+  ]), `before ${link}`);
+  assert.equal(render([{ insert: ' ', attributes }]), link);
+
+  const coalesced = render([{ insert: '  ', attributes }]);
+  assert.equal(coalesced, `${link}${link}`);
+  assert.equal(render([{ insert: '\u200B\u200B', attributes }]), `${link}${link}`);
+  assert.equal(render([{ insert: ' \u200B', attributes }]), `${link}${link}`);
+  assert.equal(render([{ insert: 'Component register', attributes }]), link);
+  const reparsed = parseMarkdownToOperations(coalesced).operations[0];
+  assert.equal(
+    (reparsed.deltas ?? []).filter(delta => delta.attributes?.reference?.type === 'LinkedPage').length,
+    2,
+    'coalesced native sentinels should export and re-import as one link per marker',
+  );
+}
+
 testRenderCalloutAsAdmonition();
 testParseAdmonitionAsCallout();
 testParserRetainsInlineDeltas();
@@ -343,4 +374,5 @@ testUnsupportedInlineAttributeFidelity();
 testRichTextAcrossBlockTypes();
 testTableCellRichTextRoundTrip();
 testYTextDeltaCollection();
+testLinkedPageReferenceBoundaryExport();
 console.log('Markdown round-trip tests passed');
