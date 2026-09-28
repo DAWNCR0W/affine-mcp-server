@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import * as Y from 'yjs';
+
+import { acquireCredentials } from './acquire-credentials.mjs';
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from '../dist/ws.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
@@ -41,6 +45,40 @@ function expectTruthy(value, message) {
   }
 }
 
+async function readWorkspacePageUpdatedDate(workspaceId, docId) {
+  const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+  const socket = await connectWorkspaceSocket(
+    wsUrlFromGraphQLEndpoint(`${BASE_URL.replace(/\/+$/, '')}/graphql`),
+    cookie,
+  );
+  try {
+    await joinWorkspace(socket, workspaceId);
+    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+    if (typeof snapshot.missing !== 'string') {
+      throw new Error(`Workspace root metadata was not available for ${workspaceId}`);
+    }
+
+    const workspaceDoc = new Y.Doc();
+    try {
+      Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, 'base64'));
+      const pages = workspaceDoc.getMap('meta').get('pages');
+      if (!(pages instanceof Y.Array)) {
+        throw new Error(`Workspace ${workspaceId} has no root meta.pages array`);
+      }
+      const page = pages.toArray().find(entry => entry instanceof Y.Map && entry.get('id') === docId);
+      const updatedDate = page instanceof Y.Map ? page.get('updatedDate') : undefined;
+      if (typeof updatedDate !== 'number' || !Number.isFinite(updatedDate) || updatedDate <= 0) {
+        throw new Error(`Document ${docId} has no valid root meta.pages[].updatedDate`);
+      }
+      return updatedDate;
+    } finally {
+      workspaceDoc.destroy();
+    }
+  } finally {
+    socket.disconnect();
+  }
+}
+
 function assertDerivedParentIds(readDocPayload) {
   const blocks = Array.isArray(readDocPayload?.blocks) ? readDocPayload.blocks : [];
   const expectedParents = new Map();
@@ -66,6 +104,7 @@ async function main() {
     workspaceId: null,
     docId: null,
     documentTitle: 'Block Editing E2E',
+    updatedDate: null,
     inboxHeadingBlockId: null,
     taskBlockId: null,
     quoteBlockId: null,
@@ -795,6 +834,7 @@ async function main() {
     expectEqual(markdown.markdown.includes('[GitLab](https://gitlab.com)'), true, 'export_doc_markdown link');
     expectEqual(markdown.markdown.includes('\\|'), true, 'export_doc_markdown escaped table pipe');
 
+    state.updatedDate = await readWorkspacePageUpdatedDate(state.workspaceId, state.docId);
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
     console.log();
     console.log(`State written to: ${STATE_OUTPUT_PATH}`);
