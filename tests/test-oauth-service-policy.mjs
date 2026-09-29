@@ -82,7 +82,7 @@ const projectDirectory = path.resolve(fileURLToPath(new URL("..", import.meta.ur
 const isolatedEnvironment = {
   ...process.env,
   XDG_CONFIG_HOME: path.join(os.tmpdir(), `affine-oauth-policy-${process.pid}`),
-  AFFINE_API_TOKEN: "test-service-token",
+  AFFINE_API_TOKEN: "example-test-service-token",
   AFFINE_MCP_AUTH_MODE: "oauth",
   AFFINE_OAUTH_ALLOW_SERVICE_WRITES: "false",
   AFFINE_TOOL_PROFILE: "full",

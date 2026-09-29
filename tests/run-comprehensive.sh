@@ -146,7 +146,7 @@ start_docker_stack_with_retry() {
 }
 
 export AFFINE_EMAIL="$AFFINE_ADMIN_EMAIL"
-export AFFINE_PASSWORD="$AFFINE_ADMIN_PASSWORD"
+export AFFINE_PASSWORD="${AFFINE_ADMIN_PASSWORD}"
 export AFFINE_LOGIN_AT_START="${AFFINE_LOGIN_AT_START:-sync}"
 
 compose down -v --remove-orphans 2>/dev/null || true
