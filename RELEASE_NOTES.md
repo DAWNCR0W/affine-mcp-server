@@ -1,5 +1,29 @@
 # Release Notes
 
+## Version 3.8.4 (2026-09-29)
+
+### Highlights
+- Show the authenticated creator for new MCP-created pages in AFFiNE.
+- Keep custom properties and comments visible and editable in the native AFFiNE UI.
+- Prevent empty Markdown notes after rejected content and report missing page metadata explicitly.
+
+### What Changed
+- Record creators for pages, workspace welcome pages, and template instances without overwriting existing attribution. Reconcile incomplete creator writes before returning success.
+- Store custom-property definitions and values in AFFiNE's workspace-scoped documents; preserve the creator stored alongside property values.
+- Convert strings and legacy `{ text: string }` comments into native BlockSuite snapshots. Preserve rich snapshot content and reject malformed snapshots, including non-page roots, before mutation.
+- Save a Markdown note and its children in one page update, so invalid child content cannot leave an empty note behind.
+- Return non-retryable `workspace_page_updated_date_failed` when page content was saved but the workspace page metadata entry is missing.
+- Add native UI coverage for all four property types and comment creation, editing, and deletion, plus integration coverage for supporting tools and partial-write regressions.
+
+### Compatibility
+- The canonical MCP surface remains at 106 tools. No configuration migration is required.
+- Existing pages are not backfilled with creator attribution. Existing creator values are preserved.
+- Older custom-property data in unscoped documents is retained but is not migrated automatically. Recreate affected definitions and reapply values in the native workspace documents if needed; native properties are not overwritten.
+- Legacy comments already stored without a native snapshot are not rewritten automatically. Update their content through `update_comment` to make them renderable.
+- After a partial-write error, inspect the existing document and repair its metadata instead of replaying the content edit.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.4`, then restart the MCP server.
+
 ## Version 3.8.3 (2026-09-28)
 
 ### Highlights
