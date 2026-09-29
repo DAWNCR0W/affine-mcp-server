@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Record the authenticated AFFiNE user as the creator of new pages, including welcome pages and template instances, without replacing an existing creator. Reconcile incomplete creator writes before reporting document creation success.
+
 ## [3.8.3] - 2026-09-28
 
 ### Changed

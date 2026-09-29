@@ -30,6 +30,7 @@ import {
   isDocumentMoveSuccessful,
   toDocumentMoveResult,
 } from "../dist/util/mutationSafety.js";
+import { docPropertiesDocId } from "../dist/util/docCreator.js";
 
 {
   const partialPageWrite = new ToolFailure(
@@ -495,6 +496,8 @@ for (const invalidTimestamp of [0, -1]) {
   workspaceRoot.getMap("meta").set("pages", workspacePages);
   const emptyWorkspaceSnapshot = Buffer.from(Y.encodeStateAsUpdate(workspaceRoot)).toString("base64");
   const contentUpdates = new Map();
+  const propertiesDoc = new Y.Doc();
+  let hasPropertiesDoc = false;
   let contentMode = "persist";
   let contentRejectRemaining = 0;
   let contentPushCount = 0;
@@ -503,13 +506,26 @@ for (const invalidTimestamp of [0, -1]) {
   let staleWorkspaceReads = 0;
   let metadataPushCount = 0;
   const metadataUpdates = [];
+  let creatorMode = "success";
+  let creatorLoadMode = "success";
+  let creatorAckWasLost = false;
+  let creatorPushCount = 0;
+  let seedCreatorForNextDoc = null;
+  let currentUserId = "user-A";
+  let currentUserMode = "success";
   const socket = { disconnect() {} };
   const fakeGql = {
     async getConnectionAuth() {
       return { endpoint: "http://example.test/graphql" };
     },
-    async request() {
-      throw new Error("Unexpected GraphQL request in document creation recovery test");
+    async request(query) {
+      assert.match(query, /currentUser\s*\{\s*id\s*\}/);
+      if (currentUserMode === "query-failure") {
+        throw new Error("currentUser query failed");
+      }
+      if (currentUserMode === "null") return { currentUser: null };
+      if (currentUserMode === "malformed") return { currentUser: { id: 42 } };
+      return { currentUser: { id: currentUserId } };
     },
   };
   const transport = {
@@ -518,6 +534,14 @@ for (const invalidTimestamp of [0, -1]) {
     },
     async joinWorkspace() {},
     async loadDoc(_socket, workspaceId, docId) {
+      if (docId === docPropertiesDocId(workspaceId)) {
+        if (creatorLoadMode === "unreadable") {
+          throw new Error("docProperties readback unavailable");
+        }
+        return hasPropertiesDoc
+          ? { missing: Buffer.from(Y.encodeStateAsUpdate(propertiesDoc)).toString("base64") }
+          : {};
+      }
       if (docId === workspaceId) {
         if (staleWorkspaceReads > 0) {
           staleWorkspaceReads -= 1;
@@ -534,6 +558,19 @@ for (const invalidTimestamp of [0, -1]) {
       return content ? { missing: content } : {};
     },
     async pushDocUpdate(_socket, workspaceId, docId, updateBase64) {
+      if (docId === docPropertiesDocId(workspaceId)) {
+        creatorPushCount += 1;
+        if (creatorMode === "persistent-failure") {
+          throw new Error("docProperties write failed");
+        }
+        Y.applyUpdate(propertiesDoc, Buffer.from(updateBase64, "base64"));
+        hasPropertiesDoc = true;
+        if (creatorMode === "ack-lost" && !creatorAckWasLost) {
+          creatorAckWasLost = true;
+          throw new Error("docProperties acknowledgement timed out");
+        }
+        return Date.now();
+      }
       if (docId !== workspaceId) {
         contentPushCount += 1;
         if (contentMode === "unreadable") {
@@ -544,6 +581,14 @@ for (const invalidTimestamp of [0, -1]) {
           throw new Error("content write rejected before persistence");
         }
         contentUpdates.set(docId, updateBase64);
+        if (seedCreatorForNextDoc) {
+          const record = propertiesDoc.getMap(docId);
+          record.set("id", docId);
+          record.set("createdBy", seedCreatorForNextDoc);
+          record.set("custom:preserve", "existing value");
+          hasPropertiesDoc = true;
+          seedCreatorForNextDoc = null;
+        }
         return Date.now();
       }
       metadataPushCount += 1;
@@ -569,12 +614,27 @@ for (const invalidTimestamp of [0, -1]) {
   const client = new Client({ name: "document-creation-recovery-client", version: "1.0.0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
+  for (const mode of ["null", "malformed", "query-failure"]) {
+    currentUserMode = mode;
+    const before = [contentPushCount, metadataPushCount, creatorPushCount];
+    const rejected = await client.callTool({
+      name: "create_doc",
+      arguments: { workspaceId: "workspace-1", title: `Invalid identity ${mode}`, content: "body" },
+    });
+    assert.equal(rejected.isError, true, `${mode} currentUser response must fail creation`);
+    assert.deepEqual([contentPushCount, metadataPushCount, creatorPushCount], before,
+      `${mode} currentUser response must fail before any content or metadata write`);
+  }
+  currentUserMode = "success";
+
   const acknowledged = await client.callTool({
     name: "create_doc",
     arguments: { workspaceId: "workspace-1", title: "ACK lost", content: "body" },
   });
   assert.equal(acknowledged.isError, undefined);
   assert.equal(acknowledged.structuredContent.ok, true);
+  assert.equal(propertiesDoc.getMap(acknowledged.structuredContent.docId).get("id"), acknowledged.structuredContent.docId);
+  assert.equal(propertiesDoc.getMap(acknowledged.structuredContent.docId).get("createdBy"), "user-A");
   assert.equal(workspacePages.length, 1, "metadata ACK loss must reconcile the existing page");
   const createdPage = workspacePages.get(0);
   assert.equal(typeof createdPage.get("updatedDate"), "number", "new pages start with an updatedDate");
@@ -584,6 +644,7 @@ for (const invalidTimestamp of [0, -1]) {
   assert.equal(metadataUpdates[0], metadataUpdates[1], "metadata replay must use the exact original Yjs update");
 
   metadataMode = "persistent-failure";
+  currentUserId = "user-B";
   const partial = await client.callTool({
     name: "create_doc",
     arguments: { workspaceId: "workspace-1", title: "Partial", content: "body" },
@@ -602,6 +663,8 @@ for (const invalidTimestamp of [0, -1]) {
   assert.match(partial.structuredContent.recoveryGuidance, /Do not retry document creation/);
   assert.equal(metadataPushCount, 4, "metadata recovery must be bounded to one repair attempt");
   assert.equal(workspacePages.length, 1, "failed metadata repair must not duplicate an existing page");
+  assert.equal(propertiesDoc.getMap(partial.structuredContent.docId).get("createdBy"), "user-B",
+    "creator metadata is persisted even when workspace page registration fails");
 
   metadataMode = "success";
   contentMode = "reject-once";
@@ -614,6 +677,8 @@ for (const invalidTimestamp of [0, -1]) {
   assert.equal(contentRecovered.isError, undefined);
   assert.equal(contentRecovered.structuredContent.ok, true);
   assert.equal(contentUpdates.has(contentRecovered.structuredContent.docId), true);
+  assert.equal(propertiesDoc.getMap(contentRecovered.structuredContent.docId).get("createdBy"), "user-B",
+    "repaired content creation must finish creator metadata before returning success");
   assert.equal(contentPushCount, contentPushesBeforeRetry + 2, "content recovery must retry the same generated id once");
 
   contentMode = "unreadable";
@@ -633,8 +698,65 @@ for (const invalidTimestamp of [0, -1]) {
   assert.equal(contentUpdates.has(uncertainContent.structuredContent.docId), false);
   assert.equal(metadataPushCount, 5, "unreadable content must stop before metadata mutation");
 
+  contentMode = "persist";
+  creatorMode = "ack-lost";
+  const creatorAckLost = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Creator ACK lost", content: "body" },
+  });
+  assert.equal(creatorAckLost.isError, undefined, "a persisted creator write with a lost ACK is confirmed by readback");
+  assert.equal(propertiesDoc.getMap(creatorAckLost.structuredContent.docId).get("createdBy"), "user-B");
+  creatorMode = "success";
+
+  seedCreatorForNextDoc = "existing-user";
+  const creatorWritesBeforeExisting = creatorPushCount;
+  const existingCreator = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Existing creator", content: "body" },
+  });
+  assert.equal(existingCreator.isError, undefined);
+  const existingRecord = propertiesDoc.getMap(existingCreator.structuredContent.docId);
+  assert.equal(existingRecord.get("createdBy"), "existing-user", "a non-empty existing creator is preserved");
+  assert.equal(existingRecord.get("custom:preserve"), "existing value", "unrelated properties are preserved");
+  assert.equal(creatorPushCount, creatorWritesBeforeExisting,
+    "an already populated creator record is not rewritten");
+
+  creatorMode = "persistent-failure";
+  const creatorPushesBeforeFailure = creatorPushCount;
+  const failedCreator = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Creator write failed", content: "body" },
+  });
+  assert.equal(failedCreator.isError, true);
+  assert.equal(failedCreator.structuredContent.code, "DOCUMENT_CREATE_PARTIAL");
+  assert.equal(failedCreator.structuredContent.docId.length > 0, true);
+  assert.equal(failedCreator.structuredContent.contentPersisted, true);
+  assert.equal(failedCreator.structuredContent.metadataPersisted, false);
+  assert.equal(failedCreator.structuredContent.retryable, false);
+  assert.equal(creatorPushCount, creatorPushesBeforeFailure + 2,
+    "creator recovery is bounded to one initial write and one repair write");
+  creatorMode = "success";
+
+  creatorLoadMode = "unreadable";
+  const creatorPushesBeforeUnreadable = creatorPushCount;
+  const unreadableCreator = await client.callTool({
+    name: "create_doc",
+    arguments: { workspaceId: "workspace-1", title: "Creator readback unavailable", content: "body" },
+  });
+  assert.equal(unreadableCreator.isError, true);
+  assert.equal(unreadableCreator.structuredContent.code, "DOCUMENT_CREATE_UNCERTAIN");
+  assert.equal(unreadableCreator.structuredContent.docId.length > 0, true);
+  assert.equal(unreadableCreator.structuredContent.contentPersisted, true);
+  assert.equal(unreadableCreator.structuredContent.metadataPersisted, null);
+  assert.equal(unreadableCreator.structuredContent.retryable, false);
+  assert.equal(creatorPushCount, creatorPushesBeforeUnreadable,
+    "unreadable creator metadata must stop before a blind properties write");
+  creatorLoadMode = "success";
+
   await client.close();
   await server.close();
+  propertiesDoc.destroy();
+  workspaceRoot.destroy();
 }
 
 function dependencies(overrides = {}) {

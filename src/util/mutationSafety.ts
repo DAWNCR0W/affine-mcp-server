@@ -224,7 +224,7 @@ export class DocumentCreationError extends Error implements DocumentCreationFail
     const metadataMissing = input.metadataPersisted === false;
     const status: DocumentCreationStatus = contentConfirmed && metadataMissing ? "partial" : "uncertain";
     const recoveryGuidance = status === "partial"
-      ? `Document "${input.docId}" content is persisted but workspace metadata is missing. Do not retry document creation; inspect this docId and repair its workspace metadata or parent link manually.`
+      ? `Document "${input.docId}" content is persisted but workspace page or creator metadata is incomplete. Do not retry document creation; inspect this docId and repair its workspace registration or creator metadata manually.`
       : `Document "${input.docId}" creation could not be fully confirmed. Do not retry document creation until this docId is inspected; reconcile existing content and workspace metadata first.`;
     const message = `Document creation ${status} at ${input.stage} for doc "${input.docId}": ${creationErrorMessage(input.cause)}. ${recoveryGuidance}`;
 

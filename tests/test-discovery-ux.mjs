@@ -198,7 +198,10 @@ async function testSearchContinuationAndBrowserUrls() {
 }
 
 async function testPartialWorkspaceRecoveryReceipt() {
+  let createRequests = 0;
+  let currentUser = null;
   const server = createServer(async (_request, response) => {
+    createRequests += 1;
     for await (const _chunk of _request) {
       // Consume the multipart request before returning the GraphQL result.
     }
@@ -225,6 +228,10 @@ async function testPartialWorkspaceRecoveryReceipt() {
   const gql = {
     endpoint,
     baseUrl: "https://affine.example/custom-base",
+    async request(query) {
+      assert.match(query, /currentUser/);
+      return { currentUser };
+    },
     async getConnectionAuth() {
       return { endpoint, cookie: "", bearer: "", headers: {} };
     },
@@ -233,6 +240,10 @@ async function testPartialWorkspaceRecoveryReceipt() {
   registerWorkspaceTools(registry, gql);
 
   try {
+    const unidentified = await registry.tools.get("create_workspace").handler({ name: "No identity" });
+    assert.equal(unidentified.isError, true, "missing creator identity must fail before workspace creation");
+    assert.equal(createRequests, 0, "identity lookup failure must not create a workspace");
+    currentUser = { id: "workspace-creator" };
     const result = await registry.tools.get("create_workspace").handler({ name: "UX recovery" });
     const receipt = parseResult(result);
     assert.equal(result.isError, undefined, "partial workspace creation must remain an OK receipt");

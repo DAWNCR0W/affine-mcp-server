@@ -167,9 +167,16 @@ stored as one plain paragraph.
 
 Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 
+New pages record the authenticated AFFiNE user's ID in the workspace's native
+`docProperties.createdBy` record, so **Created by** displays the creating account.
+This also applies to semantic pages, template instances (using the instantiating
+account), and workspace welcome pages. Existing creator values are preserved;
+editing an older page does not backfill or change its creator. HTTP/OAuth deployments
+using a shared AFFiNE account record that backend account as the creator.
+
 #### Document creation failures
 
-Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.
+Document content, workspace page registration, and native creator properties are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration or creator writes. `metadataPersisted` covers both page registration and the creator record.
 
 If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
 
