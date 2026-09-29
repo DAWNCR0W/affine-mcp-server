@@ -13,7 +13,7 @@ const PROJECT_DIR = path.resolve(__dirname, "..");
 const PROXY_PATH = path.join(PROJECT_DIR, "bin", "affine-mcp-http-proxy");
 const SERVER_PATH = path.join(PROJECT_DIR, "dist", "index.js");
 assert.ok(existsSync(SERVER_PATH), "dist/index.js is missing; run npm run build before test:fast");
-const TOKEN = "test-proxy-token";
+const TOKEN = "example-test-proxy-token";
 const SESSION_ID = "session-for-test";
 
 function readBody(request) {
@@ -165,7 +165,7 @@ async function testNativeStdioEof() {
       ...process.env,
       MCP_TRANSPORT: "stdio",
       AFFINE_BASE_URL: "http://127.0.0.1:9",
-      AFFINE_API_TOKEN: "test-affine-api-token",
+      AFFINE_API_TOKEN: "example-test-affine-api-token",
       AFFINE_MCP_AUTH_MODE: "bearer",
       XDG_CONFIG_HOME: `/tmp/affine-mcp-stdio-eof-${process.pid}`,
     },

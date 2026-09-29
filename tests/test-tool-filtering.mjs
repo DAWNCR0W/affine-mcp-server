@@ -30,7 +30,7 @@ async function listToolEntries(env = {}) {
       ...process.env,
       ...env,
       AFFINE_BASE_URL: "http://localhost:3000", // dummy
-      AFFINE_API_TOKEN: "dummy_token",
+      AFFINE_API_TOKEN: "example-dummy_token",
       XDG_CONFIG_HOME: "/tmp/affine-test-" + Date.now(),
     },
   });
@@ -53,7 +53,7 @@ async function inspectAdvertisedSurface(env = {}) {
       ...process.env,
       ...env,
       AFFINE_BASE_URL: "http://localhost:3000",
-      AFFINE_API_TOKEN: "dummy_token",
+      AFFINE_API_TOKEN: "example-dummy_token",
       XDG_CONFIG_HOME: "/tmp/affine-capabilities-" + Date.now(),
     },
   });
@@ -117,7 +117,7 @@ async function expectInvalidConfiguration(env, expectedMessages) {
       env: {
         ...process.env,
         AFFINE_BASE_URL: "http://localhost:3000",
-        AFFINE_API_TOKEN: "dummy_token",
+        AFFINE_API_TOKEN: "example-dummy_token",
         XDG_CONFIG_HOME: "/tmp/affine-invalid-config-" + Date.now(),
         ...env,
       },

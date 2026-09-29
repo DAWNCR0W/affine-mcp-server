@@ -132,7 +132,7 @@ try {
   const savedHome = path.join(tempRoot, "saved");
   writeConfig(savedHome, {
     AFFINE_BASE_URL: `${baseUrl.toUpperCase()}/`,
-    AFFINE_API_TOKEN: "saved-token",
+    AFFINE_API_TOKEN: "example-saved-token",
     AFFINE_WORKSPACE_ID: "workspace-one",
     AFFINE_HEADERS_JSON: JSON.stringify({ "X-Tenant": "preserve-me" }),
     MCP_TRANSPORT: "stdio",
@@ -157,14 +157,14 @@ try {
   expect(prompted.stderr.includes("Enter a number") && prompted.stderr.includes("Selection must be between"), "workspace selector did not reject invalid choices");
   const promptedConfig = readConfig(savedHome);
   expect(promptedConfig.includes("AFFINE_WORKSPACE_ID=workspace-two"), "interactive workspace selection did not save the valid choice");
-  expect(promptedConfig.includes("AFFINE_API_TOKEN=saved-token"), "interactive workspace selection erased credentials");
+  expect(promptedConfig.includes("AFFINE_API_TOKEN=example-saved-token"), "interactive workspace selection erased credentials");
   expect(promptedConfig.includes("X-Tenant\":\"preserve-me"), "interactive workspace selection erased unrelated headers");
   expect(promptedConfig.includes("MCP_TRANSPORT=stdio") && promptedConfig.includes("PORT=3011"), "interactive workspace selection erased runtime config");
 
   const cancelledHome = path.join(tempRoot, "cancelled-workspace");
   writeConfig(cancelledHome, {
     AFFINE_BASE_URL: baseUrl,
-    AFFINE_API_TOKEN: "cancel-token",
+    AFFINE_API_TOKEN: "example-cancel-token",
     AFFINE_WORKSPACE_ID: "workspace-one",
     MCP_TRANSPORT: "stdio",
   });
@@ -176,7 +176,7 @@ try {
   const eofWorkspaceHome = path.join(tempRoot, "eof-workspace");
   writeConfig(eofWorkspaceHome, {
     AFFINE_BASE_URL: baseUrl,
-    AFFINE_API_TOKEN: "eof-token",
+    AFFINE_API_TOKEN: "example-eof-token",
     AFFINE_WORKSPACE_ID: "workspace-one",
     MCP_TRANSPORT: "stdio",
   });
@@ -191,7 +191,7 @@ try {
   expect(switchPayload.saved === true, "workspace switch should report a saved selection");
   const switchedConfig = readConfig(savedHome);
   expect(switchedConfig.includes("AFFINE_WORKSPACE_ID=workspace-two"), "workspace switch did not save the selected ID");
-  expect(switchedConfig.includes("AFFINE_API_TOKEN=saved-token"), "workspace switch erased credentials");
+  expect(switchedConfig.includes("AFFINE_API_TOKEN=example-saved-token"), "workspace switch erased credentials");
   expect(switchedConfig.includes("X-Tenant\":\"preserve-me"), "workspace switch erased unrelated headers");
   expect(switchedConfig.includes("MCP_TRANSPORT=stdio") && switchedConfig.includes("PORT=3011"), "workspace switch erased runtime config");
 
@@ -272,7 +272,7 @@ try {
   const unknownWorkspaceHome = path.join(tempRoot, "unknown-workspace");
   writeConfig(unknownWorkspaceHome, {
     AFFINE_BASE_URL: baseUrl,
-    AFFINE_API_TOKEN: "unknown-workspace-token",
+    AFFINE_API_TOKEN: "example-unknown-workspace-token",
     AFFINE_WORKSPACE_ID: "workspace-missing",
   });
   const unknownWorkspaceDoctor = await runCli(["doctor", "--json"], cleanEnvironment(unknownWorkspaceHome));

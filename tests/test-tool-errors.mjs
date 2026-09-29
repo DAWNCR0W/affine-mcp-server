@@ -37,7 +37,7 @@ const transport = new StdioClientTransport({
     XDG_CONFIG_HOME: temporary,
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: '/api/gql',
-    AFFINE_API_TOKEN: 'local-mock-token',
+    AFFINE_API_TOKEN: 'example-local-mock-token',
     MCP_TRANSPORT: 'stdio',
   },
   stderr: 'pipe',

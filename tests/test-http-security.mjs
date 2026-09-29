@@ -64,7 +64,7 @@ function serverEnvironment(port, overrides = {}) {
     MCP_TRANSPORT: "http",
     PORT: String(port),
     AFFINE_BASE_URL: "http://127.0.0.1:3010",
-    AFFINE_API_TOKEN: "test-affine-api-token",
+    AFFINE_API_TOKEN: "example-test-affine-api-token",
     AFFINE_MCP_AUTH_MODE: "bearer",
     AFFINE_MCP_HTTP_HOST: "127.0.0.1",
     XDG_CONFIG_HOME: `/tmp/affine-mcp-http-security-${process.pid}-${port}`,
@@ -232,7 +232,7 @@ function testQueryTokenShapeRejection() {
     {
       allowAnyOrigin: false,
       allowQueryToken: false,
-      httpAuthToken: "static-test-token",
+      httpAuthToken: "example-static-test-token",
     },
   );
 
@@ -324,7 +324,7 @@ async function testRemoteBindPolicy() {
 }
 
 async function testBearerTokenPolicy() {
-  const token = "static-test-token";
+  const token = "example-static-test-token";
   const server = await startHealthyServer({ AFFINE_MCP_HTTP_TOKEN: token });
   try {
     const health = await fetch(`${server.baseUrl}/healthz`);

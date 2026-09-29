@@ -66,7 +66,7 @@ function serverEnvironment(port, overrides = {}) {
     MCP_TRANSPORT: "http",
     PORT: String(port),
     AFFINE_BASE_URL: "http://127.0.0.1:3010",
-    AFFINE_API_TOKEN: "test-affine-api-token",
+    AFFINE_API_TOKEN: "example-test-affine-api-token",
     AFFINE_MCP_AUTH_MODE: "bearer",
     AFFINE_MCP_HTTP_HOST: "127.0.0.1",
     XDG_CONFIG_HOME: `/tmp/affine-mcp-http-runtime-${process.pid}-${port}`,
