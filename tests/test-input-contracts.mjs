@@ -452,7 +452,10 @@ console.log("Input contract tests passed");
   paragraph.props.text.delta[0].attributes = { bold: true };
   await create({ docId: "doc-1", content: rich });
   assert.deepEqual(calls[2].content, rich, "native snapshot attributes and metadata must survive unchanged");
-  for (const invalid of [[], {}, { text: 1 }, { snapshot: {} }, { snapshot: { ...content.snapshot, blocks: {} } }]) {
+  const nonPageRoot = { snapshot: {
+    ...content.snapshot, blocks: { ...content.snapshot.blocks, flavour: "affine:paragraph" },
+  } };
+  for (const invalid of [[], {}, { text: 1 }, { snapshot: {} }, { snapshot: { ...content.snapshot, blocks: {} } }, nonPageRoot]) {
     await assert.rejects(create({ docId: "doc-1", content: invalid }));
     const result = await update({ id: "comment-1", content: invalid });
     assert.equal(result.isError, true);

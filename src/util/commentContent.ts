@@ -19,7 +19,9 @@ const CommentSnapshot = z.object({
     createDate: z.number(),
     tags: z.array(z.string()),
   }).passthrough(),
-  blocks: BlockSnapshot,
+  blocks: BlockSnapshot.refine(block => block.flavour === "affine:page", {
+    message: "Comment snapshots require an affine:page root block.",
+  }),
 }).passthrough();
 
 /** Preserve native comment payloads and convert plain text to a renderable snapshot. */
