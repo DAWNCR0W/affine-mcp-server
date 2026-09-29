@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Record the authenticated AFFiNE user as the creator of new pages, including welcome pages and template instances, without replacing an existing creator. Reconcile incomplete creator writes before reporting document creation success.
+- Read and write custom properties in AFFiNE's workspace-scoped documents so definitions and values appear in the native UI and UI edits are visible to MCP.
+- Convert plain and legacy text comments to native BlockSuite snapshots; preserve rich snapshots and reject malformed payloads before writing.
+- Save a Markdown note and its children in one document update so a rejected child cannot leave an empty note behind.
+- Report a non-retryable partial-write error when saved page content has no workspace metadata entry to update.
+
+### Tests
+- Verify all custom-property types in Chrome, including UI-to-MCP edits, clearing values, and deleting definitions; verify comment creation, update, and deletion in the native sidebar.
+- Add supporting-tool integration coverage to the release E2E suite and regressions for malformed comments, orphan-page metadata, and rejected Markdown children.
 
 ## [3.8.3] - 2026-09-28
 

@@ -215,11 +215,13 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$docProperties` / `db$docCustomPropertyInfo` sub-docs |
+| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$<workspaceId>$docProperties` / `db$<workspaceId>$docCustomPropertyInfo` sub-docs |
 | `create_custom_property` | Create a workspace-wide custom property definition | Types: `text`, `number`, `checkbox`, `date`. Returns the `propertyId` |
 | `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
 | `clear_doc_property` | Remove a custom property value from a document | |
+
+Custom properties use AFFiNE's workspace-scoped tables. Values previously written by older MCP versions to unscoped tables are retained there but are not automatically imported; recreate the definitions and reapply those values if needed. Existing native properties and creator metadata are preserved.
 
 ### Markdown export
 
@@ -271,10 +273,12 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `list_comments` | List comments on a document | |
-| `create_comment` | Create a comment on a document | |
-| `update_comment` | Update comment content | |
+| `create_comment` | Create a comment on a document | Plain text or a native AFFiNE `{ snapshot }` payload |
+| `update_comment` | Update comment content | Same content format as `create_comment` |
 | `delete_comment` | Delete a comment | Destructive |
 | `resolve_comment` | Resolve or unresolve a comment | |
+
+Plain strings and legacy `{ text: "..." }` comment objects are converted to BlockSuite snapshots so AFFiNE can render them. Native `{ snapshot, attachments?, mode?, preview? }` payloads retain their rich content. Malformed snapshot payloads are rejected before mutation.
 
 ## Version History
 

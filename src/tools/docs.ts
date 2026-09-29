@@ -3299,7 +3299,7 @@ export function registerDocTools(
     }
   }
 
-  async function appendBlockInternal(parsed: AppendBlockInput) {
+  async function appendBlockInternal(parsed: AppendBlockInput, markdown?: ReturnType<typeof parseMarkdownToOperations>) {
     const normalized = normalizeAppendBlockInput(parsed);
     const workspaceId = normalized.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
@@ -3337,6 +3337,14 @@ export function registerDocTools(
         context.children.insert(context.insertIndex, [blockId]);
       }
 
+      const applied = markdown ? applyMarkdownOperationsToDoc(doc, {
+        workspaceId,
+        docId: normalized.docId,
+        operations: markdown.operations,
+        strict: parsed.strict,
+        placement: { parentId: blockId },
+      }) : undefined;
+
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushPageDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
@@ -3351,6 +3359,12 @@ export function registerDocTools(
       }
 
       return {
+        ...(applied ? { markdown: {
+          appendedCount: applied.appendedCount,
+          skippedCount: applied.skippedCount,
+          blockIds: applied.blockIds,
+          warnings: markdown!.warnings,
+        } } : {}),
         appended: true,
         blockId,
         flavour,
@@ -4205,6 +4219,105 @@ export function registerDocTools(
     };
   }
 
+  function applyMarkdownOperationsToDoc(doc: Y.Doc, parsed: {
+    workspaceId: string;
+    docId: string;
+    operations: MarkdownOperation[];
+    strict?: boolean;
+    placement?: AppendPlacement;
+    replaceExisting?: boolean;
+  }) {
+    const strict = parsed.strict !== false;
+    const replaceExisting = parsed.replaceExisting === true;
+    const blocks = doc.getMap("blocks") as Y.Map<any>;
+    let anchorPlacement: AppendPlacement | undefined = parsed.placement;
+    let lastInsertedBlockId: string | undefined;
+    let replaceParentId: string | undefined;
+    let skippedCount = 0;
+    let removedCount = 0;
+    let removedEmptyParagraphCount = 0;
+    const blockIds: string[] = [];
+
+    if (replaceExisting) {
+      replaceParentId = ensureNoteBlock(blocks);
+      const noteBlock = findBlockById(blocks, replaceParentId);
+      if (!noteBlock) {
+        throw new Error("Unable to resolve note block for markdown replacement.");
+      }
+      const noteChildren = ensureChildrenArray(noteBlock);
+      const existingChildren = childIdsFrom(noteChildren);
+      const descendantBlockIds = collectDescendantBlockIds(blocks, existingChildren);
+      for (const descendantId of descendantBlockIds) {
+        const descendant = findBlockById(blocks, descendantId);
+        if (descendant) {
+          removedCount += 1;
+          if (
+            descendant.get("sys:flavour") === "affine:paragraph" &&
+            asText(descendant.get("prop:text")).length === 0
+          ) {
+            removedEmptyParagraphCount += 1;
+          }
+        }
+        blocks.delete(descendantId);
+      }
+      if (noteChildren.length > 0) {
+        noteChildren.delete(0, noteChildren.length);
+      }
+    }
+
+    for (const [operationIndex, operation] of parsed.operations.entries()) {
+      const placement =
+        lastInsertedBlockId
+          ? { afterBlockId: lastInsertedBlockId }
+          : replaceParentId
+            ? { parentId: replaceParentId }
+            : anchorPlacement;
+      const appendInput = markdownOperationToAppendInput(
+        operation,
+        parsed.docId,
+        parsed.workspaceId,
+        strict,
+        placement
+      );
+
+      try {
+        const normalized = normalizeAppendBlockInput(appendInput);
+        const context = resolveInsertContext(blocks, normalized);
+        const { blockId, block, extraBlocks } = createBlock(normalized);
+        blocks.set(blockId, block);
+        if (Array.isArray(extraBlocks)) {
+          for (const extra of extraBlocks) {
+            blocks.set(extra.blockId, extra.block);
+          }
+        }
+        if (context.insertIndex >= context.children.length) {
+          context.children.push([blockId]);
+        } else {
+          context.children.insert(context.insertIndex, [blockId]);
+        }
+        blockIds.push(blockId);
+        lastInsertedBlockId = blockId;
+        if (!replaceParentId) {
+          anchorPlacement = { afterBlockId: blockId };
+        }
+      } catch (error) {
+        handleMarkdownOperationFailure(error, {
+          strict,
+          replaceExisting,
+          operationIndex,
+        });
+        skippedCount += 1;
+      }
+    }
+    return {
+      appendedCount: blockIds.length,
+      skippedCount,
+      removedCount,
+      removedEmptyParagraphCount,
+      blockIds,
+    };
+  }
+
   async function applyMarkdownOperationsInternal(parsed: {
     workspaceId: string;
     docId: string;
@@ -4219,8 +4332,6 @@ export function registerDocTools(
     removedEmptyParagraphCount: number;
     blockIds: string[];
   }> {
-    const strict = parsed.strict !== false;
-    const replaceExisting = parsed.replaceExisting === true;
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
@@ -4235,97 +4346,12 @@ export function registerDocTools(
 
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       const prevSV = Y.encodeStateVector(doc);
-      const blocks = doc.getMap("blocks") as Y.Map<any>;
-      let anchorPlacement: AppendPlacement | undefined = parsed.placement;
-      let lastInsertedBlockId: string | undefined;
-      let replaceParentId: string | undefined;
-      let skippedCount = 0;
-      let removedCount = 0;
-      let removedEmptyParagraphCount = 0;
-      const blockIds: string[] = [];
-
-      if (replaceExisting) {
-        replaceParentId = ensureNoteBlock(blocks);
-        const noteBlock = findBlockById(blocks, replaceParentId);
-        if (!noteBlock) {
-          throw new Error("Unable to resolve note block for markdown replacement.");
-        }
-        const noteChildren = ensureChildrenArray(noteBlock);
-        const existingChildren = childIdsFrom(noteChildren);
-        const descendantBlockIds = collectDescendantBlockIds(blocks, existingChildren);
-        for (const descendantId of descendantBlockIds) {
-          const descendant = findBlockById(blocks, descendantId);
-          if (descendant) {
-            removedCount += 1;
-            if (
-              descendant.get("sys:flavour") === "affine:paragraph" &&
-              asText(descendant.get("prop:text")).length === 0
-            ) {
-              removedEmptyParagraphCount += 1;
-            }
-          }
-          blocks.delete(descendantId);
-        }
-        if (noteChildren.length > 0) {
-          noteChildren.delete(0, noteChildren.length);
-        }
-      }
-
-      for (const [operationIndex, operation] of parsed.operations.entries()) {
-        const placement =
-          lastInsertedBlockId
-            ? { afterBlockId: lastInsertedBlockId }
-            : replaceParentId
-              ? { parentId: replaceParentId }
-              : anchorPlacement;
-        const appendInput = markdownOperationToAppendInput(
-          operation,
-          parsed.docId,
-          parsed.workspaceId,
-          strict,
-          placement
-        );
-
-        try {
-          const normalized = normalizeAppendBlockInput(appendInput);
-          const context = resolveInsertContext(blocks, normalized);
-          const { blockId, block, extraBlocks } = createBlock(normalized);
-          blocks.set(blockId, block);
-          if (Array.isArray(extraBlocks)) {
-            for (const extra of extraBlocks) {
-              blocks.set(extra.blockId, extra.block);
-            }
-          }
-          if (context.insertIndex >= context.children.length) {
-            context.children.push([blockId]);
-          } else {
-            context.children.insert(context.insertIndex, [blockId]);
-          }
-          blockIds.push(blockId);
-          lastInsertedBlockId = blockId;
-          if (!replaceParentId) {
-            anchorPlacement = { afterBlockId: blockId };
-          }
-        } catch (error) {
-          handleMarkdownOperationFailure(error, {
-            strict,
-            replaceExisting,
-            operationIndex,
-          });
-          skippedCount += 1;
-        }
-      }
+      const result = applyMarkdownOperationsToDoc(doc, parsed);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushPageDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
-      return {
-        appendedCount: blockIds.length,
-        skippedCount,
-        removedCount,
-        removedEmptyParagraphCount,
-        blockIds,
-      };
+      return result;
     } finally {
       socket.disconnect();
     }
@@ -6757,32 +6783,8 @@ export function registerDocTools(
     // sit next to a stale one-paragraph echo.
     const shouldApplyMarkdown = parsed.type === "note" && !!parsed.markdown;
     const coreParsed = shouldApplyMarkdown ? { ...parsed, text: undefined } : parsed;
-    const result = await appendBlockInternal(coreParsed);
-
-    let markdownApplied: {
-      appendedCount: number;
-      skippedCount: number;
-      blockIds: string[];
-      warnings: string[];
-    } | undefined;
-    if (shouldApplyMarkdown && result.appended && result.blockId) {
-      const parsedMd = parseMarkdownToOperations(parsed.markdown!);
-      if (parsedMd.operations.length > 0) {
-        const applied = await applyMarkdownOperationsInternal({
-          workspaceId: parsed.workspaceId || defaults.workspaceId!,
-          docId: parsed.docId,
-          operations: parsedMd.operations,
-          strict: parsed.strict,
-          placement: { parentId: result.blockId },
-        });
-        markdownApplied = {
-          appendedCount: applied.appendedCount,
-          skippedCount: applied.skippedCount,
-          blockIds: applied.blockIds,
-          warnings: parsedMd.warnings,
-        };
-      }
-    }
+    const parsedMarkdown = shouldApplyMarkdown ? parseMarkdownToOperations(parsed.markdown!) : undefined;
+    const result = await appendBlockInternal(coreParsed, parsedMarkdown);
 
     return receipt("doc.append_block", {
       workspaceId: parsed.workspaceId || defaults.workspaceId || null,
@@ -6796,7 +6798,7 @@ export function registerDocTools(
       legacyType: result.legacyType,
       ...(result.ownedIds ? { ownedIds: result.ownedIds } : {}),
       ...(result.missing ? { missing: result.missing } : {}),
-      ...(markdownApplied ? { markdown: markdownApplied } : {}),
+      ...(result.markdown ? { markdown: result.markdown } : {}),
       ...(result.warnings?.length ? { warnings: result.warnings } : {}),
     });
   };
