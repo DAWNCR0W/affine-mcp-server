@@ -57,6 +57,12 @@ const nullTextResult = text(null);
 assert.deepEqual(nullTextResult.content, [{ type: "text", text: "null" }]);
 assert.deepEqual(nullTextResult.structuredContent, { value: null });
 
+const propertyListing = { workspaceId: "workspace", docId: "page", definitions: [], properties: [], orphanValues: [] };
+const propertySchema = toolOutputSchemaFor("list_doc_properties");
+assert.equal(propertySchema.safeParse(propertyListing).success, true);
+assert.equal(propertySchema.safeParse({ ...propertyListing, legacy: { definitions: [], properties: [], orphanValues: [] } }).success, true);
+assert.equal(propertySchema.safeParse({ ...propertyListing, legacy: [] }).success, false);
+
 const representativeError = {
   ok: false,
   error: "Operation failed",
