@@ -2,13 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text, toolError } from "../util/mcp.js";
+import { normalizeCommentContent } from "../util/commentContent.js";
 import { BoundedOffset, BoundedPageSize } from "../util/inputSchemas.js";
 
 const CommentContent = z.union([
   z.string(),
   z.record(z.unknown()),
-  z.array(z.unknown()),
-]).describe("Comment content accepted by AFFiNE. Plain strings are normalized to { text }, and rich AFFiNE payload objects are passed through.");
+]).describe("Plain comment text, a legacy { text } object, or a native AFFiNE { snapshot } payload. Plain text is converted to a renderable BlockSuite snapshot.");
 const CommentPageSize = BoundedPageSize.describe("Maximum number of comments to return from the AFFiNE pagination connection (1-200).");
 const CommentOffset = BoundedOffset.describe("Zero-based offset used by AFFiNE pagination (maximum 1,000,000). Do not combine with after unless the AFFiNE API requires it.");
 
@@ -41,7 +41,7 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
     if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
     const mutation = `mutation CreateComment($input: CommentCreateInput!){ createComment(input:$input){ id content createdAt updatedAt resolved } }`;
     const normalizedDocMode = (parsed.docMode || 'page').toLowerCase() === 'edgeless' ? 'edgeless' : 'page';
-    const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
+    const normalizedContent = normalizeCommentContent(parsed.content);
     const input = { content: normalizedContent, docId: parsed.docId, workspaceId, docTitle: parsed.docTitle || "", docMode: normalizedDocMode, mentions: parsed.mentions };
     const data = await gql.request<{ createComment: any }>(mutation, { input });
     return receipt("comment.create", {
@@ -73,7 +73,7 @@ export function registerCommentTools(server: McpServer, gql: GraphQLClient, defa
   const updateCommentHandler = async (parsed: { id: string; content: any }) => {
     try {
       const mutation = `mutation UpdateComment($input: CommentUpdateInput!){ updateComment(input:$input) }`;
-      const normalizedContent = typeof parsed.content === 'string' ? { text: parsed.content } : parsed.content;
+      const normalizedContent = normalizeCommentContent(parsed.content);
       const data = await gql.request<{ updateComment: boolean }>(mutation, { input: { id: parsed.id, content: normalizedContent } });
       if (!data.updateComment) {
         return toolError("AFFiNE did not confirm the comment update.", {

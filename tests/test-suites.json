@@ -153,7 +153,8 @@
       "test-canvas-tool-map-demo.mjs",
       "test-edgeless-canvas-cookbook.mjs",
       "test-stack-after-directions.mjs",
-      "test-theme-defaults-setup.mjs"
+      "test-theme-defaults-setup.mjs",
+      "test-supporting-tools.mjs"
     ],
     "comprehensive": [
       "test-concurrent-writes.mjs",

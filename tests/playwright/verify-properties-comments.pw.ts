@@ -111,4 +111,16 @@ test.describe('Native property and comment contracts', () => {
     await expect(rows[1]).toHaveCount(0);
   });
 
+  test('plain and updated comments render their actual text', async ({ page }) => {
+    const comment = await call('create_comment', { workspaceId, docId, content: 'Visible MCP comment' });
+    // The native comment deep link opens the sidebar without creating another comment.
+    await openDoc(page, comment.id);
+    const row = page.locator(`[data-comment-id="${comment.id}"]`);
+    await expect(row).toBeVisible();
+    await expect(row.locator('.comment-editor-viewport[data-readonly="true"]')).toContainText('Visible MCP comment');
+    await call('update_comment', { id: comment.id, content: { text: 'Visible updated comment' } });
+    await expect(row.locator('.comment-editor-viewport[data-readonly="true"]')).toContainText('Visible updated comment');
+    await call('delete_comment', { id: comment.id });
+    await expect(row).toHaveCount(0);
+  });
 });
