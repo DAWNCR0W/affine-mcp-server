@@ -45,7 +45,7 @@ function expectTruthy(value, message) {
   }
 }
 
-async function readWorkspacePageUpdatedDate(workspaceId, docId) {
+async function readWorkspacePageUpdatedDate(workspaceId, docId, expectedCreator) {
   const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
   const socket = await connectWorkspaceSocket(
     wsUrlFromGraphQLEndpoint(`${BASE_URL.replace(/\/+$/, '')}/graphql`),
@@ -53,6 +53,18 @@ async function readWorkspacePageUpdatedDate(workspaceId, docId) {
   );
   try {
     await joinWorkspace(socket, workspaceId);
+    // Inspect the wire document before opening the UI, which can migrate properties.
+    const propertiesSnapshot = await loadDoc(socket, workspaceId, `db$${workspaceId}$docProperties`);
+    assert.equal(typeof propertiesSnapshot.missing, 'string', 'workspace-scoped docProperties exists');
+    const properties = new Y.Doc();
+    try {
+      Y.applyUpdate(properties, Buffer.from(propertiesSnapshot.missing, 'base64'));
+      const record = properties.getMap(docId);
+      assert.equal(record.get('id'), docId, 'creator record uses the page id');
+      assert.equal(record.get('createdBy'), expectedCreator, 'creator is the authenticated AFFiNE user');
+    } finally {
+      properties.destroy();
+    }
     const snapshot = await loadDoc(socket, workspaceId, workspaceId);
     if (typeof snapshot.missing !== 'string') {
       throw new Error(`Workspace root metadata was not available for ${workspaceId}`);
@@ -105,6 +117,8 @@ async function main() {
     docId: null,
     documentTitle: 'Block Editing E2E',
     updatedDate: null,
+    creatorId: null,
+    creatorName: null,
     inboxHeadingBlockId: null,
     taskBlockId: null,
     quoteBlockId: null,
@@ -224,9 +238,15 @@ async function main() {
   try {
     await client.connect(transport);
 
+    const user = await call('current_user');
+    state.creatorId = user.id;
+    state.creatorName = user.name;
+    expectTruthy(state.creatorId, 'authenticated user id');
+
     const workspace = await call('create_workspace', { name: testResourceName('block-editing') });
     state.workspaceId = workspace?.id || workspace?.workspaceId;
     expectTruthy(state.workspaceId, 'create_workspace id');
+    await readWorkspacePageUpdatedDate(state.workspaceId, workspace.firstDocId, state.creatorId);
 
     const document = await call('create_doc', {
       workspaceId: state.workspaceId,
@@ -235,6 +255,18 @@ async function main() {
     });
     state.docId = document?.docId;
     expectTruthy(state.docId, 'create_doc docId');
+    await readWorkspacePageUpdatedDate(state.workspaceId, state.docId, state.creatorId);
+
+    // All creation paths must populate the same native creator record.
+    for (const [tool, input] of [
+      ['create_doc_from_markdown', { title: 'Creator Markdown', markdown: '# Authored through MCP' }],
+      ['create_semantic_page', { title: 'Creator Semantic', sections: [{ title: 'Summary', paragraphs: ['Authored through MCP'] }] }],
+      ['instantiate_template_native', { title: 'Creator Native Template', templateDocId: state.docId }],
+    ]) {
+      const created = await call(tool, { workspaceId: state.workspaceId, ...input });
+      expectTruthy(created.docId, `${tool} docId`);
+      await readWorkspacePageUpdatedDate(state.workspaceId, created.docId, state.creatorId);
+    }
 
     const referenceTarget = await call('create_doc', {
       workspaceId: state.workspaceId,
@@ -834,7 +866,7 @@ async function main() {
     expectEqual(markdown.markdown.includes('[GitLab](https://gitlab.com)'), true, 'export_doc_markdown link');
     expectEqual(markdown.markdown.includes('\\|'), true, 'export_doc_markdown escaped table pipe');
 
-    state.updatedDate = await readWorkspacePageUpdatedDate(state.workspaceId, state.docId);
+    state.updatedDate = await readWorkspacePageUpdatedDate(state.workspaceId, state.docId, state.creatorId);
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
     console.log();
     console.log(`State written to: ${STATE_OUTPUT_PATH}`);

@@ -16,6 +16,8 @@ interface TestState {
   docId: string;
   documentTitle: string;
   updatedDate: number;
+  creatorId: string;
+  creatorName: string;
   taskBlockId: string;
   tableBlockId: string;
   taskText: string;
@@ -77,6 +79,9 @@ test.beforeAll(() => {
   if (!state.workspaceId || !state.docId || !state.taskBlockId || !state.tableBlockId) {
     throw new Error('State file is missing workspaceId, docId, taskBlockId, or tableBlockId');
   }
+  if (!state.creatorId || !state.creatorName) {
+    throw new Error('State file is missing the authenticated creator identity');
+  }
   if (!Number.isFinite(state.updatedDate) || state.updatedDate <= 0) {
     throw new Error('State file is missing a valid root meta.pages[].updatedDate');
   }
@@ -104,6 +109,27 @@ test.describe.serial('AFFiNE block editing verification', () => {
       await expect(row).toBeVisible();
       await expect(row).toContainText(state.documentTitle);
       await expect(page.locator(`[data-masonry-item-id="${state.docId}"]`)).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('show the authenticated creator in the native page properties', async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_STATE_PATH });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${state.baseUrl}/workspace/${state.workspaceId}/${state.docId}`);
+      // The integration test has already checked the stored record before the
+      // browser can run any migration. Only expand the native properties UI.
+      await page.getByTestId('page-info-collapse').click();
+      const creator = page.locator('[data-testid="doc-property-row"][data-info-id="createdBy"]');
+      await expect(creator).toBeAttached();
+      if (!await creator.isVisible()) {
+        await page.getByText(/^\d+ more propert/i).click();
+      }
+      await expect(creator).toBeVisible();
+      await expect(creator).toContainText(state.creatorName);
+      await expect(creator).not.toContainText('No Record');
     } finally {
       await context.close();
     }

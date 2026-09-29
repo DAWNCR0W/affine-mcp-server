@@ -129,6 +129,10 @@ async function testCallersRejectDeclaredOversize(baseUrl) {
   const registry = new ToolRegistry();
   const gql = {
     endpoint: `${baseUrl}/workspace`,
+    async request(query) {
+      assert.match(query, /currentUser/);
+      return { currentUser: { id: "response-safety-creator" } };
+    },
     async getConnectionAuth() {
       return {
         bearer: "",

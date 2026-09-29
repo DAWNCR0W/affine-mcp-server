@@ -31,6 +31,7 @@ import {
 } from "../util/inputSchemas.js";
 import { secureAffineId, secureRandomInt31 } from "../util/random.js";
 import { documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
+import { ensureDocumentCreator, fetchCurrentUserId, readDocumentCreator } from "../util/docCreator.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -1267,6 +1268,10 @@ export function registerDocTools(
   const joinForDocumentCreation = documentCreationTransport.joinWorkspace ?? joinWorkspace;
   const loadForDocumentCreation = documentCreationTransport.loadDoc ?? loadDoc;
   const pushForDocumentCreation = documentCreationTransport.pushDocUpdate ?? pushDocUpdate;
+  const creatorTransport = {
+    loadDoc: loadForDocumentCreation,
+    pushDocUpdate: pushForDocumentCreation,
+  };
 
   // helpers
   const generateId = secureAffineId;
@@ -4377,10 +4382,11 @@ export function registerDocTools(
     try {
       await joinForDocumentCreation(socket, workspaceId);
 
+      const creatorId = await fetchCurrentUserId(gql);
       const docId = generateId();
       const title = parsed.title || "Untitled";
       const docShell = createDocSkeleton(title, parsed.content);
-      await commitNewDocument(socket, workspaceId, docId, title, docShell.doc);
+      await commitNewDocument(socket, workspaceId, docId, title, docShell.doc, creatorId);
 
       return {
         workspaceId,
@@ -4795,9 +4801,21 @@ export function registerDocTools(
         metadataPersisted = false;
       } else {
         const workspaceDoc = new Y.Doc();
-        Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-        metadataPersisted = getWorkspacePageEntries(workspaceDoc.getMap("meta"))
-          .some(page => page.id === docId);
+        try {
+          Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+          const pageExists = getWorkspacePageEntries(workspaceDoc.getMap("meta"))
+            .some(page => page.id === docId);
+          if (!pageExists) {
+            metadataPersisted = false;
+          } else {
+            const creator = await readDocumentCreator(socket, workspaceId, docId, creatorTransport);
+            metadataPersisted = creator?.id === docId
+              && typeof creator.createdBy === "string"
+              && creator.createdBy.trim().length > 0;
+          }
+        } finally {
+          workspaceDoc.destroy();
+        }
       }
     } catch {
       metadataPersisted = null;
@@ -4876,6 +4894,7 @@ export function registerDocTools(
       docId: string;
       title: string;
       contentUpdateBase64: string;
+      creatorId: string;
       metadataUpdateBase64?: string;
       stage: DocumentCreationErrorInput["stage"];
       cause: unknown;
@@ -4918,6 +4937,17 @@ export function registerDocTools(
       } catch (error) {
         lastError = error;
       }
+      try {
+        await ensureDocumentCreator(
+          socket,
+          input.workspaceId,
+          input.docId,
+          input.creatorId,
+          creatorTransport,
+        );
+      } catch (error) {
+        lastError = error;
+      }
       state = await probeDocumentCreation(socket, input.workspaceId, input.docId);
     }
 
@@ -4943,6 +4973,7 @@ export function registerDocTools(
     docId: string,
     title: string,
     doc: Y.Doc,
+    creatorId: string,
   ): Promise<void> {
     const contentUpdateBase64 = Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64");
     try {
@@ -4953,6 +4984,7 @@ export function registerDocTools(
         docId,
         title,
         contentUpdateBase64,
+        creatorId,
         stage: "content",
         cause: error,
       });
@@ -4970,12 +5002,14 @@ export function registerDocTools(
       if (metadataUpdateBase64) {
         await pushForDocumentCreation(socket, workspaceId, workspaceId, metadataUpdateBase64);
       }
+      await ensureDocumentCreator(socket, workspaceId, docId, creatorId, creatorTransport);
     } catch (error) {
       await reconcileDocumentCreation(socket, {
         workspaceId,
         docId,
         title,
         contentUpdateBase64,
+        creatorId,
         metadataUpdateBase64,
         stage: "metadata",
         cause: error,
@@ -5006,6 +5040,7 @@ export function registerDocTools(
     try {
       await joinForDocumentCreation(socket, workspaceId);
 
+      const creatorId = await fetchCurrentUserId(gql);
       const docId = generateId();
       const title = parsed.title || "Untitled";
       const pageType = parsed.pageType ?? "wiki_page";
@@ -5019,7 +5054,7 @@ export function registerDocTools(
         docId
       );
 
-      await commitNewDocument(socket, workspaceId, docId, title, docShell.doc);
+      await commitNewDocument(socket, workspaceId, docId, title, docShell.doc, creatorId);
 
       let parentLinked = false;
       const warnings: string[] = [];
