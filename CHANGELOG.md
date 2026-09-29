@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Record the authenticated AFFiNE user as the creator of new pages, including welcome pages and template instances, without replacing an existing creator. Reconcile incomplete creator writes before reporting document creation success.
-- Read and write custom properties in AFFiNE's workspace-scoped documents so definitions and values appear in the native UI and UI edits are visible to MCP.
+- Read and write custom properties in AFFiNE's workspace-scoped documents so definitions and values appear in the native UI and UI edits are visible to MCP. Keep older unscoped data accessible through the opt-in `includeLegacy` recovery result without overwriting native state.
 - Convert plain and legacy text comments to native BlockSuite snapshots; preserve rich snapshots and reject malformed payloads before writing.
 - Save a Markdown note and its children in one document update so a rejected child cannot leave an empty note behind.
 - Report a non-retryable partial-write error when saved page content has no workspace metadata entry to update.
