@@ -221,7 +221,7 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
 | `clear_doc_property` | Remove a custom property value from a document | |
 
-Custom properties use AFFiNE's workspace-scoped tables. Values previously written by older MCP versions to unscoped tables are retained there but are not automatically imported; recreate the definitions and reapply those values if needed. Existing native properties and creator metadata are preserved.
+Custom properties use AFFiNE's workspace-scoped tables. To recover values written by versions before 3.8.4, call `list_doc_properties` with `includeLegacy: true`. Its separate `legacy` object contains the old definitions, decoded properties, and orphan values; the normal result remains native-only. This read never imports or modifies data, so cleared native values, deleted definitions, and creator metadata stay intact. To restore an old value in AFFiNE, use `create_custom_property` for its definition and `set_doc_property` with the returned new property ID and the recovered value. Existing native properties are not automatically overwritten.
 
 ### Markdown export
 

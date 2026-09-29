@@ -18,7 +18,7 @@
 ### Compatibility
 - The canonical MCP surface remains at 106 tools. No configuration migration is required.
 - Existing pages are not backfilled with creator attribution. Existing creator values are preserved.
-- Older custom-property data in unscoped documents is retained but is not migrated automatically. Recreate affected definitions and reapply values in the native workspace documents if needed; native properties are not overwritten.
+- Older custom-property data is recoverable through `list_doc_properties` with `includeLegacy: true`, in a separate `legacy` result. Nothing is automatically imported or overwritten. Recreate affected definitions with `create_custom_property`, then use the new property IDs with `set_doc_property` to restore recovered values.
 - Legacy comments already stored without a native snapshot are not rewritten automatically. Update their content through `update_comment` to make them renderable.
 - After a partial-write error, inspect the existing document and repair its metadata instead of replaying the content edit.
 - Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
