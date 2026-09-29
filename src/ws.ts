@@ -220,7 +220,7 @@ async function updateWorkspacePageUpdatedDate(
     try {
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       const page = findWorkspacePage(doc, docId);
-      if (!page) return;
+      if (!page) throw new Error("Document is not registered in workspace page metadata.");
 
       const currentDate = page.get("updatedDate");
       if (typeof currentDate === "number" && currentDate >= updatedDate) return;

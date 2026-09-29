@@ -197,6 +197,25 @@ function changedDocumentUpdate() {
   root.destroy();
 }
 
+{
+  const workspaceId = "workspace-unregistered-page";
+  const root = workspaceRootWithPages([]);
+  const transport = makeUpdateSocket({ workspaceId, root });
+  const handler = withToolErrors(
+    () => pushPageDocUpdate(transport.socket, workspaceId, "orphan", changedDocumentUpdate()),
+    { toolName: "append_block", authMode: "bearer", readOnly: false },
+  );
+  const failure = await handler();
+  assert.equal(failure.isError, true);
+  assert.equal(failure.structuredContent.code, "workspace_page_updated_date_failed");
+  assert.equal(failure.structuredContent.retryable, false);
+  assert.match(failure.structuredContent.error, /not registered/);
+  assert.equal(transport.pushes.length, 1, "a saved orphan is never replayed or silently registered");
+  assert.equal(transport.rootPushes, 0);
+  assert.equal(pageDates(root).size, 0);
+  root.destroy();
+}
+
 for (const invalidTimestamp of [0, -1]) {
   const workspaceId = `workspace-updated-date-invalid-ack-${invalidTimestamp}`;
   const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
