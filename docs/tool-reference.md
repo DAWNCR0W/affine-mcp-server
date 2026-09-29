@@ -167,9 +167,16 @@ stored as one plain paragraph.
 
 Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 
+New pages record the authenticated AFFiNE user's ID in the workspace's native
+`docProperties.createdBy` record, so **Created by** displays the creating account.
+This also applies to semantic pages, template instances (using the instantiating
+account), and workspace welcome pages. Existing creator values are preserved;
+editing an older page does not backfill or change its creator. HTTP/OAuth deployments
+using a shared AFFiNE account record that backend account as the creator.
+
 #### Document creation failures
 
-Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.
+Document content, workspace page registration, and native creator properties are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration or creator writes. `metadataPersisted` covers both page registration and the creator record.
 
 If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
 
@@ -208,11 +215,13 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$docProperties` / `db$docCustomPropertyInfo` sub-docs |
+| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$<workspaceId>$docProperties` / `db$<workspaceId>$docCustomPropertyInfo` sub-docs |
 | `create_custom_property` | Create a workspace-wide custom property definition | Types: `text`, `number`, `checkbox`, `date`. Returns the `propertyId` |
 | `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
 | `clear_doc_property` | Remove a custom property value from a document | |
+
+Custom properties use AFFiNE's workspace-scoped tables. To recover values written by versions before 3.8.4, call `list_doc_properties` with `includeLegacy: true`. Its separate `legacy` object contains the old definitions, decoded properties, and orphan values; the normal result remains native-only. This read never imports or modifies data, so cleared native values, deleted definitions, and creator metadata stay intact. To restore an old value in AFFiNE, use `create_custom_property` for its definition and `set_doc_property` with the returned new property ID and the recovered value. Existing native properties are not automatically overwritten.
 
 ### Markdown export
 
@@ -264,10 +273,12 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `list_comments` | List comments on a document | |
-| `create_comment` | Create a comment on a document | |
-| `update_comment` | Update comment content | |
+| `create_comment` | Create a comment on a document | Plain text or a native AFFiNE `{ snapshot }` payload |
+| `update_comment` | Update comment content | Same content format as `create_comment` |
 | `delete_comment` | Delete a comment | Destructive |
 | `resolve_comment` | Resolve or unresolve a comment | |
+
+Plain strings and legacy `{ text: "..." }` comment objects are converted to BlockSuite snapshots so AFFiNE can render them. Native `{ snapshot, attachments?, mode?, preview? }` payloads retain their rich content. Malformed snapshot payloads are rejected before mutation.
 
 ## Version History
 

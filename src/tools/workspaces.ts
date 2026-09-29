@@ -6,6 +6,7 @@ import FormData from "form-data";
 import fetch from "node-fetch";
 import { receipt, text, toolError } from "../util/mcp.js";
 import { secureAffineId } from "../util/random.js";
+import { ensureDocumentCreator, fetchCurrentUserId } from "../util/docCreator.js";
 import { fetchResponseBody } from "../util/httpResponse.js";
 import { readWorkspaceProfile } from "../workspaceProfile.js";
 import {
@@ -304,6 +305,7 @@ export function registerWorkspaceTools(
       try {
         // Wait for the shared auth session before multipart or WebSocket operations.
         const { endpoint, headers, cookie, bearer } = await gql.getConnectionAuth();
+        const creatorId = await fetchCurrentUserId(gql);
         
         // Create initial workspace data
         const { workspaceUpdate, firstDocId, docUpdate } = createInitialWorkspaceData(name, avatar || '');
@@ -382,6 +384,7 @@ export function registerWorkspaceTools(
             await joinWorkspace(socket, workspace.id);
             const docUpdateBase64 = Buffer.from(docUpdate).toString('base64');
             await pushDocUpdate(socket, workspace.id, firstDocId, docUpdateBase64);
+            await ensureDocumentCreator(socket, workspace.id, firstDocId, creatorId);
           } finally {
             socket.disconnect();
           }
@@ -395,9 +398,9 @@ export function registerWorkspaceTools(
             firstDocId,
             syncStatus: "partial",
             status: "partial",
-            message: "Workspace created; initial document sync failed. No automatic retry is scheduled.",
+            message: "Workspace created; initial document or creator sync failed. No automatic retry is scheduled.",
             requiresManualRepair: true,
-            recoveryGuidance: `Workspace ${workspace.id} was created, but initial document synchronization did not complete. Read workspace ${workspace.id} and document ${firstDocId} before any repair because the timed-out write may have persisted. Repair the existing document manually if needed; do not call create_workspace again. No automatic retry is scheduled.`,
+            recoveryGuidance: `Workspace ${workspace.id} was created, but initial document or creator synchronization did not complete. Read workspace ${workspace.id} and document ${firstDocId} before any repair because the timed-out write may have persisted. Repair the existing document manually if needed; do not call create_workspace again. No automatic retry is scheduled.`,
             url: `${baseUrl}/workspace/${workspace.id}`
           });
         }

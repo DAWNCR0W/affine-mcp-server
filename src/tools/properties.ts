@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
 import { secureRandomString } from "../util/random.js";
+import { docPropertiesDocId } from "../util/docCreator.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -16,15 +17,15 @@ import {
 /**
  * Doc custom properties live in dedicated Yjs sub-docs synced by guid, NOT in
  * the page doc or the workspace root meta. AFFiNE's WorkspaceDB (an ORM on top
- * of Yjs) maps one table to one sub-doc whose guid is `db$<tableName>`:
+ * of Yjs) maps one table to one sub-doc whose wire id is `db$<workspaceId>$<tableName>`:
  *
- *  - `db$docCustomPropertyInfo`: the workspace-wide property *definitions*
+ *  - `db$<workspaceId>$docCustomPropertyInfo`: the workspace-wide property *definitions*
  *     (schema). Top-level YMap keyed by propertyId -> { id, name, type, index,
  *     icon, show, isDeleted }.
- *  - `db$docProperties`: the per-doc property *values*. Top-level YMap keyed by
+ *  - `db$<workspaceId>$docProperties`: the per-doc property *values*. Top-level YMap keyed by
  *     docId -> { id, ...builtins, "custom:<propertyId>": <value> }.
  *
- * A custom property must have a definition in `db$docCustomPropertyInfo` to be
+ * A custom property must have a definition in `db$<workspaceId>$docCustomPropertyInfo` to be
  * rendered/editable in the AFFiNE UI. Writing a value without a matching
  * definition stores orphan data that the UI ignores.
  *
@@ -35,13 +36,16 @@ import {
  *  - date:     "YYYY-MM-DD"
  *
  * References (AFFiNE repo):
- *  - modules/db/services/db.ts  -> guid `db$${tableName}`
+ *  - modules/db/services/db.ts -> normalized guid `db$${tableName}`
+ *  - nbstore/utils/id-converter.ts -> workspace-scoped wire id
  *  - orm/core/adapters/yjs/table.ts -> record = top-level YMap keyed by primary key
  *  - modules/doc/entities/record.ts -> value key is `custom:<propertyId>`
  */
 
-const DOC_PROPERTIES_GUID = "db$docProperties";
-const CUSTOM_PROPERTY_INFO_GUID = "db$docCustomPropertyInfo";
+/** AFFiNE sync gateway id for workspace custom-property definitions. */
+function customPropertyInfoDocId(workspaceId: string): string {
+  return `db$${workspaceId}$docCustomPropertyInfo`;
+}
 const DELETED_FLAG = "$$DELETED";
 const CUSTOM_PREFIX = "custom:";
 
@@ -69,7 +73,7 @@ type PropertyDefinition = {
 };
 
 /**
- * Read all live custom-property definitions from the `db$docCustomPropertyInfo`
+ * Read all live custom-property definitions from the `db$<workspaceId>$docCustomPropertyInfo`
  * sub-doc, skipping soft-deleted and empty records.
  */
 function readPropertyDefinitions(doc: Y.Doc): PropertyDefinition[] {
@@ -176,6 +180,34 @@ function decodeValue(type: string, raw: unknown): unknown {
   }
 }
 
+/** Decode one storage namespace without mixing native and legacy records. */
+function propertyListing(infoDoc: Y.Doc, propsDoc: Y.Doc, docId: string) {
+  const defs = readPropertyDefinitions(infoDoc);
+  const record = propsDoc.share.has(docId)
+    ? (propsDoc.getMap(docId).toJSON() as Record<string, unknown>)
+    : {};
+
+  const byId = new Map(defs.map((d) => [d.id, d]));
+  const properties = defs.map((def) => {
+    const raw = record[CUSTOM_PREFIX + def.id];
+    return {
+      propertyId: def.id,
+      name: def.name,
+      type: def.type,
+      value: decodeValue(def.type, raw),
+      set: raw !== undefined && raw !== null,
+    };
+  });
+
+  // Surface custom values that have no matching (live) definition.
+  const orphans = Object.keys(record)
+    .filter((k) => k.startsWith(CUSTOM_PREFIX))
+    .map((k) => k.slice(CUSTOM_PREFIX.length))
+    .filter((id) => !byId.has(id))
+    .map((id) => ({ propertyId: id, value: record[CUSTOM_PREFIX + id] }));
+  return { definitions: defs, properties, orphanValues: orphans };
+}
+
 /** Register the five document custom-property tools on the MCP server. */
 export function registerPropertyTools(
   server: McpServer,
@@ -247,46 +279,27 @@ export function registerPropertyTools(
   // list_doc_properties
   // ---------------------------------------------------------------------------
   /** Handle `list_doc_properties`: definitions, decoded per-doc values, and orphan values. */
-  const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+  const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string; includeLegacy?: boolean }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
 
-      const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID);
-      const defs = readPropertyDefinitions(infoDoc);
-
-      const { doc: propsDoc } = await loadSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID);
-      const record = propsDoc.share.has(parsed.docId)
-        ? (propsDoc.getMap(parsed.docId).toJSON() as Record<string, unknown>)
-        : {};
-
-      const byId = new Map(defs.map((d) => [d.id, d]));
-      const properties = defs.map((def) => {
-        const raw = record[CUSTOM_PREFIX + def.id];
-        return {
-          propertyId: def.id,
-          name: def.name,
-          type: def.type,
-          value: decodeValue(def.type, raw),
-          set: raw !== undefined && raw !== null,
-        };
-      });
-
-      // Surface custom values that have no matching (live) definition.
-      const orphans = Object.keys(record)
-        .filter((k) => k.startsWith(CUSTOM_PREFIX))
-        .map((k) => k.slice(CUSTOM_PREFIX.length))
-        .filter((id) => !byId.has(id))
-        .map((id) => ({ propertyId: id, value: record[CUSTOM_PREFIX + id] }));
-
+      const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
+      const { doc: propsDoc } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
+      const native = propertyListing(infoDoc, propsDoc, parsed.docId);
+      let legacy;
+      if (parsed.includeLegacy) {
+        const { doc: legacyInfo } = await loadSubdoc(socket, workspaceId, "db$docCustomPropertyInfo");
+        const { doc: legacyProps } = await loadSubdoc(socket, workspaceId, "db$docProperties");
+        legacy = propertyListing(legacyInfo, legacyProps, parsed.docId);
+      }
       return text({
         workspaceId,
         docId: parsed.docId,
-        definitions: defs,
-        properties,
-        orphanValues: orphans,
+        ...native,
+        ...(legacy ? { legacy } : {}),
       });
     } finally {
       socket.disconnect();
@@ -297,10 +310,11 @@ export function registerPropertyTools(
     {
       title: "List Document Properties",
       description:
-        "List the workspace custom-property definitions and a document's current values for them.",
+        "List native workspace custom-property definitions and document values. Set includeLegacy to read older unscoped data separately for recovery; this never migrates or writes data.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
+        includeLegacy: z.boolean().optional().describe("Include retained pre-3.8.4 data in a separate legacy result for manual recovery"),
       },
     },
     listDocPropertiesHandler as any
@@ -324,7 +338,7 @@ export function registerPropertyTools(
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID);
+      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(doc);
 
       const id = generatePropertyId();
@@ -337,7 +351,7 @@ export function registerPropertyTools(
       record.set("index", index);
       if (parsed.icon) record.set("icon", parsed.icon);
 
-      await pushSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID, doc, prevSV);
+      await pushSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId), doc, prevSV);
 
       return text({
         workspaceId,
@@ -380,7 +394,7 @@ export function registerPropertyTools(
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID);
+      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(doc);
       const def = resolveDefinition(defs, parsed.property);
       if (!def) {
@@ -390,7 +404,7 @@ export function registerPropertyTools(
       const record = doc.getMap(def.id);
       record.set("isDeleted", true);
 
-      await pushSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID, doc, prevSV);
+      await pushSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId), doc, prevSV);
 
       return text({ workspaceId, propertyId: def.id, name: def.name, deleted: true });
     } finally {
@@ -428,7 +442,7 @@ export function registerPropertyTools(
       await joinWorkspace(socket, workspaceId);
       await assertDocExists(socket, workspaceId, parsed.docId);
 
-      const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID);
+      const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(infoDoc);
       const def = resolveDefinition(defs, parsed.property);
       if (!def) {
@@ -443,12 +457,12 @@ export function registerPropertyTools(
       }
       const encoded = encodeValue(def.type as SupportedType, parsed.value);
 
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID);
+      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
       const record = doc.getMap(parsed.docId);
       record.set("id", parsed.docId); // ORM keyField, required by find/observe
       record.set(CUSTOM_PREFIX + def.id, encoded);
 
-      await pushSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID, doc, prevSV);
+      await pushSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId), doc, prevSV);
 
       return text({
         workspaceId,
@@ -497,13 +511,13 @@ export function registerPropertyTools(
     try {
       await joinWorkspace(socket, workspaceId);
 
-      const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, CUSTOM_PROPERTY_INFO_GUID);
+      const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(infoDoc);
       const def = resolveDefinition(defs, parsed.property);
       // Allow clearing by raw id even if the definition was already deleted.
       const propertyId = def?.id ?? parsed.property;
 
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID);
+      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
       let cleared = false;
       if (doc.share.has(parsed.docId)) {
         const record = doc.getMap(parsed.docId);
@@ -514,7 +528,7 @@ export function registerPropertyTools(
         }
       }
       if (cleared) {
-        await pushSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID, doc, prevSV);
+        await pushSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId), doc, prevSV);
       }
 
       return text({ workspaceId, docId: parsed.docId, propertyId, cleared });

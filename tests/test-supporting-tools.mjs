@@ -177,10 +177,11 @@ async function main() {
       docId,
       docTitle: 'Supporting Tools Doc',
       docMode: 'page',
-      content: { text: 'supporting comment' },
+      content: 'supporting comment',
     });
     commentId = createdComment?.id;
     expectTruthy(commentId, 'create_comment id');
+    expectEqual(createdComment.content?.snapshot?.blocks?.children?.[0]?.children?.[0]?.props?.text?.delta?.[0]?.insert, 'supporting comment', 'renderable comment snapshot');
 
     const commentsAfterCreate = await call('list_comments', {
       workspaceId,
@@ -201,6 +202,9 @@ async function main() {
       content: { text: 'supporting comment updated' },
     });
     expectEqual(updatedComment?.success, true, 'update_comment success');
+    const afterUpdate = await call('list_comments', { workspaceId, docId, first: 20 });
+    const updatedContent = afterUpdate.edges.find(edge => edge.node.id === commentId)?.node.content;
+    expectEqual(updatedContent?.snapshot?.blocks?.children?.[0]?.children?.[0]?.props?.text?.delta?.[0]?.insert, 'supporting comment updated', 'updated comment snapshot');
 
     const resolvedComment = await call('resolve_comment', {
       id: commentId,

@@ -407,6 +407,21 @@ async function main() {
     expectTruthy(canvas?.bounds, "canvas aggregate bounds");
 
     // 11. Markdown round-trip into a note — BlockSuite-native block-first model:
+    // A strict child failure must not leave the new note committed on its own.
+    const wideTable = [
+      `| ${Array.from({ length: 21 }, (_, i) => `column ${i}`).join(' | ')} |`,
+      `| ${Array.from({ length: 21 }, () => '---').join(' | ')} |`,
+    ].join('\n');
+    const rejectedNote = await client.callTool({ name: "append_block", arguments: {
+      workspaceId: workspace.id, docId, type: "note", x: 1800, y: 50,
+      markdown: wideTable,
+    } });
+    expectTruthy(rejectedNote.isError, "oversized Markdown child must fail validation");
+    const afterRejectedNote = await call("get_edgeless_canvas", { workspaceId: workspace.id, docId });
+    expectTruthy(!afterRejectedNote.edgelessBlocks.some(
+      b => b.flavour === "affine:note" && b.bounds?.x === 1800 && b.bounds?.y === 50
+    ), "failed Markdown must not persist an empty note");
+
     // append_block(type="note", markdown) parses via the existing markdown-it
     // pipeline and seeds heading/paragraph/list/code children. get_edgeless_canvas
     // returns these as a structured `children` array per note.

@@ -12,6 +12,10 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * - clear_doc_property removes a value
  * - delete_custom_property removes a definition
  */
+import assert from "node:assert/strict";
+import * as Y from "yjs";
+import { acquireCredentials } from "./acquire-credentials.mjs";
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushDocUpdate, wsUrlFromGraphQLEndpoint } from "../dist/ws.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -218,6 +222,60 @@ async function main() {
       expectTruthy(defIds.includes(p.propertyId), `definition listed: ${p.propertyId}`);
     }
 
+    // --- opt-in recovery of retained legacy data without native writes --------
+    assert.equal(Object.hasOwn(listedDefs, "legacy"), false, "default listing must stay native-only");
+    const emptyLegacy = await call("list_doc_properties", { workspaceId, docId, includeLegacy: true });
+    assert.deepEqual(emptyLegacy.legacy, { definitions: [], properties: [], orphanValues: [] });
+    const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const info = new Y.Doc();
+      const props = new Y.Doc();
+      const legacyValues = ["Retained text", "0", "false", "2025-01-02"];
+      for (const [i, definition] of [textProp, numberProp, checkboxProp, dateProp].entries()) {
+        const record = info.getMap(definition.propertyId);
+        for (const key of ["name", "type", "index"]) record.set(key, definition[key]);
+        record.set("id", definition.propertyId);
+        props.getMap(docId).set(`custom:${definition.propertyId}`, legacyValues[i]);
+      }
+      const legacyOnlyId = "legacy-only-property";
+      for (const [key, value] of Object.entries({ id: legacyOnlyId, name: "Legacy only", type: "text", index: "b00" })) {
+        info.getMap(legacyOnlyId).set(key, value);
+      }
+      props.getMap(docId).set(`custom:${legacyOnlyId}`, "Recover me");
+      props.getMap(docId).set("custom:orphan-property", "Retained orphan");
+      props.getMap(docId).set("createdBy", "legacy-creator-must-not-win");
+      for (const [guid, doc] of [["db$docCustomPropertyInfo", info], ["db$docProperties", props]]) {
+        await pushDocUpdate(socket, workspaceId, guid, Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64"));
+        doc.destroy();
+      }
+      const guids = ["db$docCustomPropertyInfo", "db$docProperties", `db$${workspaceId}$docCustomPropertyInfo`, `db$${workspaceId}$docProperties`];
+      async function storageState() {
+        const result = {};
+        for (const guid of guids) {
+          const snapshot = await loadDoc(socket, workspaceId, guid);
+          const doc = new Y.Doc();
+          try {
+            if (snapshot.missing) Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+            result[guid] = Object.fromEntries([...doc.share.keys()].map(key => [key, doc.getMap(key).toJSON()]));
+          } finally { doc.destroy(); }
+        }
+        return result;
+      }
+      const before = await storageState();
+      assert.deepEqual(await call("list_doc_properties", { workspaceId, docId }), listedDefs, "legacy data must remain opt-in");
+      const recovered = await call("list_doc_properties", { workspaceId, docId, includeLegacy: true });
+      const { legacy, ...native } = recovered;
+      assert.deepEqual(native, listedDefs, "conflicting legacy values must never override native results");
+      assert.deepEqual(legacy.properties.map(p => p.value), ["Retained text", 0, false, "2025-01-02", "Recover me"]);
+      assert.deepEqual(legacy.orphanValues, [{ propertyId: "orphan-property", value: "Retained orphan" }]);
+      assert.deepEqual(await storageState(), before, "recovery reads must not change either storage namespace");
+      const restored = await call("create_custom_property", { workspaceId, name: "Recovered legacy only", type: "text" });
+      await setWithRetry({ workspaceId, docId, property: restored.propertyId, value: legacy.properties.find(p => p.propertyId === legacyOnlyId).value });
+      await readProperty(workspaceId, docId, restored.propertyId, p => p?.value === "Recover me", "explicit legacy recovery");
+    } finally { socket.disconnect(); }
+
     // --- clear a value -------------------------------------------------------
     const cleared = await call("clear_doc_property", { workspaceId, docId, property: textProp.propertyId });
     expectEqual(cleared?.cleared, true, "clear_doc_property cleared flag");
@@ -237,6 +295,11 @@ async function main() {
     );
 
     console.log();
+    const afterDelete = await call("list_doc_properties", { workspaceId, docId, includeLegacy: true });
+    assert.equal(afterDelete.properties.find(p => p.propertyId === textProp.propertyId).set, false);
+    assert.equal(afterDelete.definitions.some(d => d.id === numberProp.propertyId), false);
+    assert.equal(afterDelete.legacy.properties.find(p => p.propertyId === textProp.propertyId).value, "Retained text");
+    assert.equal(afterDelete.legacy.properties.find(p => p.propertyId === numberProp.propertyId).value, 0);
     console.log("=== Document custom-property integration test passed ===");
   } finally {
     if (workspaceId && docId) {
