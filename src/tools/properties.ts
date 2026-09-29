@@ -180,6 +180,34 @@ function decodeValue(type: string, raw: unknown): unknown {
   }
 }
 
+/** Decode one storage namespace without mixing native and legacy records. */
+function propertyListing(infoDoc: Y.Doc, propsDoc: Y.Doc, docId: string) {
+  const defs = readPropertyDefinitions(infoDoc);
+  const record = propsDoc.share.has(docId)
+    ? (propsDoc.getMap(docId).toJSON() as Record<string, unknown>)
+    : {};
+
+  const byId = new Map(defs.map((d) => [d.id, d]));
+  const properties = defs.map((def) => {
+    const raw = record[CUSTOM_PREFIX + def.id];
+    return {
+      propertyId: def.id,
+      name: def.name,
+      type: def.type,
+      value: decodeValue(def.type, raw),
+      set: raw !== undefined && raw !== null,
+    };
+  });
+
+  // Surface custom values that have no matching (live) definition.
+  const orphans = Object.keys(record)
+    .filter((k) => k.startsWith(CUSTOM_PREFIX))
+    .map((k) => k.slice(CUSTOM_PREFIX.length))
+    .filter((id) => !byId.has(id))
+    .map((id) => ({ propertyId: id, value: record[CUSTOM_PREFIX + id] }));
+  return { definitions: defs, properties, orphanValues: orphans };
+}
+
 /** Register the five document custom-property tools on the MCP server. */
 export function registerPropertyTools(
   server: McpServer,
@@ -251,7 +279,7 @@ export function registerPropertyTools(
   // list_doc_properties
   // ---------------------------------------------------------------------------
   /** Handle `list_doc_properties`: definitions, decoded per-doc values, and orphan values. */
-  const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+  const listDocPropertiesHandler = async (parsed: { workspaceId?: string; docId: string; includeLegacy?: boolean }) => {
     const workspaceId = requireWorkspaceId(parsed.workspaceId);
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
@@ -259,38 +287,19 @@ export function registerPropertyTools(
       await joinWorkspace(socket, workspaceId);
 
       const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
-      const defs = readPropertyDefinitions(infoDoc);
-
       const { doc: propsDoc } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
-      const record = propsDoc.share.has(parsed.docId)
-        ? (propsDoc.getMap(parsed.docId).toJSON() as Record<string, unknown>)
-        : {};
-
-      const byId = new Map(defs.map((d) => [d.id, d]));
-      const properties = defs.map((def) => {
-        const raw = record[CUSTOM_PREFIX + def.id];
-        return {
-          propertyId: def.id,
-          name: def.name,
-          type: def.type,
-          value: decodeValue(def.type, raw),
-          set: raw !== undefined && raw !== null,
-        };
-      });
-
-      // Surface custom values that have no matching (live) definition.
-      const orphans = Object.keys(record)
-        .filter((k) => k.startsWith(CUSTOM_PREFIX))
-        .map((k) => k.slice(CUSTOM_PREFIX.length))
-        .filter((id) => !byId.has(id))
-        .map((id) => ({ propertyId: id, value: record[CUSTOM_PREFIX + id] }));
-
+      const native = propertyListing(infoDoc, propsDoc, parsed.docId);
+      let legacy;
+      if (parsed.includeLegacy) {
+        const { doc: legacyInfo } = await loadSubdoc(socket, workspaceId, "db$docCustomPropertyInfo");
+        const { doc: legacyProps } = await loadSubdoc(socket, workspaceId, "db$docProperties");
+        legacy = propertyListing(legacyInfo, legacyProps, parsed.docId);
+      }
       return text({
         workspaceId,
         docId: parsed.docId,
-        definitions: defs,
-        properties,
-        orphanValues: orphans,
+        ...native,
+        ...(legacy ? { legacy } : {}),
       });
     } finally {
       socket.disconnect();
@@ -301,10 +310,11 @@ export function registerPropertyTools(
     {
       title: "List Document Properties",
       description:
-        "List the workspace custom-property definitions and a document's current values for them.",
+        "List native workspace custom-property definitions and document values. Set includeLegacy to read older unscoped data separately for recovery; this never migrates or writes data.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
+        includeLegacy: z.boolean().optional().describe("Include retained pre-3.8.4 data in a separate legacy result for manual recovery"),
       },
     },
     listDocPropertiesHandler as any
