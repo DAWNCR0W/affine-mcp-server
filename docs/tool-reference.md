@@ -215,7 +215,7 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$docProperties` / `db$docCustomPropertyInfo` sub-docs |
+| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$<workspaceId>$docProperties` / `db$<workspaceId>$docCustomPropertyInfo` sub-docs |
 | `create_custom_property` | Create a workspace-wide custom property definition | Types: `text`, `number`, `checkbox`, `date`. Returns the `propertyId` |
 | `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
