@@ -163,6 +163,25 @@ async function testMissingAndEmptyWorkspaceRoots() {
   }
 }
 
+async function testUpdateDocTitleRejectsMissingDoc() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  try {
+    await assert.rejects(
+      fixture.registry.tools.get("update_doc_title").handler({
+        workspaceId: "workspace-ux",
+        docId: "ghost",
+        title: "Renamed",
+      }),
+      /Document ghost is not present in workspace workspace-ux/,
+      "update_doc_title must not report success for a doc that does not exist",
+    );
+  } finally {
+    await fixture.close();
+  }
+}
+
 async function testSearchContinuationAndBrowserUrls() {
   const pages = Array.from({ length: 205 }, (_, index) => ({
     id: `doc-${String(index).padStart(3, "0")}`,
@@ -265,6 +284,7 @@ async function testPartialWorkspaceRecoveryReceipt() {
 }
 
 await testMissingAndEmptyWorkspaceRoots();
+await testUpdateDocTitleRejectsMissingDoc();
 await testSearchContinuationAndBrowserUrls();
 await testPartialWorkspaceRecoveryReceipt();
 console.log("Discovery UX tests passed");
