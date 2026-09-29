@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.4] - 2026-09-29
+
 ### Fixed
 - Record the authenticated AFFiNE user as the creator of new pages, including welcome pages and template instances, without replacing an existing creator. Reconcile incomplete creator writes before reporting document creation success.
 - Read and write custom properties in AFFiNE's workspace-scoped documents so definitions and values appear in the native UI and UI edits are visible to MCP. Keep older unscoped data accessible through the opt-in `includeLegacy` recovery result without overwriting native state.
@@ -875,6 +877,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.4]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.4
 [3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
 [3.8.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.2
 [3.8.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.1
@@ -919,4 +922,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.3...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.4...HEAD
