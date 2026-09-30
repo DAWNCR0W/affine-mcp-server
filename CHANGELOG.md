@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reject `list_doc_properties` and `clear_doc_property` for a document that is not in the workspace, as `set_doc_property` already does.
+
 ## [3.8.4] - 2026-09-29
 
 ### Fixed
