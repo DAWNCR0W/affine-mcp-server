@@ -165,6 +165,25 @@ async function testMissingAndEmptyWorkspaceRoots() {
   }
 }
 
+async function testUpdateDocTitleRejectsMissingDoc() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  try {
+    await assert.rejects(
+      fixture.registry.tools.get("update_doc_title").handler({
+        workspaceId: "workspace-ux",
+        docId: "ghost",
+        title: "Renamed",
+      }),
+      /Document ghost is not present in workspace workspace-ux/,
+      "update_doc_title must not report success for a doc that does not exist",
+    );
+  } finally {
+    await fixture.close();
+  }
+}
+
 async function testDocPropertyToolsRejectMissingDoc() {
   const fixture = await createRealtimeFixture({
     rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
@@ -287,6 +306,7 @@ async function testPartialWorkspaceRecoveryReceipt() {
 }
 
 await testMissingAndEmptyWorkspaceRoots();
+await testUpdateDocTitleRejectsMissingDoc();
 await testDocPropertyToolsRejectMissingDoc();
 await testSearchContinuationAndBrowserUrls();
 await testPartialWorkspaceRecoveryReceipt();
