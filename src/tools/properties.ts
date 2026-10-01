@@ -285,6 +285,7 @@ export function registerPropertyTools(
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
+      await assertDocExists(socket, workspaceId, parsed.docId);
 
       const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const { doc: propsDoc } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
@@ -510,6 +511,7 @@ export function registerPropertyTools(
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
+      await assertDocExists(socket, workspaceId, parsed.docId);
 
       const { doc: infoDoc } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(infoDoc);

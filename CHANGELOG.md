@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.5] - 2026-10-01
+
+### Fixed
+- Reject `update_doc_title` for a document that is not in the workspace instead of reporting it renamed.
+- Reject `list_doc_properties` and `clear_doc_property` for a document that is not in the workspace, as `set_doc_property` already does.
+
+### Changed
+- Pin GitHub Actions dependencies to immutable commits.
+- Update locked `fast-uri` to 3.1.8 and `ip-address` to 10.7.2 to resolve moderate dependency advisories.
+
 ## [3.8.4] - 2026-09-29
 
 ### Fixed
@@ -877,6 +887,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.5]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.8.5
 [3.8.4]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.4
 [3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
 [3.8.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.2
@@ -922,4 +933,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.4...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.5...HEAD

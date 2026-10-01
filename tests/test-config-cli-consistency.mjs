@@ -202,7 +202,7 @@ try {
   writeConfig(savedConfigHome, {
     AFFINE_BASE_URL: "https://saved.example.test",
     AFFINE_GRAPHQL_PATH: "/saved/graphql",
-    AFFINE_API_TOKEN: "saved-token",
+    AFFINE_API_TOKEN: "example-saved-token",
     MCP_TRANSPORT: "stdio",
     PORT: "3001",
   });
@@ -210,12 +210,12 @@ try {
     XDG_CONFIG_HOME: savedConfigHome,
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: "/custom/graphql",
-    AFFINE_API_TOKEN: "env-token",
+    AFFINE_API_TOKEN: "example-env-token",
     AFFINE_HEADERS_JSON: JSON.stringify({ "X-Affine-Version": "cli-override-version" }),
     AFFINE_WORKSPACE_ID: "workspace-env",
     MCP_TRANSPORT: "streamable",
     PORT: "4321",
-    AFFINE_MCP_HTTP_TOKEN: "http-secret-token",
+    AFFINE_MCP_HTTP_TOKEN: "example-http-secret-token",
     AFFINE_MCP_HTTP_ALLOWED_ORIGINS: "https://client.example.test",
   });
 
@@ -225,17 +225,17 @@ try {
   expect(summary.graphqlEndpoint === `${baseUrl}/custom/graphql`, "GraphQL endpoint did not use env precedence");
   expect(summary.transportMode === "http", "streamable alias did not normalize to HTTP");
   expect(summary.http.port === 4321, "HTTP port did not reach effective config");
-  expect(summary.http.authToken !== "http-secret-token", "show-config exposed the HTTP auth token");
+  expect(summary.http.authToken !== "example-http-secret-token", "show-config exposed the HTTP auth token");
   expect(summary.sources.graphqlPath === "env", "GraphQL path source should be env");
-  expect(summary.apiToken !== "env-token", "show-config exposed the API token");
+  expect(summary.apiToken !== "example-env-token", "show-config exposed the API token");
 
   const staleSavedAuthHome = path.join(TEMP_ROOT, "stale-saved-auth");
   writeConfig(staleSavedAuthHome, {
     AFFINE_BASE_URL: baseUrl,
-    AFFINE_API_TOKEN: "stale-saved-token",
+    AFFINE_API_TOKEN: "example-stale-saved-token",
     AFFINE_COOKIE: "affine_session=stale-saved-cookie",
     AFFINE_EMAIL: "saved@example.test",
-    AFFINE_PASSWORD: "saved-password",
+    AFFINE_PASSWORD: "example-saved-password",
     AFFINE_HEADERS_JSON: JSON.stringify({
       Authorization: "Bearer stale-saved-header-token",
       Cookie: "affine_session=stale-saved-header-cookie",
@@ -246,7 +246,7 @@ try {
     XDG_CONFIG_HOME: staleSavedAuthHome,
     AFFINE_GRAPHQL_PATH: "/custom/graphql",
     AFFINE_EMAIL: "environment@example.test",
-    AFFINE_PASSWORD: "environment-password",
+    AFFINE_PASSWORD: "example-environment-password",
   });
   const environmentAuthConfig = await runNode(
     [DIST_ENTRY, "show-config", "--json"],
@@ -348,7 +348,7 @@ try {
     [DIST_ENTRY, "show-config", "--json"],
     cleanEnvironment({
       XDG_CONFIG_HOME: staleSavedAuthHome,
-      AFFINE_PASSWORD: "environment-password",
+      AFFINE_PASSWORD: "example-environment-password",
     }),
   );
   expect(
@@ -451,7 +451,7 @@ try {
   expect(statusPayload.userEmail === "config@example.test", "status did not inspect the fake upstream");
   expect(
     graphqlRequests.some(
-      (entry) => entry.authorization === "Bearer env-token"
+      (entry) => entry.authorization === "Bearer example-env-token"
         && entry.affineVersion === "cli-override-version",
     ),
     "status did not send the environment API token and exact client-version override",
@@ -462,7 +462,7 @@ try {
     XDG_CONFIG_HOME: noConfigHome,
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: "/custom/graphql",
-    AFFINE_API_TOKEN: "doctor-token",
+    AFFINE_API_TOKEN: "example-doctor-token",
   });
   const doctor = await runNode([DIST_ENTRY, "doctor", "--json"], doctorEnv);
   expect(doctor.code === 0, `doctor failed without a saved config: ${doctor.stderr}\n${doctor.stdout}`);
@@ -484,7 +484,7 @@ try {
       XDG_CONFIG_HOME: noConfigHome,
       AFFINE_BASE_URL: baseUrl,
       AFFINE_GRAPHQL_PATH: "/custom/graphql",
-      AFFINE_API_TOKEN: "doctor-token",
+      AFFINE_API_TOKEN: "example-doctor-token",
       MCP_TRANSPORT: "http",
       AFFINE_MCP_HTTP_HOST: "0.0.0.0",
     }),
@@ -575,7 +575,7 @@ try {
   );
 
   const savedEmail = "login@example.test";
-  const savedPassword = "login-password";
+  const savedPassword = "example-login-password";
   const emailPasswordHome = path.join(TEMP_ROOT, "email-password-login");
   writeConfig(emailPasswordHome, {
     AFFINE_BASE_URL: baseUrl,
@@ -840,7 +840,7 @@ try {
     "login saved config after workspace validation failed",
   );
 
-  const legacyCookieSecret = "affine_session=must-not-appear-in-errors";
+  const legacyCookieSecret = "example-affine_session=must-not-appear-in-errors";
   const legacyCookie = await runNode([
     DIST_ENTRY,
     "login",
@@ -909,7 +909,7 @@ try {
   writeConfig(httpConfigHome, {
     AFFINE_BASE_URL: baseUrl,
     AFFINE_GRAPHQL_PATH: "/custom/graphql",
-    AFFINE_API_TOKEN: "runtime-token",
+    AFFINE_API_TOKEN: "example-runtime-token",
     AFFINE_COOKIE: "stale-cookie",
     AFFINE_HEADERS_JSON: JSON.stringify({
       "X-Tenant": "saved-tenant",
@@ -945,7 +945,7 @@ try {
   expect(
     graphqlRequests.some(
       (entry) => entry.query?.includes("AffineMcpReadiness")
-        && entry.authorization === "Bearer runtime-token"
+        && entry.authorization === "Bearer example-runtime-token"
         && entry.cookie === null
         && entry.tenant === "saved-tenant"
         && entry.affineVersion === "readyz-override-version",

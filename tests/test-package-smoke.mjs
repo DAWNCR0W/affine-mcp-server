@@ -34,7 +34,7 @@ const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "affine-mcp-pac
 const serverEnvironment = {
   ...process.env,
   AFFINE_BASE_URL: "http://127.0.0.1:9",
-  AFFINE_API_TOKEN: "package-smoke-token",
+  AFFINE_API_TOKEN: "example-package-smoke-token",
   AFFINE_COOKIE: "",
   AFFINE_EMAIL: "",
   AFFINE_PASSWORD: "",
@@ -106,7 +106,7 @@ async function verifyProxySurface(installedDirectory, installedManifest) {
   const port = reservation.address().port;
   await new Promise((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
   const endpoint = `http://127.0.0.1:${port}`;
-  const token = "package-smoke-http-token";
+  const token = "example-package-smoke-http-token";
   const server = spawn(process.execPath, [path.join(installedDirectory, "dist", "index.js")], {
     cwd: temporaryDirectory,
     env: {

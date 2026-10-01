@@ -42,10 +42,10 @@ async function main() {
   Object.assign(env, {
     AFFINE_HTTP_MEMORY_PROBE: "1",
     AFFINE_BASE_URL: "http://127.0.0.1:1",
-    AFFINE_API_TOKEN: "unused-local-backend-token",
+    AFFINE_API_TOKEN: "example-unused-local-backend-token",
     AFFINE_MCP_AUTH_MODE: "bearer",
     AFFINE_MCP_HTTP_HOST: "127.0.0.1",
-    AFFINE_MCP_HTTP_TOKEN: "local-memory-test",
+    AFFINE_MCP_HTTP_TOKEN: "example-local-memory-test",
     AFFINE_MCP_HTTP_SESSION_IDLE_TIMEOUT_MS: "1000",
     XDG_CONFIG_HOME: configDir,
     MCP_TRANSPORT: "http",
@@ -60,7 +60,7 @@ async function main() {
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
-    Authorization: "Bearer local-memory-test",
+    Authorization: "Bearer example-local-memory-test",
   };
   const url = `http://127.0.0.1:${port}`;
   let id = 0;

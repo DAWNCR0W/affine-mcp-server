@@ -19,7 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
 const MCP_SERVER_PATH = path.resolve(PROJECT_DIR, "dist", "index.js");
 const EMAIL = "auth-session@example.test";
-const PASSWORD = "mock-password";
+const PASSWORD = "example-mock-password";
 const COOKIE = "affine_session=shared-session";
 
 function assert(condition, message) {
@@ -328,14 +328,14 @@ async function testConfiguredAuthResolution() {
   assertEqual(cookieHeaders.headers?.Cookie, "affine_session=header-cookie", "canonical cookie header");
 
   const explicitToken = resolveConfiguredAuth({
-    apiToken: "explicit-token",
+    apiToken: "example-explicit-token",
     cookie: "cookie=\ninvalid-lower-priority",
     email: EMAIL,
     password: PASSWORD,
     headers: { Authorization: "Basic ignored" },
   });
   assertEqual(explicitToken.kind, "api-token", "explicit token precedence");
-  assertEqual(explicitToken.apiToken, "explicit-token", "explicit token value");
+  assertEqual(explicitToken.apiToken, "example-explicit-token", "explicit token value");
   assertEqual(explicitToken.cookie, undefined, "ignored lower-priority cookie is not exposed");
   assertEqual(explicitToken.email, undefined, "ignored lower-priority email is not exposed");
   assertEqual(explicitToken.password, undefined, "ignored lower-priority password is not exposed");
@@ -549,7 +549,7 @@ async function testEnvironmentCredentialsOverrideSavedAuthentication() {
   const scenarios = [
     {
       label: "saved API token",
-      values: { AFFINE_API_TOKEN: "stale-saved-token" },
+      values: { AFFINE_API_TOKEN: "example-stale-saved-token" },
     },
     {
       label: "saved cookie",
