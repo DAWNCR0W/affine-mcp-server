@@ -7647,18 +7647,15 @@ export function registerDocTools(
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      const wsSnap = await loadDoc(socket, workspaceId, workspaceId);
-      if (wsSnap.missing) {
-        const wsDoc = new Y.Doc();
-        Y.applyUpdate(wsDoc, Buffer.from(wsSnap.missing, "base64"));
-        const prevSV = Y.encodeStateVector(wsDoc);
-        const pages = wsDoc.getMap("meta").get("pages") as Y.Array<any> | undefined;
-        if (pages) pages.forEach((page: Y.Map<any>) => {
-          if (page instanceof Y.Map && page.get("id") === parsed.docId) page.set("title", newTitle);
-        });
-        const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
-        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+      const wsDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
+      const page = workspacePageById(wsDoc, parsed.docId);
+      if (!page) {
+        throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
       }
+      const prevSV = Y.encodeStateVector(wsDoc);
+      page.set("title", newTitle);
+      const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
+      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
       const snap = await loadDoc(socket, workspaceId, parsed.docId);
       if (snap.missing) {
         const doc = new Y.Doc();

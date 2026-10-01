@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reject `update_doc_title` for a document that is not in the workspace instead of reporting it renamed.
+
 ## [3.8.4] - 2026-09-29
 
 ### Fixed
