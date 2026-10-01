@@ -13,6 +13,7 @@ process.env.AFFINE_WS_ACK_TIMEOUT_MS = "1000";
 
 const { registerDocTools } = await import("../dist/tools/docs.js");
 const { registerWorkspaceTools } = await import("../dist/tools/workspaces.js");
+const { registerPropertyTools } = await import("../dist/tools/properties.js");
 
 class ToolRegistry {
   tools = new Map();
@@ -108,6 +109,7 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
   };
   const registry = new ToolRegistry();
   registerDocTools(registry, gql, { workspaceId });
+  registerPropertyTools(registry, gql, { workspaceId });
 
   return {
     registry,
@@ -177,6 +179,26 @@ async function testUpdateDocTitleRejectsMissingDoc() {
       /Document ghost is not present in workspace workspace-ux/,
       "update_doc_title must not report success for a doc that does not exist",
     );
+  } finally {
+    await fixture.close();
+  }
+}
+
+async function testDocPropertyToolsRejectMissingDoc() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  try {
+    for (const [name, args] of [
+      ["list_doc_properties", { workspaceId: "workspace-ux", docId: "ghost" }],
+      ["clear_doc_property", { workspaceId: "workspace-ux", docId: "ghost", property: "Status" }],
+    ]) {
+      await assert.rejects(
+        fixture.registry.tools.get(name).handler(args),
+        /docId ghost is not present in workspace workspace-ux/,
+        `${name} must reject a doc that does not exist`,
+      );
+    }
   } finally {
     await fixture.close();
   }
@@ -285,6 +307,7 @@ async function testPartialWorkspaceRecoveryReceipt() {
 
 await testMissingAndEmptyWorkspaceRoots();
 await testUpdateDocTitleRejectsMissingDoc();
+await testDocPropertyToolsRejectMissingDoc();
 await testSearchContinuationAndBrowserUrls();
 await testPartialWorkspaceRecoveryReceipt();
 console.log("Discovery UX tests passed");
