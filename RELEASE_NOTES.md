@@ -1,5 +1,26 @@
 # Release Notes
 
+## Version 3.8.5 (2026-10-01)
+
+### Highlights
+- Reject missing documents before reporting a successful rename or accessing their properties.
+
+### What Changed
+- Make `update_doc_title` check workspace metadata before writing, matching the existing document tools (#384, #385).
+- Make `list_doc_properties` and `clear_doc_property` check document membership, matching `set_doc_property` (#386, #387).
+- Add regression tests for all three missing-document requests and retain both fixes after integration.
+- Pin GitHub Actions dependencies to immutable commits.
+- Update locked `fast-uri` to 3.1.8 and `ip-address` to 10.7.2 to resolve moderate dependency advisories.
+
+### Compatibility
+- Requests for documents absent from the workspace now return an error instead of `updated: true`, unset properties, or `cleared: false`. Existing documents keep their current behavior.
+- The canonical MCP surface remains at 106 tools. No configuration or data migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.5`, then restart the MCP server.
+
+### Thanks
+- Thanks to @ConnorMoss02 for reporting both issues and contributing the focused fixes.
+
 ## Version 3.8.4 (2026-09-29)
 
 ### Highlights
