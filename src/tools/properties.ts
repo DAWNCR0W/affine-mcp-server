@@ -52,6 +52,9 @@ const CUSTOM_PREFIX = "custom:";
 const SUPPORTED_TYPES = ["text", "number", "checkbox", "date"] as const;
 type SupportedType = (typeof SUPPORTED_TYPES)[number];
 
+const CHECKBOX_TRUE: unknown[] = [true, 1, "true", "1", "yes"];
+const CHECKBOX_FALSE: unknown[] = [false, 0, "false", "0", "no"];
+
 const WorkspaceId = z.string().min(1, "workspaceId required");
 const DocId = z.string().min(1, "docId required");
 
@@ -135,11 +138,10 @@ function nextIndex(defs: PropertyDefinition[]): string {
 function encodeValue(type: SupportedType, value: unknown): string {
   switch (type) {
     case "checkbox": {
-      const truthy =
-        value === true ||
-        value === 1 ||
-        (typeof value === "string" && ["true", "1", "yes"].includes(value.trim().toLowerCase()));
-      return truthy ? "true" : "false";
+      const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
+      if (CHECKBOX_TRUE.includes(normalized)) return "true";
+      if (CHECKBOX_FALSE.includes(normalized)) return "false";
+      throw new Error(`checkbox property requires true or false, got ${JSON.stringify(value)}`);
     }
     case "number": {
       const n = typeof value === "number" ? value : Number(String(value).trim());

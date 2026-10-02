@@ -116,6 +116,9 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
     setRootSnapshot(snapshot) {
       currentRootSnapshot = snapshot;
     },
+    setDocumentSnapshot(docId, snapshot) {
+      documentSnapshots.set(docId, snapshot);
+    },
     async close() {
       for (const client of wss.clients) client.terminate();
       await new Promise(resolve => wss.close(resolve));
@@ -199,6 +202,35 @@ async function testDocPropertyToolsRejectMissingDoc() {
         `${name} must reject a doc that does not exist`,
       );
     }
+  } finally {
+    await fixture.close();
+  }
+}
+
+async function testCheckboxPropertyRejectsUnrecognizedValues() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  const info = new Y.Doc();
+  const definition = info.getMap("prop-done");
+  definition.set("id", "prop-done");
+  definition.set("name", "Done");
+  definition.set("type", "checkbox");
+  fixture.setDocumentSnapshot(
+    "db$workspace-ux$docCustomPropertyInfo",
+    Buffer.from(Y.encodeStateAsUpdate(info)).toString("base64"),
+  );
+  try {
+    await assert.rejects(
+      fixture.registry.tools.get("set_doc_property").handler({
+        workspaceId: "workspace-ux",
+        docId: "doc-1",
+        property: "Done",
+        value: "on",
+      }),
+      /checkbox property requires true or false, got "on"/,
+      "an unrecognized checkbox value must not be stored as false",
+    );
   } finally {
     await fixture.close();
   }
@@ -308,6 +340,7 @@ async function testPartialWorkspaceRecoveryReceipt() {
 await testMissingAndEmptyWorkspaceRoots();
 await testUpdateDocTitleRejectsMissingDoc();
 await testDocPropertyToolsRejectMissingDoc();
+await testCheckboxPropertyRejectsUnrecognizedValues();
 await testSearchContinuationAndBrowserUrls();
 await testPartialWorkspaceRecoveryReceipt();
 console.log("Discovery UX tests passed");

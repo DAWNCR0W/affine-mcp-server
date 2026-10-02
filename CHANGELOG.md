@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reject unrecognized checkbox values in `set_doc_property` instead of storing them as `false`, as number and date values already are.
+
 ## [3.8.5] - 2026-10-01
 
 ### Fixed
