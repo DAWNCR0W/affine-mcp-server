@@ -123,4 +123,44 @@ test.describe('Native property and comment contracts', () => {
     await call('delete_comment', { id: comment.id });
     await expect(row).toHaveCount(0);
   });
+
+  test('native journal dates display, move, and clear independently of custom Journal properties', async ({ page }) => {
+    const content = 'Native journal contract body.';
+    const journalDocId = (await call('create_doc', { workspaceId, title: 'Native journal contract', content })).docId;
+    const customJournal = await call('create_custom_property', { workspaceId, name: 'Journal', type: 'date' });
+    await call('set_doc_property', { workspaceId, docId: journalDocId, property: customJournal.propertyId, value: '2026-10-06' });
+    await signInToAffine(page, { baseUrl, email, password });
+
+    async function openDate(date: string) {
+      await page.goto(`${baseUrl}/workspace/${workspaceId}/journals?date=${date}`);
+      await page.reload();
+    }
+    async function expectNoJournal(date: string) {
+      await openDate(date);
+      await expect(page.getByRole('button', { name: 'Create Daily Journal', exact: true })).toBeVisible();
+      await expect(page.getByText('No Journal', { exact: true })).toBeVisible();
+      await expect(page.getByText(content, { exact: true })).toHaveCount(0);
+    }
+    async function expectJournal(date: string) {
+      await openDate(date);
+      await expect(page).toHaveURL(url => url.pathname === `/workspace/${workspaceId}/${journalDocId}`);
+      await expect(page.getByTestId('page-info-collapse')).toBeVisible();
+      await expect(page.getByRole('button', { name: date, exact: true })).toBeVisible();
+      await expect(page.getByText(content, { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Create Daily Journal', exact: true })).toHaveCount(0);
+    }
+
+    await expectNoJournal('2026-10-06');
+    expect(await call('set_doc_journal', { workspaceId, docId: journalDocId, date: '2026-10-06' })).toMatchObject({ date: '2026-10-06', updated: true });
+    await expectJournal('2026-10-06');
+
+    expect(await call('set_doc_journal', { workspaceId, docId: journalDocId, date: '2026-10-07' })).toMatchObject({ date: '2026-10-07', updated: true });
+    await expectNoJournal('2026-10-06');
+    await expectJournal('2026-10-07');
+
+    expect(await call('set_doc_journal', { workspaceId, docId: journalDocId, date: null })).toMatchObject({ date: null, updated: true });
+    await expectNoJournal('2026-10-07');
+    const listed = await call('list_doc_properties', { workspaceId, docId: journalDocId });
+    expect(listed.properties.find((entry: any) => entry.propertyId === customJournal.propertyId)?.value).toBe('2026-10-06');
+  });
 });

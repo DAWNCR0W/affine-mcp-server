@@ -37,6 +37,9 @@ function encodeWorkspaceRoot(pages) {
     entry.set("title", page.title);
     entry.set("createDate", page.createDate ?? 1);
     if (page.updatedDate !== undefined) entry.set("updatedDate", page.updatedDate);
+    for (const key of ["trash", "inTrash", "trashDate"]) {
+      if (page[key] !== undefined) entry.set(key, page[key]);
+    }
     pageArray.push([entry]);
   }
   meta.set("pages", pageArray);
@@ -47,12 +50,35 @@ function emptyWorkspaceRoot() {
   return Buffer.from(Y.encodeStateAsUpdate(new Y.Doc())).toString("base64");
 }
 
+function encodePropertyRecords(records) {
+  const doc = new Y.Doc();
+  try {
+    for (const [id, values] of Object.entries(records)) {
+      for (const [key, value] of Object.entries(values)) doc.getMap(id).set(key, value);
+    }
+    return Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64");
+  } finally { doc.destroy(); }
+}
+
+function readPropertyRecords(snapshot) {
+  const doc = new Y.Doc();
+  try {
+    if (snapshot) Y.applyUpdate(doc, Buffer.from(snapshot, "base64"));
+    return Object.fromEntries([...doc.share.keys()].map(id => [id, doc.getMap(id).toJSON()]));
+  } finally { doc.destroy(); }
+}
+
 async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapshot } = {}) {
   let currentRootSnapshot = rootSnapshot;
   const documentSnapshots = new Map();
+  let pushMode = "success";
+  let pushSnapshotOverride;
+  let pushCount = 0;
+  let connectionCount = 0;
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 
   wss.on("connection", socket => {
+    connectionCount += 1;
     socket.send(`0${JSON.stringify({
       sid: "engine-ux",
       upgrades: [],
@@ -81,6 +107,25 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
       const payload = data[1] || {};
       if (event === "space:join") {
         socket.send(`43${ackId}[]`);
+        return;
+      }
+      if (event === "space:push-doc-update") {
+        pushCount += 1;
+        if (pushMode !== "error") {
+          const doc = new Y.Doc();
+          try {
+            const snapshot = payload.docId === workspaceId ? currentRootSnapshot : documentSnapshots.get(payload.docId);
+            if (snapshot) Y.applyUpdate(doc, Buffer.from(snapshot, "base64"));
+            Y.applyUpdate(doc, Buffer.from(payload.update, "base64"));
+            const updated = pushSnapshotOverride ?? Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64");
+            if (payload.docId === workspaceId) currentRootSnapshot = updated;
+            else documentSnapshots.set(payload.docId, updated);
+          } finally { doc.destroy(); }
+        }
+        const ack = pushMode === "success"
+          ? { data: { timestamp: 2 } }
+          : { error: { name: "SYNC_FAILED", message: "journal write acknowledgement failed" } };
+        socket.send(`43${ackId}${JSON.stringify([ack])}`);
         return;
       }
       if (event !== "space:load-doc") return;
@@ -116,6 +161,20 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
     setRootSnapshot(snapshot) {
       currentRootSnapshot = snapshot;
     },
+    setDocumentSnapshot(docId, snapshot) {
+      documentSnapshots.set(docId, snapshot);
+    },
+    documentSnapshot(docId) {
+      return documentSnapshots.get(docId);
+    },
+    setPushMode(mode) {
+      pushMode = mode;
+    },
+    setPushSnapshotOverride(snapshot) {
+      pushSnapshotOverride = snapshot;
+    },
+    get pushCount() { return pushCount; },
+    get connectionCount() { return connectionCount; },
     async close() {
       for (const client of wss.clients) client.terminate();
       await new Promise(resolve => wss.close(resolve));
@@ -202,6 +261,164 @@ async function testDocPropertyToolsRejectMissingDoc() {
   } finally {
     await fixture.close();
   }
+}
+
+async function testCheckboxPropertyRejectsUnrecognizedValues() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  const info = new Y.Doc();
+  const definition = info.getMap("prop-done");
+  definition.set("id", "prop-done");
+  definition.set("name", "Done");
+  definition.set("type", "checkbox");
+  fixture.setDocumentSnapshot(
+    "db$workspace-ux$docCustomPropertyInfo",
+    Buffer.from(Y.encodeStateAsUpdate(info)).toString("base64"),
+  );
+  try {
+    await assert.rejects(
+      fixture.registry.tools.get("set_doc_property").handler({
+        workspaceId: "workspace-ux",
+        docId: "doc-1",
+        property: "Done",
+        value: "on",
+      }),
+      /checkbox property requires true or false, got "on"/,
+      "an unrecognized checkbox value must not be stored as false",
+    );
+  } finally {
+    await fixture.close();
+  }
+}
+
+async function testNativeJournalRoundTrip() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  const propertiesId = "db$workspace-ux$docProperties";
+  const original = {
+    "doc-1": { id: "doc-1", createdBy: "creator", icon: "😀", customJournal: "2025-01-05", "custom:journal-custom": "2025-01-02" },
+    "other-doc": { id: "other-doc", journal: "2025-01-03" },
+  };
+  fixture.setDocumentSnapshot(propertiesId, encodePropertyRecords(original));
+  fixture.setDocumentSnapshot("db$docProperties", encodePropertyRecords({ "doc-1": { journal: "2025-01-04" } }));
+  try {
+    const { definition, handler } = fixture.registry.tools.get("set_doc_journal");
+    assert.equal(definition.inputSchema.date.safeParse(null).success, true);
+    assert.equal(definition.inputSchema.date.safeParse(undefined).success, false);
+    const set = parseResult(await handler({ docId: "doc-1", date: " 2026-10-06 " }));
+    assert.deepEqual(set, { workspaceId: "workspace-ux", docId: "doc-1", date: "2026-10-06", updated: true });
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), {
+      ...original, "doc-1": { ...original["doc-1"], journal: "2026-10-06" },
+    });
+    const pushes = fixture.pushCount;
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: "2026-10-06" })).updated, false);
+    assert.equal(fixture.pushCount, pushes, "setting the same journal date must not push");
+
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: "2024-02-29" })).updated, true);
+    assert.equal(readPropertyRecords(fixture.documentSnapshot(propertiesId))["doc-1"].journal, "2024-02-29");
+    assert.deepEqual(parseResult(await handler({ docId: "doc-1", date: null })), {
+      workspaceId: "workspace-ux", docId: "doc-1", date: null, updated: true,
+    });
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), original, "clearing must preserve every unrelated property and record");
+    const clearPushes = fixture.pushCount;
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: null })).updated, false);
+    assert.equal(fixture.pushCount, clearPushes, "clearing an absent journal date must not push");
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot("db$docProperties")), { "doc-1": { journal: "2025-01-04" } }, "native journal writes must not migrate retained legacy properties");
+
+    fixture.setDocumentSnapshot(propertiesId, encodePropertyRecords({ "other-doc": original["other-doc"] }));
+    const absentPushes = fixture.pushCount;
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: null })).updated, false);
+    assert.equal(fixture.pushCount, absentPushes);
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), { "other-doc": original["other-doc"] }, "clear must not create a document property record");
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: "2026-10-06" })).updated, true);
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), {
+      "other-doc": original["other-doc"], "doc-1": { id: "doc-1", journal: "2026-10-06" },
+    }, "set must create the native record id when the record is absent");
+    for (const idFields of [{}, { id: "" }, { id: "   " }]) {
+      fixture.setDocumentSnapshot(propertiesId, encodePropertyRecords({ "doc-1": { ...idFields, journal: "2026-10-06", createdBy: "creator" } }));
+      assert.equal(parseResult(await handler({ docId: "doc-1", date: "2026-10-06" })).updated, true);
+      assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), {
+        "doc-1": { id: "doc-1", journal: "2026-10-06", createdBy: "creator" },
+      }, "set must repair missing or empty ids without losing other fields");
+    }
+  } finally { await fixture.close(); }
+}
+
+async function testNativeJournalFailsClosed() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  const propertiesId = "db$workspace-ux$docProperties";
+  try {
+    const handler = fixture.registry.tools.get("set_doc_journal").handler;
+    for (const date of ["not-a-date", "2026-1-02", "2026-02-30", "2026-02-29", "2026-04-31", "2026-10-06T00:00:00Z"]) {
+      await assert.rejects(handler({ docId: "doc-1", date }), /date|YYYY-MM-DD/i);
+    }
+    assert.equal(fixture.connectionCount, 0, "invalid dates must fail before connecting");
+    assert.equal(fixture.pushCount, 0);
+
+    for (const docId of ["ghost", "workspace-ux"]) {
+      await assert.rejects(handler({ docId, date: "2026-10-06" }));
+    }
+    for (const flags of [{ trash: true }, { inTrash: true }, { trash: false, inTrash: true }, { trashDate: 1 }]) {
+      fixture.setRootSnapshot(encodeWorkspaceRoot([{ id: "doc-1", title: "Task", ...flags }]));
+      await assert.rejects(handler({ docId: "doc-1", date: "2026-10-06" }));
+    }
+    fixture.setRootSnapshot(undefined);
+    await assert.rejects(handler({ docId: "doc-1", date: "2026-10-06" }));
+    fixture.setRootSnapshot(emptyWorkspaceRoot());
+    await assert.rejects(handler({ docId: "doc-1", date: "2026-10-06" }));
+    fixture.setRootSnapshot(encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]));
+    for (const record of [{ id: "different-doc", journal: "2025-01-02" }, { id: "doc-1", "$$DELETED": true, journal: "2025-01-02" }]) {
+      fixture.setDocumentSnapshot(propertiesId, encodePropertyRecords({ "doc-1": record }));
+      for (const date of ["2026-10-06", null]) {
+        await assert.rejects(handler({ docId: "doc-1", date }));
+        assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), { "doc-1": record });
+      }
+    }
+    assert.equal(fixture.pushCount, 0, "invalid document or property metadata must not be written");
+
+    fixture.setDocumentSnapshot(propertiesId, encodePropertyRecords({ "doc-1": { id: "doc-1" } }));
+    fixture.setRootSnapshot(encodeWorkspaceRoot([{ id: "doc-1", title: "Task", trash: true, inTrash: false }]));
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: "2026-10-06" })).updated, true, "explicit inTrash=false must take precedence over trash=true");
+  } finally { await fixture.close(); }
+}
+
+async function testNativeJournalWriteAcknowledgements() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  const propertiesId = "db$workspace-ux$docProperties";
+  const original = { "doc-1": { id: "doc-1", createdBy: "creator", "custom:journal-custom": "2025-01-02" } };
+  fixture.setDocumentSnapshot(propertiesId, encodePropertyRecords(original));
+  try {
+    const handler = fixture.registry.tools.get("set_doc_journal").handler;
+    fixture.setPushMode("error");
+    await assert.rejects(handler({ docId: "doc-1", date: "2026-10-06" }), error => error?.code === "doc_journal_write_failed");
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), original);
+
+    fixture.setPushMode("persist-error");
+    const recovered = parseResult(await handler({ docId: "doc-1", date: "2026-10-06" }));
+    assert.deepEqual(recovered, { workspaceId: "workspace-ux", docId: "doc-1", date: "2026-10-06", updated: true });
+    assert.equal(fixture.pushCount, 2, "readback recovery must not blindly retry an uncertain write");
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), {
+      "doc-1": { ...original["doc-1"], journal: "2026-10-06" },
+    });
+    fixture.setPushMode("error");
+    await assert.rejects(handler({ docId: "doc-1", date: null }), error => error?.code === "doc_journal_write_failed");
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), {
+      "doc-1": { ...original["doc-1"], journal: "2026-10-06" },
+    }, "a failed clear must preserve the persisted journal date");
+    fixture.setPushMode("persist-error");
+    assert.equal(parseResult(await handler({ docId: "doc-1", date: null })).updated, true, "a persisted clear with failed acknowledgement must be verified by readback");
+    assert.deepEqual(readPropertyRecords(fixture.documentSnapshot(propertiesId)), original);
+    fixture.setPushSnapshotOverride(encodePropertyRecords({
+      "doc-1": { ...original["doc-1"], id: "different-doc", journal: "2026-10-06" },
+    }));
+    await assert.rejects(handler({ docId: "doc-1", date: "2026-10-06" }), error => error?.code === "doc_journal_write_failed", "the requested journal date with a conflicting id must not confirm an uncertain write");
+  } finally { await fixture.close(); }
 }
 
 async function testSearchContinuationAndBrowserUrls() {
@@ -308,6 +525,10 @@ async function testPartialWorkspaceRecoveryReceipt() {
 await testMissingAndEmptyWorkspaceRoots();
 await testUpdateDocTitleRejectsMissingDoc();
 await testDocPropertyToolsRejectMissingDoc();
+await testCheckboxPropertyRejectsUnrecognizedValues();
+await testNativeJournalRoundTrip();
+await testNativeJournalFailsClosed();
+await testNativeJournalWriteAcknowledgements();
 await testSearchContinuationAndBrowserUrls();
 await testPartialWorkspaceRecoveryReceipt();
 console.log("Discovery UX tests passed");

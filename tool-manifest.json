@@ -1,5 +1,5 @@
 {
-  "version": "3.8.5",
+  "version": "3.9.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -83,6 +83,7 @@
     "restore_doc",
     "revoke_doc",
     "search_docs",
+    "set_doc_journal",
     "set_doc_property",
     "set_mindmap_layout",
     "set_mindmap_lock",
