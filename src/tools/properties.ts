@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween } from "fractional-indexing";
 import * as Y from "yjs";
 import { GraphQLClient } from "../graphqlClient.js";
-import { text } from "../util/mcp.js";
+import { text, ToolFailure } from "../util/mcp.js";
 import { secureRandomString } from "../util/random.js";
 import { docPropertiesDocId } from "../util/docCreator.js";
 import {
@@ -210,7 +210,7 @@ function propertyListing(infoDoc: Y.Doc, propsDoc: Y.Doc, docId: string) {
   return { definitions: defs, properties, orphanValues: orphans };
 }
 
-/** Register the five document custom-property tools on the MCP server. */
+/** Register document custom-property and native journal tools on the MCP server. */
 export function registerPropertyTools(
   server: McpServer,
   gql: GraphQLClient,
@@ -240,12 +240,17 @@ export function registerPropertyTools(
   ): Promise<{ doc: Y.Doc; prevSV: Uint8Array; existed: boolean }> {
     const snapshot = await loadDoc(socket, workspaceId, guid);
     const doc = new Y.Doc();
-    let existed = false;
-    if (snapshot.missing) {
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      existed = true;
+    try {
+      let existed = false;
+      if (snapshot.missing) {
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+        existed = true;
+      }
+      return { doc, prevSV: Y.encodeStateVector(doc), existed };
+    } catch (error) {
+      doc.destroy();
+      throw error;
     }
-    return { doc, prevSV: Y.encodeStateVector(doc), existed };
   }
 
   /** Push only the delta accumulated since `prevSV` back to the sync gateway. */
@@ -261,21 +266,124 @@ export function registerPropertyTools(
   }
 
   /** Throw if the workspace root or the docId is not found in workspace metadata. */
-  async function assertDocExists(socket: any, workspaceId: string, docId: string) {
+  async function assertDocExists(socket: any, workspaceId: string, docId: string, requireActive = false) {
     const snapshot = await loadDoc(socket, workspaceId, workspaceId);
     if (!snapshot.missing) {
       throw new Error(`Workspace root document not found for workspace ${workspaceId}`);
     }
     const wsDoc = new Y.Doc();
-    Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
-    const pages = wsDoc.getMap("meta").get("pages");
-    const exists =
-      pages instanceof Y.Array &&
-      pages.toArray().some((p: unknown) => p instanceof Y.Map && p.get("id") === docId);
-    if (!exists) {
-      throw new Error(`docId ${docId} is not present in workspace ${workspaceId}`);
+    try {
+      Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
+      const pages = wsDoc.getMap("meta").get("pages");
+      const page = pages instanceof Y.Array
+        ? pages.toArray().find((p: unknown) => p instanceof Y.Map && p.get("id") === docId)
+        : undefined;
+      if (!(page instanceof Y.Map)) {
+        throw new Error(`docId ${docId} is not present in workspace ${workspaceId}`);
+      }
+      if (requireActive) {
+        const inTrash = page.get("inTrash");
+        const trash = page.get("trash");
+        const trashDate = page.get("trashDate");
+        const trashed = typeof inTrash === "boolean"
+          ? inTrash
+          : typeof trash === "boolean"
+            ? trash
+            : typeof trashDate === "number" && trashDate > 0;
+        if (trashed) {
+          throw new Error(`Document ${docId} is in trash. Restore it before setting its journal date.`);
+        }
+      }
+    } finally {
+      wsDoc.destroy();
     }
   }
+
+  /** Set AFFiNE's native journal date without changing other document properties. */
+  const setDocJournalHandler = async (parsed: { workspaceId?: string; docId: string; date: string | null }) => {
+    const workspaceId = requireWorkspaceId(parsed.workspaceId);
+    const date = parsed.date === null ? null : encodeValue("date", parsed.date);
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    let propsDoc: Y.Doc | undefined;
+    try {
+      await joinWorkspace(socket, workspaceId);
+      await assertDocExists(socket, workspaceId, parsed.docId, true);
+      const guid = docPropertiesDocId(workspaceId);
+      const loaded = await loadSubdoc(socket, workspaceId, guid);
+      propsDoc = loaded.doc;
+      if (date === null && !propsDoc.share.has(parsed.docId)) {
+        return text({ workspaceId, docId: parsed.docId, date, updated: false });
+      }
+
+      const record = propsDoc.getMap(parsed.docId);
+      const existingId = record.get("id");
+      if (existingId !== null && existingId !== undefined && existingId !== parsed.docId
+        && !(typeof existingId === "string" && !existingId.trim())) {
+        throw new Error(`Document ${parsed.docId} has a conflicting id property; it was preserved.`);
+      }
+      if (record.get(DELETED_FLAG) === true) {
+        throw new Error(`Document ${parsed.docId} has a deleted properties record; it was preserved.`);
+      }
+      const updated = date === null
+        ? record.has("journal")
+        : record.get("journal") !== date || existingId !== parsed.docId;
+      if (!updated) return text({ workspaceId, docId: parsed.docId, date, updated });
+
+      propsDoc.transact(() => {
+        if (date === null) {
+          record.delete("journal");
+        } else {
+          if (existingId !== parsed.docId) record.set("id", parsed.docId);
+          if (record.get("journal") !== date) record.set("journal", date);
+        }
+      });
+      try {
+        await pushSubdoc(socket, workspaceId, guid, propsDoc, loaded.prevSV);
+      } catch (writeError) {
+        let confirmedDoc: Y.Doc | undefined;
+        let confirmed = false;
+        try {
+          confirmedDoc = (await loadSubdoc(socket, workspaceId, guid)).doc;
+          if (confirmedDoc.share.has(parsed.docId)) {
+            const confirmedRecord = confirmedDoc.getMap(parsed.docId);
+            confirmed = confirmedRecord.get(DELETED_FLAG) !== true
+              && confirmedRecord.get("id") === (date === null ? existingId : parsed.docId)
+              && (date === null ? !confirmedRecord.has("journal") : confirmedRecord.get("journal") === date);
+          }
+        } catch {
+          // An unreadable snapshot cannot confirm a potentially persisted write.
+        } finally {
+          confirmedDoc?.destroy();
+        }
+        if (!confirmed) {
+          throw new ToolFailure(
+            `Document journal write could not be confirmed: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
+            "doc_journal_write_failed",
+            `Inspect document ${parsed.docId} in AFFiNE before retrying; the failed write may have persisted.`,
+          );
+        }
+      }
+      return text({ workspaceId, docId: parsed.docId, date, updated });
+    } finally {
+      propsDoc?.destroy();
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "set_doc_journal",
+    {
+      title: "Set Document Journal Date",
+      description:
+        "Set or clear AFFiNE's native Journal date for a document. Use YYYY-MM-DD or null to remove it; customJournal and custom properties are preserved.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        date: z.string().nullable().describe("Native journal date in YYYY-MM-DD format, or null to clear it"),
+      },
+    },
+    setDocJournalHandler as any
+  );
 
   // ---------------------------------------------------------------------------
   // list_doc_properties

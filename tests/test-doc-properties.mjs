@@ -2,7 +2,7 @@
 import { testResourceName, testTempPath } from './require-destructive-test-safety.mjs';
 
 /**
- * Focused integration test for document custom-property tools.
+ * Focused integration test for document custom-property and native journal tools.
  *
  * Covers the full round-trip against a live AFFiNE instance:
  * - create_custom_property for text / number / checkbox / date
@@ -11,6 +11,7 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * - value validation rejects malformed input (bad date)
  * - clear_doc_property removes a value
  * - delete_custom_property removes a definition
+ * - set_doc_journal changes only the native journal field, with idempotent clearing
  */
 import assert from "node:assert/strict";
 import * as Y from "yjs";
@@ -214,6 +215,40 @@ async function main() {
       semanticDateRejected = true;
     }
     expectTruthy(semanticDateRejected, "semantically invalid date should be rejected");
+
+    // Native Journals use the built-in journal field, independently of a custom
+    // property named Journal. All journal mutations go through the MCP tool.
+    {
+      const customJournal = await call("create_custom_property", { workspaceId, name: "Journal", type: "date" });
+      await setWithRetry({ workspaceId, docId, property: customJournal.propertyId, value: "2025-01-02" });
+      const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+      const journalSocket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie);
+      try {
+        await joinWorkspace(journalSocket, workspaceId);
+        async function nativeRecords() {
+          const snapshot = await loadDoc(journalSocket, workspaceId, `db$${workspaceId}$docProperties`);
+          const properties = new Y.Doc();
+          try {
+            assert.equal(typeof snapshot.missing, "string", "native document properties must exist");
+            Y.applyUpdate(properties, Buffer.from(snapshot.missing, "base64"));
+            return Object.fromEntries([...properties.share.keys()].map(id => [id, properties.getMap(id).toJSON()]));
+          } finally { properties.destroy(); }
+        }
+        const original = await nativeRecords();
+        assert.equal(Object.hasOwn(original[docId], "journal"), false, "custom Journal must not create a native journal date");
+        for (const date of ["2026-10-06", "2024-02-29"]) {
+          assert.deepEqual(await call("set_doc_journal", { workspaceId, docId, date }), { workspaceId, docId, date, updated: true });
+          assert.deepEqual(await nativeRecords(), { ...original, [docId]: { ...original[docId], journal: date } }, "native journal writes must preserve all unrelated fields and records");
+          assert.deepEqual(await call("set_doc_journal", { workspaceId, docId, date }), { workspaceId, docId, date, updated: false });
+        }
+        await assert.rejects(call("set_doc_journal", { workspaceId, docId, date: "2026-02-30" }), /date|YYYY-MM-DD/i);
+        assert.equal((await nativeRecords())[docId].journal, "2024-02-29", "invalid dates must not alter the existing journal");
+        assert.deepEqual(await call("set_doc_journal", { workspaceId, docId, date: null }), { workspaceId, docId, date: null, updated: true });
+        assert.deepEqual(await nativeRecords(), original, "clearing journal must retain creator and custom properties");
+        assert.deepEqual(await call("set_doc_journal", { workspaceId, docId, date: null }), { workspaceId, docId, date: null, updated: false });
+        await readProperty(workspaceId, docId, customJournal.propertyId, entry => entry?.value === "2025-01-02", "custom Journal preserved after native journal changes");
+      } finally { journalSocket.disconnect(); }
+    }
 
     // --- definitions present in listing --------------------------------------
     const listedDefs = await call("list_doc_properties", { workspaceId, docId });

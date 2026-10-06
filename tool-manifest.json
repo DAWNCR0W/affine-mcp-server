@@ -83,6 +83,7 @@
     "restore_doc",
     "revoke_doc",
     "search_docs",
+    "set_doc_journal",
     "set_doc_property",
     "set_mindmap_layout",
     "set_mindmap_lock",
