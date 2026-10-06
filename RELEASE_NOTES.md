@@ -1,5 +1,30 @@
 # Release Notes
 
+## Version 3.9.0 (2026-10-06)
+
+### Highlights
+- Set, change, and clear native AFFiNE Journal dates with `set_doc_journal`.
+- Reject invalid checkbox property values instead of silently storing `false`.
+
+### What Changed
+- Add `set_doc_journal` for existing, non-trashed documents. A calendar-valid `YYYY-MM-DD` date assigns or moves the document in AFFiNE's Journals view; `null` clears only the native Journal assignment.
+- Preserve custom properties, including properties named "Journal", creator metadata, and unrelated document records. Repeating the current date or clearing an absent assignment returns `updated: false` without writing.
+- Reject conflicting document IDs and deleted property records. Confirm uncertain write acknowledgements through fresh readback; unconfirmed writes return `doc_journal_write_failed` with recovery guidance.
+- Make `set_doc_property` reject unrecognized checkbox values. Booleans, numeric `1`/`0`, and case-insensitive, whitespace-trimmed strings `true`/`false`, `1`/`0`, and `yes`/`no` remain supported.
+- Add regression, live integration, and native UI coverage for the Journal lifecycle and write recovery.
+- Update locked MCP SDK to 1.31.0, Socket.IO client to 4.8.4, Undici to 7.30.0, Yjs to 13.6.33, and development Node.js types to 24.19.0.
+- Update the transitive `proxy-addr` dependency from 2.0.7 to 2.0.8 to address [GHSA-jqcg-44mw-7w3h](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h).
+
+### Compatibility
+- One tool was added, bringing the canonical MCP surface to 107 tools. Existing tool names and required inputs remain unchanged.
+- Invalid checkbox inputs now return an error; replace unsupported values such as `"on"` with a supported boolean representation.
+- Native Journal assignments are separate from custom date properties. No configuration or data migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.9.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @ConnorMoss02 for contributing the checkbox validation fix.
+
 ## Version 3.8.5 (2026-10-01)
 
 ### Highlights
