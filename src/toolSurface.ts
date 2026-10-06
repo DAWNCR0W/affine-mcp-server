@@ -81,6 +81,7 @@ export const ALL_TOOLS = [
   "restore_doc",
   "revoke_doc",
   "search_docs",
+  "set_doc_journal",
   "set_doc_property",
   "set_mindmap_layout",
   "set_mindmap_lock",
@@ -203,6 +204,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   restore_doc: ["docs", "docs.write", "write"],
   revoke_doc: ["docs", "docs.share", "docs.write", "destructive", "write"],
   search_docs: ["docs", "docs.read", "read"],
+  set_doc_journal: ["docs", "docs.properties", "docs.write", "write"],
   set_doc_property: ["docs", "docs.properties", "docs.write", "write"],
   sign_in: ["users", "users.auth", "auth", "write"],
   trash_doc: ["docs", "docs.write", "write"],
@@ -307,6 +309,7 @@ const AUTHORING_EXCLUDED_GROUPS = new Set([
 
 const IDEMPOTENT_WRITE_TOOLS = new Set<ToolName>([
   "restore_doc",
+  "set_doc_journal",
   "trash_doc",
 ]);
 

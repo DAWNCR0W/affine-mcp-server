@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `set_doc_journal` sets, changes, or clears an existing document's native AFFiNE Journal date while preserving custom properties and creator metadata.
+
 ### Fixed
 - Reject unrecognized checkbox values in `set_doc_property` instead of storing them as `false`, as number and date values already are.
 

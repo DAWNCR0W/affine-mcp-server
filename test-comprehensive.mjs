@@ -57,6 +57,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['rename_folder', 'test-organize-tools.mjs'],
   ['restore_doc', 'test-doc-discovery.mjs'],
   ['search_docs', 'test-doc-discovery.mjs'],
+  ['set_doc_journal', 'test-doc-properties.mjs'],
   ['set_doc_property', 'test-doc-properties.mjs'],
   ['trash_doc', 'test-doc-discovery.mjs'],
   ['update_block', 'test-block-editing.mjs'],

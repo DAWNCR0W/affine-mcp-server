@@ -211,7 +211,7 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 | `remove_tag_from_doc` | Detach a tag from a document | |
 | `delete_tag` | Delete a workspace tag and detach it from every document | Destructive; accepts a tag id or name, rejects an ambiguous name |
 
-### Custom properties
+### Document properties and journals
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
@@ -220,6 +220,15 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 | `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
 | `clear_doc_property` | Remove a custom property value from a document | |
+| `set_doc_journal` | Set or clear a document's native AFFiNE Journal date | Requires an existing, non-trashed document; accepts a calendar-valid `YYYY-MM-DD` date or `null` to clear |
+
+Use `set_doc_journal` with `workspaceId`, `docId`, and `date` to mark an existing document as a Journal entry. Changing `date` moves it to the new date in AFFiNE's Journals view; passing `null` removes only the native Journal assignment. Custom properties, including a custom property named "Journal", and creator metadata are preserved. Repeating an already applied date or clearing an absent date returns `updated: false` without writing.
+
+```json
+{"workspaceId":"<workspace-id>","docId":"<doc-id>","date":"2026-10-05"}
+```
+
+The result includes `workspaceId`, `docId`, the resulting `date` (or `null`), and `updated`. To clear the assignment, call the same tool with `"date": null`. A custom date property cannot substitute for this native Journal field.
 
 Custom properties use AFFiNE's workspace-scoped tables. To recover values written by versions before 3.8.4, call `list_doc_properties` with `includeLegacy: true`. Its separate `legacy` object contains the old definitions, decoded properties, and orphan values; the normal result remains native-only. This read never imports or modifies data, so cleared native values, deleted definitions, and creator metadata stay intact. To restore an old value in AFFiNE, use `create_custom_property` for its definition and `set_doc_property` with the returned new property ID and the recovered value. Existing native properties are not automatically overwritten.
 

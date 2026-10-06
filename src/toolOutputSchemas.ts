@@ -140,6 +140,7 @@ const OUTPUT_SPECS = {
   restore_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
   revoke_doc: receipt({ workspaceId: "string", docId: "string" }),
   search_docs: spec({ query: "string", tag: "nullableString", matchMode: "string", sortBy: "string", sortDirection: "string", limit: "number", totalCount: "number", results: "unknownArray", offset: "number", hasMore: "boolean", truncated: "boolean", nextOffset: "nullableNumber" }, true),
+  set_doc_journal: spec({ workspaceId: "string", docId: "string", date: "nullableString", updated: "boolean" }),
   set_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", name: "string", type: "string", value: "unknown", stored: "unknown", updated: "boolean" }),
   sign_in: spec({ signedIn: "boolean" }),
   trash_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
