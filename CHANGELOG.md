@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-10-06
+
 ### Added
 - `set_doc_journal` sets, changes, or clears an existing document's native AFFiNE Journal date while preserving custom properties and creator metadata.
 
 ### Fixed
 - Reject unrecognized checkbox values in `set_doc_property` instead of storing them as `false`, as number and date values already are.
+- Update transitive `proxy-addr` to 2.0.8 to address [GHSA-jqcg-44mw-7w3h](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h).
+
+### Changed
+- Update locked MCP SDK to 1.31.0, Socket.IO client to 4.8.4, Undici to 7.30.0, Yjs to 13.6.33, and development Node.js types to 24.19.0.
+
+### Tests
+- Verify native Journal assignment, date changes, and clearing in the live integration and Chrome UI suites; cover invalid dates, property preservation, idempotency, and uncertain write acknowledgements.
 
 ## [3.8.5] - 2026-10-01
 
@@ -893,6 +902,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.9.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.0
 [3.8.5]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.8.5
 [3.8.4]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.4
 [3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
@@ -939,4 +949,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.5...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.9.0...HEAD

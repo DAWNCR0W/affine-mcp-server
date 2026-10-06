@@ -2,8 +2,8 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.8.5-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
-[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
+[![Version](https://img.shields.io/badge/version-3.9.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.31.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
@@ -91,7 +91,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.8.5
+  ghcr.io/dawncr0w/affine-mcp-server:3.9.0
 ```
 
 Then point your client at:
