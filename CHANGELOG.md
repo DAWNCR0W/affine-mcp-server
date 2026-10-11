@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Record the authenticated AFFiNE creator and creation time for new database rows, including composed rows and paragraph insertion, without replacing existing row metadata.
+
 ## [3.9.0] - 2026-10-06
 
 ### Added

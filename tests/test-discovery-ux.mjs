@@ -75,6 +75,8 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
   let pushSnapshotOverride;
   let pushCount = 0;
   let connectionCount = 0;
+  let currentUser = { id: "row-creator-A" };
+  let currentUserQueries = 0;
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 
   wss.on("connection", socket => {
@@ -151,6 +153,12 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
     async getConnectionAuth() {
       return { endpoint, cookie: "", bearer: "", headers: {} };
     },
+    async request(query) {
+      assert.match(query, /currentUser\s*\{\s*id\s*\}/);
+      currentUserQueries += 1;
+      if (currentUser instanceof Error) throw currentUser;
+      return { currentUser };
+    },
   };
   const registry = new ToolRegistry();
   registerDocTools(registry, gql, { workspaceId });
@@ -167,6 +175,9 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
     documentSnapshot(docId) {
       return documentSnapshots.get(docId);
     },
+    setCurrentUser(value) {
+      currentUser = value;
+    },
     setPushMode(mode) {
       pushMode = mode;
     },
@@ -175,6 +186,7 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
     },
     get pushCount() { return pushCount; },
     get connectionCount() { return connectionCount; },
+    get currentUserQueries() { return currentUserQueries; },
     async close() {
       for (const client of wss.clients) client.terminate();
       await new Promise(resolve => wss.close(resolve));
@@ -522,6 +534,118 @@ async function testPartialWorkspaceRecoveryReceipt() {
   }
 }
 
+async function testDatabaseRowCreators() {
+  const workspaceId = "workspace-row-creators";
+  const docId = "row-creator-doc";
+  const fixture = await createRealtimeFixture({
+    workspaceId,
+    rootSnapshot: encodeWorkspaceRoot([{ id: docId, title: "Row creators" }]),
+  });
+  const page = new Y.Doc();
+  const blocks = page.getMap("blocks");
+  for (const [id, flavour, childIds] of [
+    ["page", "affine:page", ["note"]],
+    ["note", "affine:note", []],
+  ]) {
+    const block = new Y.Map();
+    block.set("sys:id", id);
+    block.set("sys:flavour", flavour);
+    block.set("sys:version", 1);
+    const children = new Y.Array();
+    children.push(childIds);
+    block.set("sys:children", children);
+    blocks.set(id, block);
+  }
+  fixture.setDocumentSnapshot(docId, Buffer.from(Y.encodeStateAsUpdate(page)).toString("base64"));
+  page.destroy();
+
+  const call = async (name, args) => parseResult(await fixture.registry.tools.get(name).handler({ workspaceId, docId, ...args }));
+  const withPage = callback => {
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Buffer.from(fixture.documentSnapshot(docId), "base64"));
+      return callback(doc);
+    } finally { doc.destroy(); }
+  };
+  const rowMetadata = id => withPage(doc => {
+    const row = doc.getMap("blocks").get(id);
+    return { creator: row.get("prop:meta:createdBy"), createdAt: row.get("prop:meta:createdAt") };
+  });
+  const assertCreator = (id, creator, earliest) => {
+    const metadata = rowMetadata(id);
+    assert.equal(metadata.creator, creator, `${id} uses the identity at row creation`);
+    assert.equal(typeof metadata.createdAt, "number", `${id} has native creation time`);
+    assert.ok(metadata.createdAt >= earliest && metadata.createdAt <= Date.now(), `${id} creation time is from this operation`);
+    return metadata;
+  };
+
+  try {
+    const database = await call("append_block", { type: "database" });
+    const databaseBlockId = database.blockId;
+    for (const identity of [null, { id: 42 }, new Error("identity lookup failed")]) {
+      fixture.setCurrentUser(identity);
+      for (const [name, args] of [
+        ["add_database_row", { databaseBlockId, cells: { title: "Must not exist" } }],
+        ["compose_database_from_intent", { intent: "task_board", seedRows: [{ title: "Must not exist" }] }],
+        ["append_block", { type: "paragraph", text: "Must not exist", placement: { parentId: databaseBlockId } }],
+        ["append_markdown", { markdown: "Must not exist", strict: true, placement: { parentId: databaseBlockId } }],
+        ["append_markdown", { markdown: "Must not exist", strict: false, placement: { parentId: databaseBlockId } }],
+      ]) {
+        const before = fixture.documentSnapshot(docId);
+        const pushesBefore = fixture.pushCount;
+        await assert.rejects(call(name, args), /identity|authenticated|current.*user|creator/i);
+        assert.equal(fixture.documentSnapshot(docId), before, `${name} identity failure preserves the page, including database count`);
+        assert.equal(fixture.pushCount, pushesBefore, `${name} identity failure persists no partial row or empty database`);
+      }
+    }
+
+    const queriesBeforeEmpty = fixture.currentUserQueries;
+    const empty = await call("compose_database_from_intent", { intent: "task_board", seedRows: [] });
+    assert.deepEqual(empty.rowBlockIds, [], "columns-only composition remains supported without creator identity");
+    assert.equal(fixture.currentUserQueries, queriesBeforeEmpty, "columns-only composition does not resolve an unused creator");
+
+    fixture.setCurrentUser({ id: "row-creator-A" });
+    let earliest = Date.now();
+    const direct = await call("add_database_row", { databaseBlockId, cells: { title: "Direct row" } });
+    const original = assertCreator(direct.rowBlockId, "row-creator-A", earliest);
+    earliest = Date.now();
+    const linked = await call("add_database_row", { databaseBlockId, cells: {}, linkedDocId: "linked-page" });
+    assertCreator(linked.rowBlockId, "row-creator-A", earliest);
+    earliest = Date.now();
+    const composed = await call("compose_database_from_intent", {
+      intent: "task_board", seedRows: [{ title: "Composed first" }, { title: "Composed second" }],
+    });
+    assert.equal(composed.rowBlockIds.length, 2);
+    for (const id of composed.rowBlockIds) assertCreator(id, "row-creator-A", earliest);
+    earliest = Date.now();
+    const appended = await call("append_block", { type: "paragraph", text: "Generic row", placement: { parentId: databaseBlockId } });
+    assertCreator(appended.blockId, "row-creator-A", earliest);
+    earliest = Date.now();
+    const markdown = await call("append_markdown", { markdown: "First row\n\nSecond row", strict: true, placement: { parentId: databaseBlockId } });
+    assert.equal(markdown.blockIds.length, 2);
+    for (const id of markdown.blockIds) assertCreator(id, "row-creator-A", earliest);
+
+    fixture.setCurrentUser({ id: "row-creator-B" });
+    await call("update_database_row", { databaseBlockId, rowBlockId: direct.rowBlockId, cells: { title: "Updated by B" } });
+    assert.deepEqual(rowMetadata(direct.rowBlockId), original, "ordinary updates preserve creator and original creation time");
+    await call("move_block", { blockId: direct.rowBlockId, placement: { parentId: "note" } });
+    assert.deepEqual(rowMetadata(direct.rowBlockId), original, "moving an existing row preserves creation metadata");
+    earliest = Date.now();
+    const afterSwitch = await call("add_database_row", { databaseBlockId, cells: { title: "Created by B" } });
+    assertCreator(afterSwitch.rowBlockId, "row-creator-B", earliest);
+
+    withPage(doc => {
+      const row = doc.getMap("blocks").get(afterSwitch.rowBlockId);
+      row.delete("prop:meta:createdBy");
+      row.delete("prop:meta:createdAt");
+      fixture.setDocumentSnapshot(docId, Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64"));
+    });
+    await call("update_database_row", { databaseBlockId, rowBlockId: afterSwitch.rowBlockId, cells: { title: "Legacy row edited" } });
+    assert.deepEqual(rowMetadata(afterSwitch.rowBlockId), { creator: undefined, createdAt: undefined }, "editing legacy rows never backfills creation metadata");
+  } finally { await fixture.close(); }
+}
+
+await testDatabaseRowCreators();
 await testMissingAndEmptyWorkspaceRoots();
 await testUpdateDocTitleRejectsMissingDoc();
 await testDocPropertyToolsRejectMissingDoc();
