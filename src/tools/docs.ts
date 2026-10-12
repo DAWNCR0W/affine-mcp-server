@@ -3324,6 +3324,10 @@ export function registerDocTools(
       resolveEdgelessLayoutHints(blocks, normalized);
       const context = resolveInsertContext(blocks, normalized);
       const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized);
+      const databaseRows: Y.Map<any>[] = [];
+      if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+        databaseRows.push(block);
+      }
 
       blocks.set(blockId, block);
       if (Array.isArray(extraBlocks)) {
@@ -3343,7 +3347,9 @@ export function registerDocTools(
         operations: markdown.operations,
         strict: parsed.strict,
         placement: { parentId: blockId },
-      }) : undefined;
+      }, databaseRows) : undefined;
+
+      await setNewDatabaseRowCreators(databaseRows);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushPageDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
@@ -4226,7 +4232,7 @@ export function registerDocTools(
     strict?: boolean;
     placement?: AppendPlacement;
     replaceExisting?: boolean;
-  }) {
+  }, databaseRows: Y.Map<any>[]) {
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
     const blocks = doc.getMap("blocks") as Y.Map<any>;
@@ -4283,7 +4289,7 @@ export function registerDocTools(
       try {
         const normalized = normalizeAppendBlockInput(appendInput);
         const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized);
+        const { blockId, block, flavour, extraBlocks } = createBlock(normalized);
         blocks.set(blockId, block);
         if (Array.isArray(extraBlocks)) {
           for (const extra of extraBlocks) {
@@ -4294,6 +4300,9 @@ export function registerDocTools(
           context.children.push([blockId]);
         } else {
           context.children.insert(context.insertIndex, [blockId]);
+        }
+        if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+          databaseRows.push(block);
         }
         blockIds.push(blockId);
         lastInsertedBlockId = blockId;
@@ -4346,7 +4355,9 @@ export function registerDocTools(
 
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       const prevSV = Y.encodeStateVector(doc);
-      const result = applyMarkdownOperationsToDoc(doc, parsed);
+      const databaseRows: Y.Map<any>[] = [];
+      const result = applyMarkdownOperationsToDoc(doc, parsed, databaseRows);
+      await setNewDatabaseRowCreators(databaseRows);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushPageDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
@@ -8322,6 +8333,19 @@ export function registerDocTools(
     return rowCells;
   }
 
+  function setDatabaseRowCreationMetadata(rowBlock: Y.Map<any>, creatorId: string): void {
+    rowBlock.set("prop:meta:createdBy", creatorId);
+    rowBlock.set("prop:meta:createdAt", Date.now());
+  }
+
+  async function setNewDatabaseRowCreators(databaseRows: Y.Map<any>[]): Promise<void> {
+    if (databaseRows.length === 0) return;
+    const creatorId = await fetchCurrentUserId(gql);
+    for (const rowBlock of databaseRows) {
+      setDatabaseRowCreationMetadata(rowBlock, creatorId);
+    }
+  }
+
   function addDatabaseRowToBlock(parsed: {
     blocks: Y.Map<any>;
     dbBlock: Y.Map<any>;
@@ -8330,6 +8354,7 @@ export function registerDocTools(
     lookup: DatabaseColumnLookup;
     cells: Record<string, unknown>;
     linkedDocId?: string;
+    creatorId: string;
   }): string {
     const rowBlockId = generateId();
     const rowBlock = new Y.Map<any>();
@@ -8337,6 +8362,7 @@ export function registerDocTools(
     rowBlock.set("sys:parent", parsed.databaseBlockId);
     rowBlock.set("sys:children", new Y.Array<string>());
     rowBlock.set("prop:type", "text");
+    setDatabaseRowCreationMetadata(rowBlock, parsed.creatorId);
     if (parsed.linkedDocId) {
       rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
     } else {
@@ -8639,38 +8665,17 @@ export function registerDocTools(
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      // Create a new paragraph block as the row child of the database
-      const rowBlockId = generateId();
-      const rowBlock = new Y.Map<any>();
-      setSysFields(rowBlock, rowBlockId, "affine:paragraph");
-      rowBlock.set("sys:parent", parsed.databaseBlockId);
-      rowBlock.set("sys:children", new Y.Array<string>());
-      rowBlock.set("prop:type", "text");
-      if (parsed.linkedDocId) {
-        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
-      } else {
-        const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
-        rowBlock.set("prop:text", makeText(titleValue));
-      }
-      ctx.blocks.set(rowBlockId, rowBlock);
-
-      // Add row block to database's children
-      const dbChildren = ensureChildrenArray(ctx.dbBlock);
-      dbChildren.push([rowBlockId]);
-
-      // Create row cell map
-      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, rowBlockId);
-      for (const [key, value] of Object.entries(parsed.cells)) {
-        const col = findDatabaseColumn(key, ctx);
-        if (!col) {
-          if (isTitleAliasKey(key)) {
-            continue;
-          }
-          throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
-        }
-
-        writeDatabaseCellValue(rowCells, col, value, true);
-      }
+      const creatorId = await fetchCurrentUserId(gql);
+      const rowBlockId = addDatabaseRowToBlock({
+        blocks: ctx.blocks,
+        dbBlock: ctx.dbBlock,
+        cellsMap: ctx.cellsMap,
+        databaseBlockId: parsed.databaseBlockId,
+        lookup: ctx,
+        cells: parsed.cells,
+        linkedDocId: parsed.linkedDocId,
+        creatorId,
+      });
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
@@ -8960,6 +8965,7 @@ export function registerDocTools(
     const preset = buildDatabaseIntentPreset(parsed.intent);
     const title = (parsed.title ?? preset.title).trim() || preset.title;
     const starterRows = Array.isArray(parsed.seedRows) ? parsed.seedRows : preset.starterRows;
+    const creatorId = starterRows.length > 0 ? await fetchCurrentUserId(gql) : undefined;
     const creation = await appendBlockInternal({
       workspaceId,
       docId: parsed.docId,
@@ -8995,15 +9001,18 @@ export function registerDocTools(
       }
 
       const rowBlockIds: string[] = [];
-      for (const rowInput of starterRows) {
-        rowBlockIds.push(addDatabaseRowToBlock({
-          blocks: ctx.blocks,
-          dbBlock: ctx.dbBlock,
-          cellsMap: ctx.cellsMap,
-          databaseBlockId: creation.blockId,
-          lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
-          cells: rowInput,
-        }));
+      if (creatorId !== undefined) {
+        for (const rowInput of starterRows) {
+          rowBlockIds.push(addDatabaseRowToBlock({
+            blocks: ctx.blocks,
+            dbBlock: ctx.dbBlock,
+            cellsMap: ctx.cellsMap,
+            databaseBlockId: creation.blockId,
+            lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
+            cells: rowInput,
+            creatorId,
+          }));
+        }
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);

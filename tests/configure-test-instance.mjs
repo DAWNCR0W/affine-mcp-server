@@ -33,6 +33,11 @@ const response = await fetch(`${baseUrl.replace(/\/$/, '')}/graphql`, {
               value: 0
             }
             {
+              module: "auth"
+              key: "inviteQuotaShadowMode"
+              value: true
+            }
+            {
               module: "throttle"
               key: "enabled"
               value: false
@@ -53,8 +58,10 @@ if (!response.ok || body?.errors?.length) {
 }
 
 const updated = body?.data?.updateAppConfig;
-if (updated?.auth?.newAccountShareActionDelay !== 0 || updated?.throttle?.enabled !== false) {
+if (updated?.auth?.newAccountShareActionDelay !== 0
+  || updated?.auth?.inviteQuotaShadowMode !== true
+  || updated?.throttle?.enabled !== false) {
   throw new Error('AFFiNE did not confirm the isolated test configuration');
 }
 
-console.log('[test-instance] Share delay and rate limiting disabled for the isolated test instance');
+console.log('[test-instance] Share delay and rate limiting disabled; invitation quota uses shadow mode in the isolated test instance');
