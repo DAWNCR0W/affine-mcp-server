@@ -251,6 +251,13 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
 | `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
 
+New rows created by `add_database_row` and `compose_database_from_intent` record the
+authenticated AFFiNE account and creation time in native block metadata. Paragraphs
+inserted directly under a database by `append_block` or `append_markdown` do the same.
+HTTP/OAuth deployments using a shared AFFiNE account attribute rows to that backend
+account. Updating or moving an existing row preserves its creation metadata; older
+rows are not backfilled.
+
 ## Edgeless canvas and surface elements
 
 AFFiNE's edgeless doc has two layers: top-level edgeless blocks (`note`, `frame`, `edgeless-text`) with `prop:xywh`, and the surface layer (`affine:surface`) which stores free-floating shapes, connectors, canvas text, and groups in `prop:elements.value` — the native BlockSuite representation.

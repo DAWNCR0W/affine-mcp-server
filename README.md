@@ -273,6 +273,9 @@ code blocks. Both tools accept `folderId` for immediate organize-folder placemen
 New pages record the authenticated AFFiNE account in the app's **Created by**
 property, including semantic pages, template instances, and workspace welcome pages.
 Existing creator records are preserved; older pages are not backfilled.
+New database rows also record the authenticated AFFiNE account and creation time,
+including rows composed from intent or inserted as paragraph blocks. Editing or
+moving existing rows preserves their creation metadata; older rows are not backfilled.
 
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
