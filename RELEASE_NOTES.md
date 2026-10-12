@@ -1,5 +1,26 @@
 # Release Notes
 
+## Version 3.9.1 (2026-10-12)
+
+### Highlights
+- Keep the original creator visible for new MCP-created database rows after another account edits them in AFFiNE.
+
+### What Changed
+- Record the authenticated AFFiNE user and creation time when adding rows through `add_database_row`, `compose_database_from_intent`, `append_block`, and `append_markdown` (#401, #404).
+- Preserve existing row attribution during edits and moves. Reject new row creation before writing if the authenticated user cannot be resolved.
+- Add live integration and Chrome coverage for cross-account editing, native Created by columns, and attribution after a reload.
+- Update locked MCP SDK to 1.32.1 and development Node.js types to 24.19.1.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names, inputs, and outputs remain unchanged.
+- Creator attribution uses the authenticated AFFiNE account. Clients sharing backend credentials share that attribution.
+- Existing rows are not backfilled. No configuration or data migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.9.1`, then restart the MCP server.
+
+### Thanks
+- Thanks to @pagliarinimvp for reporting the row attribution issue.
+
 ## Version 3.9.0 (2026-10-06)
 
 ### Highlights

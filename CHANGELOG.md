@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.1] - 2026-10-12
+
 ### Fixed
 - Record the authenticated AFFiNE creator and creation time for new database rows, including composed rows and paragraph insertion, without replacing existing row metadata.
+
+### Changed
+- Update locked MCP SDK to 1.32.1 and development Node.js types to 24.19.1.
+
+### Tests
+- Verify row attribution across direct creation, composition, block insertion, and Markdown insertion, including edits by another account and native UI reloads.
 
 ## [3.9.0] - 2026-10-06
 
@@ -905,6 +913,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.9.1]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.1
 [3.9.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.0
 [3.8.5]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.8.5
 [3.8.4]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.4
@@ -952,4 +961,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.9.0...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.9.1...HEAD
