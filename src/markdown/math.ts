@@ -183,42 +183,55 @@ export function markdownItMath(md: MarkdownIt): void {
 
 /**
  * Renderers without math support read `$` content as Markdown, so keep it
- * inert there: a space after `<` stops raw HTML and autolinks, and a space
- * after `]` stops `[label](url)` links and `[label]: url` definitions. TeX
- * ignores spaces in math mode, so the formula renders the same.
+ * inert there. A `<` before a tag-like character opens raw HTML or an
+ * autolink only when a later `>` closes it, or when it starts a line (HTML
+ * blocks); a space after that `<` stops it. A space after `]` stops
+ * `[label](url)` links and `[label]: url` definitions. TeX ignores spaces in
+ * math mode, so the formula renders the same, but the stored LaTeX changes.
  */
 function inertMath(latex: string): string {
+  const lastClose = latex.lastIndexOf(">");
   return latex
-    .replace(/<(?=[A-Za-z/!?])/g, "< ")
+    .replace(/<(?=[A-Za-z/!?])/g, (lt: string, offset: number) =>
+      offset < lastClose || /(?:^|\n) {0,3}$/.test(latex.slice(Math.max(0, offset - 4), offset)) ? "< " : lt)
     .replace(/\](?=[(:])/g, "] ");
 }
+
+export type RenderedMath<T> = {
+  markdown: T;
+  /** True when spaces were added to keep the math inert, so re-import stores different LaTeX. */
+  respaced: boolean;
+};
 
 /**
  * Inline math delimited so `parseMarkdownToOperations` reads back the same
  * LaTeX, or null when no delimiter can. Pass the character that will follow
  * the closing delimiter, since a digit there prevents a single `$` close.
  */
-export function renderInlineMath(latex: string, nextChar: string = ""): string | null {
-  const value = inertMath(latex.trim());
+export function renderInlineMath(latex: string, nextChar: string = ""): RenderedMath<string> | null {
+  const trimmed = latex.trim();
+  const value = inertMath(trimmed);
   if (value.length === 0 || /[\r\n\u2028\u2029]/.test(value)) {
     return null;
   }
+  const respaced = value !== trimmed;
   const single = `$${value}$`;
   if (findInlineMathClose(single + nextChar, 1) === single.length - 1) {
-    return single;
+    return { markdown: single, respaced };
   }
   const double = `$$${value}$$`;
   if (findUnescaped(double, "$$", 2) === double.length - 2) {
-    return double;
+    return { markdown: double, respaced };
   }
   return null;
 }
 
 /** Display math lines for an `affine:latex` block, or null when a line would close the block early. */
-export function renderDisplayMath(latex: string): string[] | null {
-  const lines = inertMath(latex).split(/\r\n|\r|\n/);
+export function renderDisplayMath(latex: string): RenderedMath<string[]> | null {
+  const value = inertMath(latex);
+  const lines = value.split(/\r\n|\r|\n/);
   if (lines.some(line => line.trimEnd().endsWith("$$"))) {
     return null;
   }
-  return ["$$", ...lines, "$$"];
+  return { markdown: ["$$", ...lines, "$$"], respaced: value !== latex };
 }

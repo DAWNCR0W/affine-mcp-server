@@ -82,6 +82,14 @@ function recordInlineLoss(
   );
 }
 
+function recordMathRespacing(state: RenderState, context: string): void {
+  const warning = `${context} has math with '<' or ']' that Markdown export followed with a space so renderers without math support cannot read it as HTML or a link; TeX renders it the same, but re-importing stores the spaced LaTeX.`;
+  if (!state.warningSet.has(warning)) {
+    state.unsupportedCount += 1;
+    addWarning(state, warning);
+  }
+}
+
 function supportedInlineAttributes(
   attributes: TextDeltaAttributes | undefined,
   context: string,
@@ -238,11 +246,14 @@ function renderTextDelta(
   if (attributes.latex !== null) {
     const math = renderInlineMath(attributes.latex, options.nextChar);
     if (math !== null) {
+      if (math.respaced) {
+        recordMathRespacing(state, context);
+      }
       // Each inline formula is one embed character; Yjs can coalesce identical neighbours.
       const markerCount = /^[ \u200B]+$/.test(insert)
         ? insert.length
         : 1;
-      const delimited = options.tableCell ? math.replace(/\|/g, "\\|") : math;
+      const delimited = options.tableCell ? math.markdown.replace(/\|/g, "\\|") : math.markdown;
       return applyInlineFormatting(delimited.repeat(markerCount), attributes, context, state);
     }
     recordInlineLoss(state, context, "latex", "the formula cannot be delimited as inline math");
@@ -490,13 +501,16 @@ function renderBlock(
         addWarning(state, `LaTeX block '${blockId}' was empty and was skipped.`);
         return { lines: [], isList: false };
       }
-      const lines = renderDisplayMath(latex);
-      if (lines === null) {
+      const math = renderDisplayMath(latex);
+      if (math === null) {
         state.unsupportedCount += 1;
         addWarning(state, `LaTeX block '${blockId}' has a line ending in '$$' and was exported as a latex code block.`);
         return { lines: renderFencedCodeBlock(latex, "latex"), isList: false };
       }
-      return { lines, isList: false };
+      if (math.respaced) {
+        recordMathRespacing(state, `LaTeX block '${blockId}'`);
+      }
+      return { lines: math.markdown, isList: false };
     }
 
     case "affine:bookmark":

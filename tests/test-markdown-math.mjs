@@ -316,15 +316,28 @@ function testExportedMathCannotInjectMarkup() {
     assert.ok(!rendered.markdown.includes('</script>'), rendered.markdown);
     assert.ok(!rendered.markdown.includes('](javascript:'), rendered.markdown);
     assert.ok(!rendered.markdown.includes(']: javascript:'), rendered.markdown);
-    assert.equal(rendered.lossy, false, rendered.markdown);
+    assert.equal(rendered.lossy, true, 'added spaces change the stored LaTeX and must be reported');
+    assert.equal(rendered.warnings.length, 1, rendered.warnings.join('\n'));
+    assert.match(rendered.warnings[0], /followed with a space/);
   }
+  assert.match(display.warnings[0], /^LaTeX block 'block-1'/);
+  assert.match(inline.warnings[0], /^Block 'block-1'/);
   assert.deepEqual(parseMarkdownToOperations(display.markdown).operations, [{
     type: 'latex',
     latex: '# heading\n- item\n[owned] (javascript:alert(1))\n[ref] : javascript:alert(1)\n< script>alert(1)< /script>',
   }]);
 
-  assert.equal(renderDeltas([latexDelta('0<x<1')]).markdown, '$0< x<1$', 'only a < that could open HTML gets a space');
-  assert.equal(renderDeltas([latexDelta('a < b, [0,1]')]).markdown, '$a < b, [0,1]$');
+  // A `<` opens HTML only before a later `>` or at the start of a line.
+  for (const latex of ['0<x<1', 'a<b', 'a < b, [0,1]', 'x>y<z']) {
+    const rendered = renderDeltas([latexDelta(latex)]);
+    assert.equal(rendered.markdown, `$${latex}$`, latex);
+    assert.equal(rendered.lossy, false, latex);
+    assert.deepEqual(rendered.warnings, [], latex);
+  }
+  assert.equal(renderDeltas([latexDelta('a<b>c')]).markdown, '$a< b>c$');
+  const lineStart = renderSingleBlock(markdownBlock({ flavour: 'affine:latex', type: null, latex: 'x\n  <div\ny' }));
+  assert.equal(lineStart.markdown, '$$\nx\n  < div\ny\n$$');
+  assert.equal(lineStart.lossy, true);
 }
 
 function testDollarTextRoundTripsAsText() {
