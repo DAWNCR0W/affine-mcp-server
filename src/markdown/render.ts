@@ -5,6 +5,7 @@ import type {
   TextDeltaAttributes,
 } from "./types.js";
 import {
+  countDollarSigns,
   escapeMarkdownHtmlCommentValue,
   escapeMarkdownPlainText,
   escapeMarkdownTableCell,
@@ -14,7 +15,8 @@ import {
   renderMarkdownLinkWithSafeLabel,
 } from "./safety.js";
 import { blobSourceIdToUrl } from "../urlSafety.js";
-import { isLinkedPageReferenceDelta } from "./richText.js";
+import { isInlineEmbedDelta } from "./richText.js";
+import { renderDisplayMath, renderInlineMath } from "./math.js";
 
 type RenderState = {
   blocksById: Map<string, MarkdownRenderableBlock>;
@@ -45,11 +47,18 @@ type SupportedInlineAttributes = {
   code: boolean;
   link: string | null;
   linkedPage: string | null;
+  latex: string | null;
 };
 
 type RenderInlineOptions = {
   trim?: boolean;
   tableCell?: boolean;
+};
+
+type RenderRunOptions = RenderInlineOptions & {
+  escapeDollars: boolean;
+  /** First character rendered after this run, which decides inline math delimiters. */
+  nextChar?: string;
 };
 
 const BOOLEAN_INLINE_ATTRIBUTES = new Set(["bold", "italic", "strike", "code"]);
@@ -73,6 +82,14 @@ function recordInlineLoss(
   );
 }
 
+function recordMathRespacing(state: RenderState, context: string): void {
+  const warning = `${context} has math with '<' or ']' that Markdown export followed with a space so renderers without math support cannot read it as HTML or a link; TeX renders it the same, but re-importing stores the spaced LaTeX.`;
+  if (!state.warningSet.has(warning)) {
+    state.unsupportedCount += 1;
+    addWarning(state, warning);
+  }
+}
+
 function supportedInlineAttributes(
   attributes: TextDeltaAttributes | undefined,
   context: string,
@@ -85,6 +102,7 @@ function supportedInlineAttributes(
     code: false,
     link: null,
     linkedPage: null,
+    latex: null,
   };
   if (!attributes) {
     return supported;
@@ -122,6 +140,14 @@ function supportedInlineAttributes(
       }
       continue;
     }
+    if (name === "latex") {
+      if (typeof value === "string") {
+        supported.latex = value;
+      } else {
+        recordInlineLoss(state, context, name, "expected a LaTeX string");
+      }
+      continue;
+    }
     recordInlineLoss(state, context, name, "unsupported attribute name");
   }
 
@@ -135,14 +161,14 @@ function trimTextDeltas(deltas: TextDelta[]): TextDelta[] {
   }));
 
   while (trimmed.length > 0) {
-    if (isLinkedPageReferenceDelta(trimmed[0])) break;
+    if (isInlineEmbedDelta(trimmed[0])) break;
     trimmed[0].insert = trimmed[0].insert.replace(/^\s+/, "");
     if (trimmed[0].insert.length > 0) break;
     trimmed.shift();
   }
   while (trimmed.length > 0) {
     const last = trimmed[trimmed.length - 1];
-    if (isLinkedPageReferenceDelta(last)) break;
+    if (isInlineEmbedDelta(last)) break;
     last.insert = last.insert.replace(/\s+$/, "");
     if (last.insert.length > 0) break;
     trimmed.pop();
@@ -167,7 +193,29 @@ function sameSupportedInlineAttributes(
     left.strike === right.strike &&
     left.code === right.code &&
     left.link === right.link &&
-    left.linkedPage === right.linkedPage;
+    left.linkedPage === right.linkedPage &&
+    left.latex === right.latex;
+}
+
+function applyInlineFormatting(
+  rendered: string,
+  attributes: SupportedInlineAttributes,
+  context: string,
+  state: RenderState,
+): string {
+  let output = rendered;
+  if (attributes.bold) output = `**${output}**`;
+  if (attributes.italic) output = `*${output}*`;
+  if (attributes.strike) output = `~~${output}~~`;
+  if (attributes.link) {
+    const link = renderMarkdownLinkWithSafeLabel(output, attributes.link);
+    if (link === null) {
+      recordInlineLoss(state, context, "link", "unsafe URL scheme");
+    } else {
+      output = link;
+    }
+  }
+  return output;
 }
 
 function renderTextDelta(
@@ -175,7 +223,7 @@ function renderTextDelta(
   attributes: SupportedInlineAttributes,
   context: string,
   state: RenderState,
-  options: RenderInlineOptions,
+  options: RenderRunOptions,
 ): string {
   if (insert.length === 0) {
     return "";
@@ -194,9 +242,30 @@ function renderTextDelta(
     return link.repeat(markerCount);
   }
 
+  let text = insert;
+  if (attributes.latex !== null) {
+    const math = renderInlineMath(attributes.latex, options.nextChar);
+    if (math !== null) {
+      if (math.respaced) {
+        recordMathRespacing(state, context);
+      }
+      // Each inline formula is one embed character; Yjs can coalesce identical neighbours.
+      const markerCount = /^[ \u200B]+$/.test(insert)
+        ? insert.length
+        : 1;
+      const delimited = options.tableCell ? math.markdown.replace(/\|/g, "\\|") : math.markdown;
+      return applyInlineFormatting(delimited.repeat(markerCount), attributes, context, state);
+    }
+    recordInlineLoss(state, context, "latex", "the formula cannot be delimited as inline math");
+    text = attributes.latex.trim();
+    if (text.length === 0) {
+      return "";
+    }
+  }
+
   const codeCannotBePreserved = attributes.code && (
-    /[\r\n\u2028\u2029]/.test(insert) ||
-    (options.tableCell === true && insert.includes("|"))
+    /[\r\n\u2028\u2029]/.test(text) ||
+    (options.tableCell === true && text.includes("|"))
   );
   if (codeCannotBePreserved) {
     recordInlineLoss(
@@ -216,33 +285,23 @@ function renderTextDelta(
 
   let leading = "";
   let trailing = "";
-  let content = insert;
+  let content = text;
   if (hasFormatting && !renderAsCode) {
     leading = content.match(/^ */)?.[0] ?? "";
     trailing = content.match(/ *$/)?.[0] ?? "";
     content = content.slice(leading.length, content.length - trailing.length);
     if (!content) {
-      return insert;
+      return text;
     }
   }
 
-  let rendered = renderAsCode
+  const escapeOptions = { escapeDollars: options.escapeDollars };
+  const rendered = renderAsCode
     ? inlineCodeFence(content)
     : options.tableCell
-      ? escapeMarkdownTableCell(content)
-      : escapeMarkdownPlainText(content);
-  if (attributes.bold) rendered = `**${rendered}**`;
-  if (attributes.italic) rendered = `*${rendered}*`;
-  if (attributes.strike) rendered = `~~${rendered}~~`;
-  if (attributes.link) {
-    const link = renderMarkdownLinkWithSafeLabel(rendered, attributes.link);
-    if (link === null) {
-      recordInlineLoss(state, context, "link", "unsafe URL scheme");
-    } else {
-      rendered = link;
-    }
-  }
-  return `${leading}${rendered}${trailing}`;
+      ? escapeMarkdownTableCell(content, escapeOptions)
+      : escapeMarkdownPlainText(content, escapeOptions);
+  return `${leading}${applyInlineFormatting(rendered, attributes, context, state)}${trailing}`;
 }
 
 function renderTextDeltas(
@@ -262,9 +321,28 @@ function renderTextDeltas(
       runs.push({ insert: delta.insert, attributes });
     }
   }
-  return runs
-    .map(run => renderTextDelta(run.insert, run.attributes, context, state, options))
-    .join("");
+
+  // Two `$` in one block could pair up as math on re-import, so escape them all.
+  const dollarCount = runs.reduce((count, run) => {
+    if (run.attributes.latex !== null) return count + 2;
+    if (run.attributes.code || run.attributes.linkedPage !== null) return count;
+    return count + countDollarSigns(run.insert);
+  }, 0);
+  const runOptions: RenderRunOptions = { ...options, escapeDollars: dollarCount >= 2 };
+  const outputs = runs.map(run => renderTextDelta(run.insert, run.attributes, context, state, runOptions));
+
+  // A digit right after `$x$` stops the `$` from closing, so re-delimit that math.
+  let nextChar = "";
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    if (runs[index].attributes.latex !== null && /\d/.test(nextChar)) {
+      outputs[index] = renderTextDelta(runs[index].insert, runs[index].attributes, context, state, {
+        ...runOptions,
+        nextChar,
+      });
+    }
+    nextChar = outputs[index].charAt(0) || nextChar;
+  }
+  return outputs.join("");
 }
 
 function formatQuote(text: string): string[] {
@@ -415,6 +493,25 @@ function renderBlock(
 
     case "affine:divider":
       return { lines: ["---"], isList: false };
+
+    case "affine:latex": {
+      const latex = (block.latex ?? "").trim();
+      if (!latex) {
+        state.unsupportedCount += 1;
+        addWarning(state, `LaTeX block '${blockId}' was empty and was skipped.`);
+        return { lines: [], isList: false };
+      }
+      const math = renderDisplayMath(latex);
+      if (math === null) {
+        state.unsupportedCount += 1;
+        addWarning(state, `LaTeX block '${blockId}' has a line ending in '$$' and was exported as a latex code block.`);
+        return { lines: renderFencedCodeBlock(latex, "latex"), isList: false };
+      }
+      if (math.respaced) {
+        recordMathRespacing(state, `LaTeX block '${blockId}'`);
+      }
+      return { lines: math.markdown, isList: false };
+    }
 
     case "affine:bookmark":
     case "affine:embed-youtube":

@@ -268,8 +268,8 @@ Domains:
 - Blob storage: upload, delete, and cleanup blobs
 
 For new document content, use `create_doc` for an optional single plain-text
-paragraph and `create_doc_from_markdown` for native headings, lists, links, and
-code blocks. Both tools accept `folderId` for immediate organize-folder placement.
+paragraph and `create_doc_from_markdown` for native headings, lists, links,
+code blocks, and `$$...$$`/`$...$` math equations. Both tools accept `folderId` for immediate organize-folder placement.
 New pages record the authenticated AFFiNE account in the app's **Created by**
 property, including semantic pages, template instances, and workspace welcome pages.
 Existing creator records are preserved; older pages are not backfilled.
