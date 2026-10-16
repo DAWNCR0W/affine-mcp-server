@@ -6,6 +6,7 @@ export type TextDeltaAttributes = {
   strike?: boolean;
   code?: boolean;
   link?: string;
+  latex?: string;
   [key: string]: unknown;
 };
 
@@ -62,6 +63,10 @@ export type MarkdownOperation =
       type: "bookmark";
       url: string;
       caption?: string;
+    }
+  | {
+      type: "latex";
+      latex: string;
     };
 
 export type MarkdownParseResult = {
@@ -88,6 +93,7 @@ export type MarkdownRenderableBlock = {
   sourceId: string | null;
   caption: string | null;
   tableData: string[][] | null;
+  latex?: string | null;
   textDeltas?: TextDelta[] | null;
   tableCellDeltas?: TextDelta[][][] | null;
 };

@@ -39,7 +39,15 @@ const MARKDOWN = [
   "| --- | --- |",
   "| **ADMIN** | Full access |",
   "| Normal | **Important** value |",
+  "",
+  "Euler $e^{i\\pi} + 1 = 0$ with spacing $a \\, b$",
+  "",
+  "$$",
+  "\\int_0^1 x \\, dx",
+  "$$",
 ].join("\n");
+const EXPECTED_INLINE_LATEX = ["e^{i\\pi} + 1 = 0", "a \\, b"];
+const EXPECTED_BLOCK_LATEX = "\\int_0^1 x \\, dx";
 
 function parseContent(result) {
   const text = result?.content?.[0]?.text;
@@ -167,6 +175,22 @@ function expectSingleLinkedPageParagraph(blocks, pageId, flow) {
   expect(
     references[0].attributes.reference.pageId === pageId,
     `${flow} changed the LinkedPage pageId (deltas=${JSON.stringify(paragraphDeltas)})`,
+  );
+}
+
+function expectNativeMath(blocks, flow) {
+  const inlineLatex = paragraphBlockDeltas(blocks, "text")
+    .flat()
+    .filter(delta => typeof delta.attributes?.latex === "string");
+  expect(
+    EXPECTED_INLINE_LATEX.every(latex => inlineLatex.some(delta => delta.attributes.latex === latex && delta.insert === " ")),
+    `${flow} must store inline math as native latex deltas with TeX backslashes intact (deltas=${JSON.stringify(inlineLatex)})`,
+  );
+  const latexBlock = findBlock(blocks, (_, block) => block.get("sys:flavour") === "affine:latex");
+  expect(latexBlock, `${flow} did not create an affine:latex block`);
+  expect(
+    latexBlock.block.get("prop:latex") === EXPECTED_BLOCK_LATEX,
+    `${flow} changed the display math (latex=${JSON.stringify(latexBlock.block.get("prop:latex"))})`,
   );
 }
 
@@ -332,6 +356,9 @@ async function main() {
     expect(createdTableDeltas.some(delta => hasBoldRun(delta, "ADMIN")), "table cell bold text did not preserve bold");
     expect(createdTableDeltas.some(delta => hasBoldRun(delta, "Important")), "table cell mixed bold text did not preserve bold");
 
+    // --- Math ---
+    expectNativeMath(createdBlocks, "create_doc_from_markdown");
+
     const emptyDoc = await call("create_doc", {
       workspaceId,
       title: "Markdown Replace Rich Text",
@@ -382,6 +409,9 @@ async function main() {
     const replacedTableDeltas = tableCellDeltas(replacedTable.block);
     expect(replacedTableDeltas.some(delta => hasBoldRun(delta, "ADMIN")), "replace_doc_with_markdown table cell bold text lost bold");
     expect(replacedTableDeltas.some(delta => hasBoldRun(delta, "Important")), "replace_doc_with_markdown table cell mixed bold text lost bold");
+
+    // --- Math ---
+    expectNativeMath(replacedBlocks, "replace_doc_with_markdown");
 
     console.log("=== Markdown rich text import test passed ===");
   } finally {
