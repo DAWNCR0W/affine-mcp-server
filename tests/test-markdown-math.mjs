@@ -272,6 +272,211 @@ function testLatexBlockExportEdgeCases() {
   assert.deepEqual(reparsed, [{ type: 'code', text: 'a $$\nb', language: 'latex' }]);
 }
 
+function testDisplayMathInsideNativeCalloutReportsInlineConversion() {
+  const latex = 'x^2';
+  const callout = markdownBlock({ id: 'callout', flavour: 'affine:callout', type: null, childIds: ['equation'] });
+  const equation = markdownBlock({ id: 'equation', parentId: callout.id, flavour: 'affine:latex', type: null, latex });
+  const rendered = renderBlocksToMarkdown({
+    rootBlockIds: [callout.id],
+    blocksById: new Map([[callout.id, callout], [equation.id, equation]]),
+  });
+  assert.equal(rendered.markdown, '> [!NOTE]\n> $$\n> x^2\n> $$');
+  const operation = onlyOperation(rendered.markdown);
+  assert.equal(operation.type, 'callout');
+  assert.deepEqual(latexValues(operation.deltas), [latex]);
+  assert.equal(rendered.lossy, true);
+  assert.equal(rendered.stats.unsupportedCount, 1);
+  assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0);
+  assert.equal(rendered.warnings.length, 1);
+  assert.match(rendered.warnings[0], /LaTeX block 'equation'.*callout.*inline math/);
+
+  const fallback = renderBlocksToMarkdown({
+    rootBlockIds: [callout.id],
+    blocksById: new Map([[callout.id, callout], [equation.id, { ...equation, latex: 'a $$\nb' }]]),
+  });
+  assert.equal(fallback.stats.unsupportedCount, 1);
+  assert.equal(fallback.warnings.length, 1);
+  assert.match(fallback.warnings[0], /exported as a latex code block/);
+}
+
+function testDisplayMathInsideQuoteReportsRootRelocation() {
+  const latex = 'x^2';
+  for (const deep of [false, true]) {
+    const quote = markdownBlock({ id: 'quote', type: 'quote', text: 'Quoted text', childIds: [deep ? 'body' : 'equation'] });
+    const body = markdownBlock({ id: 'body', parentId: quote.id, text: 'Continuation', childIds: ['equation'] });
+    const equation = markdownBlock({ id: 'equation', parentId: deep ? body.id : quote.id, flavour: 'affine:latex', type: null, latex });
+    const blocksById = new Map([[quote.id, quote], [equation.id, equation]]);
+    if (deep) blocksById.set(body.id, body);
+    const rendered = renderBlocksToMarkdown({ rootBlockIds: [quote.id], blocksById });
+    assert.equal(rendered.markdown, `> Quoted text\n${deep ? 'Continuation\n' : ''}$$\nx^2\n$$`);
+    const parsed = parseMarkdownToOperations(rendered.markdown);
+    assert.deepEqual(parsed.operations.map(operation => operation.type), ['quote', 'latex']);
+    assert.equal(parsed.operations[0].text, deep ? 'Quoted text\nContinuation' : 'Quoted text');
+    assert.deepEqual(parsed.operations[1], { type: 'latex', latex });
+    assert.equal(rendered.lossy, true);
+    assert.equal(rendered.stats.unsupportedCount, 1);
+    assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0);
+    assert.equal(rendered.warnings.length, 1);
+    assert.match(rendered.warnings[0], /LaTeX block 'equation'.*quote.*document root/);
+
+    const fallback = renderBlocksToMarkdown({
+      rootBlockIds: [quote.id],
+      blocksById: new Map(blocksById).set(equation.id, { ...equation, latex: 'a $$\nb' }),
+    });
+    assert.equal(fallback.stats.unsupportedCount, 1);
+    assert.equal(fallback.warnings.length, 1);
+    assert.match(fallback.warnings[0], /exported as a latex code block/);
+
+    const callout = markdownBlock({ id: 'callout', flavour: 'affine:callout', type: null, childIds: [quote.id] });
+    const nestedCallout = renderBlocksToMarkdown({
+      rootBlockIds: [callout.id],
+      blocksById: new Map(blocksById)
+        .set(callout.id, callout)
+        .set(quote.id, { ...quote, parentId: callout.id }),
+    });
+    assert.equal(nestedCallout.stats.unsupportedCount, 1);
+    assert.equal(nestedCallout.warnings.length, 1);
+    assert.match(nestedCallout.warnings[0], /callout.*inline math/);
+    assert.ok(!nestedCallout.warnings[0].includes('document root'));
+    assert.deepEqual(latexValues(onlyOperation(nestedCallout.markdown).deltas), [latex]);
+  }
+}
+
+function testDisplayMathInsideListsReportsInlineConversion() {
+  for (const [type, marker, deep] of [
+    ['bulleted', '-', false],
+    ['numbered', '1.', false],
+    ['todo', '- [x]', false],
+    ['bulleted', '-', true],
+  ]) {
+    const list = markdownBlock({ id: 'list', flavour: 'affine:list', type, checked: true, text: 'Listed text', childIds: [deep ? 'body' : 'equation'] });
+    const body = markdownBlock({ id: 'body', parentId: list.id, text: 'Continuation', childIds: ['equation'] });
+    const equation = markdownBlock({ id: 'equation', parentId: deep ? body.id : list.id, flavour: 'affine:latex', type: null, latex: 'x^2' });
+    const blocksById = new Map([[list.id, list], [equation.id, equation]]);
+    if (deep) blocksById.set(body.id, body);
+    const rendered = renderBlocksToMarkdown({ rootBlockIds: [list.id], blocksById });
+    assert.equal(rendered.markdown, `${marker} Listed text\n${deep ? 'Continuation\n' : ''}$$\nx^2\n$$`);
+    const operation = onlyOperation(rendered.markdown);
+    assert.equal(operation.type, 'list');
+    assert.equal(operation.style, type);
+    if (type === 'todo') assert.equal(operation.checked, true);
+    assert.deepEqual(latexValues(operation.deltas), ['x^2']);
+    assert.equal(rendered.lossy, true);
+    assert.equal(rendered.stats.unsupportedCount, 1);
+    assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0);
+    assert.equal(rendered.warnings.length, 1);
+    assert.match(rendered.warnings[0], /LaTeX block 'equation'.*list.*nested display math block/);
+
+    const inlineLatex = '\\text{$y$}';
+    const paragraph = {
+      ...equation, flavour: 'affine:paragraph', type: 'text', latex: null, textDeltas: [latexDelta(inlineLatex)],
+    };
+    const inline = renderBlocksToMarkdown({
+      rootBlockIds: [list.id],
+      blocksById: new Map(blocksById).set(equation.id, paragraph),
+    });
+    assert.ok(inline.markdown.endsWith(`$$${inlineLatex}$$`));
+    const parsedInline = parseMarkdownToOperations(inline.markdown);
+    assert.deepEqual(parsedInline.operations.map(operation => operation.type), ['list', 'latex']);
+    assert.deepEqual(parsedInline.operations[1], { type: 'latex', latex: inlineLatex });
+    assert.equal(inline.lossy, true, 'one-line double-dollar math in a list child becomes a root display block');
+    assert.equal(inline.stats.unsupportedCount, 1);
+    assert.equal(inline.warnings.length, 1);
+    assert.match(inline.warnings[0], /inline math.*display math block/);
+
+    const simple = renderBlocksToMarkdown({
+      rootBlockIds: [list.id],
+      blocksById: new Map(blocksById).set(equation.id, { ...paragraph, textDeltas: [latexDelta('x^2')] }),
+    });
+    assert.equal(onlyOperation(simple.markdown).type, 'list');
+    assert.deepEqual(latexValues(onlyOperation(simple.markdown).deltas), ['x^2']);
+    assert.equal(simple.lossy, false, 'single-dollar math in a list child stays inline on re-import');
+    assert.equal(simple.stats.unsupportedCount, 0);
+    assert.deepEqual(simple.warnings, []);
+  }
+}
+
+function testDisplayMathInsideListLayoutReportsRelocation() {
+  const list = markdownBlock({ id: 'list', flavour: 'affine:list', type: 'bulleted', text: 'Listed text', childIds: ['note'] });
+  const note = markdownBlock({ id: 'note', parentId: list.id, flavour: 'affine:note', childIds: ['body', 'equation'] });
+  const body = markdownBlock({ id: 'body', parentId: note.id, text: 'Continuation' });
+  const equation = markdownBlock({ id: 'equation', parentId: note.id, flavour: 'affine:latex', type: null, latex: 'x^2' });
+  const rendered = renderBlocksToMarkdown({
+    rootBlockIds: [list.id],
+    blocksById: new Map([list, note, body, equation].map(block => [block.id, block])),
+  });
+  assert.equal(rendered.markdown, '- Listed text\nContinuation\n\n$$\nx^2\n$$');
+  const parsed = parseMarkdownToOperations(rendered.markdown);
+  assert.deepEqual(parsed.operations.map(operation => operation.type), ['list', 'latex']);
+  assert.deepEqual(parsed.operations[1], { type: 'latex', latex: 'x^2' });
+  assert.equal(rendered.lossy, true);
+  assert.equal(rendered.stats.unsupportedCount, 1);
+  assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0);
+  assert.equal(rendered.warnings.length, 1);
+  assert.match(rendered.warnings[0], /LaTeX block 'equation'.*list.*nested display math block/);
+}
+
+function testNearestMathContainerControlsLoss() {
+  for (const outerQuote of [true, false]) {
+    const outer = markdownBlock({
+      id: 'outer', flavour: outerQuote ? 'affine:paragraph' : 'affine:list', type: outerQuote ? 'quote' : 'bulleted',
+      text: outerQuote ? 'Quoted text' : 'Listed text', childIds: ['inner'],
+    });
+    const inner = markdownBlock({
+      id: 'inner', parentId: outer.id, flavour: outerQuote ? 'affine:list' : 'affine:paragraph', type: outerQuote ? 'bulleted' : 'quote',
+      text: outerQuote ? 'Listed text' : 'Quoted text', childIds: ['equation'],
+    });
+    const equation = markdownBlock({ id: 'equation', parentId: inner.id, flavour: 'affine:latex', type: null, latex: 'x^2' });
+    const blocksById = new Map([[outer.id, outer], [inner.id, inner], [equation.id, equation]]);
+    const rendered = renderBlocksToMarkdown({ rootBlockIds: [outer.id], blocksById });
+    assert.equal(rendered.markdown, `${outerQuote ? '> Quoted text\n- Listed text' : '- Listed text\n> Quoted text'}\n$$\nx^2\n$$`);
+    const parsed = parseMarkdownToOperations(rendered.markdown);
+    assert.deepEqual(parsed.operations.map(operation => operation.type), outerQuote ? ['quote', 'list'] : ['list', 'quote', 'latex']);
+    if (outerQuote) assert.deepEqual(latexValues(parsed.operations[1].deltas), ['x^2']);
+    else assert.deepEqual(parsed.operations[2], { type: 'latex', latex: 'x^2' });
+    assert.equal(rendered.lossy, true);
+    assert.equal(rendered.stats.unsupportedCount, 1);
+    assert.equal(rendered.warnings.length, 1);
+    assert.match(rendered.warnings[0], outerQuote ? /list.*nested display math block/ : /quote.*document root/);
+
+    const callout = markdownBlock({ id: 'callout', flavour: 'affine:callout', type: null, childIds: [outer.id] });
+    const nestedCallout = renderBlocksToMarkdown({
+      rootBlockIds: [callout.id],
+      blocksById: new Map(blocksById).set(callout.id, callout).set(outer.id, { ...outer, parentId: callout.id }),
+    });
+    const operation = onlyOperation(nestedCallout.markdown);
+    assert.equal(operation.type, 'callout');
+    assert.deepEqual(latexValues(operation.deltas), ['x^2']);
+    assert.equal(nestedCallout.stats.unsupportedCount, 1);
+    assert.equal(nestedCallout.warnings.length, 1);
+    assert.match(nestedCallout.warnings[0], /callout.*inline math/);
+  }
+}
+
+function testQuoteTextChildrenStayInline() {
+  const quote = markdownBlock({ id: 'quote', type: 'quote', text: 'Quoted text', childIds: ['body'] });
+  for (const inlineMath of [false, true]) {
+    const body = markdownBlock({
+      id: 'body',
+      parentId: quote.id,
+      text: 'Continuation',
+      ...(inlineMath ? { textDeltas: [{ insert: 'Continuation ' }, latexDelta('x^2')] } : {}),
+    });
+    const rendered = renderBlocksToMarkdown({
+      rootBlockIds: [quote.id],
+      blocksById: new Map([[quote.id, quote], [body.id, body]]),
+    });
+    assert.equal(rendered.markdown, `> Quoted text\nContinuation${inlineMath ? ' $x^2$' : ''}`);
+    const operation = onlyOperation(rendered.markdown);
+    assert.equal(operation.type, 'quote');
+    assert.deepEqual(latexValues(operation.deltas), inlineMath ? ['x^2'] : []);
+    if (!inlineMath) assert.equal(operation.text, 'Quoted text\nContinuation');
+    assert.equal(rendered.lossy, false);
+    assert.equal(rendered.stats.unsupportedCount, 0);
+    assert.deepEqual(rendered.warnings, []);
+  }
+}
+
 function testInlineLatexExport() {
   const deltas = [
     { insert: 'Euler: ' },
@@ -468,6 +673,102 @@ function testDollarTextRoundTripsAsText() {
   assert.equal(onlyOperation(tableText.markdown).tableData[1][0], '$5 or $6');
 }
 
+function testCodeFallbackDollarTextRoundTripsAsText() {
+  const table = renderSingleBlock(markdownBlock({
+    flavour: 'affine:table',
+    type: null,
+    tableData: [['Value'], ['a|b$c$']],
+    tableCellDeltas: [[[{ insert: 'Value' }]], [[
+      { insert: 'a|b$', attributes: { code: true } },
+      { insert: 'c$' },
+    ]]],
+  }));
+  assert.equal(table.markdown, '| Value |\n| --- |\n| a\\|b\\$c\\$ |');
+  const operation = onlyOperation(table.markdown);
+  assert.equal(operation.tableData[1][0], 'a|b$c$');
+  assert.deepEqual(latexValues(operation.tableCellDeltas[1][0]), []);
+  assert.equal(table.lossy, true);
+  assert.equal(table.stats.unsupportedCount, 1);
+  assert.equal(table.stats.unsupportedInlineAttributeCount, 1);
+  assert.equal(table.warnings.length, 1);
+  assert.match(table.warnings[0], /'code'/);
+
+  for (const [lineBreak, escaped] of [
+    ['\n', '&#10;'],
+    ['\r', '&#13;'],
+    ['\r\n', '&#13;&#10;'],
+    ['\u2028', '&#8232;'],
+    ['\u2029', '&#8233;'],
+  ]) {
+    const rendered = renderDeltas([
+      { insert: `a${lineBreak}b$`, attributes: { code: true } },
+      { insert: 'c$' },
+    ]);
+    assert.equal(rendered.markdown, `a${escaped}b\\$c\\$`);
+    const paragraph = onlyOperation(rendered.markdown);
+    assert.equal(paragraph.text, `a${lineBreak}b$c$`);
+    assert.deepEqual(latexValues(paragraph.deltas), []);
+    assert.equal(rendered.stats.unsupportedCount, 1);
+    assert.equal(rendered.stats.unsupportedInlineAttributeCount, 1);
+    assert.equal(rendered.warnings.length, 1);
+    assert.match(rendered.warnings[0], /'code'/);
+  }
+
+  const safeCode = [{ insert: 'a$b', attributes: { code: true } }, { insert: 'c$' }];
+  const safe = renderDeltas(safeCode);
+  assert.equal(safe.markdown, '`a$b`c\\$');
+  assert.equal(safe.lossy, false);
+  assert.deepEqual(parsedDeltas(safe.markdown), safeCode);
+}
+
+function testDollarTextAcrossCodeAndLinksRoundTripsAsText() {
+  const reference = { insert: ' ', attributes: { reference: { type: 'LinkedPage', pageId: 'y$' } } };
+  const link = { insert: 'link', attributes: { link: 'https://example.com/y$' } };
+  for (const protectedRun of [{ insert: 'y$', attributes: { code: true } }, reference, link]) {
+    for (const reverse of [false, true]) {
+      const plain = { insert: '$x' };
+      const deltas = reverse ? [protectedRun, plain] : [plain, protectedRun];
+      for (const tableCell of [false, true]) {
+        const rendered = tableCell ? renderSingleBlock(markdownBlock({
+          flavour: 'affine:table', type: null,
+          tableData: [['Value'], [deltas.map(delta => delta.insert).join('')]],
+          tableCellDeltas: [[[{ insert: 'Value' }]], [deltas]],
+        })) : renderDeltas(deltas);
+        const operation = onlyOperation(rendered.markdown);
+        const actual = (tableCell ? operation.tableCellDeltas[1][0] : operation.deltas)
+          .filter(delta => delta.insert !== '');
+        assert.deepEqual(actual, deltas, rendered.markdown);
+        assert.deepEqual(latexValues(actual), [], rendered.markdown);
+        assert.equal(rendered.lossy, false, rendered.markdown);
+        assert.deepEqual(rendered.warnings, [], rendered.markdown);
+      }
+    }
+  }
+
+  for (const deltas of [
+    [reference],
+    [{ insert: 'See ' }, { insert: 'label $', attributes: { link: 'https://example.com/y$' } }],
+  ]) {
+    const rendered = renderDeltas(deltas);
+    assert.deepEqual(parsedDeltas(rendered.markdown), deltas, rendered.markdown);
+    assert.equal(rendered.lossy, false, rendered.markdown);
+    assert.deepEqual(rendered.warnings, [], rendered.markdown);
+  }
+
+  const reversedFallback = renderSingleBlock(markdownBlock({
+    flavour: 'affine:table', type: null, tableData: [['Value'], ['c$a|b$']],
+    tableCellDeltas: [[[{ insert: 'Value' }]], [[{ insert: 'c$' }, { insert: 'a|b$', attributes: { code: true } }]]],
+  }));
+  assert.equal(reversedFallback.markdown, '| Value |\n| --- |\n| c\\$a\\|b\\$ |');
+  const fallbackDeltas = onlyOperation(reversedFallback.markdown).tableCellDeltas[1][0];
+  assert.equal(fallbackDeltas.map(delta => delta.insert).join(''), 'c$a|b$');
+  assert.deepEqual(latexValues(fallbackDeltas), []);
+  assert.equal(reversedFallback.lossy, true);
+  assert.equal(reversedFallback.stats.unsupportedInlineAttributeCount, 1);
+  assert.equal(reversedFallback.warnings.length, 1);
+  assert.match(reversedFallback.warnings[0], /'code'/);
+}
+
 testDisplayMathBecomesLatexBlock();
 testDisplayMathInterruptsParagraphs();
 testDisplayMathLookalikesStayText();
@@ -480,6 +781,12 @@ testDisplayMathInsideContainersBecomesInlineMath();
 testListTextAfterDisplayMathIsPreserved();
 testLatexBlockExport();
 testLatexBlockExportEdgeCases();
+testDisplayMathInsideNativeCalloutReportsInlineConversion();
+testDisplayMathInsideQuoteReportsRootRelocation();
+testDisplayMathInsideListsReportsInlineConversion();
+testDisplayMathInsideListLayoutReportsRelocation();
+testNearestMathContainerControlsLoss();
+testQuoteTextChildrenStayInline();
 testInlineLatexExport();
 testInlineLatexExportRoundTrips();
 testStandaloneDoubleDollarInlineMathReportsBlockConversion();
@@ -487,4 +794,6 @@ testUnrepresentableInlineLatexIsReported();
 testTableCellLatexExport();
 testExportedMathCannotInjectMarkup();
 testDollarTextRoundTripsAsText();
+testCodeFallbackDollarTextRoundTripsAsText();
+testDollarTextAcrossCodeAndLinksRoundTripsAsText();
 console.log('Markdown math tests passed');

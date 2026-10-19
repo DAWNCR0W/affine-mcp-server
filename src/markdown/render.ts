@@ -184,6 +184,10 @@ function inlineCodeFence(text: string): string {
   return `${fence}${needsPadding ? ` ${text} ` : text}${fence}`;
 }
 
+function canRenderInlineCode(text: string, options: RenderInlineOptions): boolean {
+  return !/[\r\n\u2028\u2029]/.test(text) && !(options.tableCell && text.includes("|"));
+}
+
 function sameSupportedInlineAttributes(
   left: SupportedInlineAttributes,
   right: SupportedInlineAttributes,
@@ -231,7 +235,8 @@ function renderTextDelta(
 
   if (attributes.linkedPage !== null) {
     const destination = `LinkedPage:${attributes.linkedPage}`;
-    const link = renderMarkdownLinkWithSafeLabel(escapeMarkdownPlainText(attributes.linkedPage), destination);
+    const label = escapeMarkdownPlainText(attributes.linkedPage, { escapeDollars: options.escapeDollars });
+    const link = renderMarkdownLinkWithSafeLabel(label, destination);
     if (link === null) {
       recordInlineLoss(state, context, "reference", "unsafe URL scheme");
       return "";
@@ -263,11 +268,8 @@ function renderTextDelta(
     }
   }
 
-  const codeCannotBePreserved = attributes.code && (
-    /[\r\n\u2028\u2029]/.test(text) ||
-    (options.tableCell === true && text.includes("|"))
-  );
-  if (codeCannotBePreserved) {
+  const renderAsCode = attributes.code && canRenderInlineCode(text, options);
+  if (attributes.code && !renderAsCode) {
     recordInlineLoss(
       state,
       context,
@@ -275,7 +277,6 @@ function renderTextDelta(
       options.tableCell ? "table delimiters or line breaks are unsafe in inline code" : "line breaks are unsafe in inline code",
     );
   }
-  const renderAsCode = attributes.code && !codeCannotBePreserved;
   const hasFormatting =
     attributes.bold ||
     attributes.italic ||
@@ -322,11 +323,14 @@ function renderTextDeltas(
     }
   }
 
-  // Two `$` in one block could pair up as math on re-import, so escape them all.
+  // Math scanning can pair dollars across code and link syntax, so count those dollars too.
   const dollarCount = runs.reduce((count, run) => {
-    if (run.attributes.latex !== null) return count + 2;
-    if (run.attributes.code || run.attributes.linkedPage !== null) return count;
-    return count + countDollarSigns(run.insert);
+    if (run.attributes.linkedPage !== null) {
+      // The page ID appears in both the label and destination.
+      return count + 2 * countDollarSigns(run.attributes.linkedPage);
+    }
+    return count + (run.attributes.latex !== null ? 2 : countDollarSigns(run.insert)) +
+      countDollarSigns(run.attributes.link ?? "");
   }, 0);
   const runOptions: RenderRunOptions = { ...options, escapeDollars: dollarCount >= 2 };
   const outputs = runs.map(run => renderTextDelta(run.insert, run.attributes, context, state, runOptions));
@@ -415,7 +419,7 @@ function renderBlock(
   blockId: string,
   listDepth: number,
   state: RenderState,
-  insideCallout: boolean = false,
+  container?: "callout" | "quote" | "list",
 ): RenderChunk {
   if (state.visited.has(blockId)) {
     return { lines: [], isList: false };
@@ -447,7 +451,7 @@ function renderBlock(
       } else if (type === "quote") {
         lines = formatQuote(text);
       } else {
-        if (!insideCallout && text.split(/\r\n|\r|\n/).some(line =>
+        if (container !== "callout" && text.split(/\r\n|\r|\n/).some(line =>
           /^ {0,3}\$\$/.test(line) &&
           findUnescaped(line, "$$", line.indexOf("$$") + 2) === line.trimEnd().length - 2)) {
           state.unsupportedCount += 1;
@@ -456,8 +460,9 @@ function renderBlock(
         lines = [text];
       }
 
+      const childContainer = container === "callout" || type !== "quote" ? container : "quote";
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, insideCallout);
+        const child = renderBlock(childId, listDepth, state, childContainer);
         if (child.lines.length > 0) {
           lines.push(...child.lines);
         }
@@ -482,7 +487,7 @@ function renderBlock(
       for (const childId of children) {
         const child = state.blocksById.get(childId);
         const nextDepth = child?.flavour === "affine:list" ? listDepth + 1 : listDepth;
-        const rendered = renderBlock(childId, nextDepth, state, insideCallout);
+        const rendered = renderBlock(childId, nextDepth, state, container === "callout" ? container : "list");
         if (rendered.lines.length > 0) {
           lines.push(...rendered.lines);
         }
@@ -516,6 +521,15 @@ function renderBlock(
       }
       if (math.respaced) {
         recordMathRespacing(state, `LaTeX block '${blockId}'`);
+      }
+      if (container) {
+        state.unsupportedCount += 1;
+        const consequence = container === "quote"
+          ? "moves it to the document root."
+          : container === "list"
+            ? "cannot preserve it as a nested display math block."
+            : "converts it to inline math.";
+        addWarning(state, `LaTeX block '${blockId}' is inside a ${container} and Markdown re-import ${consequence}`);
       }
       return { lines: math.markdown, isList: false };
     }
@@ -582,7 +596,7 @@ function renderBlock(
     case "affine:callout": {
       const contentLines: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, true);
+        const child = renderBlock(childId, listDepth, state, "callout");
         if (child.lines.length > 0) {
           if (contentLines.length > 0 && !child.isList) {
             contentLines.push("");
@@ -604,7 +618,7 @@ function renderBlock(
     case "affine:surface": {
       const chunks: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, insideCallout);
+        const child = renderBlock(childId, listDepth, state, container);
         if (child.lines.length > 0) {
           if (chunks.length > 0 && !child.isList) {
             chunks.push("");
