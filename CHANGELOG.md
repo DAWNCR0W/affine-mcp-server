@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Escape dollar signs in code runs that export as plain text, including table cells with pipes, so re-import does not turn text into math.
 - Report safety-added spaces and inline-to-display block conversion as lossy. Avoid that conversion warning for inline math inside native callouts.
 - Report display equation blocks inside callouts as lossy when Markdown re-import converts them to inline math.
+- Report display equation blocks below quotes or lists as lossy when Markdown re-import changes their placement or converts them to inline math.
 
 ### Changed
 - Update locked Express to 5.3.0, Playwright to 1.64.0, and development Node.js types to 24.19.2; update pinned GitHub Actions dependencies.

@@ -416,7 +416,7 @@ function renderBlock(
   blockId: string,
   listDepth: number,
   state: RenderState,
-  insideCallout: boolean = false,
+  container?: "callout" | "quote" | "list",
 ): RenderChunk {
   if (state.visited.has(blockId)) {
     return { lines: [], isList: false };
@@ -448,7 +448,7 @@ function renderBlock(
       } else if (type === "quote") {
         lines = formatQuote(text);
       } else {
-        if (!insideCallout && text.split(/\r\n|\r|\n/).some(line =>
+        if (container !== "callout" && text.split(/\r\n|\r|\n/).some(line =>
           /^ {0,3}\$\$/.test(line) &&
           findUnescaped(line, "$$", line.indexOf("$$") + 2) === line.trimEnd().length - 2)) {
           state.unsupportedCount += 1;
@@ -457,8 +457,9 @@ function renderBlock(
         lines = [text];
       }
 
+      const childContainer = container === "callout" || type !== "quote" ? container : "quote";
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, insideCallout);
+        const child = renderBlock(childId, listDepth, state, childContainer);
         if (child.lines.length > 0) {
           lines.push(...child.lines);
         }
@@ -483,7 +484,7 @@ function renderBlock(
       for (const childId of children) {
         const child = state.blocksById.get(childId);
         const nextDepth = child?.flavour === "affine:list" ? listDepth + 1 : listDepth;
-        const rendered = renderBlock(childId, nextDepth, state, insideCallout);
+        const rendered = renderBlock(childId, nextDepth, state, container === "callout" ? container : "list");
         if (rendered.lines.length > 0) {
           lines.push(...rendered.lines);
         }
@@ -518,9 +519,14 @@ function renderBlock(
       if (math.respaced) {
         recordMathRespacing(state, `LaTeX block '${blockId}'`);
       }
-      if (insideCallout) {
+      if (container) {
         state.unsupportedCount += 1;
-        addWarning(state, `LaTeX block '${blockId}' is inside a callout and Markdown re-import converts it to inline math.`);
+        const consequence = container === "quote"
+          ? "moves it to the document root."
+          : container === "list"
+            ? "cannot preserve it as a nested display math block."
+            : "converts it to inline math.";
+        addWarning(state, `LaTeX block '${blockId}' is inside a ${container} and Markdown re-import ${consequence}`);
       }
       return { lines: math.markdown, isList: false };
     }
@@ -587,7 +593,7 @@ function renderBlock(
     case "affine:callout": {
       const contentLines: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, true);
+        const child = renderBlock(childId, listDepth, state, "callout");
         if (child.lines.length > 0) {
           if (contentLines.length > 0 && !child.isList) {
             contentLines.push("");
@@ -609,7 +615,7 @@ function renderBlock(
     case "affine:surface": {
       const chunks: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, insideCallout);
+        const child = renderBlock(childId, listDepth, state, container);
         if (child.lines.length > 0) {
           if (chunks.length > 0 && !child.isList) {
             chunks.push("");
