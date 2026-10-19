@@ -208,6 +208,33 @@ function testDisplayMathInsideContainersBecomesInlineMath() {
   assert.equal(list.lossy, true);
 }
 
+function testListTextAfterDisplayMathIsPreserved() {
+  const cases = [
+    { markdown: '- Before\n  $$x$$\n  After', text: 'Before\n \nAfter' },
+    { markdown: '- $$x$$\n  After', text: ' \nAfter' },
+    { markdown: '- $$x$$\n\n  After', text: ' \nAfter' },
+    { markdown: '- Before\n  $$\n  x\n  $$\n  After', text: 'Before\n \nAfter' },
+    { markdown: '- [x] Before\n  $$x$$\n  After', text: 'Before\n \nAfter', checked: true },
+    { markdown: '- [ ]\n  $$x$$\n  After', text: ' \nAfter', checked: false },
+  ];
+  for (const { markdown, text, checked } of cases) {
+    const parsed = parseMarkdownToOperations(markdown);
+    assert.equal(parsed.operations.length, 1, markdown);
+    const operation = parsed.operations[0];
+    assert.equal(operation.type, 'list', markdown);
+    assert.equal(operation.text, text, markdown);
+    assert.equal(operation.deltas.map(delta => delta.insert).join(''), text, markdown);
+    assert.deepEqual(latexValues(operation.deltas), ['x'], markdown);
+    assert.equal(operation.style, checked === undefined ? 'bulleted' : 'todo', markdown);
+    if (checked !== undefined) assert.equal(operation.checked, checked, markdown);
+    assert.equal(parsed.lossy, true, 'display-to-inline conversion is still reported');
+  }
+
+  const nested = parseMarkdownToOperations('- Before\n  $$x$$\n  After\n  - Child $y$');
+  assert.deepEqual(nested.operations.map(operation => operation.text), ['Before\n \nAfter', 'Child  ']);
+  assert.deepEqual(nested.operations.map(operation => latexValues(operation.deltas)), [['x'], ['y']]);
+}
+
 function testLatexBlockExport() {
   const block = markdownBlock({
     flavour: 'affine:latex',
@@ -392,6 +419,7 @@ testDollarTextIsNotMath();
 testMathOnlyInlineBlocksSurvive();
 testTableCellMath();
 testDisplayMathInsideContainersBecomesInlineMath();
+testListTextAfterDisplayMathIsPreserved();
 testLatexBlockExport();
 testLatexBlockExportEdgeCases();
 testInlineLatexExport();

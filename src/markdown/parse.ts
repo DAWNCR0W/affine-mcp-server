@@ -539,8 +539,11 @@ function parseList(
       let cursor = i + 1;
       while (cursor < close) {
         const current = tokens[cursor];
-        if (!itemText && current.type === "inline") {
-          itemDeltas = renderInline(current.children ?? []);
+        if (current.type === "inline") {
+          if (itemDeltas.length > 0) {
+            itemDeltas.push({ insert: "\n" });
+          }
+          itemDeltas.push(...renderInline(current.children ?? []));
           itemText = deltaToText(itemDeltas);
         }
 
