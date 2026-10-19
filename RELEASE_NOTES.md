@@ -1,5 +1,30 @@
 # Release Notes
 
+## Version 3.10.0 (2026-10-19)
+
+### Highlights
+- Import and export LaTeX equations as native AFFiNE math with `$...$` inline equations and `$$...$$` equation blocks.
+
+### What Changed
+- Support equations in `create_doc_from_markdown`, `append_markdown`, and `replace_doc_with_markdown`, keeping TeX backslashes intact (#412).
+- Export native equation blocks and inline equations as Markdown math. Escape literal dollar signs where needed to keep ordinary text from becoming equations on re-import.
+- Preserve list-item text after display math, including task items and nested lists. Report safety respacing and standalone inline-to-display conversion as lossy, with context-aware handling for native callouts.
+- Preserve literal dollar-sign text across code, link, and linked-page boundaries, including code that falls back to plain text.
+- Report display equation blocks inside callouts as lossy when re-import converts them to inline math.
+- Report display equation blocks below quotes or lists as lossy when re-import changes their placement or converts them to inline math.
+- Add fast parser, export, and round-trip regressions and live integration checks for native equation storage.
+- Update locked Express to 5.3.0, Playwright to 1.64.0, and development Node.js types to 24.19.2; update pinned GitHub Actions dependencies.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names and required inputs remain unchanged.
+- Markdown imports now interpret matching `$...$` and `$$...$$` delimiters as math. Common prices such as `$5 and $10` remain text; write `\$` for a literal dollar sign next to math.
+- Display math inside lists or quotes becomes inline math. Export reports safety-added spaces and inline-to-display block conversion through `lossy` and warnings.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.10.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @Yeh35 for contributing Markdown math support.
+
 ## Version 3.9.1 (2026-10-12)
 
 ### Highlights

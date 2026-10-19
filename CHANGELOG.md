@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-10-19
+
 ### Added
 - Markdown import (`create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`) converts `$$...$$` to native AFFiNE equation blocks and `$...$` to inline equations, keeping TeX backslashes such as `\,` intact. Inline `$` follows Pandoc's rules, so prices such as `$5 and $10` stay text.
 - Markdown export writes equation blocks as `$$...$$` and inline equations as `$...$`, and escapes `$` in text only where it could otherwise be re-imported as math.
 
+### Fixed
+- Preserve list-item text after display math, including task items and nested lists.
+- Preserve literal dollar-sign text across code, link, and linked-page boundaries, including code that falls back to plain text in table cells.
+- Report safety-added spaces and inline-to-display block conversion as lossy. Avoid that conversion warning for inline math inside native callouts.
+- Report display equation blocks inside callouts as lossy when Markdown re-import converts them to inline math.
+- Report display equation blocks below quotes or lists as lossy when Markdown re-import changes their placement or converts them to inline math.
+
+### Changed
+- Update locked Express to 5.3.0, Playwright to 1.64.0, and development Node.js types to 24.19.2; update pinned GitHub Actions dependencies.
+
 ### Tests
-- Cover math import, export, round trips, and dollar-sign text in a new fast suite test.
+- Cover math import, export, round trips, dollar-sign text, container handling, and native equation persistence in fast and live integration tests.
 
 ## [3.9.1] - 2026-10-12
 
@@ -920,6 +932,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.10.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.10.0
 [3.9.1]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.1
 [3.9.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.0
 [3.8.5]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.8.5
@@ -968,4 +981,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.9.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.10.0...HEAD
