@@ -312,6 +312,64 @@ function testInlineLatexExportRoundTrips() {
   }
 }
 
+function testStandaloneDoubleDollarInlineMathReportsBlockConversion() {
+  const latex = '\\text{$y$}';
+  const cases = [
+    [latexDelta(latex)],
+    [{ insert: '  ' }, latexDelta(latex), { insert: '  ' }],
+    [latexDelta(latex), { insert: '', attributes: { bold: true } }],
+  ];
+  for (const deltas of cases) {
+    const rendered = renderDeltas(deltas);
+    assert.equal(rendered.markdown, `$$${latex}$$`);
+    assert.deepEqual(parseMarkdownToOperations(rendered.markdown).operations, [{ type: 'latex', latex }]);
+    assert.equal(rendered.lossy, true);
+    assert.equal(rendered.stats.unsupportedCount, 1);
+    assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0, 'the formula itself is preserved');
+    assert.match(rendered.warnings.join('\n'), /inline math.*display math block/);
+  }
+
+  const contextual = [
+    [{ insert: 'See ' }, latexDelta(latex)],
+    [latexDelta(latex), { insert: ' after' }],
+    [latexDelta(latex, { bold: true })],
+    [latexDelta(latex), latexDelta('\\text{$z$}')],
+    [{ insert: '  ', attributes: { latex } }],
+    [latexDelta(latex), latexDelta(latex)],
+  ];
+  for (const deltas of contextual) {
+    const rendered = renderDeltas(deltas);
+    assert.equal(rendered.lossy, false, rendered.markdown);
+    const operation = onlyOperation(rendered.markdown);
+    assert.equal(operation.type, 'paragraph', rendered.markdown);
+    const expected = deltas.flatMap(delta => typeof delta.attributes?.latex === 'string'
+      ? Array(delta.insert.length).fill(delta.attributes.latex)
+      : []);
+    assert.deepEqual(latexValues(operation.deltas), expected, rendered.markdown);
+  }
+
+  for (const overrides of [
+    { type: 'h2' },
+    { flavour: 'affine:list', type: 'bulleted' },
+    { type: 'quote' },
+    { flavour: 'affine:callout', type: null },
+  ]) {
+    const rendered = renderSingleBlock(markdownBlock({ ...overrides, textDeltas: [latexDelta(latex)] }));
+    assert.equal(rendered.lossy, false, rendered.markdown);
+    assert.deepEqual(latexValues(onlyOperation(rendered.markdown).deltas), [latex], rendered.markdown);
+  }
+
+  const callout = markdownBlock({ id: 'callout', flavour: 'affine:callout', type: null, childIds: ['body'] });
+  const body = markdownBlock({ id: 'body', parentId: 'callout', textDeltas: [latexDelta(latex)] });
+  const renderedCallout = renderBlocksToMarkdown({
+    rootBlockIds: [callout.id],
+    blocksById: new Map([[callout.id, callout], [body.id, body]]),
+  });
+  assert.equal(renderedCallout.lossy, false, 'native callout child paragraphs stay inline after quoting');
+  assert.deepEqual(renderedCallout.warnings, []);
+  assert.deepEqual(latexValues(onlyOperation(renderedCallout.markdown).deltas), [latex]);
+}
+
 function testUnrepresentableInlineLatexIsReported() {
   for (const latex of ['a\nb', 'x\\', '']) {
     const rendered = renderDeltas([{ insert: 'f ' }, latexDelta(latex)]);
@@ -424,6 +482,7 @@ testLatexBlockExport();
 testLatexBlockExportEdgeCases();
 testInlineLatexExport();
 testInlineLatexExportRoundTrips();
+testStandaloneDoubleDollarInlineMathReportsBlockConversion();
 testUnrepresentableInlineLatexIsReported();
 testTableCellLatexExport();
 testExportedMathCannotInjectMarkup();
