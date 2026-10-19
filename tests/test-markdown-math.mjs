@@ -468,6 +468,54 @@ function testDollarTextRoundTripsAsText() {
   assert.equal(onlyOperation(tableText.markdown).tableData[1][0], '$5 or $6');
 }
 
+function testCodeFallbackDollarTextRoundTripsAsText() {
+  const table = renderSingleBlock(markdownBlock({
+    flavour: 'affine:table',
+    type: null,
+    tableData: [['Value'], ['a|b$c$']],
+    tableCellDeltas: [[[{ insert: 'Value' }]], [[
+      { insert: 'a|b$', attributes: { code: true } },
+      { insert: 'c$' },
+    ]]],
+  }));
+  assert.equal(table.markdown, '| Value |\n| --- |\n| a\\|b\\$c\\$ |');
+  const operation = onlyOperation(table.markdown);
+  assert.equal(operation.tableData[1][0], 'a|b$c$');
+  assert.deepEqual(latexValues(operation.tableCellDeltas[1][0]), []);
+  assert.equal(table.lossy, true);
+  assert.equal(table.stats.unsupportedCount, 1);
+  assert.equal(table.stats.unsupportedInlineAttributeCount, 1);
+  assert.equal(table.warnings.length, 1);
+  assert.match(table.warnings[0], /'code'/);
+
+  for (const [lineBreak, escaped] of [
+    ['\n', '&#10;'],
+    ['\r', '&#13;'],
+    ['\r\n', '&#13;&#10;'],
+    ['\u2028', '&#8232;'],
+    ['\u2029', '&#8233;'],
+  ]) {
+    const rendered = renderDeltas([
+      { insert: `a${lineBreak}b$`, attributes: { code: true } },
+      { insert: 'c$' },
+    ]);
+    assert.equal(rendered.markdown, `a${escaped}b\\$c\\$`);
+    const paragraph = onlyOperation(rendered.markdown);
+    assert.equal(paragraph.text, `a${lineBreak}b$c$`);
+    assert.deepEqual(latexValues(paragraph.deltas), []);
+    assert.equal(rendered.stats.unsupportedCount, 1);
+    assert.equal(rendered.stats.unsupportedInlineAttributeCount, 1);
+    assert.equal(rendered.warnings.length, 1);
+    assert.match(rendered.warnings[0], /'code'/);
+  }
+
+  const safeCode = [{ insert: 'a$b', attributes: { code: true } }, { insert: 'c$' }];
+  const safe = renderDeltas(safeCode);
+  assert.equal(safe.markdown, '`a$b`c$');
+  assert.equal(safe.lossy, false);
+  assert.deepEqual(parsedDeltas(safe.markdown), safeCode);
+}
+
 testDisplayMathBecomesLatexBlock();
 testDisplayMathInterruptsParagraphs();
 testDisplayMathLookalikesStayText();
@@ -487,4 +535,5 @@ testUnrepresentableInlineLatexIsReported();
 testTableCellLatexExport();
 testExportedMathCannotInjectMarkup();
 testDollarTextRoundTripsAsText();
+testCodeFallbackDollarTextRoundTripsAsText();
 console.log('Markdown math tests passed');
