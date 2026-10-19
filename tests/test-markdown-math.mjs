@@ -272,6 +272,33 @@ function testLatexBlockExportEdgeCases() {
   assert.deepEqual(reparsed, [{ type: 'code', text: 'a $$\nb', language: 'latex' }]);
 }
 
+function testDisplayMathInsideNativeCalloutReportsInlineConversion() {
+  const latex = 'x^2';
+  const callout = markdownBlock({ id: 'callout', flavour: 'affine:callout', type: null, childIds: ['equation'] });
+  const equation = markdownBlock({ id: 'equation', parentId: callout.id, flavour: 'affine:latex', type: null, latex });
+  const rendered = renderBlocksToMarkdown({
+    rootBlockIds: [callout.id],
+    blocksById: new Map([[callout.id, callout], [equation.id, equation]]),
+  });
+  assert.equal(rendered.markdown, '> [!NOTE]\n> $$\n> x^2\n> $$');
+  const operation = onlyOperation(rendered.markdown);
+  assert.equal(operation.type, 'callout');
+  assert.deepEqual(latexValues(operation.deltas), [latex]);
+  assert.equal(rendered.lossy, true);
+  assert.equal(rendered.stats.unsupportedCount, 1);
+  assert.equal(rendered.stats.unsupportedInlineAttributeCount, 0);
+  assert.equal(rendered.warnings.length, 1);
+  assert.match(rendered.warnings[0], /LaTeX block 'equation'.*callout.*inline math/);
+
+  const fallback = renderBlocksToMarkdown({
+    rootBlockIds: [callout.id],
+    blocksById: new Map([[callout.id, callout], [equation.id, { ...equation, latex: 'a $$\nb' }]]),
+  });
+  assert.equal(fallback.stats.unsupportedCount, 1);
+  assert.equal(fallback.warnings.length, 1);
+  assert.match(fallback.warnings[0], /exported as a latex code block/);
+}
+
 function testInlineLatexExport() {
   const deltas = [
     { insert: 'Euler: ' },
@@ -528,6 +555,7 @@ testDisplayMathInsideContainersBecomesInlineMath();
 testListTextAfterDisplayMathIsPreserved();
 testLatexBlockExport();
 testLatexBlockExportEdgeCases();
+testDisplayMathInsideNativeCalloutReportsInlineConversion();
 testInlineLatexExport();
 testInlineLatexExportRoundTrips();
 testStandaloneDoubleDollarInlineMathReportsBlockConversion();

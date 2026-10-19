@@ -518,6 +518,10 @@ function renderBlock(
       if (math.respaced) {
         recordMathRespacing(state, `LaTeX block '${blockId}'`);
       }
+      if (insideCallout) {
+        state.unsupportedCount += 1;
+        addWarning(state, `LaTeX block '${blockId}' is inside a callout and Markdown re-import converts it to inline math.`);
+      }
       return { lines: math.markdown, isList: false };
     }
 

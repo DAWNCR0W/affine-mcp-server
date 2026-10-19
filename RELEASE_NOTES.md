@@ -10,6 +10,7 @@
 - Export native equation blocks and inline equations as Markdown math. Escape literal dollar signs where needed to keep ordinary text from becoming equations on re-import.
 - Preserve list-item text after display math, including task items and nested lists. Report safety respacing and standalone inline-to-display conversion as lossy, with context-aware handling for native callouts.
 - Preserve literal dollar-sign text when inline code falls back to plain text.
+- Report display equation blocks inside callouts as lossy when re-import converts them to inline math.
 - Add fast parser, export, and round-trip regressions and live integration checks for native equation storage.
 - Update locked Express to 5.3.0, Playwright to 1.64.0, and development Node.js types to 24.19.2; update pinned GitHub Actions dependencies.
 
