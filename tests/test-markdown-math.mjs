@@ -716,9 +716,57 @@ function testCodeFallbackDollarTextRoundTripsAsText() {
 
   const safeCode = [{ insert: 'a$b', attributes: { code: true } }, { insert: 'c$' }];
   const safe = renderDeltas(safeCode);
-  assert.equal(safe.markdown, '`a$b`c$');
+  assert.equal(safe.markdown, '`a$b`c\\$');
   assert.equal(safe.lossy, false);
   assert.deepEqual(parsedDeltas(safe.markdown), safeCode);
+}
+
+function testDollarTextAcrossCodeAndLinksRoundTripsAsText() {
+  const reference = { insert: ' ', attributes: { reference: { type: 'LinkedPage', pageId: 'y$' } } };
+  const link = { insert: 'link', attributes: { link: 'https://example.com/y$' } };
+  for (const protectedRun of [{ insert: 'y$', attributes: { code: true } }, reference, link]) {
+    for (const reverse of [false, true]) {
+      const plain = { insert: '$x' };
+      const deltas = reverse ? [protectedRun, plain] : [plain, protectedRun];
+      for (const tableCell of [false, true]) {
+        const rendered = tableCell ? renderSingleBlock(markdownBlock({
+          flavour: 'affine:table', type: null,
+          tableData: [['Value'], [deltas.map(delta => delta.insert).join('')]],
+          tableCellDeltas: [[[{ insert: 'Value' }]], [deltas]],
+        })) : renderDeltas(deltas);
+        const operation = onlyOperation(rendered.markdown);
+        const actual = (tableCell ? operation.tableCellDeltas[1][0] : operation.deltas)
+          .filter(delta => delta.insert !== '');
+        assert.deepEqual(actual, deltas, rendered.markdown);
+        assert.deepEqual(latexValues(actual), [], rendered.markdown);
+        assert.equal(rendered.lossy, false, rendered.markdown);
+        assert.deepEqual(rendered.warnings, [], rendered.markdown);
+      }
+    }
+  }
+
+  for (const deltas of [
+    [reference],
+    [{ insert: 'See ' }, { insert: 'label $', attributes: { link: 'https://example.com/y$' } }],
+  ]) {
+    const rendered = renderDeltas(deltas);
+    assert.deepEqual(parsedDeltas(rendered.markdown), deltas, rendered.markdown);
+    assert.equal(rendered.lossy, false, rendered.markdown);
+    assert.deepEqual(rendered.warnings, [], rendered.markdown);
+  }
+
+  const reversedFallback = renderSingleBlock(markdownBlock({
+    flavour: 'affine:table', type: null, tableData: [['Value'], ['c$a|b$']],
+    tableCellDeltas: [[[{ insert: 'Value' }]], [[{ insert: 'c$' }, { insert: 'a|b$', attributes: { code: true } }]]],
+  }));
+  assert.equal(reversedFallback.markdown, '| Value |\n| --- |\n| c\\$a\\|b\\$ |');
+  const fallbackDeltas = onlyOperation(reversedFallback.markdown).tableCellDeltas[1][0];
+  assert.equal(fallbackDeltas.map(delta => delta.insert).join(''), 'c$a|b$');
+  assert.deepEqual(latexValues(fallbackDeltas), []);
+  assert.equal(reversedFallback.lossy, true);
+  assert.equal(reversedFallback.stats.unsupportedInlineAttributeCount, 1);
+  assert.equal(reversedFallback.warnings.length, 1);
+  assert.match(reversedFallback.warnings[0], /'code'/);
 }
 
 testDisplayMathBecomesLatexBlock();
@@ -747,4 +795,5 @@ testTableCellLatexExport();
 testExportedMathCannotInjectMarkup();
 testDollarTextRoundTripsAsText();
 testCodeFallbackDollarTextRoundTripsAsText();
+testDollarTextAcrossCodeAndLinksRoundTripsAsText();
 console.log('Markdown math tests passed');
