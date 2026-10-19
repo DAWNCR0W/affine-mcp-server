@@ -184,6 +184,10 @@ function inlineCodeFence(text: string): string {
   return `${fence}${needsPadding ? ` ${text} ` : text}${fence}`;
 }
 
+function canRenderInlineCode(text: string, options: RenderInlineOptions): boolean {
+  return !/[\r\n\u2028\u2029]/.test(text) && !(options.tableCell && text.includes("|"));
+}
+
 function sameSupportedInlineAttributes(
   left: SupportedInlineAttributes,
   right: SupportedInlineAttributes,
@@ -263,11 +267,8 @@ function renderTextDelta(
     }
   }
 
-  const codeCannotBePreserved = attributes.code && (
-    /[\r\n\u2028\u2029]/.test(text) ||
-    (options.tableCell === true && text.includes("|"))
-  );
-  if (codeCannotBePreserved) {
+  const renderAsCode = attributes.code && canRenderInlineCode(text, options);
+  if (attributes.code && !renderAsCode) {
     recordInlineLoss(
       state,
       context,
@@ -275,7 +276,6 @@ function renderTextDelta(
       options.tableCell ? "table delimiters or line breaks are unsafe in inline code" : "line breaks are unsafe in inline code",
     );
   }
-  const renderAsCode = attributes.code && !codeCannotBePreserved;
   const hasFormatting =
     attributes.bold ||
     attributes.italic ||
@@ -325,7 +325,8 @@ function renderTextDeltas(
   // Two `$` in one block could pair up as math on re-import, so escape them all.
   const dollarCount = runs.reduce((count, run) => {
     if (run.attributes.latex !== null) return count + 2;
-    if (run.attributes.code || run.attributes.linkedPage !== null) return count;
+    if (run.attributes.linkedPage !== null ||
+      (run.attributes.code && canRenderInlineCode(run.insert, options))) return count;
     return count + countDollarSigns(run.insert);
   }, 0);
   const runOptions: RenderRunOptions = { ...options, escapeDollars: dollarCount >= 2 };
