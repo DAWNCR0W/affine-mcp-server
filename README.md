@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.9.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.10.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.1-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -91,7 +91,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.9.1
+  ghcr.io/dawncr0w/affine-mcp-server:3.10.0
 ```
 
 Then point your client at:
@@ -268,8 +268,8 @@ Domains:
 - Blob storage: upload, delete, and cleanup blobs
 
 For new document content, use `create_doc` for an optional single plain-text
-paragraph and `create_doc_from_markdown` for native headings, lists, links, and
-code blocks. Both tools accept `folderId` for immediate organize-folder placement.
+paragraph and `create_doc_from_markdown` for native headings, lists, links,
+code blocks, and `$$...$$`/`$...$` math equations. Both tools accept `folderId` for immediate organize-folder placement.
 New pages record the authenticated AFFiNE account in the app's **Created by**
 property, including semantic pages, template instances, and workspace welcome pages.
 Existing creator records are preserved; older pages are not backfilled.

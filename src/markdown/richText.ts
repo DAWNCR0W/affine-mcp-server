@@ -3,11 +3,24 @@ import * as Y from "yjs";
 import type { TextDelta, TextDeltaAttributes } from "./types.js";
 
 export const AFFINE_LINKED_PAGE_REFERENCE_NODE = " ";
+export const AFFINE_INLINE_LATEX_NODE = " ";
 
 export function isLinkedPageReferenceDelta(delta: TextDelta): boolean {
   const reference = delta.attributes?.reference;
   return !!reference && typeof reference === "object" && !Array.isArray(reference) &&
     (reference as { type?: unknown }).type === "LinkedPage";
+}
+
+export function isInlineLatexDelta(delta: TextDelta): boolean {
+  return typeof delta.attributes?.latex === "string";
+}
+
+/**
+ * Linked pages and inline math are embeds stored as one space each, so text
+ * trimming must not remove them.
+ */
+export function isInlineEmbedDelta(delta: TextDelta): boolean {
+  return isLinkedPageReferenceDelta(delta) || isInlineLatexDelta(delta);
 }
 
 /**
