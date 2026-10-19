@@ -498,6 +498,7 @@ const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-sele
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
   "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
+  "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
   "Blank lines delimit Markdown blocks and do not create spacer paragraph blocks.",
   "CommonMark parsing normalizes Markdown syntax and surrounding whitespace, including leading whitespace in list-item content.",
@@ -518,6 +519,7 @@ const MARKDOWN_EXPORT_SUPPORTED_FLAVOURS = new Set<string>([
   "affine:image",
   "affine:table",
   "affine:callout",
+  "affine:latex",
   "affine:note",
   "affine:page",
   "affine:surface",
@@ -3492,6 +3494,15 @@ export function registerDocTools(
           strict,
           placement,
         };
+      case "latex":
+        return {
+          workspaceId,
+          docId,
+          type: "latex",
+          latex: operation.latex,
+          strict,
+          placement,
+        };
       default: {
         const exhaustiveCheck: never = operation;
         throw new Error(`Unsupported markdown operation type: ${(exhaustiveCheck as any).type}`);
@@ -3779,6 +3790,7 @@ export function registerDocTools(
         caption: asStringOrNull(block.get("prop:caption")),
         tableData: table?.tableData ?? null,
         tableCellDeltas: table?.tableCellDeltas ?? null,
+        latex: asStringOrNull(block.get("prop:latex")),
       };
       blocksById.set(blockId, entry);
 
@@ -7210,7 +7222,7 @@ export function registerDocTools(
     "create_doc_from_markdown",
     {
       title: "Create Document From Markdown",
-      description: "Create a new AFFiNE document and import Markdown as native blocks. Use parentDocId to embed the new doc into a parent, or folderId to place it in an organize folder.",
+      description: "Create a new AFFiNE document and import Markdown as native blocks, including $$...$$ equation blocks and $...$ inline equations. Use parentDocId to embed the new doc into a parent, or folderId to place it in an organize folder.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         title: z.string().optional(),
@@ -7329,7 +7341,7 @@ export function registerDocTools(
     "append_markdown",
     {
       title: "Append Markdown",
-      description: "Append markdown content to an existing AFFiNE document.",
+      description: "Append markdown content to an existing AFFiNE document. $$...$$ and $...$ become native equations.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,

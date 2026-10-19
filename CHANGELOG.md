@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Markdown import (`create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`) converts `$$...$$` to native AFFiNE equation blocks and `$...$` to inline equations, keeping TeX backslashes such as `\,` intact. Inline `$` follows Pandoc's rules, so prices such as `$5 and $10` stay text.
+- Markdown export writes equation blocks as `$$...$$` and inline equations as `$...$`, and escapes `$` in text only where it could otherwise be re-imported as math.
+
+### Tests
+- Cover math import, export, round trips, and dollar-sign text in a new fast suite test.
+
 ## [3.9.1] - 2026-10-12
 
 ### Fixed

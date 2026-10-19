@@ -1,9 +1,11 @@
 import MarkdownIt from "markdown-it";
 import type { MarkdownListStyle, MarkdownOperation, MarkdownParseResult, TextDelta } from "./types.js";
 import {
+  AFFINE_INLINE_LATEX_NODE,
   AFFINE_LINKED_PAGE_REFERENCE_NODE,
-  isLinkedPageReferenceDelta,
+  isInlineEmbedDelta,
 } from "./richText.js";
+import { markdownItMath } from "./math.js";
 
 type TokenLike = {
   type: string;
@@ -20,7 +22,7 @@ const md = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: false,
-});
+}).use(markdownItMath);
 
 type ParseState = {
   operations: MarkdownOperation[];
@@ -145,16 +147,16 @@ function deltaToString(deltas: TextDelta[]): string {
   return deltas.map(delta => delta.insert).join("");
 }
 
-function hasLinkedPageReference(deltas: TextDelta[]): boolean {
-  return deltas.some(isLinkedPageReferenceDelta);
+function hasInlineEmbed(deltas: TextDelta[]): boolean {
+  return deltas.some(isInlineEmbedDelta);
 }
 
-function getLinkedPageTaskPrefix(
+function getInlineEmbedTaskPrefix(
   deltas: TextDelta[],
 ): { checked: boolean; prefixLength: number } | null {
   let leadingText = "";
   for (const delta of deltas) {
-    if (isLinkedPageReferenceDelta(delta)) {
+    if (isInlineEmbedDelta(delta)) {
       break;
     }
     leadingText += delta.insert;
@@ -172,7 +174,7 @@ function getLinkedPageTaskPrefix(
 
 function deltaToText(deltas: TextDelta[]): string {
   const text = deltaToString(deltas);
-  return hasLinkedPageReference(deltas) ? text : text.trim();
+  return hasInlineEmbed(deltas) ? text : text.trim();
 }
 
 /**
@@ -226,6 +228,26 @@ function linkedPageDelta(pageId: string): TextDelta {
   };
 }
 
+/** Build the embed delta AFFiNE uses for inline math. */
+function inlineLatexDelta(latex: string): TextDelta {
+  return { insert: AFFINE_INLINE_LATEX_NODE, attributes: { latex } };
+}
+
+/** Fold a display-math block into container text, which can only hold inline math. */
+function appendContainedDisplayMath(deltas: TextDelta[], token: TokenLike, state: ParseState): boolean {
+  const latex = token.content.trim();
+  if (!latex) {
+    return false;
+  }
+  if (deltas.length > 0) {
+    deltas.push({ insert: "\n" });
+  }
+  deltas.push(inlineLatexDelta(latex));
+  state.unsupportedCount += 1;
+  addWarning(state, "Display math inside lists or quotes was imported as inline math.");
+  return true;
+}
+
 function renderInline(children: TokenLike[]): TextDelta[] {
   function applyAttrs(deltas: TextDelta[], attrs: NonNullable<TextDelta["attributes"]>): TextDelta[] {
     return deltas.map(delta => ({
@@ -245,6 +267,9 @@ function renderInline(children: TokenLike[]): TextDelta[] {
           break;
         case "code_inline":
           output.push({ insert: token.content, attributes: { code: true } });
+          break;
+        case "math_inline":
+          output.push(inlineLatexDelta(token.content));
           break;
         case "softbreak":
           output.push({ insert: "\n" });
@@ -431,7 +456,12 @@ function parseTable(tokens: TokenLike[], start: number, end: number): {
   };
 }
 
-function collectQuoteText(tokens: TokenLike[], start: number, end: number): { text: string; deltas: TextDelta[] } {
+function collectQuoteText(
+  tokens: TokenLike[],
+  start: number,
+  end: number,
+  state: ParseState,
+): { text: string; deltas: TextDelta[] } {
   const lines: string[] = [];
   const allDeltas: TextDelta[] = [];
   let firstLine = true;
@@ -461,6 +491,10 @@ function collectQuoteText(tokens: TokenLike[], start: number, end: number): { te
       lines.push(fenceText);
       firstLine = false;
       continue;
+    }
+    if (token.type === "math_block" && appendContainedDisplayMath(allDeltas, token, state)) {
+      lines.push(AFFINE_INLINE_LATEX_NODE);
+      firstLine = false;
     }
   }
 
@@ -505,8 +539,15 @@ function parseList(
       let cursor = i + 1;
       while (cursor < close) {
         const current = tokens[cursor];
-        if (!itemText && current.type === "inline") {
-          itemDeltas = renderInline(current.children ?? []);
+        if (current.type === "inline") {
+          if (itemDeltas.length > 0) {
+            itemDeltas.push({ insert: "\n" });
+          }
+          itemDeltas.push(...renderInline(current.children ?? []));
+          itemText = deltaToText(itemDeltas);
+        }
+
+        if (current.type === "math_block" && appendContainedDisplayMath(itemDeltas, current, state)) {
           itemText = deltaToText(itemDeltas);
         }
 
@@ -534,14 +575,14 @@ function parseList(
 
       let style: MarkdownListStyle = defaultStyle;
       let checked: boolean | undefined;
-      const containsLinkedPageReference = hasLinkedPageReference(itemDeltas);
-      const linkedPageTask = containsLinkedPageReference
-        ? getLinkedPageTaskPrefix(itemDeltas)
+      const containsInlineEmbed = hasInlineEmbed(itemDeltas);
+      const embedTask = containsInlineEmbed
+        ? getInlineEmbedTaskPrefix(itemDeltas)
         : null;
-      const taskMatch = containsLinkedPageReference
+      const taskMatch = containsInlineEmbed
         ? null
         : itemText.match(/^\[(\s|x|X)\]\s+([\s\S]*)$/);
-      const task = linkedPageTask ?? (taskMatch
+      const task = embedTask ?? (taskMatch
         ? {
             checked: taskMatch[1].toLowerCase() === "x",
             prefixLength: deltaToString(itemDeltas).length - taskMatch[2].length,
@@ -681,6 +722,18 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
         break;
       }
 
+      case "math_block": {
+        const latex = token.content.trim();
+        if (latex) {
+          state.operations.push({ type: "latex", latex });
+        } else {
+          state.unsupportedCount += 1;
+          addWarning(state, "Empty display math blocks were skipped.");
+        }
+        i += 1;
+        break;
+      }
+
       case "hr":
         state.operations.push({ type: "divider" });
         i += 1;
@@ -694,7 +747,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           i += 1;
           break;
         }
-        const quoteResult = collectQuoteText(tokens, i + 1, close);
+        const quoteResult = collectQuoteText(tokens, i + 1, close, state);
         const quoteText = deltaToText(quoteResult.deltas);
         const calloutText = parseCalloutAdmonition(quoteText);
         if (calloutText !== null) {

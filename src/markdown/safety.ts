@@ -111,12 +111,28 @@ function startsMarkdownEntity(value: string, offset: number): boolean {
   return candidate !== undefined && markdownUtils.unescapeAll(candidate) !== candidate;
 }
 
+export type MarkdownTextEscapeOptions = {
+  /**
+   * Escape `$` so it cannot delimit math on re-import. Defaults to whether
+   * `value` holds two or more `$`; one `$` alone (a price) cannot delimit math.
+   */
+  escapeDollars?: boolean;
+};
+
+export function countDollarSigns(value: string): number {
+  return value.split("$").length - 1;
+}
+
 /** Escape untrusted text while leaving generated Markdown structure untouched. */
-export function escapeMarkdownPlainText(value: string): string {
+export function escapeMarkdownPlainText(value: string, options: MarkdownTextEscapeOptions = {}): string {
+  const escapeDollars = options.escapeDollars ?? countDollarSigns(value) >= 2;
   let offset = 0;
   return Array.from(value, character => {
     const currentOffset = offset;
     offset += character.length;
+    if (character === "$") {
+      return escapeDollars ? "\\$" : character;
+    }
     return character === "&" && startsMarkdownEntity(value, currentOffset)
       ? "\\&"
       : escapeMarkdownCharacter(character);
@@ -136,8 +152,8 @@ export function escapeMarkdownLinkLabel(value: string): string {
   return escapeMarkdownPlainText(value);
 }
 
-export function escapeMarkdownTableCell(value: string): string {
-  return escapeMarkdownPlainText(value).replace(/\|/g, "\\|");
+export function escapeMarkdownTableCell(value: string, options: MarkdownTextEscapeOptions = {}): string {
+  return escapeMarkdownPlainText(value, options).replace(/\|/g, "\\|");
 }
 
 export function escapeMarkdownLinkDestination(value: string): string {

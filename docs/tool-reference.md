@@ -135,7 +135,7 @@ check.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `create_doc` | Create a new document | `content` is stored as one plain paragraph; accepts `folderId` for immediate organize-folder placement |
-| `create_doc_from_markdown` | Create a document from Markdown content | Creates native blocks, accepts `folderId` for immediate organize-folder placement, and converts `[label](LinkedPage:<docId>)` links to native inline linked-doc references |
+| `create_doc_from_markdown` | Create a document from Markdown content | Creates native blocks, accepts `folderId` for immediate organize-folder placement, converts `[label](LinkedPage:<docId>)` links to native inline linked-doc references, and converts `$$...$$` and `$...$` math to native equations |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
@@ -144,9 +144,16 @@ check.
 | `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
 
 Use `create_doc_from_markdown` when the initial content contains headings, lists,
-links, quotes, tables, or code fences. `create_doc.content` does not parse Markdown;
+links, quotes, tables, code fences, or math. `create_doc.content` does not parse Markdown;
 when structured Markdown is detected, its receipt warns that the content was
 stored as one plain paragraph.
+
+Markdown import and export map LaTeX math to AFFiNE's native equations: a
+`$$...$$` block becomes an equation block and `$...$` becomes an inline
+equation. TeX backslashes such as `\,` are kept as written. Inline `$` follows
+Pandoc's rules, so text such as `$5 and $10` stays plain; write `\$` for a
+literal dollar sign next to math. Display math inside a list item or quote is
+imported as an inline equation in that block.
 
 ### Content editing
 
@@ -236,7 +243,7 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `export_doc_markdown` | Export document content as Markdown | Preserves supported inline rich text and safely escapes untrusted Markdown contexts, URLs, tables, code fences, and optional frontmatter |
+| `export_doc_markdown` | Export document content as Markdown | Preserves supported inline rich text and equations (as `$$...$$` and `$...$`), and safely escapes untrusted Markdown contexts, URLs, tables, code fences, and optional frontmatter |
 | `export_with_fidelity_report` | Export a document with a machine-readable fidelity report | Reports unsupported inline attributes and native block loss while using the same safe serializer |
 
 ## Database blocks
