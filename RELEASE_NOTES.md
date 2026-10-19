@@ -9,7 +9,7 @@
 - Support equations in `create_doc_from_markdown`, `append_markdown`, and `replace_doc_with_markdown`, keeping TeX backslashes intact (#412).
 - Export native equation blocks and inline equations as Markdown math. Escape literal dollar signs where needed to keep ordinary text from becoming equations on re-import.
 - Preserve list-item text after display math, including task items and nested lists. Report safety respacing and standalone inline-to-display conversion as lossy, with context-aware handling for native callouts.
-- Preserve literal dollar-sign text when inline code falls back to plain text.
+- Preserve literal dollar-sign text across code, link, and linked-page boundaries, including code that falls back to plain text.
 - Report display equation blocks inside callouts as lossy when re-import converts them to inline math.
 - Report display equation blocks below quotes or lists as lossy when re-import changes their placement or converts them to inline math.
 - Add fast parser, export, and round-trip regressions and live integration checks for native equation storage.

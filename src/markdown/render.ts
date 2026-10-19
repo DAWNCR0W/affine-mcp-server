@@ -235,7 +235,8 @@ function renderTextDelta(
 
   if (attributes.linkedPage !== null) {
     const destination = `LinkedPage:${attributes.linkedPage}`;
-    const link = renderMarkdownLinkWithSafeLabel(escapeMarkdownPlainText(attributes.linkedPage), destination);
+    const label = escapeMarkdownPlainText(attributes.linkedPage, { escapeDollars: options.escapeDollars });
+    const link = renderMarkdownLinkWithSafeLabel(label, destination);
     if (link === null) {
       recordInlineLoss(state, context, "reference", "unsafe URL scheme");
       return "";
@@ -322,12 +323,14 @@ function renderTextDeltas(
     }
   }
 
-  // Two `$` in one block could pair up as math on re-import, so escape them all.
+  // Math scanning can pair dollars across code and link syntax, so count those dollars too.
   const dollarCount = runs.reduce((count, run) => {
-    if (run.attributes.latex !== null) return count + 2;
-    if (run.attributes.linkedPage !== null ||
-      (run.attributes.code && canRenderInlineCode(run.insert, options))) return count;
-    return count + countDollarSigns(run.insert);
+    if (run.attributes.linkedPage !== null) {
+      // The page ID appears in both the label and destination.
+      return count + 2 * countDollarSigns(run.attributes.linkedPage);
+    }
+    return count + (run.attributes.latex !== null ? 2 : countDollarSigns(run.insert)) +
+      countDollarSigns(run.attributes.link ?? "");
   }, 0);
   const runOptions: RenderRunOptions = { ...options, escapeDollars: dollarCount >= 2 };
   const outputs = runs.map(run => renderTextDelta(run.insert, run.attributes, context, state, runOptions));

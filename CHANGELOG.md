@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Preserve list-item text after display math, including task items and nested lists.
-- Escape dollar signs in code runs that export as plain text, including table cells with pipes, so re-import does not turn text into math.
+- Preserve literal dollar-sign text across code, link, and linked-page boundaries, including code that falls back to plain text in table cells.
 - Report safety-added spaces and inline-to-display block conversion as lossy. Avoid that conversion warning for inline math inside native callouts.
 - Report display equation blocks inside callouts as lossy when Markdown re-import converts them to inline math.
 - Report display equation blocks below quotes or lists as lossy when Markdown re-import changes their placement or converts them to inline math.
