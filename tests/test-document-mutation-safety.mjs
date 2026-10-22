@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as Y from "yjs";
-import { pushDocUpdate, pushPageDocUpdate } from "../dist/ws.js";
+import { loadDoc, pushDocUpdate, pushPageDocUpdate } from "../dist/ws.js";
 import { ToolFailure, withToolErrors } from "../dist/util/mcp.js";
 
 import {
@@ -63,7 +63,18 @@ function workspaceRootWithPages(pages) {
   return doc;
 }
 
-function makeUpdateSocket({ workspaceId, root, pageTimestamp = 100, rootMode = "success", rootReadBarrier = 0, rootUnavailable = false } = {}) {
+function makeUpdateSocket({
+  workspaceId,
+  root,
+  pageTimestamp = 100,
+  rootMode = "success",
+  rootReadBarrier = 0,
+  rootUnavailable = false,
+  rootPushErrors = [],
+  rootReadErrors = [],
+  onRootRead,
+  onPagePush,
+} = {}) {
   const pushes = [];
   let rootReads = 0;
   let rootPushes = 0;
@@ -73,6 +84,13 @@ function makeUpdateSocket({ workspaceId, root, pageTimestamp = 100, rootMode = "
     emit(event, payload, acknowledge) {
       if (event === "space:load-doc") {
         assert.equal(payload.docId, workspaceId, "page timestamp sync reads only the workspace root");
+        onRootRead?.(rootReads + 1);
+        const rootReadError = rootReadErrors[rootReads];
+        if (rootReadError) {
+          rootReads += 1;
+          acknowledge({ error: typeof rootReadError === "string" ? { message: rootReadError } : rootReadError });
+          return;
+        }
         if (rootUnavailable) {
           rootReads += 1;
           acknowledge({ error: { message: "workspace root unavailable" } });
@@ -97,11 +115,17 @@ function makeUpdateSocket({ workspaceId, root, pageTimestamp = 100, rootMode = "
           acknowledge({ error: { message: pageTimestamp.message } });
           return;
         }
+        onPagePush?.(payload);
         acknowledge({ data: { timestamp: pageTimestamp } });
         return;
       }
 
       rootPushes += 1;
+      const rootPushError = rootPushErrors[rootPushes - 1];
+      if (rootPushError) {
+        acknowledge({ error: typeof rootPushError === "string" ? { message: rootPushError } : rootPushError });
+        return;
+      }
       if (rootMode === "fail") {
         acknowledge({ error: { message: "workspace root write failed" } });
         return;
@@ -277,6 +301,7 @@ for (const invalidTimestamp of [0, -1]) {
   assert.equal(pageDates(root).get("page-1"), 20, "an applied root update with a lost ACK is confirmed by readback");
   assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1,
     "metadata confirmation never replays the already-committed page mutation");
+  assert.equal(transport.rootPushes, 1, "confirmed ACK loss does not retry the root update");
 
   const failedRoot = workspaceRootWithPages([{ id: "page-2", updatedDate: 10 }]);
   const failedTransport = makeUpdateSocket({ workspaceId, root: failedRoot, pageTimestamp: 30, rootMode: "fail" });
@@ -294,6 +319,158 @@ for (const invalidTimestamp of [0, -1]) {
   assert.equal(failedTransport.rootPushes, 1);
   root.destroy();
   failedRoot.destroy();
+}
+
+for (const transientError of [
+  { name: "INTERNAL_SERVER_ERROR", code: "Internal Server Error", message: "Too many concurrent writings" },
+  { message: "space:push-doc-update timeout after 10000ms" },
+  { code: "ECONNRESET", message: "Connection closed" },
+  { name: "ETIMEDOUT", message: "Acknowledgement unavailable" },
+]) {
+  const workspaceId = "workspace-updated-date-transient";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({
+    workspaceId,
+    root,
+    pageTimestamp: 20,
+    rootPushErrors: [transientError],
+  });
+  assert.equal(await pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate()), 20);
+  assert.equal(pageDates(root).get("page-1"), 20, `${JSON.stringify(transientError)}: metadata recovers`);
+  assert.equal(transport.rootPushes, 2);
+  assert.equal(transport.rootReads, 3, "a retry reloads root metadata after the failed-write readback");
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1,
+    "transient metadata recovery never replays page content");
+  root.destroy();
+}
+
+for (const operation of [
+  socket => loadDoc(socket, "workspace-error-metadata", "page-1"),
+  socket => pushDocUpdate(socket, "workspace-error-metadata", "page-1", changedDocumentUpdate()),
+]) {
+  await assert.rejects(operation({
+    emit(_event, _payload, acknowledge) {
+      acknowledge({ error: { name: "ACCESS_DENIED", code: "Forbidden", message: "Changing timeout is forbidden" } });
+    },
+  }), error => error.name === "ACCESS_DENIED" && error.code === "Forbidden"
+    && error.message === "Changing timeout is forbidden", "load and push preserve acknowledgement error metadata");
+}
+
+for (const permanentError of [
+  { name: "ACCESS_DENIED", message: "Changing timeout is forbidden" },
+  { code: "VALIDATION_ERROR", message: "Invalid timeout after setting" },
+  { name: "ACCESS_DENIED", message: "Too many concurrent writings" },
+  { code: "INVALID_INPUT", message: "space:push-doc-update timeout after 10000ms" },
+  { message: "Timeout configuration is invalid" },
+]) {
+  const workspaceId = "workspace-updated-date-permanent-identity";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, rootPushErrors: [permanentError] });
+  await assert.rejects(
+    pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate()),
+    error => error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed"
+      && error.message.includes(permanentError.message),
+  );
+  assert.equal(transport.rootPushes, 1, "permanent identities and unrelated timeout text never retry metadata");
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1);
+  assert.equal(pageDates(root).get("page-1"), 10);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-transient-read";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({
+    workspaceId,
+    root,
+    pageTimestamp: 20,
+    rootReadErrors: [{ code: "EAI_AGAIN", message: "Name lookup unavailable" }],
+  });
+  await pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate());
+  assert.equal(pageDates(root).get("page-1"), 20, "a transient root load failure is recovered separately from page content");
+  assert.equal(transport.rootReads, 2);
+  assert.equal(transport.rootPushes, 1);
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-advanced-during-backoff";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({
+    workspaceId,
+    root,
+    pageTimestamp: 20,
+    rootPushErrors: ["Too many concurrent writings"],
+    onRootRead(readCount) {
+      if (readCount === 3) root.getMap("meta").get("pages").get(0).set("updatedDate", 30);
+    },
+  });
+  await pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate());
+  assert.equal(pageDates(root).get("page-1"), 30, "fresh-root confirmation preserves a newer timestamp");
+  assert.equal(transport.rootPushes, 1, "a timestamp advanced during backoff needs no repeated root write");
+  assert.equal(transport.rootReads, 3);
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-retries-exhausted";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({
+    workspaceId,
+    root,
+    pageTimestamp: 20,
+    rootPushErrors: Array(4).fill("Too many concurrent writings"),
+  });
+  const handler = withToolErrors(
+    () => pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate()),
+    { toolName: "append_markdown", authMode: "bearer", readOnly: false },
+  );
+  const failure = await handler();
+  assert.equal(failure.isError, true);
+  assert.equal(failure.structuredContent.code, "workspace_page_updated_date_failed");
+  assert.equal(failure.structuredContent.retryable, false);
+  assert.match(failure.structuredContent.error, /Document page-1 was saved.*Too many concurrent writings/);
+  assert.match(failure.structuredContent.recoveryGuidance, /Do not retry the page mutation/);
+  assert.equal(transport.rootPushes, 4, "the initial metadata attempt has at most three retries");
+  assert.equal(transport.rootReads, 8, "every failed root push receives a confirmation read");
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1);
+  assert.equal(pageDates(root).get("page-1"), 10);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-updated-date-long-content";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const draft = new Y.Doc();
+  const saved = new Y.Doc();
+  const paragraphs = Array.from({ length: 500 }, (_, index) => `Paragraph ${index}: ${"content ".repeat(20)}`);
+  draft.getArray("paragraphs").push(paragraphs);
+  const transport = makeUpdateSocket({
+    workspaceId,
+    root,
+    pageTimestamp: 20,
+    rootPushErrors: ["Too many concurrent writings", "Too many concurrent writings"],
+    onPagePush(payload) {
+      Y.applyUpdate(saved, Buffer.from(payload.update, "base64"));
+    },
+  });
+  await pushPageDocUpdate(
+    transport.socket,
+    workspaceId,
+    "page-1",
+    Buffer.from(Y.encodeStateAsUpdate(draft)).toString("base64"),
+  );
+  assert.deepEqual(saved.getArray("paragraphs").toArray(), paragraphs,
+    "all content, including the final paragraph, persists before metadata recovery completes");
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1,
+    "long content is pushed once even across multiple metadata retries");
+  assert.equal(transport.rootPushes, 3);
+  assert.equal(pageDates(root).get("page-1"), 20);
+  draft.destroy();
+  saved.destroy();
+  root.destroy();
 }
 
 {

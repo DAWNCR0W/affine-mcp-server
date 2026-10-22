@@ -1,4 +1,5 @@
 import { io, Socket } from "socket.io-client";
+import { setTimeout as delay } from "node:timers/promises";
 import * as Y from "yjs";
 import { ToolFailure } from "./util/mcp.js";
 
@@ -6,6 +7,7 @@ export type WorkspaceSocket = Socket<any, any>;
 const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
 const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS || 10000);
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
+const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
 
 function ackErrorMessage(ack: any, fallback: string): string | null {
   const message = ack?.error?.message;
@@ -53,6 +55,10 @@ function emitWithAck<T>(
       try {
         resolve(onAck(ack));
       } catch (err) {
+        if (err instanceof Error && ack?.error) {
+          if (typeof ack.error.name === "string" && ack.error.name.trim()) err.name = ack.error.name;
+          if (ack.error.code !== undefined) Object.assign(err, { code: ack.error.code });
+        }
         reject(err);
       }
     });
@@ -204,6 +210,24 @@ async function workspacePageHasUpdatedDate(
   }
 }
 
+/** Keep permanent acknowledgement identities authoritative over message fallbacks. */
+function isTransientWorkspaceMetadataError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  let transientIdentity = false;
+  for (const identity of [error.name, (error as { code?: unknown }).code]) {
+    if (identity === undefined) continue;
+    if (typeof identity !== "string") return false;
+    if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)$/i.test(identity)) {
+      transientIdentity = true;
+    } else if (!/^(Error|INTERNAL_SERVER_ERROR|Internal Server Error)$/i.test(identity)) {
+      return false;
+    }
+  }
+  return transientIdentity
+    || /^Too many concurrent writings[.!]?$/i.test(error.message)
+    || /^space:(load-doc|push-doc-update) timeout after \d+ms$/.test(error.message);
+}
+
 async function updateWorkspacePageUpdatedDate(
   socket: WorkspaceSocket,
   workspaceId: string,
@@ -211,36 +235,47 @@ async function updateWorkspacePageUpdatedDate(
   updatedDate: number,
 ): Promise<void> {
   try {
-    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-    if (typeof snapshot.missing !== "string") {
-      throw new Error("Workspace root document was unavailable.");
-    }
-
-    const doc = new Y.Doc();
-    try {
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const page = findWorkspacePage(doc, docId);
-      if (!page) throw new Error("Document is not registered in workspace page metadata.");
-
-      const currentDate = page.get("updatedDate");
-      if (typeof currentDate === "number" && currentDate >= updatedDate) return;
-
-      const previousState = Y.encodeStateVector(doc);
-      page.set("updatedDate", updatedDate);
-      const update = Buffer.from(Y.encodeStateAsUpdate(doc, previousState)).toString("base64");
+    for (let attempt = 0; ; attempt += 1) {
       try {
-        await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
-      } catch (error) {
-        try {
-          if (await workspacePageHasUpdatedDate(socket, workspaceId, docId, updatedDate)) return;
-        } catch {
-          // Preserve the write error; page content already succeeded and the
-          // caller will receive the explicit non-retryable partial-write error.
+        const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+        if (typeof snapshot.missing !== "string") {
+          throw new Error("Workspace root document was unavailable.");
         }
-        throw error;
+
+        const doc = new Y.Doc();
+        try {
+          Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+          const page = findWorkspacePage(doc, docId);
+          if (!page) throw new Error("Document is not registered in workspace page metadata.");
+
+          const currentDate = page.get("updatedDate");
+          if (typeof currentDate === "number" && currentDate >= updatedDate) return;
+
+          const previousState = Y.encodeStateVector(doc);
+          page.set("updatedDate", updatedDate);
+          const update = Buffer.from(Y.encodeStateAsUpdate(doc, previousState)).toString("base64");
+          try {
+            await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
+            return;
+          } catch (error) {
+            try {
+              if (await workspacePageHasUpdatedDate(socket, workspaceId, docId, updatedDate)) return;
+            } catch {
+              // Preserve the write error when readback cannot confirm it.
+            }
+            throw error;
+          }
+        } finally {
+          doc.destroy();
+        }
+      } catch (error) {
+        const retryDelay = WORKSPACE_METADATA_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined || !isTransientWorkspaceMetadataError(error)) {
+          throw error;
+        }
+        // Retry only metadata, reloading the root after the server has had time to recover.
+        await delay(retryDelay);
       }
-    } finally {
-      doc.destroy();
     }
   } catch (error) {
     const cause = error instanceof Error ? ` ${error.message}` : "";

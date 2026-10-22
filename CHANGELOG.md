@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Retry transient workspace page timestamp synchronization failures with bounded backoff and fresh-root confirmation, without replaying saved page content.
 - Verify content absence after `delete_doc` is acknowledged. AFFiNE servers that retain readable content now produce a partial receipt with a warning instead of `contentDeleted: true`.
 
 ## [3.10.0] - 2026-10-19
