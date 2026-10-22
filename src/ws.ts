@@ -379,12 +379,12 @@ export function deleteDoc(
         }
       } catch (error) {
         if (settled) return;
-        if (acknowledged) {
-          resolveOnce({ acknowledged: true, verifiedAbsent: false });
-          return;
-        }
         const message = error instanceof Error ? error.message : String(error);
         if (!message.startsWith('space:load-doc timeout after ')) {
+          if (acknowledged) {
+            resolveOnce({ acknowledged: true, verifiedAbsent: false });
+            return;
+          }
           rejectOnce(error instanceof Error ? error : new Error(message));
           return;
         }

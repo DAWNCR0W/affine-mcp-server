@@ -66,6 +66,7 @@ class FakeWorkspaceSocket {
     pushMode = "success",
     staleWorkspaceReadsAfterPush = 0,
     missingContentAck = null,
+    contentReadTimeouts = 0,
   } = {}) {
     this.workspaceId = workspaceId;
     this.docId = docId;
@@ -76,6 +77,7 @@ class FakeWorkspaceSocket {
     this.staleWorkspaceReadsAfterPush = staleWorkspaceReadsAfterPush;
     this.staleWorkspaceUpdate = null;
     this.missingContentAck = missingContentAck;
+    this.contentReadTimeouts = contentReadTimeouts;
     this.events = [];
     this.listeners = new Map();
   }
@@ -96,6 +98,10 @@ class FakeWorkspaceSocket {
               timestamp: 1,
             },
           });
+          return;
+        }
+        if (this.contentReadTimeouts > 0) {
+          this.contentReadTimeouts -= 1;
           return;
         }
         if (payload.docId === this.docId && this.contentExists) {
@@ -225,6 +231,33 @@ async function testDeleteDocProtocol() {
   });
   assert.deepEqual(acknowledged, { acknowledged: true, verifiedAbsent: true });
   assert.ok(acknowledgedSocket.events.some(entry => entry.event === "space:load-doc"));
+
+  const slowVerificationSocket = new FakeWorkspaceSocket({ deleteMode: "ack-success", contentReadTimeouts: 1 });
+  assert.deepEqual(
+    await deleteDoc(slowVerificationSocket, "workspace-1", "doc-1", { timeoutMs: 100, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: true },
+    "a timed-out verification read after acknowledgement is retried until absence is confirmed",
+  );
+  assert.equal(slowVerificationSocket.events.filter(entry => entry.event === "space:load-doc").length, 2);
+
+  const timedOutVerificationSocket = new FakeWorkspaceSocket({ deleteMode: "ack-success", contentReadTimeouts: 100 });
+  assert.deepEqual(
+    await deleteDoc(timedOutVerificationSocket, "workspace-1", "doc-1", { timeoutMs: 60, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: false },
+    "repeated verification timeouts preserve acknowledgement at the operation deadline",
+  );
+  assert.ok(timedOutVerificationSocket.events.filter(entry => entry.event === "space:load-doc").length >= 2);
+
+  const verificationDeniedSocket = new FakeWorkspaceSocket({
+    deleteMode: "ack-success",
+    missingContentAck: { error: { name: "FORBIDDEN", message: "Doc.Read permission denied" } },
+  });
+  assert.deepEqual(
+    await deleteDoc(verificationDeniedSocket, "workspace-1", "doc-1", { timeoutMs: 100, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: false },
+    "non-timeout verification errors still return unverified immediately after acknowledgement",
+  );
+  assert.equal(verificationDeniedSocket.events.filter(entry => entry.event === "space:load-doc").length, 1);
 
   const serverAcknowledgedSocket = new FakeWorkspaceSocket({ deleteMode: "server-success-ack" });
   const serverAcknowledged = await deleteDoc(serverAcknowledgedSocket, "workspace-1", "doc-1", {
