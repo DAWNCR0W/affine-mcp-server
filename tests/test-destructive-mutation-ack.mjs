@@ -65,6 +65,8 @@ class FakeWorkspaceSocket {
     deleteMode = "void-success",
     pushMode = "success",
     staleWorkspaceReadsAfterPush = 0,
+    missingContentAck = null,
+    contentReadTimeouts = 0,
   } = {}) {
     this.workspaceId = workspaceId;
     this.docId = docId;
@@ -74,6 +76,8 @@ class FakeWorkspaceSocket {
     this.pushMode = pushMode;
     this.staleWorkspaceReadsAfterPush = staleWorkspaceReadsAfterPush;
     this.staleWorkspaceUpdate = null;
+    this.missingContentAck = missingContentAck;
+    this.contentReadTimeouts = contentReadTimeouts;
     this.events = [];
     this.listeners = new Map();
   }
@@ -96,11 +100,15 @@ class FakeWorkspaceSocket {
           });
           return;
         }
+        if (this.contentReadTimeouts > 0) {
+          this.contentReadTimeouts -= 1;
+          return;
+        }
         if (payload.docId === this.docId && this.contentExists) {
           ack?.({ data: { missing: encodedDoc(), timestamp: 1 } });
           return;
         }
-        ack?.({ error: { name: "DOC_NOT_FOUND", message: "Document not found" } });
+        ack?.(this.missingContentAck ?? { error: { name: "DOC_NOT_FOUND", message: "Document not found" } });
         return;
       }
 
@@ -131,6 +139,11 @@ class FakeWorkspaceSocket {
         }
         if (this.deleteMode === "server-success-ack") {
           ack?.({ data: { success: true } });
+          return;
+        }
+        if (this.deleteMode === "ack-then-disconnect") {
+          ack?.({ data: { success: true } });
+          this.listeners.get("disconnect")?.();
           return;
         }
         if (this.deleteMode === "server-negative-ack") {
@@ -216,7 +229,35 @@ async function testDeleteDocProtocol() {
     timeoutMs: 100,
     verificationIntervalMs: 5,
   });
-  assert.deepEqual(acknowledged, { acknowledged: true, verifiedAbsent: false });
+  assert.deepEqual(acknowledged, { acknowledged: true, verifiedAbsent: true });
+  assert.ok(acknowledgedSocket.events.some(entry => entry.event === "space:load-doc"));
+
+  const slowVerificationSocket = new FakeWorkspaceSocket({ deleteMode: "ack-success", contentReadTimeouts: 1 });
+  assert.deepEqual(
+    await deleteDoc(slowVerificationSocket, "workspace-1", "doc-1", { timeoutMs: 100, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: true },
+    "a timed-out verification read after acknowledgement is retried until absence is confirmed",
+  );
+  assert.equal(slowVerificationSocket.events.filter(entry => entry.event === "space:load-doc").length, 2);
+
+  const timedOutVerificationSocket = new FakeWorkspaceSocket({ deleteMode: "ack-success", contentReadTimeouts: 100 });
+  assert.deepEqual(
+    await deleteDoc(timedOutVerificationSocket, "workspace-1", "doc-1", { timeoutMs: 60, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: false },
+    "repeated verification timeouts preserve acknowledgement at the operation deadline",
+  );
+  assert.ok(timedOutVerificationSocket.events.filter(entry => entry.event === "space:load-doc").length >= 2);
+
+  const verificationDeniedSocket = new FakeWorkspaceSocket({
+    deleteMode: "ack-success",
+    missingContentAck: { error: { name: "FORBIDDEN", message: "Doc.Read permission denied" } },
+  });
+  assert.deepEqual(
+    await deleteDoc(verificationDeniedSocket, "workspace-1", "doc-1", { timeoutMs: 100, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: false },
+    "non-timeout verification errors still return unverified immediately after acknowledgement",
+  );
+  assert.equal(verificationDeniedSocket.events.filter(entry => entry.event === "space:load-doc").length, 1);
 
   const serverAcknowledgedSocket = new FakeWorkspaceSocket({ deleteMode: "server-success-ack" });
   const serverAcknowledged = await deleteDoc(serverAcknowledgedSocket, "workspace-1", "doc-1", {
@@ -224,6 +265,14 @@ async function testDeleteDocProtocol() {
     verificationIntervalMs: 5,
   });
   assert.deepEqual(serverAcknowledged, { acknowledged: true, verifiedAbsent: false });
+  assert.equal(serverAcknowledgedSocket.contentExists, true);
+  assert.ok(serverAcknowledgedSocket.events.some(entry => entry.event === "space:load-doc"));
+
+  const disconnectedSocket = new FakeWorkspaceSocket({ deleteMode: "ack-then-disconnect" });
+  assert.deepEqual(
+    await deleteDoc(disconnectedSocket, "workspace-1", "doc-1", { timeoutMs: 100, verificationIntervalMs: 5 }),
+    { acknowledged: true, verifiedAbsent: false },
+  );
 
   const voidSuccessSocket = new FakeWorkspaceSocket({ deleteMode: "void-success" });
   const verified = await deleteDoc(voidSuccessSocket, "workspace-1", "doc-1", {
@@ -304,6 +353,39 @@ async function testDocumentReceipts() {
   assert.equal(deleted.contentDeleteAcknowledged, false);
   assert.equal(deleted.contentAbsenceVerified, true);
   assert.deepEqual(deletedSocket.pageIds(), []);
+
+  const retainedSocket = new FakeWorkspaceSocket({ deleteMode: "server-success-ack" });
+  const retained = parseToolResult(
+    await deleteDocFromWorkspace(retainedSocket, "workspace-1", "doc-1"),
+  );
+  assert.equal(retained.ok, true);
+  assert.equal(retained.status, "partial");
+  assert.equal(retained.deleted, false);
+  assert.equal(retained.metadataRemoved, true);
+  assert.equal(retained.contentDeleted, false);
+  assert.equal(retained.contentDeleteAcknowledged, true);
+  assert.equal(retained.contentAbsenceVerified, false);
+  assert.match(retained.warnings.join(" "), /remain readable and continue syncing/);
+  assert.equal(retainedSocket.contentExists, true);
+  assert.deepEqual(retainedSocket.pageIds(), []);
+
+  const disconnectedSocket = new FakeWorkspaceSocket({ deleteMode: "ack-then-disconnect" });
+  const disconnected = parseToolResult(await deleteDocFromWorkspace(disconnectedSocket, "workspace-1", "doc-1"));
+  assert.equal(disconnected.status, "partial");
+  assert.equal(disconnected.contentDeleted, false);
+  assert.equal(disconnected.contentDeleteAcknowledged, true);
+  assert.equal(disconnected.contentAbsenceVerified, false);
+  assert.ok(disconnected.warnings.length > 0);
+
+  for (const missingContentAck of [{}, { data: { timestamp: 1 } }]) {
+    const unconfirmedSocket = new FakeWorkspaceSocket({ contentExists: false, missingContentAck });
+    await assert.rejects(
+      deleteDocFromWorkspace(unconfirmedSocket, "workspace-1", "doc-1"),
+      error => error.code === "doc_content_state_unconfirmed",
+    );
+    assert.deepEqual(unconfirmedSocket.pageIds(), ["doc-1"]);
+    assert.equal(unconfirmedSocket.events.some(entry => entry.event === "space:delete-doc" || entry.event === "space:push-doc-update"), false);
+  }
 
   const partialSocket = new FakeWorkspaceSocket({ deleteMode: "error" });
   const partialResult = await deleteDocFromWorkspace(partialSocket, "workspace-1", "doc-1");

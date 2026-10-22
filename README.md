@@ -51,6 +51,7 @@ Scope boundaries:
 - After a content write, transient workspace timestamp failures are retried up to three times with backoff. If metadata still cannot be confirmed, inspect the saved document before any repair; do not repeat the content edit. See [document mutation recovery](docs/tool-reference.md#content-editing).
 - AFFiNE 0.27+ removed the legacy personal-access-token GraphQL API; this server no longer exposes token-management tools
 - AFFiNE Cloud requires browser-session authentication for this external GraphQL integration; programmatic email/password sign-in is blocked by Cloudflare
+- `delete_doc` removes workspace page metadata and requests content deletion. Some AFFiNE servers retain content despite acknowledging the request; the tool returns a partial result with a warning unless content absence is verified. Use `trash_doc` for recoverable cleanup.
 
 > New in v3.2.1: Scripted cookie login now keeps session secrets out of process arguments, validates workspace access before saving credentials, and restores document pagination for ordinary workspace members.
 

@@ -853,6 +853,13 @@ export async function deleteDocFromWorkspace(
   const contentSnapshot = await loadDoc(socket, workspaceId, docId);
   const metadataExisted = metadataIndex >= 0;
   const contentExisted = typeof contentSnapshot.missing === "string";
+  if (!contentExisted && contentSnapshot.notFound !== true) {
+    throw new ToolFailure(
+      `Document ${docId} did not return content or an explicit DOC_NOT_FOUND response. No deletion was attempted.`,
+      "doc_content_state_unconfirmed",
+      "Check AFFiNE connectivity and read the document before requesting deletion again.",
+    );
+  }
 
   if (!metadataExisted && !contentExisted) {
     return receipt("doc.delete", {
@@ -918,17 +925,20 @@ export async function deleteDocFromWorkspace(
   try {
     const deletion = await wsDeleteDoc(socket, workspaceId, docId);
     return receipt("doc.delete", {
-      status: "deleted",
+      status: deletion.verifiedAbsent ? "deleted" : "partial",
       workspaceId,
       docId,
-      deleted: true,
+      deleted: deletion.verifiedAbsent,
       alreadyAbsent: false,
       metadataExisted,
       metadataRemoved,
       contentExisted: true,
-      contentDeleted: true,
+      contentDeleted: deletion.verifiedAbsent,
       contentDeleteAcknowledged: deletion.acknowledged,
       contentAbsenceVerified: deletion.verifiedAbsent,
+      ...(!deletion.verifiedAbsent ? {
+        warnings: ["AFFiNE acknowledged the deletion request, but content absence could not be verified. The document may remain readable and continue syncing to clients."],
+      } : {}),
     });
   } catch (error) {
     return toolError(error, {
@@ -7491,8 +7501,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const result = await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
-      const deletion = result.structuredContent as { ok?: boolean; status?: string } | undefined;
-      if (deletion?.ok === true && (deletion.status === "deleted" || deletion.status === "already_absent")) {
+      const deletion = result.structuredContent as { ok?: boolean; status?: string; metadataRemoved?: boolean } | undefined;
+      if (deletion?.metadataRemoved === true
+        || (deletion?.ok === true && (deletion.status === "deleted" || deletion.status === "already_absent"))) {
         acknowledgedDeletedDocs.remember(workspaceId, parsed.docId);
       }
       return result;
@@ -7504,7 +7515,7 @@ export function registerDocTools(
     'delete_doc',
     {
       title: 'Delete Document',
-      description: 'Delete a document, wait for the AFFiNE WebSocket outcome, and report workspace-metadata and content deletion separately. This is destructive; use revoke_doc when you only need to remove public access.',
+      description: 'Remove a document from the workspace list and request content deletion. AFFiNE servers may acknowledge this request while retaining readable content that still syncs. Content deletion is reported only after absence is verified; otherwise the result is partial with a warning. This is destructive; use trash_doc for recoverable cleanup or revoke_doc to remove public access.',
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
