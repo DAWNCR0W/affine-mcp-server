@@ -203,18 +203,25 @@ async function main() {
       docId,
       confirmDocId: docId,
     });
+    const remainingContent = parseContent(await call('read_doc', { workspaceId, docId }));
+    expectEqual(typeof remainingContent?.exists, 'boolean', 'read_doc existence evidence');
+    const contentAbsent = deletedDoc.structuredContent?.contentAbsenceVerified === true;
+    if (contentAbsent) expectEqual(remainingContent.exists, false, 'verified deletion reads absent');
+    if (remainingContent.exists) expectEqual(contentAbsent, false, 'readable content is not reported deleted');
     const deletedDocReceipt = assertReceipt(deletedDoc, 'doc.delete', {
       workspaceId,
       docId,
-      status: 'deleted',
-      deleted: true,
+      status: contentAbsent ? 'deleted' : 'partial',
+      deleted: contentAbsent,
       metadataExisted: true,
       metadataRemoved: true,
       contentExisted: true,
-      contentDeleted: true,
+      contentDeleted: contentAbsent,
+      contentAbsenceVerified: contentAbsent,
     });
-    if (!deletedDocReceipt.structured.contentDeleteAcknowledged && !deletedDocReceipt.structured.contentAbsenceVerified) {
-      throw new Error('doc.delete did not include acknowledgement or absence-verification evidence');
+    if (!contentAbsent) {
+      expectEqual(deletedDocReceipt.structured.contentDeleteAcknowledged, true, 'doc.delete request acknowledgement');
+      expectTruthy(deletedDocReceipt.structured.warnings?.length > 0, 'doc.delete retained-content warning');
     }
     docId = null;
   } finally {
