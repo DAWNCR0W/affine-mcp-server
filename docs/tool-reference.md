@@ -172,7 +172,7 @@ imported as an inline equation in that block.
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
-Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
+Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. Transient metadata failures, including `Too many concurrent writings` and transport timeouts, receive up to three retries after 500, 1000, and 2000 ms. Each retry reloads the workspace root and skips the write if its timestamp is already current; saved page content is never replayed. If the timestamp still cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 
 New pages record the authenticated AFFiNE user's ID in the workspace's native
 `docProperties.createdBy` record, so **Created by** displays the creating account.

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Retry transient workspace page timestamp synchronization failures with bounded backoff and fresh-root confirmation, without replaying saved page content.
+
 ## [3.10.0] - 2026-10-19
 
 ### Added
