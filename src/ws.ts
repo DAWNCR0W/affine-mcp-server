@@ -127,7 +127,7 @@ export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string
   );
 }
 
-type LoadDocResult = { missing?: string; state?: string; timestamp?: number };
+type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
 
 export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
   return emitWithAck<LoadDocResult>(
@@ -136,7 +136,7 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
     { spaceType: 'workspace', spaceId: workspaceId, docId },
     (ack) => {
       if (ack?.error) {
-        if (ack.error.name === 'DOC_NOT_FOUND') return {};
+        if (ack.error.name === 'DOC_NOT_FOUND') return { notFound: true };
         throw new Error(ackErrorMessage(ack, "load-doc failed") || "load-doc failed");
       }
       return ack?.data || {};
@@ -282,12 +282,11 @@ export type DeleteDocOptions = {
 };
 
 /**
- * Delete a document and wait for a trustworthy completion signal.
+ * Request document deletion and verify content absence separately.
  *
  * AFFiNE versions may return no successful acknowledgement, `{ deleted: true }`,
- * or `{ data: { success: true } }`. AFFiNE 0.27.3 also retains the underlying
- * snapshot for garbage collection, so a successful acknowledgement must be
- * recognized instead of relying exclusively on a follow-up DOC_NOT_FOUND.
+ * or `{ data: { success: true } }`. Some versions acknowledge deletion while
+ * retaining readable content. Only a follow-up DOC_NOT_FOUND proves absence.
  */
 export function deleteDoc(
   socket: WorkspaceSocket,
@@ -310,6 +309,7 @@ export function deleteDoc(
 
   return new Promise<DeleteDocResult>((resolve, reject) => {
     let settled = false;
+    let acknowledged = false;
     let verificationTimer: NodeJS.Timeout | undefined;
     const deadline = Date.now() + timeoutMs;
 
@@ -331,9 +331,17 @@ export function deleteDoc(
       reject(error);
     };
     const onDisconnect = () => {
+      if (acknowledged) {
+        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        return;
+      }
       rejectOnce(new Error('space:delete-doc failed because the socket disconnected before completion.'));
     };
     const operationTimer = setTimeout(() => {
+      if (acknowledged) {
+        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        return;
+      }
       rejectOnce(
         new Error(
           `space:delete-doc was not acknowledged and deletion could not be verified within ${timeoutMs}ms`,
@@ -345,6 +353,7 @@ export function deleteDoc(
       if (settled) return;
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return;
+      const acknowledgedBeforeRead = acknowledged;
 
       try {
         const absent = await emitWithAck<boolean>(
@@ -361,13 +370,21 @@ export function deleteDoc(
           Math.max(1, Math.min(remainingMs, verificationIntervalMs)),
         );
         if (absent) {
-          resolveOnce({ acknowledged: false, verifiedAbsent: true });
+          resolveOnce({ acknowledged, verifiedAbsent: true });
+          return;
+        }
+        if (acknowledgedBeforeRead) {
+          resolveOnce({ acknowledged: true, verifiedAbsent: false });
           return;
         }
       } catch (error) {
         if (settled) return;
         const message = error instanceof Error ? error.message : String(error);
         if (!message.startsWith('space:load-doc timeout after ')) {
+          if (acknowledged) {
+            resolveOnce({ acknowledged: true, verifiedAbsent: false });
+            return;
+          }
           rejectOnce(error instanceof Error ? error : new Error(message));
           return;
         }
@@ -380,13 +397,14 @@ export function deleteDoc(
 
     socket.once('disconnect', onDisconnect);
     socket.emit('space:delete-doc', payload, (ack: any) => {
+      if (settled) return;
       const message = ackErrorMessage(ack, 'delete-doc failed');
       if (message) {
         rejectOnce(new Error(message));
         return;
       }
       if (deleteAcknowledged(ack)) {
-        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        acknowledged = true;
         return;
       }
       if (deleteRejected(ack)) {

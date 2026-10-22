@@ -141,7 +141,7 @@ check.
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
 | `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
 | `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
-| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
+| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`. Metadata removal, request acknowledgement, and verified content absence are reported separately. Servers may retain readable, syncing content; unverified deletion returns `status: partial`, `contentDeleted: false`, and a warning |
 
 Use `create_doc_from_markdown` when the initial content contains headings, lists,
 links, quotes, tables, code fences, or math. `create_doc.content` does not parse Markdown;
