@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as Y from "yjs";
-import { pushDocUpdate, pushPageDocUpdate } from "../dist/ws.js";
+import { loadDoc, pushDocUpdate, pushPageDocUpdate } from "../dist/ws.js";
 import { ToolFailure, withToolErrors } from "../dist/util/mcp.js";
 
 import {
@@ -88,7 +88,7 @@ function makeUpdateSocket({
         const rootReadError = rootReadErrors[rootReads];
         if (rootReadError) {
           rootReads += 1;
-          acknowledge({ error: { message: rootReadError } });
+          acknowledge({ error: typeof rootReadError === "string" ? { message: rootReadError } : rootReadError });
           return;
         }
         if (rootUnavailable) {
@@ -123,7 +123,7 @@ function makeUpdateSocket({
       rootPushes += 1;
       const rootPushError = rootPushErrors[rootPushes - 1];
       if (rootPushError) {
-        acknowledge({ error: { message: rootPushError } });
+        acknowledge({ error: typeof rootPushError === "string" ? { message: rootPushError } : rootPushError });
         return;
       }
       if (rootMode === "fail") {
@@ -321,7 +321,12 @@ for (const invalidTimestamp of [0, -1]) {
   failedRoot.destroy();
 }
 
-for (const transientError of ["Too many concurrent writings", "space:push-doc-update timeout after 10000ms", "ECONNRESET"]) {
+for (const transientError of [
+  { name: "INTERNAL_SERVER_ERROR", code: "Internal Server Error", message: "Too many concurrent writings" },
+  { message: "space:push-doc-update timeout after 10000ms" },
+  { code: "ECONNRESET", message: "Connection closed" },
+  { name: "ETIMEDOUT", message: "Acknowledgement unavailable" },
+]) {
   const workspaceId = "workspace-updated-date-transient";
   const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
   const transport = makeUpdateSocket({
@@ -331,11 +336,44 @@ for (const transientError of ["Too many concurrent writings", "space:push-doc-up
     rootPushErrors: [transientError],
   });
   assert.equal(await pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate()), 20);
-  assert.equal(pageDates(root).get("page-1"), 20, `${transientError}: metadata recovers`);
+  assert.equal(pageDates(root).get("page-1"), 20, `${JSON.stringify(transientError)}: metadata recovers`);
   assert.equal(transport.rootPushes, 2);
   assert.equal(transport.rootReads, 3, "a retry reloads root metadata after the failed-write readback");
   assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1,
     "transient metadata recovery never replays page content");
+  root.destroy();
+}
+
+for (const operation of [
+  socket => loadDoc(socket, "workspace-error-metadata", "page-1"),
+  socket => pushDocUpdate(socket, "workspace-error-metadata", "page-1", changedDocumentUpdate()),
+]) {
+  await assert.rejects(operation({
+    emit(_event, _payload, acknowledge) {
+      acknowledge({ error: { name: "ACCESS_DENIED", code: "Forbidden", message: "Changing timeout is forbidden" } });
+    },
+  }), error => error.name === "ACCESS_DENIED" && error.code === "Forbidden"
+    && error.message === "Changing timeout is forbidden", "load and push preserve acknowledgement error metadata");
+}
+
+for (const permanentError of [
+  { name: "ACCESS_DENIED", message: "Changing timeout is forbidden" },
+  { code: "VALIDATION_ERROR", message: "Invalid timeout after setting" },
+  { name: "ACCESS_DENIED", message: "Too many concurrent writings" },
+  { code: "INVALID_INPUT", message: "space:push-doc-update timeout after 10000ms" },
+  { message: "Timeout configuration is invalid" },
+]) {
+  const workspaceId = "workspace-updated-date-permanent-identity";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, rootPushErrors: [permanentError] });
+  await assert.rejects(
+    pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate()),
+    error => error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed"
+      && error.message.includes(permanentError.message),
+  );
+  assert.equal(transport.rootPushes, 1, "permanent identities and unrelated timeout text never retry metadata");
+  assert.equal(transport.pushes.filter(push => push.docId === "page-1").length, 1);
+  assert.equal(pageDates(root).get("page-1"), 10);
   root.destroy();
 }
 
@@ -346,7 +384,7 @@ for (const transientError of ["Too many concurrent writings", "space:push-doc-up
     workspaceId,
     root,
     pageTimestamp: 20,
-    rootReadErrors: ["space:load-doc timeout after 10000ms"],
+    rootReadErrors: [{ code: "EAI_AGAIN", message: "Name lookup unavailable" }],
   });
   await pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate());
   assert.equal(pageDates(root).get("page-1"), 20, "a transient root load failure is recovered separately from page content");

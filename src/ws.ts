@@ -55,6 +55,10 @@ function emitWithAck<T>(
       try {
         resolve(onAck(ack));
       } catch (err) {
+        if (err instanceof Error && ack?.error) {
+          if (typeof ack.error.name === "string" && ack.error.name.trim()) err.name = ack.error.name;
+          if (ack.error.code !== undefined) Object.assign(err, { code: ack.error.code });
+        }
         reject(err);
       }
     });
@@ -206,6 +210,24 @@ async function workspacePageHasUpdatedDate(
   }
 }
 
+/** Keep permanent acknowledgement identities authoritative over message fallbacks. */
+function isTransientWorkspaceMetadataError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  let transientIdentity = false;
+  for (const identity of [error.name, (error as { code?: unknown }).code]) {
+    if (identity === undefined) continue;
+    if (typeof identity !== "string") return false;
+    if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)$/i.test(identity)) {
+      transientIdentity = true;
+    } else if (!/^(Error|INTERNAL_SERVER_ERROR|Internal Server Error)$/i.test(identity)) {
+      return false;
+    }
+  }
+  return transientIdentity
+    || /^Too many concurrent writings[.!]?$/i.test(error.message)
+    || /^space:(load-doc|push-doc-update) timeout after \d+ms$/.test(error.message);
+}
+
 async function updateWorkspacePageUpdatedDate(
   socket: WorkspaceSocket,
   workspaceId: string,
@@ -248,8 +270,7 @@ async function updateWorkspacePageUpdatedDate(
         }
       } catch (error) {
         const retryDelay = WORKSPACE_METADATA_RETRY_DELAYS_MS[attempt];
-        if (retryDelay === undefined || !(error instanceof Error)
-          || !/too many concurrent writings|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN/i.test(error.message)) {
+        if (retryDelay === undefined || !isTransientWorkspaceMetadataError(error)) {
           throw error;
         }
         // Retry only metadata, reloading the root after the server has had time to recover.
