@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.10.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.10.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.1-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -48,8 +48,10 @@ Scope boundaries:
 
 - This server can access only server-backed AFFiNE workspaces
 - Browser-local workspaces stored only in local storage are not available through AFFiNE server APIs
+- After a content write, transient workspace timestamp failures are retried up to three times with backoff. If metadata still cannot be confirmed, inspect the saved document before any repair; do not repeat the content edit. See [document mutation recovery](docs/tool-reference.md#content-editing).
 - AFFiNE 0.27+ removed the legacy personal-access-token GraphQL API; this server no longer exposes token-management tools
 - AFFiNE Cloud requires browser-session authentication for this external GraphQL integration; programmatic email/password sign-in is blocked by Cloudflare
+- `delete_doc` removes workspace page metadata and requests content deletion. Some AFFiNE servers retain content despite acknowledging the request; the tool returns a partial result with a warning unless content absence is verified. Use `trash_doc` for recoverable cleanup.
 
 > New in v3.2.1: Scripted cookie login now keeps session secrets out of process arguments, validates workspace access before saving credentials, and restores document pagination for ordinary workspace members.
 
@@ -91,7 +93,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.10.0
+  ghcr.io/dawncr0w/affine-mcp-server:3.10.1
 ```
 
 Then point your client at:

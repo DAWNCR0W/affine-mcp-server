@@ -264,14 +264,20 @@ async function main() {
       docId: createdDocs[0].docId,
       confirmDocId: createdDocs[0].docId,
     });
-    expectEqual(deletion?.status, "deleted", "delete_doc status");
-    expectEqual(deletion?.deleted, true, "delete_doc deleted");
+    const remainingContent = await call("read_doc", { workspaceId: workspace.id, docId: createdDocs[0].docId });
+    expectEqual(typeof remainingContent?.exists, "boolean", "read_doc existence evidence");
+    const contentAbsent = deletion?.contentAbsenceVerified === true;
+    if (contentAbsent) expectEqual(remainingContent.exists, false, "verified deletion reads absent");
+    if (remainingContent.exists) expectEqual(contentAbsent, false, "readable content is not reported deleted");
+    expectEqual(deletion?.status, contentAbsent ? "deleted" : "partial", "delete_doc status");
+    expectEqual(deletion?.deleted, contentAbsent, "delete_doc deleted");
     expectEqual(deletion?.metadataRemoved, true, "delete_doc metadataRemoved");
-    expectEqual(deletion?.contentDeleted, true, "delete_doc contentDeleted");
-    expectTruthy(
-      deletion?.contentDeleteAcknowledged || deletion?.contentAbsenceVerified,
-      "delete_doc completion evidence",
-    );
+    expectEqual(deletion?.contentDeleted, contentAbsent, "delete_doc contentDeleted requires verified absence");
+    expectEqual(deletion?.contentAbsenceVerified, contentAbsent, "delete_doc verified absence");
+    if (!contentAbsent) {
+      expectEqual(deletion?.contentDeleteAcknowledged, true, "delete_doc request acknowledgement");
+      expectTruthy(deletion?.warnings?.length > 0, "delete_doc retained-content warning");
+    }
 
     const listedAfterDelete = await waitForListDocs(
       workspace.id,

@@ -1,5 +1,29 @@
 # Release Notes
 
+## Version 3.10.1 (2026-10-22)
+
+### Highlights
+- Report document deletion according to verified content absence, rather than acknowledgement alone.
+- Recover transient workspace timestamp synchronization failures without replaying saved page content.
+
+### What Changed
+- Make `delete_doc` report workspace metadata removal, deletion acknowledgement, and verified content absence separately (#417, #419). An acknowledged request that leaves readable content returns a partial receipt with a warning.
+- Retry transient workspace metadata reads and writes up to three times after 500, 1000, and 2000 ms (#418, #420). Reload the root before each attempt and accept a timestamp that is already current.
+- Preserve acknowledgement error names and codes so permanent errors stop promptly while recognized transient errors can retry.
+- Keep permanent or exhausted timestamp failures as non-retryable partial-write errors. Inspect the saved document and repair metadata instead of repeating the content edit.
+- Add regressions for retained content after deletion acknowledgement, unconfirmed content state, verification timeouts, transient metadata errors, lost acknowledgements, concurrent timestamps, and a large content payload.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names and required inputs remain unchanged.
+- `delete_doc` can return `ok: true` with `status: partial`, `deleted: false`, and `contentDeleted: false`. Inspect the receipt and warnings; `contentDeleted: true` requires verified content absence.
+- Upstream AFFiNE deletion behavior is unchanged. Some servers retain readable, syncing content after acknowledging deletion. Use `trash_doc` for recoverable cleanup.
+- Timestamp retries affect only workspace metadata. Saved page content is never replayed.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.10.1`, then restart the MCP server.
+
+### Known Issues
+- [#416](https://github.com/DAWNCR0W/affine-mcp-server/issues/416): Accumulated Yjs root delete-set payloads may cause performance or memory pressure. This issue is not fixed or reproduced during this release work. Bounded metadata retries can add root read/write attempts on transient errors.
+
 ## Version 3.10.0 (2026-10-19)
 
 ### Highlights

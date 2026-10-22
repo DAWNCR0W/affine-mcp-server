@@ -141,7 +141,7 @@ check.
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
 | `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
 | `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
-| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
+| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`. Metadata removal, request acknowledgement, and verified content absence are reported separately. Servers may retain readable, syncing content; unverified deletion returns `status: partial`, `contentDeleted: false`, and a warning |
 
 Use `create_doc_from_markdown` when the initial content contains headings, lists,
 links, quotes, tables, code fences, or math. `create_doc.content` does not parse Markdown;
@@ -172,7 +172,7 @@ imported as an inline equation in that block.
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
-Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
+Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. Transient metadata failures, including `Too many concurrent writings` and transport timeouts, receive up to three retries after 500, 1000, and 2000 ms. Each retry reloads the workspace root and skips the write if its timestamp is already current; saved page content is never replayed. If the timestamp still cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 
 New pages record the authenticated AFFiNE user's ID in the workspace's native
 `docProperties.createdBy` record, so **Created by** displays the creating account.

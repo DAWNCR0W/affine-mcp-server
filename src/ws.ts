@@ -1,4 +1,5 @@
 import { io, Socket } from "socket.io-client";
+import { setTimeout as delay } from "node:timers/promises";
 import * as Y from "yjs";
 import { ToolFailure } from "./util/mcp.js";
 
@@ -6,6 +7,7 @@ export type WorkspaceSocket = Socket<any, any>;
 const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
 const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS || 10000);
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
+const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
 
 function ackErrorMessage(ack: any, fallback: string): string | null {
   const message = ack?.error?.message;
@@ -53,6 +55,10 @@ function emitWithAck<T>(
       try {
         resolve(onAck(ack));
       } catch (err) {
+        if (err instanceof Error && ack?.error) {
+          if (typeof ack.error.name === "string" && ack.error.name.trim()) err.name = ack.error.name;
+          if (ack.error.code !== undefined) Object.assign(err, { code: ack.error.code });
+        }
         reject(err);
       }
     });
@@ -127,7 +133,7 @@ export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string
   );
 }
 
-type LoadDocResult = { missing?: string; state?: string; timestamp?: number };
+type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
 
 export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
   return emitWithAck<LoadDocResult>(
@@ -136,7 +142,7 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
     { spaceType: 'workspace', spaceId: workspaceId, docId },
     (ack) => {
       if (ack?.error) {
-        if (ack.error.name === 'DOC_NOT_FOUND') return {};
+        if (ack.error.name === 'DOC_NOT_FOUND') return { notFound: true };
         throw new Error(ackErrorMessage(ack, "load-doc failed") || "load-doc failed");
       }
       return ack?.data || {};
@@ -204,6 +210,24 @@ async function workspacePageHasUpdatedDate(
   }
 }
 
+/** Keep permanent acknowledgement identities authoritative over message fallbacks. */
+function isTransientWorkspaceMetadataError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  let transientIdentity = false;
+  for (const identity of [error.name, (error as { code?: unknown }).code]) {
+    if (identity === undefined) continue;
+    if (typeof identity !== "string") return false;
+    if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)$/i.test(identity)) {
+      transientIdentity = true;
+    } else if (!/^(Error|INTERNAL_SERVER_ERROR|Internal Server Error)$/i.test(identity)) {
+      return false;
+    }
+  }
+  return transientIdentity
+    || /^Too many concurrent writings[.!]?$/i.test(error.message)
+    || /^space:(load-doc|push-doc-update) timeout after \d+ms$/.test(error.message);
+}
+
 async function updateWorkspacePageUpdatedDate(
   socket: WorkspaceSocket,
   workspaceId: string,
@@ -211,36 +235,47 @@ async function updateWorkspacePageUpdatedDate(
   updatedDate: number,
 ): Promise<void> {
   try {
-    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
-    if (typeof snapshot.missing !== "string") {
-      throw new Error("Workspace root document was unavailable.");
-    }
-
-    const doc = new Y.Doc();
-    try {
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const page = findWorkspacePage(doc, docId);
-      if (!page) throw new Error("Document is not registered in workspace page metadata.");
-
-      const currentDate = page.get("updatedDate");
-      if (typeof currentDate === "number" && currentDate >= updatedDate) return;
-
-      const previousState = Y.encodeStateVector(doc);
-      page.set("updatedDate", updatedDate);
-      const update = Buffer.from(Y.encodeStateAsUpdate(doc, previousState)).toString("base64");
+    for (let attempt = 0; ; attempt += 1) {
       try {
-        await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
-      } catch (error) {
-        try {
-          if (await workspacePageHasUpdatedDate(socket, workspaceId, docId, updatedDate)) return;
-        } catch {
-          // Preserve the write error; page content already succeeded and the
-          // caller will receive the explicit non-retryable partial-write error.
+        const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+        if (typeof snapshot.missing !== "string") {
+          throw new Error("Workspace root document was unavailable.");
         }
-        throw error;
+
+        const doc = new Y.Doc();
+        try {
+          Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+          const page = findWorkspacePage(doc, docId);
+          if (!page) throw new Error("Document is not registered in workspace page metadata.");
+
+          const currentDate = page.get("updatedDate");
+          if (typeof currentDate === "number" && currentDate >= updatedDate) return;
+
+          const previousState = Y.encodeStateVector(doc);
+          page.set("updatedDate", updatedDate);
+          const update = Buffer.from(Y.encodeStateAsUpdate(doc, previousState)).toString("base64");
+          try {
+            await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
+            return;
+          } catch (error) {
+            try {
+              if (await workspacePageHasUpdatedDate(socket, workspaceId, docId, updatedDate)) return;
+            } catch {
+              // Preserve the write error when readback cannot confirm it.
+            }
+            throw error;
+          }
+        } finally {
+          doc.destroy();
+        }
+      } catch (error) {
+        const retryDelay = WORKSPACE_METADATA_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined || !isTransientWorkspaceMetadataError(error)) {
+          throw error;
+        }
+        // Retry only metadata, reloading the root after the server has had time to recover.
+        await delay(retryDelay);
       }
-    } finally {
-      doc.destroy();
     }
   } catch (error) {
     const cause = error instanceof Error ? ` ${error.message}` : "";
@@ -282,12 +317,11 @@ export type DeleteDocOptions = {
 };
 
 /**
- * Delete a document and wait for a trustworthy completion signal.
+ * Request document deletion and verify content absence separately.
  *
  * AFFiNE versions may return no successful acknowledgement, `{ deleted: true }`,
- * or `{ data: { success: true } }`. AFFiNE 0.27.3 also retains the underlying
- * snapshot for garbage collection, so a successful acknowledgement must be
- * recognized instead of relying exclusively on a follow-up DOC_NOT_FOUND.
+ * or `{ data: { success: true } }`. Some versions acknowledge deletion while
+ * retaining readable content. Only a follow-up DOC_NOT_FOUND proves absence.
  */
 export function deleteDoc(
   socket: WorkspaceSocket,
@@ -310,6 +344,7 @@ export function deleteDoc(
 
   return new Promise<DeleteDocResult>((resolve, reject) => {
     let settled = false;
+    let acknowledged = false;
     let verificationTimer: NodeJS.Timeout | undefined;
     const deadline = Date.now() + timeoutMs;
 
@@ -331,9 +366,17 @@ export function deleteDoc(
       reject(error);
     };
     const onDisconnect = () => {
+      if (acknowledged) {
+        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        return;
+      }
       rejectOnce(new Error('space:delete-doc failed because the socket disconnected before completion.'));
     };
     const operationTimer = setTimeout(() => {
+      if (acknowledged) {
+        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        return;
+      }
       rejectOnce(
         new Error(
           `space:delete-doc was not acknowledged and deletion could not be verified within ${timeoutMs}ms`,
@@ -345,6 +388,7 @@ export function deleteDoc(
       if (settled) return;
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return;
+      const acknowledgedBeforeRead = acknowledged;
 
       try {
         const absent = await emitWithAck<boolean>(
@@ -361,13 +405,21 @@ export function deleteDoc(
           Math.max(1, Math.min(remainingMs, verificationIntervalMs)),
         );
         if (absent) {
-          resolveOnce({ acknowledged: false, verifiedAbsent: true });
+          resolveOnce({ acknowledged, verifiedAbsent: true });
+          return;
+        }
+        if (acknowledgedBeforeRead) {
+          resolveOnce({ acknowledged: true, verifiedAbsent: false });
           return;
         }
       } catch (error) {
         if (settled) return;
         const message = error instanceof Error ? error.message : String(error);
         if (!message.startsWith('space:load-doc timeout after ')) {
+          if (acknowledged) {
+            resolveOnce({ acknowledged: true, verifiedAbsent: false });
+            return;
+          }
           rejectOnce(error instanceof Error ? error : new Error(message));
           return;
         }
@@ -380,13 +432,14 @@ export function deleteDoc(
 
     socket.once('disconnect', onDisconnect);
     socket.emit('space:delete-doc', payload, (ack: any) => {
+      if (settled) return;
       const message = ackErrorMessage(ack, 'delete-doc failed');
       if (message) {
         rejectOnce(new Error(message));
         return;
       }
       if (deleteAcknowledged(ack)) {
-        resolveOnce({ acknowledged: true, verifiedAbsent: false });
+        acknowledged = true;
         return;
       }
       if (deleteRejected(ack)) {
