@@ -211,6 +211,10 @@ export function registerBlobTools(
     const workspaceId = requestedWorkspaceId || defaults.workspaceId;
     try {
       if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
+      // Like the key, a dot segment would be collapsed by URL resolution into another API route.
+      if (workspaceId === "." || workspaceId === "..") {
+        throw new Error("workspaceId must be a valid AFFiNE workspace id.");
+      }
       const key = normalizeBlobKey(rawKey);
       const { headers } = await gql.getConnectionAuth();
       const url = new URL(

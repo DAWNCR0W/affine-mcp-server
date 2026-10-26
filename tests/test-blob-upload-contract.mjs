@@ -466,6 +466,14 @@ async function testGetBlobContract() {
         status: "failed",
       }, `invalid key ${JSON.stringify(key)}`);
     }
+    for (const workspaceId of [".", ".."]) {
+      expectToolFailure(await getBlob({ workspaceId, key: "image.png" }), {
+        code: "blob_read_failed",
+        retryable: false,
+        status: "failed",
+        error: /valid AFFiNE workspace id/,
+      }, `invalid workspaceId ${JSON.stringify(workspaceId)}`);
+    }
     assert.equal(normalizeBlobKey("a/../b"), "a/../b", "slashes stay inside one encoded path segment");
     assert.equal(affine.requests.length, requestCount);
 
