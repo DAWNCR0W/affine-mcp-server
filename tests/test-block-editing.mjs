@@ -123,6 +123,7 @@ async function main() {
     taskBlockId: null,
     quoteBlockId: null,
     codeBlockId: null,
+    htmlCodeBlockId: null,
     tableBlockId: null,
     referenceBlockId: null,
     referenceTableBlockId: null,
@@ -410,6 +411,63 @@ async function main() {
     });
     state.codeBlockId = code?.blockId;
     expectTruthy(state.codeBlockId, 'append_block rich-text code id');
+
+    const htmlCode = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'code',
+      language: 'html',
+      preview: true,
+      text: '<p>Rendered diagram</p>',
+    });
+    state.htmlCodeBlockId = htmlCode?.blockId;
+    expectTruthy(state.htmlCodeBlockId, 'append_block html code id');
+    await expectCallError('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'paragraph',
+      preview: true,
+      text: 'not code',
+    }, /'preview' field can only be used with type='code'/);
+    const codeBlocks = (await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    }))?.blocks ?? [];
+    expectEqual(codeBlocks.find(block => block.id === state.htmlCodeBlockId)?.preview, true, 'read_doc returns code preview state');
+    expectEqual(codeBlocks.find(block => block.id === state.codeBlockId)?.preview, null, 'append_block without preview leaves preview unset');
+
+    const codeUpdate = await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.htmlCodeBlockId,
+      language: 'SVG',
+      preview: false,
+    });
+    assert.deepEqual(codeUpdate?.changed, ['language', 'preview'], 'update_block changes code language and preview');
+    expectEqual(codeUpdate?.previous?.preview, true, 'update_block previous preview state');
+    expectEqual(codeUpdate?.block?.language, 'svg', 'update_block normalizes code language');
+    expectEqual(codeUpdate?.block?.preview, false, 'update_block code preview state');
+    expectEqual(codeUpdate?.block?.text, '<p>Rendered diagram</p>', 'update_block preserves code text');
+    const codeTextUpdate = await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.htmlCodeBlockId,
+      text: '<p>Updated diagram</p>',
+    });
+    expectEqual(codeTextUpdate?.block?.language, 'svg', 'update_block preserves omitted code language');
+    expectEqual(codeTextUpdate?.block?.preview, false, 'update_block preserves omitted code preview');
+    await expectCallError('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.quoteBlockId,
+      preview: true,
+    }, /'preview' field can only be used with a code block/);
+    await expectCallError('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.quoteBlockId,
+      language: 'html',
+    }, /'language' field can only be used with a code block/);
 
     const table = await call('append_block', {
       workspaceId: state.workspaceId,

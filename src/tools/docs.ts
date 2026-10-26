@@ -587,6 +587,7 @@ type AppendBlockInput = {
   latex?: string;
   checked?: boolean;
   language?: string;
+  preview?: boolean;
   caption?: string;
   level?: number;
   style?: AppendBlockListStyle;
@@ -748,6 +749,7 @@ type NormalizedAppendBlockInput = {
   dataViewMode: AppendBlockDataViewMode;
   checked: boolean;
   language: string;
+  preview?: boolean;
   caption?: string;
   legacyType?: AppendBlockLegacyType;
   tableData?: string[][];
@@ -2046,6 +2048,9 @@ export function registerDocTools(
       if (raw.language !== undefined && normalized.strict) {
         throw new Error("The 'language' field can only be used with type='code'.");
       }
+      if (raw.preview !== undefined && normalized.strict) {
+        throw new Error("The 'preview' field can only be used with type='code'.");
+      }
       const allowsCaption =
         normalized.type === "bookmark" ||
         normalized.type === "image" ||
@@ -2288,6 +2293,7 @@ export function registerDocTools(
       dataViewMode,
       checked: Boolean(parsed.checked),
       language,
+      preview: parsed.preview,
       caption: parsed.caption,
       legacyType: typeInfo.legacyType,
       tableData,
@@ -2472,6 +2478,7 @@ export function registerDocTools(
     const rawType = block.get("prop:type");
     const rawChecked = block.get("prop:checked");
     const rawLanguage = block.get("prop:language");
+    const rawPreview = block.get("prop:preview");
     const rawFlavour = block.get("sys:flavour");
     const hasRichText = rawText instanceof Y.Text || typeof rawText === "string";
     return {
@@ -2483,6 +2490,7 @@ export function registerDocTools(
       deltas: hasRichText ? richTextValueToDeltas(rawText) ?? [] : [],
       checked: typeof rawChecked === "boolean" ? rawChecked : null,
       language: typeof rawLanguage === "string" ? rawLanguage : null,
+      preview: typeof rawPreview === "boolean" ? rawPreview : null,
       childIds: childIdsFrom(block.get("sys:children")),
     };
   }
@@ -2744,6 +2752,9 @@ export function registerDocTools(
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:language", normalized.language);
+        if (normalized.preview !== undefined) {
+          block.set("prop:preview", normalized.preview);
+        }
         if (normalized.caption) {
           block.set("prop:caption", normalized.caption);
         }
@@ -6141,6 +6152,7 @@ export function registerDocTools(
         linkedDocIds: string[];
         checked: boolean | null;
         language: string | null;
+        preview: boolean | null;
         childIds: string[];
       }> = [];
       const plainTextLines: string[] = [];
@@ -6162,6 +6174,7 @@ export function registerDocTools(
         const table = flavour === "affine:table" ? extractTableData(raw) : null;
         const linkedDocIds = extractLinkedPageRefs(propText);
         const language = raw.get("prop:language");
+        const preview = raw.get("prop:preview");
         const checked = raw.get("prop:checked");
         const childIds = childIdsFrom(raw.get("sys:children"));
 
@@ -6187,6 +6200,7 @@ export function registerDocTools(
           linkedDocIds,
           checked: typeof checked === "boolean" ? checked : null,
           language: typeof language === "string" ? language : null,
+          preview: typeof preview === "boolean" ? preview : null,
           childIds,
         });
 
@@ -6800,6 +6814,7 @@ export function registerDocTools(
     latex?: string;
     checked?: boolean;
     language?: string;
+    preview?: boolean;
     caption?: string;
     level?: number;
     style?: AppendBlockListStyle;
@@ -6890,6 +6905,7 @@ export function registerDocTools(
         viewMode: AppendBlockDataViewMode.optional().describe("Initial data view preset for type=database or type=data_view. Defaults: database=table, data_view=kanban"),
         checked: z.boolean().optional().describe("Todo state when type is todo"),
         language: z.string().optional().describe("Code language when type is code"),
+        preview: z.boolean().optional().describe("Initial preview state when type is code (for example, open an html code block in Preview). Omit to keep AFFiNE's default."),
         caption: z.string().optional().describe("Code caption when type is code"),
         strict: z.boolean().optional().describe("Strict validation mode (default true)"),
         placement: z
@@ -10234,6 +10250,8 @@ export function registerDocTools(
     type?: BlockEditType;
     style?: AppendBlockListStyle;
     level?: number;
+    language?: string;
+    preview?: boolean;
   }) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -10246,9 +10264,17 @@ export function registerDocTools(
       params.checked === undefined &&
       params.type === undefined &&
       params.style === undefined &&
-      params.level === undefined
+      params.level === undefined &&
+      params.language === undefined &&
+      params.preview === undefined
     ) {
-      throw new Error("update_block requires at least one of text, checked, type, style, or level.");
+      throw new Error("update_block requires at least one of text, checked, type, style, level, language, or preview.");
+    }
+    const language = params.language === undefined
+      ? undefined
+      : params.language.trim().toLowerCase() || "txt";
+    if (language !== undefined && language.length > 64) {
+      throw new Error("Code language is too long (max 64 chars).");
     }
 
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
@@ -10295,6 +10321,12 @@ export function registerDocTools(
       if (params.checked !== undefined && requestedType !== "list") {
         throw new Error("The 'checked' field can only be used with a todo list block.");
       }
+      if (language !== undefined && requestedType !== "code") {
+        throw new Error("The 'language' field can only be used with a code block.");
+      }
+      if (params.preview !== undefined && requestedType !== "code") {
+        throw new Error("The 'preview' field can only be used with a code block.");
+      }
 
       const previous = blockSnapshot(blocks, params.blockId);
       const changed: string[] = [];
@@ -10335,6 +10367,15 @@ export function registerDocTools(
             block.set("prop:checked", params.checked);
             markChanged("checked");
           }
+        }
+      } else if (requestedType === "code") {
+        if (language !== undefined && block.get("prop:language") !== language) {
+          block.set("prop:language", language);
+          markChanged("language");
+        }
+        if (params.preview !== undefined && block.get("prop:preview") !== params.preview) {
+          block.set("prop:preview", params.preview);
+          markChanged("preview");
         }
       }
 
@@ -11183,6 +11224,8 @@ export function registerDocTools(
         type: BlockEditType.optional().describe("Resulting logical block type."),
         style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),
         level: z.number().int().min(1).max(6).optional().describe("Heading level. Only valid when the resulting type is heading."),
+        language: z.string().optional().describe("Code language. Only valid for code blocks. Omit to preserve the current language."),
+        preview: z.boolean().optional().describe("Code block preview state (for example, show an html code block in Preview). Only valid for code blocks. Omit to preserve the current state."),
       },
     },
     updateBlockHandler as any

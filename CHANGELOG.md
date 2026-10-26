@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `append_block` accepts an optional `preview` boolean for code blocks, `update_block` accepts optional `language` and `preview` for code blocks, and `read_doc` and block snapshots return the code block `preview` state. Omitted fields keep the existing behavior.
+
 ## [3.10.2] - 2026-10-26
 
 ### Fixed

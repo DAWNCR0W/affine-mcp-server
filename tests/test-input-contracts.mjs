@@ -250,6 +250,37 @@ await assert.rejects(
 );
 assert.equal(requestCount, 0, "invalid table cell input must not reach AFFiNE");
 
+const codePreview = appendBlockSchema.safeParse({ docId: "doc-1", type: "code", language: "html", preview: true });
+assert.equal(codePreview.success, true, "append_block must accept a code preview state");
+assert.equal(codePreview.data.preview, true, "append_block must preserve the code preview state");
+assert.equal(
+  appendBlockSchema.safeParse({ docId: "doc-1", type: "code", preview: "true" }).success,
+  false,
+  "append_block must reject a non-boolean preview",
+);
+await assert.rejects(
+  appendBlock({ docId: "doc-1", type: "paragraph", preview: true }),
+  /The 'preview' field can only be used with type='code'/,
+  "append_block must reject preview on a non-code block",
+);
+const updateBlockSchema = toolSchema("update_block");
+const codeUpdate = updateBlockSchema.safeParse({ docId: "doc-1", blockId: "block-1", language: "html", preview: false });
+assert.equal(codeUpdate.success, true, "update_block must accept code language and preview");
+assert.equal(codeUpdate.data.language, "html");
+assert.equal(codeUpdate.data.preview, false);
+assert.equal(
+  updateBlockSchema.safeParse({ docId: "doc-1", blockId: "block-1", preview: 1 }).success,
+  false,
+  "update_block must reject a non-boolean preview",
+);
+const updateBlock = registry.tools.get("update_block").handler;
+await assert.rejects(
+  updateBlock({ workspaceId: "w", docId: "doc-1", blockId: "block-1", language: "x".repeat(65) }),
+  /Code language is too long/,
+  "update_block must reject an overlong code language",
+);
+assert.equal(requestCount, 0, "invalid code block input must not reach AFFiNE");
+
 assert.equal(toolSchema("list_docs").safeParse({ workspaceId: "w", first: 201 }).success, false);
 assert.equal(toolSchema("search_docs").safeParse({ query: "x", limit: -1 }).success, false);
 assert.equal(toolSchema("list_workspace_tree").safeParse({ depth: 21 }).success, false);
