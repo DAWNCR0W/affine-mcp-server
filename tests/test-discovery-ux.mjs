@@ -645,6 +645,128 @@ async function testDatabaseRowCreators() {
   } finally { await fixture.close(); }
 }
 
+async function testDatabaseNativeCreationCells() {
+  const workspaceId = "workspace-native-creation-cells";
+  const docId = "native-creation-cells";
+  const databaseBlockId = "database";
+  const fixture = await createRealtimeFixture({ workspaceId });
+  const page = new Y.Doc();
+  const map = values => new Y.Map(Object.entries(values));
+  const array = values => {
+    const result = new Y.Array();
+    result.push(values);
+    return result;
+  };
+  const blocks = page.getMap("blocks");
+  const cells = new Y.Map();
+  const rowIds = [];
+  const expected = new Map();
+  const creator = "original-user-id";
+  const createdAt = 1_700_000_000_000;
+  const addRow = (id, metadata, rowCells) => {
+    rowIds.push(id);
+    const title = new Y.Text();
+    title.insert(0, id, { bold: true });
+    blocks.set(id, map({
+      "sys:id": id,
+      "sys:flavour": "affine:paragraph",
+      "sys:children": array([]),
+      "prop:text": title,
+      ...metadata,
+    }));
+    if (rowCells !== undefined) cells.set(id, rowCells);
+  };
+  const nativeEntries = [
+    ["no-row-cells", undefined],
+    ["null-row-cells", null],
+    ["empty-row-cells", new Y.Map()],
+    ["null-entry", map({ author: null, created: null })],
+    ["empty-entry", map({ author: new Y.Map(), created: {} })],
+    ["null-value", map({ author: map({ value: null }), created: map({ value: null }) })],
+    ["stale-value", map({ author: map({ value: "wrong-user" }), created: map({ value: 123 }) })],
+  ];
+  for (const [id, rowCells] of nativeEntries) {
+    if (rowCells instanceof Y.Map) {
+      rowCells.set("ordinary", map({ value: "manually entered text" }));
+      rowCells.set("number", map({ value: 7 }));
+    }
+    addRow(id, { "prop:meta:createdBy": creator, "prop:meta:createdAt": createdAt }, rowCells);
+    expected.set(id, [creator, createdAt]);
+  }
+  const metadataCases = [
+    ["legacy", {}],
+    ["null-metadata", { "prop:meta:createdBy": null, "prop:meta:createdAt": null }],
+    ["wrong-types", { "prop:meta:createdBy": 42, "prop:meta:createdAt": String(createdAt) }],
+    ["empty-creator", { "prop:meta:createdBy": "", "prop:meta:createdAt": false }],
+    ["blank-creator", { "prop:meta:createdBy": " \t", "prop:meta:createdAt": NaN }],
+    ["object-metadata", { "prop:meta:createdBy": { id: creator }, "prop:meta:createdAt": {} }],
+    ["infinite-time", { "prop:meta:createdBy": creator, "prop:meta:createdAt": Infinity }],
+    ["zero-time", { "prop:meta:createdBy": creator, "prop:meta:createdAt": 0 }],
+  ];
+  for (const [id, metadata] of metadataCases) {
+    // Invalid/missing metadata must not fall back to stale cells or the current user.
+    addRow(id, metadata, map({ author: map({ value: "stale-user" }), created: map({ value: 123 }) }));
+    expected.set(id, [id === "infinite-time" || id === "zero-time" ? creator : null, id === "zero-time" ? 0 : null]);
+  }
+  blocks.set(databaseBlockId, map({
+    "sys:id": databaseBlockId,
+    "sys:flavour": "affine:database",
+    "sys:children": array(rowIds),
+    "prop:columns": array([
+      map({ id: "title", name: "Title", type: "title", data: {} }),
+      map({ id: "author", name: "Owner", type: "created-by", data: {} }),
+      map({ id: "created", name: "Opened", type: "created-time", data: {} }),
+      map({ id: "ordinary", name: "Created by", type: "rich-text", data: {} }),
+      map({ id: "number", name: "Count", type: "number", data: {} }),
+    ]),
+    "prop:cells": cells,
+  }));
+  fixture.setDocumentSnapshot(docId, Buffer.from(Y.encodeStateAsUpdate(page)).toString("base64"));
+  page.destroy();
+  const before = fixture.documentSnapshot(docId);
+  const call = async args => parseResult(await fixture.registry.tools.get("read_database_cells").handler({
+    workspaceId, docId, databaseBlockId, ...args,
+  }));
+  try {
+    const result = await call({});
+    assert.deepEqual(result.rows.map(row => row.rowBlockId), rowIds);
+    for (const row of result.rows) {
+      const [expectedCreator, expectedTime] = expected.get(row.rowBlockId);
+      assert.deepEqual(row.cells.Owner, { columnId: "author", type: "created-by", value: expectedCreator }, row.rowBlockId);
+      assert.deepEqual(row.cells.Opened, { columnId: "created", type: "created-time", value: expectedTime }, row.rowBlockId);
+      assert.equal(row.title, row.rowBlockId);
+      assert.deepEqual(row.titleDeltas, [{ insert: row.rowBlockId, attributes: { bold: true } }]);
+      assert.equal(row.linkedDocId, null);
+      assert.equal(row.cells.Title, undefined);
+    }
+    const ordinary = result.rows.find(row => row.rowBlockId === "stale-value");
+    assert.deepEqual(ordinary.cells["Created by"], {
+      columnId: "ordinary", type: "rich-text", value: "manually entered text", deltas: [{ insert: "manually entered text" }],
+    }, "native behavior is selected by type, not display name");
+    assert.deepEqual(ordinary.cells.Count, { columnId: "number", type: "number", value: 7 });
+    assert.equal(result.rows[0].cells.Count, undefined, "missing ordinary cells remain omitted");
+
+    for (const columns of [["author", "created"], ["Owner", "Opened"], [" owner ", "OPENED"]]) {
+      const filtered = await call({ columns, rowBlockIds: ["zero-time", "no-row-cells"] });
+      assert.deepEqual(filtered.rows.map(row => row.rowBlockId), ["zero-time", "no-row-cells"]);
+      for (const row of filtered.rows) {
+        assert.deepEqual(Object.keys(row.cells).sort(), ["Opened", "Owner"]);
+        assert.equal(row.cells.Owner.value, creator);
+        assert.equal(row.cells.Opened.value, row.rowBlockId === "zero-time" ? 0 : createdAt);
+      }
+    }
+    const titleOnly = await call({ columns: ["title"], rowBlockIds: ["stale-value"] });
+    assert.deepEqual(titleOnly.rows[0].cells, {});
+    assert.equal(titleOnly.rows[0].title, "stale-value");
+    const ordinaryOnly = await call({ columns: ["Created by"], rowBlockIds: ["stale-value"] });
+    assert.deepEqual(Object.keys(ordinaryOnly.rows[0].cells), ["Created by"]);
+    assert.equal(fixture.documentSnapshot(docId), before, "reads preserve persisted metadata and cells");
+    assert.equal(fixture.pushCount, 0, "reads never persist backfilled metadata");
+    assert.equal(fixture.currentUserQueries, 0, "reads never substitute the authenticated user's identity");
+  } finally { await fixture.close(); }
+}
+
+await testDatabaseNativeCreationCells();
 await testDatabaseRowCreators();
 await testMissingAndEmptyWorkspaceRoots();
 await testUpdateDocTitleRejectsMissingDoc();

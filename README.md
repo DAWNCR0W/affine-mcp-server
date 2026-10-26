@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.10.1-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.10.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.1-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -40,6 +40,7 @@ Highlights:
 - Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
 - Exposes 107 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Sets and clears native AFFiNE Journal dates with `set_doc_journal`
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.10.2] - 2026-10-26
+
+### Fixed
+- Read native database `created-by` and `created-time` values from row metadata, including absent or stale stored cells (#426).
+
 ## [3.10.1] - 2026-10-22
 
 ### Fixed
@@ -941,6 +946,7 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.10.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.10.2
 [3.10.1]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.10.1
 [3.10.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.10.0
 [3.9.1]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.1
@@ -991,4 +997,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.10.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.10.2...HEAD

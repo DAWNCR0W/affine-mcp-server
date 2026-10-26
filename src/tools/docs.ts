@@ -8814,20 +8814,30 @@ export function registerDocTools(
         const rowCells = ctx.cellsMap.get(rowBlockId);
         const cells: Record<string, Record<string, unknown>> = {};
 
-        if (rowCells instanceof Y.Map) {
-          for (const col of ctx.columnDefs) {
-            if (ctx.titleCol && col.id === ctx.titleCol.id) {
-              continue;
-            }
-            if (!requestedColumnIds.has(col.id)) {
-              continue;
-            }
-            const cellEntry = rowCells.get(col.id);
-            if (cellEntry === undefined) {
-              continue;
-            }
-            cells[col.name || col.id] = decodeDatabaseCellValue(col, cellEntry);
+        for (const col of ctx.columnDefs) {
+          if (ctx.titleCol && col.id === ctx.titleCol.id) {
+            continue;
           }
+          if (!requestedColumnIds.has(col.id)) {
+            continue;
+          }
+          // Native computed columns read row metadata, even when stored cells are
+          // absent or stale (for example after changing a column's type in AFFiNE).
+          if (col.type === "created-by" || col.type === "created-time") {
+            const rawValue = rowBlock.get(col.type === "created-by"
+              ? "prop:meta:createdBy"
+              : "prop:meta:createdAt");
+            const value = col.type === "created-by"
+              ? (typeof rawValue === "string" && rawValue.trim().length > 0 ? rawValue : null)
+              : (typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : null);
+            cells[col.name || col.id] = { columnId: col.id, type: col.type, value };
+            continue;
+          }
+          const cellEntry = rowCells instanceof Y.Map ? rowCells.get(col.id) : undefined;
+          if (cellEntry === undefined) {
+            continue;
+          }
+          cells[col.name || col.id] = decodeDatabaseCellValue(col, cellEntry);
         }
 
         return {
