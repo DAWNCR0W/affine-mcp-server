@@ -1,5 +1,25 @@
 # Release Notes
 
+## Version 3.10.2 (2026-10-26)
+
+### Highlights
+- Read the native Created by and Created time database columns correctly through `read_database_cells`.
+
+### What Changed
+- Resolve `created-by` from row `prop:meta:createdBy` and `created-time` from `prop:meta:createdAt`, including rows with absent, empty, null, or stale stored cells (#426).
+- Match AFFiNE's metadata-first computed-column behavior after a column is converted to a native type.
+- Return the creator user ID and numeric creation timestamp; missing or invalid metadata returns `null` without backfilling rows or substituting the current user.
+- Preserve ordinary cell decoding, rich-text titles, and row/column filters. Add regression coverage for renamed columns, invalid metadata, zero timestamps, and read-only behavior.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names and required inputs remain unchanged.
+- Native creation columns can now appear in results even when no stored cell exists. User display names are not resolved; `created-by` returns the native user ID.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.10.2`, then restart the MCP server.
+
+### Known Issues
+- [#416](https://github.com/DAWNCR0W/affine-mcp-server/issues/416): Accumulated Yjs root delete-set payloads may cause performance or memory pressure. This release does not address that issue.
+
 ## Version 3.10.1 (2026-10-22)
 
 ### Highlights
