@@ -503,6 +503,7 @@ class ComprehensiveRunner {
     }, parsed => {
       this.blobKey = parsed?.key || parsed?.id || null;
     });
+    await this.callTool('get_blob', { workspaceId, key: this.blobKey || 'missing-blob-key' });
     await this.callTool('delete_blob', {
       workspaceId,
       key: this.blobKey || 'missing-blob-key',

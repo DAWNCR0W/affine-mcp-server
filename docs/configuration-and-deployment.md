@@ -486,6 +486,7 @@ Current group names:
 - `users.write`
 - `users.auth`
 - `blobs`
+- `blobs.read`
 - `blobs.write`
 - `notifications`
 - `notifications.read`

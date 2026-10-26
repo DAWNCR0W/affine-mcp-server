@@ -40,6 +40,7 @@ export const ALL_TOOLS = [
   "export_doc_markdown",
   "export_with_fidelity_report",
   "find_doc_by_title",
+  "get_blob",
   "get_capabilities",
   "get_collection",
   "get_doc",
@@ -225,6 +226,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   update_table_column_widths: ["docs", "docs.write", "write"],
   update_workspace: ["workspaces", "workspaces.write", "admin", "write"],
   upload_blob: ["blobs", "blobs.write", "write"],
+  get_blob: ["blobs", "blobs.read", "read"],
 };
 
 const READ_ONLY_TOOLS = new Set<ToolName>([
@@ -234,6 +236,7 @@ const READ_ONLY_TOOLS = new Set<ToolName>([
   "export_doc_markdown",
   "export_with_fidelity_report",
   "find_doc_by_title",
+  "get_blob",
   "get_capabilities",
   "get_collection",
   "get_doc",

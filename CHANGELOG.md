@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `get_blob` downloads a workspace blob by key or `affine://blob/<key>` reference, so clients can read the files behind image and attachment blocks. Images are returned as MCP image content with `{ key, contentType, size, sha256 }` metadata. The tool is read-only and grouped under `blobs.read`, so it stays enabled with `AFFINE_DISABLED_GROUPS=destructive` and the `read_only` profile.
+
 ## [3.10.1] - 2026-10-22
 
 ### Fixed
