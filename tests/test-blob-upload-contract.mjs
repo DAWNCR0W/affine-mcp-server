@@ -2,10 +2,12 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 
 import {
   decodeBlobContent,
   loadBlobUploadConfig,
+  normalizeBlobKey,
   registerBlobTools,
 } from "../dist/tools/blobStorage.js";
 import { normalizeBlobSourceId } from "../dist/urlSafety.js";
@@ -358,7 +360,153 @@ async function testToolContract() {
   }
 }
 
+async function listen(handler) {
+  const requests = [];
+  const server = createServer((req, res) => {
+    requests.push({ path: req.url, headers: req.headers });
+    handler(req, res);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    baseUrl: `http://127.0.0.1:${server.address().port}`,
+    requests,
+    async close() {
+      server.closeAllConnections?.();
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+async function testGetBlobContract() {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  // Stands in for a pre-signed object-storage URL on another origin.
+  const storage = await listen((_req, res) => {
+    res.writeHead(200, { "content-type": "image/png" });
+    res.end(png);
+  });
+  const affine = await listen((req, res) => {
+    const blobs = "/api/workspaces/workspace-1/blobs/";
+    if (req.url === `${blobs}card.png` || req.url === `${blobs}Folder%2FMy%20image%20(1).png`) {
+      res.writeHead(200, { "content-type": "image/png" });
+      res.end(png);
+    } else if (req.url === `${blobs}notes.txt`) {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end("hello");
+    } else if (req.url === `${blobs}redirected.png`) {
+      res.writeHead(302, { location: `${storage.baseUrl}/signed/redirected.png?sig=abc` });
+      res.end();
+    } else if (req.url === `${blobs}private.png`) {
+      res.writeHead(401);
+      res.end();
+    } else if (req.url === "/api/workspaces/workspace-default/blobs/card.png") {
+      res.writeHead(200, { "content-type": "image/png" });
+      res.end(png);
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+
+  try {
+    const registry = new ToolRegistry();
+    const gql = {
+      baseUrl: affine.baseUrl,
+      async getConnectionAuth() {
+        return { endpoint: `${affine.baseUrl}/graphql`, headers: { Cookie: "session=test-cookie" } };
+      },
+    };
+    registerBlobTools(registry, gql, undefined, { workspaceId: "workspace-default" });
+    const getBlob = registry.tools.get("get_blob");
+    assert.equal(typeof getBlob, "function");
+
+    // Image blobs must be visible to MCP clients as image content, with verifiable metadata.
+    const image = await getBlob({ workspaceId: "workspace-1", key: "card.png" });
+    assert.equal(image.isError, undefined);
+    assert.deepEqual(parseToolResult(image), {
+      workspaceId: "workspace-1",
+      key: "card.png",
+      contentType: "image/png",
+      size: png.length,
+      sha256: createHash("sha256").update(png).digest("hex"),
+    });
+    assert.deepEqual(image.content[1], { type: "image", data: png.toString("base64"), mimeType: "image/png" });
+    assert.equal(affine.requests.at(-1).headers.cookie, "session=test-cookie");
+
+    // Block references (affine://blob/<url-encoded key>) resolve to the exact opaque key.
+    const referenced = parseToolResult(await getBlob({
+      workspaceId: "workspace-1",
+      key: "affine://blob/Folder%2FMy%20image%20(1).png",
+    }));
+    assert.equal(referenced.key, "Folder/My image (1).png");
+    assert.equal(affine.requests.at(-1).path, "/api/workspaces/workspace-1/blobs/Folder%2FMy%20image%20(1).png");
+
+    const defaultWorkspace = parseToolResult(await getBlob({ key: "card.png" }));
+    assert.equal(defaultWorkspace.workspaceId, "workspace-default");
+
+    const textBlob = await getBlob({ workspaceId: "workspace-1", key: "notes.txt" });
+    assert.equal(parseToolResult(textBlob).contentType, "text/plain");
+    assert.equal(textBlob.content[1].type, "resource");
+    assert.equal(Buffer.from(textBlob.content[1].resource.blob, "base64").toString("utf8"), "hello");
+
+    // A cross-origin storage redirect must never receive AFFiNE credentials.
+    const redirected = parseToolResult(await getBlob({ workspaceId: "workspace-1", key: "redirected.png" }));
+    assert.equal(redirected.size, png.length);
+    assert.equal(storage.requests.length, 1);
+    assert.equal(storage.requests[0].headers.cookie, undefined);
+
+    // Traversal keys would resolve to a different API route, so they are rejected before any request.
+    assert.throws(() => normalizeBlobKey(".."), /non-empty AFFiNE blob key/);
+    const requestCount = affine.requests.length;
+    for (const key of ["..", "affine://blob/..", "affine://blob/", "affine://blob/%E0%A4%A", "bad\nkey"]) {
+      expectToolFailure(await getBlob({ workspaceId: "workspace-1", key }), {
+        code: "blob_read_failed",
+        retryable: false,
+        status: "failed",
+      }, `invalid key ${JSON.stringify(key)}`);
+    }
+    for (const workspaceId of [".", ".."]) {
+      expectToolFailure(await getBlob({ workspaceId, key: "image.png" }), {
+        code: "blob_read_failed",
+        retryable: false,
+        status: "failed",
+        error: /valid AFFiNE workspace id/,
+      }, `invalid workspaceId ${JSON.stringify(workspaceId)}`);
+    }
+    assert.equal(normalizeBlobKey("a/../b"), "a/../b", "slashes stay inside one encoded path segment");
+    assert.equal(affine.requests.length, requestCount);
+
+    expectToolFailure(await getBlob({ workspaceId: "workspace-1", key: "missing.png" }), {
+      code: "blob_not_found",
+      retryable: false,
+      status: "failed",
+      error: /Blob missing\.png was not found in workspace workspace-1/,
+    }, "missing blob");
+
+    const unauthorized = expectToolFailure(await getBlob({ workspaceId: "workspace-1", key: "private.png" }), {
+      code: "blob_read_failed",
+      retryable: false,
+      status: "failed",
+      error: /HTTP 401/,
+    }, "unauthorized blob");
+    assert.equal(unauthorized.causeCode, "auth_required");
+    assert.doesNotMatch(JSON.stringify(unauthorized), /test-cookie/);
+
+    expectToolFailure(await getBlob({ workspaceId: "workspace-1", key: "card.png", maxBytes: 4 }), {
+      code: "blob_read_failed",
+      retryable: false,
+      status: "failed",
+      error: /configured limit (?:is|of) 4 bytes/,
+    }, "oversized blob");
+  } finally {
+    await affine.close();
+    await storage.close();
+  }
+}
+
 testContentDecoding();
 testConfiguration();
 await testToolContract();
+await testGetBlobContract();
 console.log("Blob upload contract tests passed");

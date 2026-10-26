@@ -1,11 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text, toolError } from "../util/mcp.js";
+import { createHash } from "node:crypto";
+import { receipt, text, toolError, ToolFailure } from "../util/mcp.js";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { requireMatchingConfirmation } from "../util/inputSchemas.js";
-import { readLimitedResponseBody } from "../util/httpResponse.js";
+import { readLimitedResponseBody, readLimitedResponseBuffer } from "../util/httpResponse.js";
+import { normalizeBlobSourceId } from "../urlSafety.js";
 
 export type BlobContentEncoding = "utf8" | "base64";
 
@@ -34,6 +36,31 @@ type BlobUploadGraphQLResponse = {
     message?: unknown;
   }>;
 };
+
+const DEFAULT_GET_BLOB_MAX_BYTES = 10 * 1024 * 1024;
+const MAX_GET_BLOB_MAX_BYTES = 25 * 1024 * 1024;
+const GET_BLOB_TIMEOUT_MS = 30_000;
+const AFFINE_BLOB_PREFIX = "affine://blob/";
+// Image types MCP clients render inline; anything else is returned as an embedded resource.
+const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+/** Accept a raw blob key or an affine://blob/<key> reference and return the exact key. */
+export function normalizeBlobKey(value: string): string {
+  let key = value;
+  if (key.startsWith(AFFINE_BLOB_PREFIX)) {
+    try {
+      key = decodeURIComponent(key.slice(AFFINE_BLOB_PREFIX.length));
+    } catch {
+      throw new Error("Blob reference contains invalid percent encoding.");
+    }
+  }
+  key = normalizeBlobSourceId(key, "image");
+  // encodeURIComponent keeps "." and "..", which URL resolution would treat as path traversal.
+  if (!key || key === "." || key === "..") {
+    throw new Error("Blob key must be a non-empty AFFiNE blob key.");
+  }
+  return key;
+}
 
 class BlobUploadTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -169,7 +196,113 @@ export function registerBlobTools(
   server: McpServer,
   gql: GraphQLClient,
   uploadConfig: BlobUploadConfig = loadBlobUploadConfig(),
+  defaults: { workspaceId?: string } = {},
 ) {
+  // GET BLOB
+  const getBlobHandler = async ({
+    workspaceId: requestedWorkspaceId,
+    key: rawKey,
+    maxBytes = DEFAULT_GET_BLOB_MAX_BYTES,
+  }: {
+    workspaceId?: string;
+    key: string;
+    maxBytes?: number;
+  }) => {
+    const workspaceId = requestedWorkspaceId || defaults.workspaceId;
+    try {
+      if (!workspaceId) throw new Error("workspaceId required (or set AFFINE_WORKSPACE_ID)");
+      // Like the key, a dot segment would be collapsed by URL resolution into another API route.
+      if (workspaceId === "." || workspaceId === "..") {
+        throw new Error("workspaceId must be a valid AFFiNE workspace id.");
+      }
+      const key = normalizeBlobKey(rawKey);
+      const { headers } = await gql.getConnectionAuth();
+      const url = new URL(
+        `${gql.baseUrl}/api/workspaces/${encodeURIComponent(workspaceId)}/blobs/${encodeURIComponent(key)}`,
+      );
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), GET_BLOB_TIMEOUT_MS);
+      try {
+        let response = await fetch(url, { headers, redirect: "manual", signal: controller.signal });
+        // AFFiNE Cloud redirects to a pre-signed storage URL. Follow one hop and
+        // send credentials only when the redirect stays on the AFFiNE origin.
+        const location = response.status >= 300 && response.status < 400
+          ? response.headers.get("location")
+          : null;
+        if (location) {
+          response.body?.resume();
+          const target = new URL(location, url);
+          if (target.protocol !== "https:" && target.protocol !== url.protocol) {
+            throw new Error("Blob download redirected to an unsupported URL scheme.");
+          }
+          response = await fetch(target, {
+            headers: target.origin === url.origin ? headers : {},
+            redirect: "error",
+            signal: controller.signal,
+          });
+        }
+        if (response.status === 404) {
+          response.body?.resume();
+          throw new ToolFailure(
+            `Blob ${key} was not found in workspace ${workspaceId}.`,
+            "blob_not_found",
+            "Check the key from the image or attachment block (affine://blob/<key>) and the workspaceId.",
+          );
+        }
+        if (!response.ok) {
+          response.body?.resume();
+          throw new Error(`Blob download failed with HTTP ${response.status}.`);
+        }
+
+        const payload = await readLimitedResponseBuffer(response, maxBytes, "Blob");
+        const contentType = (response.headers.get("content-type") || "application/octet-stream")
+          .split(";")[0].trim().toLowerCase();
+        const result = text({
+          workspaceId,
+          key,
+          contentType,
+          size: payload.length,
+          sha256: createHash("sha256").update(payload).digest("hex"),
+        });
+        const data = payload.toString("base64");
+        const blobContent = INLINE_IMAGE_TYPES.has(contentType)
+          ? { type: "image" as const, data, mimeType: contentType }
+          : {
+              type: "resource" as const,
+              resource: { uri: `${AFFINE_BLOB_PREFIX}${encodeURIComponent(key)}`, mimeType: contentType, blob: data },
+            };
+        return { ...result, content: [...result.content, blobContent] };
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new Error(`Blob download timed out after ${GET_BLOB_TIMEOUT_MS}ms.`);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error: any) {
+      return toolError(error, {
+        code: error instanceof ToolFailure ? error.code : "blob_read_failed",
+        data: { kind: "blob.read", status: "failed", workspaceId, key: rawKey },
+      });
+    }
+  };
+  server.registerTool(
+    "get_blob",
+    {
+      title: "Get Blob",
+      description: "Download a blob from AFFiNE workspace storage, such as the file behind an image or attachment block. Images are returned as MCP image content; other files as an embedded base64 resource. Read-only.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("AFFiNE workspace id that owns the blob. Omit only when AFFINE_WORKSPACE_ID is configured."),
+        key: z.string().min(1).describe("Blob key, or an affine://blob/<key> reference from an image or attachment block."),
+        maxBytes: z.number().int().positive().max(MAX_GET_BLOB_MAX_BYTES).optional()
+          .describe(`Refuse blobs larger than this many bytes. Defaults to ${DEFAULT_GET_BLOB_MAX_BYTES}.`),
+      },
+    },
+    getBlobHandler as any
+  );
+
   // UPLOAD BLOB/FILE
   const uploadBlobHandler = async ({
     workspaceId,

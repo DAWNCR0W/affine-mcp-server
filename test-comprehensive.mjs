@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { testResourceName, testTempPath } from './tests/require-destructive-test-safety.mjs';
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -502,6 +503,12 @@ class ComprehensiveRunner {
       contentType: 'text/plain',
     }, parsed => {
       this.blobKey = parsed?.key || parsed?.id || null;
+    });
+    const expectedBlobSha256 = createHash('sha256').update('Blob data from test').digest('hex');
+    await this.callTool('get_blob', { workspaceId, key: this.blobKey || 'missing-blob-key' }, parsed => {
+      if (parsed?.sha256 !== expectedBlobSha256) {
+        throw new Error('get_blob content did not match the uploaded blob');
+      }
     });
     await this.callTool('delete_blob', {
       workspaceId,

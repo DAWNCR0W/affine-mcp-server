@@ -340,6 +340,7 @@ Plain strings and legacy `{ text: "..." }` comment objects are converted to Bloc
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
+| `get_blob` | Download a blob from workspace storage | Accepts a raw key or an `affine://blob/<key>` reference from an image or attachment block. Returns `{ key, contentType, size, sha256 }` plus MCP image content for PNG, JPEG, GIF, and WebP, or an embedded base64 resource for other types. `maxBytes` defaults to 10 MiB (max 25 MiB). Cross-origin storage redirects are followed without AFFiNE credentials. Read-only |
 | `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |

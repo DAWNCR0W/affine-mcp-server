@@ -42,6 +42,7 @@
     "export_doc_markdown",
     "export_with_fidelity_report",
     "find_doc_by_title",
+    "get_blob",
     "get_capabilities",
     "get_collection",
     "get_doc",
