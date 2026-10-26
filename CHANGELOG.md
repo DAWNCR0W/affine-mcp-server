@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Read native database `created-by` and `created-time` values from row metadata, including absent or stale stored cells (#426).
+
 ## [3.10.1] - 2026-10-22
 
 ### Fixed
