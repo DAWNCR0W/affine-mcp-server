@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `upload_blob` accepts `filePath` as an alternative to inline `content`. It streams a file from the server host without Base64, is disabled by default and is limited to the directories in `AFFINE_BLOB_UPLOAD_FILE_ROOTS` (#433).
+
 ## [3.10.2] - 2026-10-26
 
 ### Fixed
