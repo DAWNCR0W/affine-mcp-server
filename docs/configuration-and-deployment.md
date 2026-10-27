@@ -97,8 +97,13 @@ These controls are environment-only and are not read from the saved config file.
 | `AFFINE_BLOB_UPLOAD_MAX_BYTES` | No | `26214400` (25 MiB) | Maximum decoded payload size accepted by `upload_blob` |
 | `AFFINE_BLOB_UPLOAD_TIMEOUT_MS` | No | `30000` | Maximum time allowed for the multipart upload request |
 | `AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES` | No | `1048576` (1 MiB) | Maximum AFFiNE response body size read after an upload |
+| `AFFINE_BLOB_UPLOAD_FILE_ROOTS` | No | unset (disabled) | Absolute directories, separated by the platform path delimiter (`:` on Linux/macOS, `;` on Windows), from which `upload_blob` may read files passed as `filePath`. Each entry must exist at startup |
 
 `upload_blob` treats content as UTF-8 by default and preserves it exactly, including leading and trailing whitespace. Binary callers must pass `encoding: "base64"`; Base64 input is validated for canonical padding before it is decoded. ASCII whitespace inside explicit Base64 input is ignored.
+
+`upload_blob` can also read a file from the server host with `filePath` instead of `content`, so binary files do not have to pass through the client as Base64. This is disabled until `AFFINE_BLOB_UPLOAD_FILE_ROOTS` is set. The path must be absolute; it is resolved with `realpath`, so symlinks and `..` segments cannot leave the allowed directories, and it must name a regular file no larger than `AFFINE_BLOB_UPLOAD_MAX_BYTES`. The file is streamed to AFFiNE without Base64 decoding. `filename` defaults to the file's basename and `contentType` to a guess from common extensions.
+
+Every client that can call `upload_blob` can read any file under the configured roots and store it in a workspace it can write to. In HTTP mode that includes remote clients, so point the roots at dedicated upload directories, never at a home directory or `/`.
 
 ### Upstream response safeguards
 

@@ -160,7 +160,7 @@ const OUTPUT_SPECS = {
   update_table_cell: spec({ updated: "boolean", blockId: "string", row: "number", column: "number", rowId: "string", columnId: "string", previous: "object", cell: "object" }),
   update_table_column_widths: spec({ updated: "boolean", blockId: "string", rowCount: "number", columnCount: "number", columnIds: "stringArray", changedColumns: "unknownArray", previous: "object", table: "object" }),
   update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true, ["kind", "ok"])),
-  upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true, ["id", "key"])),
+  upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", source: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true, ["id", "key"])),
 } satisfies Record<ToolName, OutputSpec>;
 
 /** Canonical tools whose handlers can return the shared structured error envelope. */

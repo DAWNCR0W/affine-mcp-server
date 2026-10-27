@@ -2,9 +2,14 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import {
   decodeBlobContent,
+  guessContentType,
   loadBlobUploadConfig,
   registerBlobTools,
 } from "../dist/tools/blobStorage.js";
@@ -134,6 +139,7 @@ function testConfiguration() {
     maxDecodedBytes: 25 * 1024 * 1024,
     timeoutMs: 30_000,
     maxResponseBytes: 1024 * 1024,
+    fileRoots: [],
   });
   assert.deepEqual(loadBlobUploadConfig({
     AFFINE_BLOB_UPLOAD_MAX_BYTES: "128",
@@ -143,6 +149,7 @@ function testConfiguration() {
     maxDecodedBytes: 128,
     timeoutMs: 250,
     maxResponseBytes: 512,
+    fileRoots: [],
   });
   assert.throws(
     () => loadBlobUploadConfig({ AFFINE_BLOB_UPLOAD_MAX_BYTES: "0" }),
@@ -156,6 +163,24 @@ function testConfiguration() {
     () => loadBlobUploadConfig({ AFFINE_BLOB_UPLOAD_TIMEOUT_MS: "2147483648" }),
     /must not exceed 2147483647/,
   );
+  assert.throws(
+    () => loadBlobUploadConfig({ AFFINE_BLOB_UPLOAD_FILE_ROOTS: "relative/dir" }),
+    /must be absolute paths/,
+  );
+  assert.throws(
+    () => loadBlobUploadConfig({ AFFINE_BLOB_UPLOAD_FILE_ROOTS: path.join(tmpdir(), "affine-mcp-missing-root-xyz") }),
+    /does not exist/,
+  );
+}
+
+async function testFileRootConfiguration(root) {
+  const config = loadBlobUploadConfig({
+    AFFINE_BLOB_UPLOAD_FILE_ROOTS: ` ${root}${path.delimiter}${path.delimiter}${path.join(root, "nested", "..")} `,
+  });
+  assert.deepEqual(config.fileRoots, [root, root], "roots are trimmed, empty entries dropped and realpath'd");
+  assert.equal(guessContentType("/x/Photo.JPG"), "image/jpeg");
+  assert.equal(guessContentType("/x/doc.pdf"), "application/pdf");
+  assert.equal(guessContentType("/x/noext"), "application/octet-stream");
 }
 
 async function testToolContract() {
@@ -358,7 +383,124 @@ async function testToolContract() {
   }
 }
 
+async function testFilePathContract() {
+  const uploadServer = await startUploadServer();
+  const sandbox = await realpath(await mkdtemp(path.join(tmpdir(), "affine-mcp-blob-")));
+  try {
+    const root = path.join(sandbox, "allowed");
+    const outside = path.join(sandbox, "outside");
+    await mkdir(path.join(root, "sub"), { recursive: true });
+    await mkdir(outside);
+    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]);
+    await writeFile(path.join(root, "sub", "frame.png"), imageBytes);
+    await writeFile(path.join(root, "big.bin"), Buffer.alloc(17));
+    await writeFile(path.join(root, "..dotted.txt"), "dotted");
+    await writeFile(path.join(outside, "secret.txt"), "secret");
+    await symlink(path.join(outside, "secret.txt"), path.join(root, "escape.txt"));
+    await symlink(path.join(root, "sub", "frame.png"), path.join(root, "alias.png"));
+
+    await testFileRootConfiguration(root);
+
+    const gql = {
+      async getConnectionAuth() {
+        return { endpoint: uploadServer.baseUrl, headers: { Cookie: "session=test-cookie" } };
+      },
+    };
+    const register = (fileRoots) => {
+      const registry = new ToolRegistry();
+      registerBlobTools(registry, gql, {
+        maxDecodedBytes: 16,
+        timeoutMs: 1_000,
+        maxResponseBytes: 128,
+        fileRoots,
+      });
+      return registry.tools.get("upload_blob");
+    };
+    const uploadBlob = register([root]);
+
+    const uploaded = parseToolResult(await uploadBlob({
+      workspaceId: "workspace-1",
+      filePath: path.join(root, "sub", "frame.png"),
+    }));
+    assert.equal(uploaded.key, "blob-key");
+    assert.equal(uploaded.source, "file");
+    assert.equal(uploaded.filename, "frame.png");
+    assert.equal(uploaded.contentType, "image/png");
+    assert.equal(uploaded.size, imageBytes.length);
+    assert.equal("encoding" in uploaded, false, "file uploads do not report a content encoding");
+    const request = uploadServer.requests.at(-1);
+    assert.equal(request.headers.cookie, "session=test-cookie");
+    assert.equal(Number(request.headers["content-length"]), request.body.length, "file upload must be length-delimited");
+    assert.equal(request.headers["transfer-encoding"], undefined);
+    assert.ok(request.body.includes(imageBytes), "multipart body carries the exact file bytes");
+    assert.match(request.body.toString("latin1"), /filename="frame\.png"\r\nContent-Type: image\/png/);
+
+    const overridden = parseToolResult(await uploadBlob({
+      workspaceId: "workspace-1",
+      filePath: path.join(root, "alias.png"),
+      filename: "storyboard.png",
+      contentType: "image/x-custom",
+    }));
+    assert.equal(overridden.filename, "storyboard.png", "explicit filename wins over the basename");
+    assert.equal(overridden.contentType, "image/x-custom");
+    const dotted = parseToolResult(await uploadBlob({
+      workspaceId: "workspace-1",
+      filePath: path.join(root, "..dotted.txt"),
+    }));
+    assert.equal(dotted.filename, "..dotted.txt", "names starting with '..' stay inside the root");
+    assert.equal(dotted.contentType, "text/plain");
+    assert.equal(parseToolResult(await uploadBlob({
+      workspaceId: "workspace-1",
+      content: "inline",
+    })).source, "content");
+
+    const requestsBeforeRejections = uploadServer.requests.length;
+    const rejected = async (args, error, label, upload = uploadBlob) => {
+      const payload = expectToolFailure(await upload({ workspaceId: "workspace-1", ...args }), {
+        code: "blob_upload_failed",
+        retryable: false,
+        status: "failed",
+        error,
+      }, label);
+      assert.equal(payload.kind, "blob.upload");
+      return payload;
+    };
+
+    const disabled = await rejected(
+      { filePath: path.join(root, "sub", "frame.png") },
+      /filePath uploads are disabled/,
+      "file roots unset",
+      register([]),
+    );
+    assert.equal(disabled.filePath, path.join(root, "sub", "frame.png"));
+    assert.equal("encoding" in disabled, false);
+    await rejected({ filePath: "sub/frame.png" }, /must be an absolute path/, "relative path");
+    await rejected({ filePath: path.join(outside, "secret.txt") }, /outside the directories allowed/, "outside root");
+    await rejected({ filePath: path.join(root, "..", "outside", "secret.txt") }, /outside the directories allowed/, "dot-dot escape");
+    await rejected({ filePath: path.join(root, "escape.txt") }, /outside the directories allowed/, "symlink escape");
+    await rejected({ filePath: root }, /outside the directories allowed/, "root itself");
+    await rejected({ filePath: path.join(root, "sub") }, /must point to a regular file/, "directory");
+    if (process.platform !== "win32") {
+      execFileSync("mkfifo", [path.join(root, "pipe")]);
+      await rejected({ filePath: path.join(root, "pipe") }, /must point to a regular file/, "fifo");
+    }
+    await rejected({ filePath: path.join(root, "missing.png") }, /does not exist/, "missing file");
+    await rejected({ filePath: path.join(root, "big.bin") }, /configured limit is 16 bytes/, "oversized file");
+    await rejected(
+      { filePath: path.join(root, "sub", "frame.png"), content: "x" },
+      /exactly one of content or filePath/,
+      "both sources",
+    );
+    await rejected({}, /exactly one of content or filePath/, "no source");
+    assert.equal(uploadServer.requests.length, requestsBeforeRejections, "rejected uploads must not reach AFFiNE");
+  } finally {
+    await uploadServer.close();
+    await rm(sandbox, { recursive: true, force: true });
+  }
+}
+
 testContentDecoding();
 testConfiguration();
 await testToolContract();
+await testFilePathContract();
 console.log("Blob upload contract tests passed");
