@@ -5,7 +5,7 @@ import { receipt, text, toolError } from "../util/mcp.js";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { constants as fsConstants, realpathSync } from "node:fs";
-import { open, realpath, type FileHandle } from "node:fs/promises";
+import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { requireMatchingConfirmation } from "../util/inputSchemas.js";
 import { readLimitedResponseBody } from "../util/httpResponse.js";
@@ -179,10 +179,44 @@ function isWithinRoot(candidate: string, root: string): boolean {
     && !path.isAbsolute(relative);
 }
 
+const FILE_OUTSIDE_ROOTS_ERROR = "filePath is not an accessible file inside AFFINE_BLOB_UPLOAD_FILE_ROOTS.";
+
+/**
+ * Confirms that an opened descriptor still refers to a file inside the roots,
+ * closing the window between realpath and open in which a path component could
+ * be swapped. Linux exposes the descriptor's canonical path through procfs;
+ * elsewhere the descriptor must be the same inode the resolved path names now.
+ */
+async function assertOpenedWithinRoots(
+  handle: FileHandle,
+  resolvedPath: string,
+  fileRoots: string[],
+): Promise<void> {
+  if (process.platform === "linux") {
+    try {
+      const openedPath = await realpath(`/proc/self/fd/${handle.fd}`);
+      if (!fileRoots.some((root) => isWithinRoot(openedPath, root))) {
+        throw new Error(FILE_OUTSIDE_ROOTS_ERROR);
+      }
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.message === FILE_OUTSIDE_ROOTS_ERROR) {
+        throw error;
+      }
+      // procfs unavailable: fall through to the inode comparison.
+    }
+  }
+  const [opened, current] = await Promise.all([handle.stat(), stat(resolvedPath).catch(() => null)]);
+  if (!current || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(FILE_OUTSIDE_ROOTS_ERROR);
+  }
+}
+
 /**
  * Resolves filePath against the configured roots and opens it for reading.
- * Symlinks are resolved before the containment check, and size/type are taken
- * from the opened handle so they describe the file that will be streamed.
+ * Symlinks are resolved before the containment check, the opened descriptor is
+ * checked again, and size/type are taken from that descriptor so they describe
+ * the file that will be streamed.
  */
 export async function openUploadFile(
   filePath: string,
@@ -199,15 +233,26 @@ export async function openUploadFile(
   try {
     resolvedPath = await realpath(filePath);
   } catch {
-    throw new Error(`filePath does not exist or is not readable: ${filePath}`);
+    // Same error as a rejected path, so callers cannot probe for files outside the roots.
+    throw new Error(FILE_OUTSIDE_ROOTS_ERROR);
   }
   if (!fileRoots.some((root) => isWithinRoot(resolvedPath, root))) {
-    throw new Error("filePath is outside the directories allowed by AFFINE_BLOB_UPLOAD_FILE_ROOTS.");
+    throw new Error(FILE_OUTSIDE_ROOTS_ERROR);
   }
 
-  // O_NONBLOCK keeps a FIFO from blocking the open before the regular-file check.
-  const handle = await open(resolvedPath, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
+  // O_NONBLOCK keeps a FIFO from blocking the open before the regular-file check;
+  // O_NOFOLLOW rejects a symlink planted at the resolved path after realpath.
+  let handle: FileHandle;
   try {
+    handle = await open(
+      resolvedPath,
+      fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOFOLLOW ?? 0),
+    );
+  } catch {
+    throw new Error(FILE_OUTSIDE_ROOTS_ERROR);
+  }
+  try {
+    await assertOpenedWithinRoots(handle, resolvedPath, fileRoots);
     const stats = await handle.stat();
     if (!stats.isFile()) {
       throw new Error("filePath must point to a regular file.");
@@ -320,8 +365,12 @@ export function registerBlobTools(
       }));
       form.append("map", JSON.stringify({ "0": ["variables.blob"] }));
       if (file) {
-        // knownLength keeps the request length-delimited instead of chunked.
-        form.append("0", file.handle.createReadStream({ autoClose: false }), {
+        // knownLength keeps the request length-delimited instead of chunked, and
+        // the stream is bounded so a file growing after fstat cannot exceed it.
+        const fileBody = file.size === 0
+          ? Buffer.alloc(0)
+          : file.handle.createReadStream({ autoClose: false, start: 0, end: file.size - 1 });
+        form.append("0", fileBody, {
           filename: safeFilename,
           contentType: mime,
           knownLength: file.size,

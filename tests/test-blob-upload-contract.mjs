@@ -395,6 +395,7 @@ async function testFilePathContract() {
     await writeFile(path.join(root, "sub", "frame.png"), imageBytes);
     await writeFile(path.join(root, "big.bin"), Buffer.alloc(17));
     await writeFile(path.join(root, "..dotted.txt"), "dotted");
+    await writeFile(path.join(root, "empty.txt"), "");
     await writeFile(path.join(outside, "secret.txt"), "secret");
     await symlink(path.join(outside, "secret.txt"), path.join(root, "escape.txt"));
     await symlink(path.join(root, "sub", "frame.png"), path.join(root, "alias.png"));
@@ -449,6 +450,13 @@ async function testFilePathContract() {
     }));
     assert.equal(dotted.filename, "..dotted.txt", "names starting with '..' stay inside the root");
     assert.equal(dotted.contentType, "text/plain");
+    const empty = parseToolResult(await uploadBlob({
+      workspaceId: "workspace-1",
+      filePath: path.join(root, "empty.txt"),
+    }));
+    assert.equal(empty.size, 0);
+    const emptyRequest = uploadServer.requests.at(-1);
+    assert.equal(Number(emptyRequest.headers["content-length"]), emptyRequest.body.length, "empty file upload stays length-delimited");
     assert.equal(parseToolResult(await uploadBlob({
       workspaceId: "workspace-1",
       content: "inline",
@@ -475,16 +483,21 @@ async function testFilePathContract() {
     assert.equal(disabled.filePath, path.join(root, "sub", "frame.png"));
     assert.equal("encoding" in disabled, false);
     await rejected({ filePath: "sub/frame.png" }, /must be an absolute path/, "relative path");
-    await rejected({ filePath: path.join(outside, "secret.txt") }, /outside the directories allowed/, "outside root");
-    await rejected({ filePath: path.join(root, "..", "outside", "secret.txt") }, /outside the directories allowed/, "dot-dot escape");
-    await rejected({ filePath: path.join(root, "escape.txt") }, /outside the directories allowed/, "symlink escape");
-    await rejected({ filePath: root }, /outside the directories allowed/, "root itself");
+    await rejected({ filePath: path.join(outside, "secret.txt") }, /not an accessible file inside AFFINE_BLOB_UPLOAD_FILE_ROOTS/, "outside root");
+    await rejected({ filePath: path.join(root, "..", "outside", "secret.txt") }, /not an accessible file inside AFFINE_BLOB_UPLOAD_FILE_ROOTS/, "dot-dot escape");
+    await rejected({ filePath: path.join(root, "escape.txt") }, /not an accessible file inside AFFINE_BLOB_UPLOAD_FILE_ROOTS/, "symlink escape");
+    await rejected({ filePath: root }, /not an accessible file inside AFFINE_BLOB_UPLOAD_FILE_ROOTS/, "root itself");
     await rejected({ filePath: path.join(root, "sub") }, /must point to a regular file/, "directory");
     if (process.platform !== "win32") {
       execFileSync("mkfifo", [path.join(root, "pipe")]);
       await rejected({ filePath: path.join(root, "pipe") }, /must point to a regular file/, "fifo");
     }
-    await rejected({ filePath: path.join(root, "missing.png") }, /does not exist/, "missing file");
+    const missing = await rejected(
+      { filePath: path.join(root, "missing.png") },
+      /not an accessible file inside AFFINE_BLOB_UPLOAD_FILE_ROOTS/,
+      "missing file",
+    );
+    assert.equal(missing.error.includes("missing.png"), false, "errors must not echo the supplied path");
     await rejected({ filePath: path.join(root, "big.bin") }, /configured limit is 16 bytes/, "oversized file");
     await rejected(
       { filePath: path.join(root, "sub", "frame.png"), content: "x" },
