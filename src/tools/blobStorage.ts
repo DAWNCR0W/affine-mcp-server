@@ -184,8 +184,11 @@ const FILE_OUTSIDE_ROOTS_ERROR = "filePath is not an accessible file inside AFFI
 /**
  * Confirms that an opened descriptor still refers to a file inside the roots,
  * closing the window between realpath and open in which a path component could
- * be swapped. Linux exposes the descriptor's canonical path through procfs;
- * elsewhere the descriptor must be the same inode the resolved path names now.
+ * be swapped. Linux exposes the descriptor's canonical path through procfs, so
+ * the check is bound to the opened file. Elsewhere the descriptor must be the
+ * same inode the resolved path names now; that is best effort, because a
+ * writer inside a root can still swap a parent directory back and forth around
+ * the stat. Roots must therefore not be writable by untrusted local users.
  */
 async function assertOpenedWithinRoots(
   handle: FileHandle,

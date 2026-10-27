@@ -105,6 +105,8 @@ These controls are environment-only and are not read from the saved config file.
 
 Every client that can call `upload_blob` can read any file under the configured roots and store it in a workspace it can write to. In HTTP mode that includes remote clients, so point the roots at dedicated upload directories, never at a home directory or `/`.
 
+On Linux the opened file is checked against the roots through `/proc/self/fd`, so swapping a path component during the upload cannot redirect it. Other platforms, and Linux without `/proc`, fall back to an inode comparison that a local user with write access to a directory inside a root can race. Keep the roots writable only by trusted users.
+
 ### Upstream response safeguards
 
 GraphQL, sign-in, workspace creation, and readiness requests keep their timeout
