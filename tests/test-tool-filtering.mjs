@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = path.resolve(__dirname, "..", "src", "index.ts");
 const REPO_ROOT = path.resolve(__dirname, "..");
-const TSX_CLI_PATH = path.resolve(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const MANIFEST_TOOLS = JSON.parse(
   fs.readFileSync(path.resolve(REPO_ROOT, "tool-manifest.json"), "utf8"),
 ).tools;
@@ -22,10 +21,10 @@ async function listToolEntries(env = {}) {
     { capabilities: {} }
   );
 
-  // Use the installed tsx CLI directly to avoid shell-specific npx launchers.
+  // Use the supported tsx loader without shell launchers or CLI IPC sockets.
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [TSX_CLI_PATH, SRC_PATH],
+    args: ["--import", "tsx", SRC_PATH],
     env: {
       ...process.env,
       ...env,
@@ -48,7 +47,7 @@ async function inspectAdvertisedSurface(env = {}) {
   );
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [TSX_CLI_PATH, SRC_PATH],
+    args: ["--import", "tsx", SRC_PATH],
     env: {
       ...process.env,
       ...env,
@@ -103,7 +102,7 @@ async function inspectToolSurfacePolicy() {
       disabledRejectsUnknown: rejectsUnknown(disabled)
     }));
   `;
-  const { stdout } = await execFileAsync(process.execPath, [TSX_CLI_PATH, "--eval", script], {
+  const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
     cwd: REPO_ROOT,
     env: process.env,
   });
@@ -112,7 +111,7 @@ async function inspectToolSurfacePolicy() {
 
 async function expectInvalidConfiguration(env, expectedMessages) {
   try {
-    await execFileAsync(process.execPath, [TSX_CLI_PATH, SRC_PATH], {
+    await execFileAsync(process.execPath, ["--import", "tsx", SRC_PATH], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
