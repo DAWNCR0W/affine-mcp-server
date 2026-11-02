@@ -1,5 +1,32 @@
 # Release Notes
 
+## Version 3.11.0 (2026-11-02)
+
+### Highlights
+- Read workspace blob content with the new read-only `get_blob` tool and upload local files through an explicit server-side directory allowlist.
+- Read and edit native code-block preview state and language.
+- Stop replaying historical Yjs delete sets on routine document and workspace mutations.
+
+### What Changed
+- Add bounded, authenticated blob downloads with image/resource output, SHA-256 metadata, redirect credential isolation, response cancellation, and timeouts (#427).
+- Add opt-in `upload_blob.filePath` streaming with directory and descriptor checks, exact bounded reads, truncation detection, and cleanup (#433, #434).
+- Support optional code `preview` on append, `language` and `preview` on update, and preview readback. Preserve omitted state and explicit `false` (#431, #432).
+- Capture local Yjs mutation transactions, including deletion-only updates, instead of retransmitting accumulated historical delete sets. Preserve concurrent updates, bounded metadata retries, and full snapshots for new documents (#416).
+- Update locked MCP SDK to 1.32.2, jose to 6.2.13, undici to 7.30.1, markdown-it to 14.3.3, and Playwright to 1.64.1. Update docker/login-action to 4.7.0.
+- Add regression coverage for blob limits and cleanup, file-path safety, native preview round trips, and Yjs history/convergence. Make the fast-suite runner work without optional TypeScript CLI IPC sockets.
+
+### Compatibility and Security
+- The canonical MCP surface increases from 107 to 108 tools. `get_blob` belongs to `blobs.read`; existing tool names remain unchanged.
+- Local-file uploads are disabled by default. Enable only dedicated trusted directories through `AFFINE_BLOB_UPLOAD_FILE_ROOTS`. Every authorized caller can upload readable files from these roots.
+- Linux uses descriptor-path validation when procfs is available. Other platforms and unavailable-procfs fallback require trusted writers for roots and their ancestors; they are not a sandbox against hostile local filesystem writers.
+- Blob downloads trust the configured AFFiNE server and its storage endpoints. Cross-origin redirects do not receive configured authentication headers.
+- Existing Yjs history is preserved, not compacted. The change reduces outgoing mutation payloads; it does not repair or shrink historical server data.
+- No migration is required. Node.js 20.18.1 or newer remains required; release integration targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.11.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @pato-gonzalez, @NazarkinRoman, and @orshih6 for the blob and code-preview contributions, and to the issue reporters for detailed reproductions and requests.
+
 ## Version 3.10.2 (2026-10-26)
 
 ### Highlights
