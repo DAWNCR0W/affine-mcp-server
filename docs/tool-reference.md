@@ -95,7 +95,7 @@ Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, and `linkedDocIds` for inline LinkedPage references |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, `linkedDocIds` for inline LinkedPage references, and code block `language`/`preview` state (`preview` is `null` when unset) |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
@@ -162,8 +162,8 @@ imported as an inline equation in that block.
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
-| `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
-| `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
+| `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, code block `language` and `preview` state, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
 | `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. |
 | `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. |
 | `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. |
@@ -190,6 +190,16 @@ If completion still cannot be confirmed, the tool returns `isError: true`, `ok: 
 For `list_docs`, pagination follows the backend page even when deleted entries are filtered out. An empty visible page can still have `hasNextPage: true`; continue with its `endCursor` instead of treating an empty `edges` array as the end of the workspace.
 
 #### Formatting-preserving block text
+
+Code blocks accept optional `preview: true` or `preview: false` in `append_block`.
+`update_block` accepts `language` and `preview` for existing code blocks without
+changing their id or omitted text. Language strings are trimmed and lowercased
+(up to 64 characters; blank becomes `txt`), matching code creation.
+`read_doc` rows and editing snapshots include `preview`: a stored boolean, or
+`null` when the native optional property is absent. Omitting `preview` during
+creation leaves AFFiNE's default behavior intact; omitting it during an update
+preserves the existing state. Preview rendering depends on the language and the
+AFFiNE client, so setting the state does not add renderers for unsupported languages.
 
 For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `update_table_cell.text` accept either a string or a delta array. Each delta requires a string `insert` and may contain arbitrary `attributes`; the server passes attributes through without restricting them to a fixed formatting vocabulary.
 
@@ -340,7 +350,8 @@ Plain strings and legacy `{ text: "..." }` comment objects are converted to Bloc
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
+| `get_blob` | Download a blob from workspace storage | Accepts a raw key or an `affine://blob/<key>` reference from an image or attachment block. Returns `{ key, contentType, size, sha256 }` plus MCP image content for PNG, JPEG, GIF, and WebP, or an embedded base64 resource for other types. `maxBytes` defaults to 10 MiB (max 25 MiB). Follows at most one storage redirect without AFFiNE credentials across origins; cross-origin HTTP is rejected except between loopback servers. Embedded redirect credentials and HTTPS downgrades are rejected. Authentication and download share a 30-second deadline. Read-only |
+| `upload_blob` | Upload a file or blob to workspace storage | Pass either `content` or `filePath`. `content` defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. `filePath` uploads a file from the server host and requires `AFFINE_BLOB_UPLOAD_FILE_ROOTS`; `filename` and `contentType` default to the basename and an extension-based guess. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |
 

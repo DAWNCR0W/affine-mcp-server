@@ -1,3 +1,4 @@
+import { captureDocUpdate } from "../util/docUpdate.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { generateKeyBetween } from "fractional-indexing";
@@ -308,14 +309,14 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       const blocks = doc.getMap("blocks");
       if (![...blocks.values()].some(b => b instanceof Y.Map && b.get("sys:flavour") === "affine:page")) fail("Document has no page root");
-      const previous = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const ctx = helpers.getSurfaceElementsValueMap(blocks, { create: operation === "create" });
       if (!ctx) fail("Document has no native surface");
       let result: ReturnType<typeof readNativeMindmap> & { nodeId?: string };
       if (operation === "get") result = readNativeMindmap(ctx.value, p.mindmapId);
       else {
         result = mutateNativeMindmap(ctx.value, operation, p, helpers);
-        const delta = Y.encodeStateAsUpdate(doc, previous);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(socket, workspaceId, p.docId, Buffer.from(delta).toString("base64"));
       }
       return text({ ok: true, workspaceId, docId: p.docId, surfaceBlockId: ctx.surfaceId, ...result }) as CallToolResult;

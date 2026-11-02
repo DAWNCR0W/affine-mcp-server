@@ -201,7 +201,7 @@ async function buildServer() {
   if (config.authMode !== "oauth") {
     registerAuthTools(server, gql, config.baseUrl);
   }
-  registerBlobTools(server, gql);
+  registerBlobTools(server, gql, undefined, { workspaceId: config.defaultWorkspaceId });
   registerNotificationTools(server, gql);
   stripSchemaDialect(server);
   return server;

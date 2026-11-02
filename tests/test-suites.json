@@ -2,6 +2,7 @@
   "version": 1,
   "classifications": {
     "test-auth-session.mjs": "fast",
+    "test-blob-live.mjs": "integration",
     "test-blob-upload-contract.mjs": "fast",
     "test-block-editing.mjs": "integration",
     "test-canvas-tool-map-demo.mjs": "integration",
@@ -11,6 +12,7 @@
     "test-cli-onboarding.mjs": "fast",
     "test-cli-tty.mjs": "fast",
     "test-cli-version.mjs": "fast",
+    "test-code-preview.mjs": "fast",
     "test-collection-rules.mjs": "fast",
     "test-comprehensive-result.mjs": "fast",
     "test-concurrent-writes.mjs": "integration",
@@ -80,7 +82,8 @@
     "test-tool-filtering.mjs": "fast",
     "test-url-safety.mjs": "fast",
     "test-workspace-discovery.mjs": "fast",
-    "test-write-coordinator.mjs": "fast"
+    "test-write-coordinator.mjs": "fast",
+    "test-yjs-update-deltas.mjs": "fast"
   },
   "suites": {
     "fast": [
@@ -90,6 +93,7 @@
       "test-cli-onboarding.mjs",
       "test-cli-tty.mjs",
       "test-cli-version.mjs",
+      "test-code-preview.mjs",
       "test-collection-rules.mjs",
       "test-comprehensive-result.mjs",
       "test-config-cli-consistency.mjs",
@@ -126,10 +130,12 @@
       "test-tool-filtering.mjs",
       "test-url-safety.mjs",
       "test-workspace-discovery.mjs",
-      "test-write-coordinator.mjs"
+      "test-write-coordinator.mjs",
+      "test-yjs-update-deltas.mjs"
     ],
     "e2e": [
       "test-cli-live.mjs",
+      "test-blob-live.mjs",
       "test-concurrent-writes.mjs",
       "test-block-editing.mjs",
       "test-database-creation.mjs",
@@ -161,6 +167,7 @@
       "test-supporting-tools.mjs"
     ],
     "comprehensive": [
+      "test-blob-live.mjs",
       "test-concurrent-writes.mjs",
       "test-tool-filtering.mjs",
       "test-block-editing.mjs",

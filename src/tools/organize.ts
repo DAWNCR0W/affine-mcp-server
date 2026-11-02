@@ -1,3 +1,4 @@
+import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Y from "yjs";
@@ -597,11 +598,11 @@ async function loadFoldersDoc(socket: any, workspaceId: string) {
   if (snapshot.missing) {
     Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
   }
-  return { docId, doc, snapshot };
+  return { docId, doc, snapshot, pendingUpdate: captureDocUpdate(doc) };
 }
 
-async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, doc: Y.Doc) {
-  const update = Y.encodeStateAsUpdate(doc);
+async function saveFoldersDoc(socket: any, workspaceId: string, docId: string, pendingUpdate: DocUpdateCapture) {
+  const update = pendingUpdate.finish();
   await pushDocUpdate(socket, workspaceId, docId, Buffer.from(update).toString("base64"));
 }
 
@@ -620,7 +621,7 @@ export async function addOrganizeLinkToFolder(
     index?: string;
   }
 ): Promise<OrganizeLinkResult> {
-  const { docId, doc } = await loadFoldersDoc(socket, workspaceId);
+  const { docId, doc, pendingUpdate } = await loadFoldersDoc(socket, workspaceId);
   const nodes = readOrganizeNodes(doc);
   const nodeMap = organizeNodeMap(nodes);
   ensureNodeIsFolder(nodeMap, folderId);
@@ -633,7 +634,7 @@ export async function addOrganizeLinkToFolder(
   record.set("parentId", folderId);
   record.set("index", nextIndex);
   record.delete("$$DELETED");
-  await saveFoldersDoc(socket, workspaceId, docId, doc);
+  await saveFoldersDoc(socket, workspaceId, docId, pendingUpdate);
   return {
     id: linkId,
     parentId: folderId,
@@ -662,11 +663,11 @@ export function registerOrganizeTools(
     if (snapshot.missing) {
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
     }
-    return { doc, snapshot };
+    return { doc, snapshot, pendingUpdate: captureDocUpdate(doc) };
   }
 
-  async function saveWorkspaceRootDoc(socket: any, workspaceId: string, doc: Y.Doc) {
-    const update = Y.encodeStateAsUpdate(doc);
+  async function saveWorkspaceRootDoc(socket: any, workspaceId: string, pendingUpdate: DocUpdateCapture) {
+    const update = pendingUpdate.finish();
     await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(update).toString("base64"));
   }
 
@@ -686,7 +687,7 @@ export function registerOrganizeTools(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, workspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, workspaceId);
+      const { doc, pendingUpdate } = await loadWorkspaceRootDoc(socket, workspaceId);
       const setting = doc.getMap("setting");
       const current = setting.get("collections");
       if (!(current instanceof Y.Array)) {
@@ -709,7 +710,7 @@ export function registerOrganizeTools(
         current.delete(found.index, 1);
         current.insert(found.index, [nextValue]);
       });
-      await saveWorkspaceRootDoc(socket, workspaceId, doc);
+      await saveWorkspaceRootDoc(socket, workspaceId, pendingUpdate);
       return next;
     } finally {
       socket.disconnect();
@@ -782,7 +783,7 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, workspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, workspaceId);
+      const { docId, doc, pendingUpdate } = await loadFoldersDoc(socket, workspaceId);
       const nodes = readOrganizeNodes(doc);
       const nodeMap = organizeNodeMap(nodes);
       ensureFolderParent(nodeMap, resolvedParentId);
@@ -795,7 +796,7 @@ async function listWorkspaceDocsForCollectionRules(
       record.set("parentId", resolvedParentId);
       record.set("index", folderIndex);
       record.delete("$$DELETED");
-      await saveFoldersDoc(socket, workspaceId, docId, doc);
+      await saveFoldersDoc(socket, workspaceId, docId, pendingUpdate);
       return {
         id: folderId,
         parentId: resolvedParentId,
@@ -916,7 +917,7 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
+      const { doc, pendingUpdate } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
       const setting = doc.getMap("setting");
       let current = setting.get("collections") as Y.Array<any> | undefined;
       if (!(current instanceof Y.Array)) {
@@ -932,7 +933,7 @@ async function listWorkspaceDocsForCollectionRules(
       };
 
       current.push([collection]);
-      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
+      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, pendingUpdate);
       return text(collection);
     } finally {
       socket.disconnect();
@@ -1039,7 +1040,7 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
+      const { doc, pendingUpdate } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
       const setting = doc.getMap("setting");
       const current = setting.get("collections");
       if (!(current instanceof Y.Array)) {
@@ -1050,7 +1051,7 @@ async function listWorkspaceDocsForCollectionRules(
         throw new Error(`Collection '${collectionId}' was not found.`);
       }
       current.delete(found.index, 1);
-      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
+      await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, pendingUpdate);
       return text({ success: true, collectionId });
     } finally {
       socket.disconnect();
@@ -1267,12 +1268,12 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
+      const { docId, doc, pendingUpdate } = await loadFoldersDoc(socket, resolvedWorkspaceId);
       const nodeMap = organizeNodeMap(readOrganizeNodes(doc));
       ensureNodeIsFolder(nodeMap, folderId);
       const record = ensureRecord(doc, folderId);
       record.set("data", name);
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
+      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, pendingUpdate);
       return text({ id: folderId, name });
     } finally {
       socket.disconnect();
@@ -1304,7 +1305,7 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
+      const { docId, doc, pendingUpdate } = await loadFoldersDoc(socket, resolvedWorkspaceId);
       const nodes = readOrganizeNodes(doc);
       const nodeMap = organizeNodeMap(nodes);
       ensureNodeIsFolder(nodeMap, folderId);
@@ -1327,7 +1328,7 @@ async function listWorkspaceDocsForCollectionRules(
         deletedIds.push(currentId);
       }
 
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
+      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, pendingUpdate);
       return text({ success: true, deletedIds });
     } finally {
       socket.disconnect();
@@ -1363,7 +1364,7 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
+      const { docId, doc, pendingUpdate } = await loadFoldersDoc(socket, resolvedWorkspaceId);
       const nodes = readOrganizeNodes(doc);
       const nodeMap = organizeNodeMap(nodes);
       const node = nodeMap.get(nodeId);
@@ -1381,7 +1382,7 @@ async function listWorkspaceDocsForCollectionRules(
       const record = ensureRecord(doc, nodeId);
       record.set("parentId", resolvedParentId);
       record.set("index", nextIndex);
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
+      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, pendingUpdate);
       return text({ id: nodeId, parentId: resolvedParentId, index: nextIndex });
     } finally {
       socket.disconnect();
@@ -1459,14 +1460,14 @@ async function listWorkspaceDocsForCollectionRules(
     const { socket } = await getSocketContext();
     try {
       await joinWorkspace(socket, resolvedWorkspaceId);
-      const { docId, doc } = await loadFoldersDoc(socket, resolvedWorkspaceId);
+      const { docId, doc, pendingUpdate } = await loadFoldersDoc(socket, resolvedWorkspaceId);
       const nodeMap = organizeNodeMap(readOrganizeNodes(doc));
       const node = nodeMap.get(nodeId);
       if (!node || node.type === "folder") {
         throw new Error(`Organize link '${nodeId}' was not found.`);
       }
       deleteRecord(ensureRecord(doc, nodeId));
-      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, doc);
+      await saveFoldersDoc(socket, resolvedWorkspaceId, docId, pendingUpdate);
       return text({ success: true, nodeId });
     } finally {
       socket.disconnect();

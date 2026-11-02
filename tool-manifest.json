@@ -1,5 +1,5 @@
 {
-  "version": "3.10.2",
+  "version": "3.11.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -42,6 +42,7 @@
     "export_doc_markdown",
     "export_with_fidelity_report",
     "find_doc_by_title",
+    "get_blob",
     "get_capabilities",
     "get_collection",
     "get_doc",
