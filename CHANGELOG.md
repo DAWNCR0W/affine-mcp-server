@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `append_block` positions `image` blocks on the edgeless canvas: `x`/`y`/`width`/`height` now write `prop:xywh` plus `prop:width`/`prop:height`, so images can be laid out and used as `connector` endpoints. Omitting them preserves the previous `[0,0,0,0]` placement.
+- `get_edgeless_canvas` includes `affine:image` blocks with `sourceId`, `caption`, `width`, and `height`; `read_doc` returns `sourceId` for image blocks; `update_edgeless_block` moves and resizes image blocks. Together these make an image diagram round-trip: write geometry, read the graph, and fetch pixels with `get_blob`.
+
 ## [3.11.0] - 2026-11-02
 
 ### Fixed
