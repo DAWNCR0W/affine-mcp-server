@@ -542,3 +542,13 @@ Before exposing the server remotely, confirm:
 - Invalid transport, port, origin, or boolean values now fail at startup instead of silently falling back
 - Remote plain-HTTP AFFiNE URL rejected: use HTTPS, or set `AFFINE_ALLOW_INSECURE_HTTP=true` only for a trusted private network
 - Non-loopback bearer listener rejected: set `AFFINE_MCP_HTTP_TOKEN` or configure OAuth
+
+### Yjs write payloads
+
+Mutations send the Yjs updates captured from the operation's local transactions,
+including deletion-only changes. They do not replay the document's accumulated
+historical delete set on each write. Workspace `updatedDate`, properties, icons,
+folders, and page content use this same delta strategy. New document creation
+still sends an initial snapshot. This reduces repeated broadcast payloads; it
+does not compact historical data already stored by AFFiNE or change CRDT conflict
+resolution. Initial document loads can therefore still be large.

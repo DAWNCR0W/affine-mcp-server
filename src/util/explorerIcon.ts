@@ -1,3 +1,4 @@
+import { captureDocUpdate } from "./docUpdate.js";
 import * as Y from "yjs";
 
 import { loadDoc, pushDocUpdate, type WorkspaceSocket } from "../ws.js";
@@ -124,7 +125,7 @@ export async function setExplorerIcon(
   icon: ExplorerIconValue | null,
 ): Promise<{ key: ExplorerIconKey; icon: ExplorerIconValue | null }> {
   const doc = await loadExplorerIconDoc(socket, workspaceId);
-  const prevSV = Y.encodeStateVector(doc);
+  const pendingUpdate = captureDocUpdate(doc);
 
   const map = doc.getMap(key);
   if (!map.has("id")) map.set("id", key);
@@ -134,7 +135,7 @@ export async function setExplorerIcon(
     map.set("icon", icon);
   }
 
-  const delta = Y.encodeStateAsUpdate(doc, prevSV);
+  const delta = pendingUpdate.finish();
   await pushDocUpdate(
     socket,
     workspaceId,

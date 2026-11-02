@@ -80,7 +80,8 @@
     "test-tool-filtering.mjs": "fast",
     "test-url-safety.mjs": "fast",
     "test-workspace-discovery.mjs": "fast",
-    "test-write-coordinator.mjs": "fast"
+    "test-write-coordinator.mjs": "fast",
+    "test-yjs-update-deltas.mjs": "fast"
   },
   "suites": {
     "fast": [
@@ -126,7 +127,8 @@
       "test-tool-filtering.mjs",
       "test-url-safety.mjs",
       "test-workspace-discovery.mjs",
-      "test-write-coordinator.mjs"
+      "test-write-coordinator.mjs",
+      "test-yjs-update-deltas.mjs"
     ],
     "e2e": [
       "test-cli-live.mjs",
