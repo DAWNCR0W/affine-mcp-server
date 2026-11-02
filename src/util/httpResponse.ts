@@ -18,7 +18,7 @@ type FetchResponseBodyOptions = {
   timeoutMs: number;
 };
 
-function cancelResponseBody(response: ResponseLike): void {
+export function cancelResponseBody(response: ResponseLike): void {
   const body = response.body as ResponseBody | null;
   if (typeof body?.destroy === "function") {
     body.destroy();
@@ -34,6 +34,14 @@ export async function readLimitedResponseBody(
   maxResponseBytes: number,
   label: string,
 ): Promise<string> {
+  return (await readLimitedResponseBuffer(response, maxResponseBytes, label)).toString("utf8");
+}
+
+export async function readLimitedResponseBuffer(
+  response: ResponseLike,
+  maxResponseBytes: number,
+  label: string,
+): Promise<Buffer> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null) {
     const declaredLength = Number(contentLength);
@@ -46,7 +54,7 @@ export async function readLimitedResponseBody(
   }
 
   if (!response.body) {
-    return "";
+    return Buffer.alloc(0);
   }
 
   const chunks: Buffer[] = [];
@@ -62,7 +70,7 @@ export async function readLimitedResponseBody(
     }
     chunks.push(buffer);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
 }
 
 export async function fetchResponseBody<T extends ResponseLike>(

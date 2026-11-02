@@ -350,7 +350,8 @@ Plain strings and legacy `{ text: "..." }` comment objects are converted to Bloc
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
+| `get_blob` | Download a blob from workspace storage | Accepts a raw key or an `affine://blob/<key>` reference from an image or attachment block. Returns `{ key, contentType, size, sha256 }` plus MCP image content for PNG, JPEG, GIF, and WebP, or an embedded base64 resource for other types. `maxBytes` defaults to 10 MiB (max 25 MiB). Follows at most one storage redirect without AFFiNE credentials across origins; cross-origin HTTP is rejected except between loopback servers. Embedded redirect credentials and HTTPS downgrades are rejected. Authentication and download share a 30-second deadline. Read-only |
+| `upload_blob` | Upload a file or blob to workspace storage | Pass either `content` or `filePath`. `content` defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. `filePath` uploads a file from the server host and requires `AFFINE_BLOB_UPLOAD_FILE_ROOTS`; `filename` and `contentType` default to the basename and an extension-based guess. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |
 

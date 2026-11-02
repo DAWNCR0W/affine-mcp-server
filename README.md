@@ -39,7 +39,7 @@ Highlights:
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 107 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Exposes 108 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Sets and clears native AFFiNE Journal dates with `set_doc_journal`
