@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { testResourceName, testTempPath } from './tests/require-destructive-test-safety.mjs';
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -15,6 +16,7 @@ const EMAIL = process.env.AFFINE_EMAIL || process.env.AFFINE_ADMIN_EMAIL || 'tes
 const PASSWORD = process.env.AFFINE_PASSWORD || process.env.AFFINE_ADMIN_PASSWORD;
 const LOGIN_MODE = process.env.AFFINE_LOGIN_AT_START || 'sync';
 const XDG_CONFIG_HOME = testTempPath('comprehensive-config');
+const BLOB_UPLOAD_ROOT = testTempPath('comprehensive-blob-upload');
 const TOOL_TIMEOUT_MS = Number(process.env.MCP_TOOL_TIMEOUT_MS || '60000');
 const MANIFEST_PATH = path.join(process.cwd(), 'tool-manifest.json');
 const EXPECTED_TOOLS = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).tools;
@@ -115,6 +117,7 @@ class ComprehensiveRunner {
         AFFINE_PASSWORD: PASSWORD,
         AFFINE_LOGIN_AT_START: LOGIN_MODE,
         XDG_CONFIG_HOME,
+        AFFINE_BLOB_UPLOAD_FILE_ROOTS: BLOB_UPLOAD_ROOT,
       },
       stderr: 'pipe',
     });
@@ -503,12 +506,45 @@ class ComprehensiveRunner {
     }, parsed => {
       this.blobKey = parsed?.key || parsed?.id || null;
     });
+    const expectedBlobSha256 = createHash('sha256').update('Blob data from test').digest('hex');
+    await this.callTool('get_blob', { workspaceId, key: this.blobKey || 'missing-blob-key' }, parsed => {
+      if (parsed?.sha256 !== expectedBlobSha256) {
+        throw new Error('get_blob content did not match the uploaded blob');
+      }
+    });
     await this.callTool('delete_blob', {
       workspaceId,
       key: this.blobKey || 'missing-blob-key',
       permanently: true,
       confirmKey: this.blobKey || 'missing-blob-key',
     });
+    // Exercise the host-file multipart path against the disposable real AFFiNE
+    // server, then download it through the public MCP surface and compare bytes.
+    const fileBytes = Buffer.from(Array.from({ length: 256 }, (_, index) => index));
+    const filePath = path.join(BLOB_UPLOAD_ROOT, 'binary-fixture.bin');
+    fs.writeFileSync(filePath, fileBytes, { mode: 0o600 });
+    let fileBlobKey = null;
+    try {
+      await this.callTool('upload_blob', { workspaceId, filePath }, parsed => {
+        fileBlobKey = parsed?.key || parsed?.id || null;
+        if (!fileBlobKey || parsed?.source !== 'file' || parsed?.size !== fileBytes.length) {
+          throw new Error('filePath upload did not return the expected file receipt');
+        }
+      });
+      const fileSha256 = createHash('sha256').update(fileBytes).digest('hex');
+      await this.callTool('get_blob', { workspaceId, key: fileBlobKey || 'missing-file-blob-key' }, parsed => {
+        if (parsed?.sha256 !== fileSha256 || parsed?.size !== fileBytes.length) {
+          throw new Error('get_blob content did not match the filePath upload');
+        }
+      });
+      if (fileBlobKey) {
+        await this.callTool('delete_blob', {
+          workspaceId, key: fileBlobKey, permanently: true, confirmKey: fileBlobKey,
+        });
+      }
+    } finally {
+      fs.rmSync(filePath, { force: true });
+    }
     await this.callTool('cleanup_blobs', { workspaceId, confirmWorkspaceId: workspaceId });
 
     await this.callTool('update_profile', { name: 'Dev User' });

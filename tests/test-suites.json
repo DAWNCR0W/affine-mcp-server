@@ -2,6 +2,7 @@
   "version": 1,
   "classifications": {
     "test-auth-session.mjs": "fast",
+    "test-blob-live.mjs": "integration",
     "test-blob-upload-contract.mjs": "fast",
     "test-block-editing.mjs": "integration",
     "test-canvas-tool-map-demo.mjs": "integration",
@@ -134,6 +135,7 @@
     ],
     "e2e": [
       "test-cli-live.mjs",
+      "test-blob-live.mjs",
       "test-concurrent-writes.mjs",
       "test-block-editing.mjs",
       "test-database-creation.mjs",
@@ -165,6 +167,7 @@
       "test-supporting-tools.mjs"
     ],
     "comprehensive": [
+      "test-blob-live.mjs",
       "test-concurrent-writes.mjs",
       "test-tool-filtering.mjs",
       "test-block-editing.mjs",

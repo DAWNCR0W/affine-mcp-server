@@ -95,17 +95,33 @@ These controls are environment-only and are not read from the saved config file.
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `AFFINE_BLOB_UPLOAD_MAX_BYTES` | No | `26214400` (25 MiB) | Maximum decoded payload size accepted by `upload_blob` |
-| `AFFINE_BLOB_UPLOAD_TIMEOUT_MS` | No | `30000` | Maximum time allowed for the multipart upload request |
+| `AFFINE_BLOB_UPLOAD_TIMEOUT_MS` | No | `30000` | Maximum time allowed for upload authentication and the multipart request |
 | `AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES` | No | `1048576` (1 MiB) | Maximum AFFiNE response body size read after an upload |
+| `AFFINE_BLOB_UPLOAD_FILE_ROOTS` | No | unset (disabled) | Absolute directories, separated by the platform path delimiter (`:` on Linux/macOS, `;` on Windows), from which `upload_blob` may read files passed as `filePath`. Each entry must be an existing directory at startup |
 
 `upload_blob` treats content as UTF-8 by default and preserves it exactly, including leading and trailing whitespace. Binary callers must pass `encoding: "base64"`; Base64 input is validated for canonical padding before it is decoded. ASCII whitespace inside explicit Base64 input is ignored.
+
+`upload_blob` can also read a file from the server host with `filePath` instead of `content`, so binary files do not have to pass through the client as Base64. This is disabled until `AFFINE_BLOB_UPLOAD_FILE_ROOTS` is set. The path must be absolute; it is resolved with `realpath`, so symlinks and `..` segments cannot leave the allowed directories, and it must name a regular file no larger than `AFFINE_BLOB_UPLOAD_MAX_BYTES`. The file is streamed to AFFiNE without Base64 decoding. `filename` defaults to the file's basename and `contentType` to a guess from common extensions.
+
+Every client that can call `upload_blob` can read any file under the configured roots and store it in a workspace it can write to. In HTTP mode that includes remote clients, so point the roots at dedicated upload directories, never at a home directory or `/`.
+
+On Linux the opened file is checked against the roots through `/proc/self/fd`, so swapping a path component during the upload cannot redirect it. Other platforms, and Linux without `/proc`, fall back to an inode comparison that a local user with write access to a directory inside a root can race. Keep the roots and their parent directories writable only by trusted users. This is an administrative trust requirement, not a sandbox for hostile local writers. Keep uploaded files unchanged until the call finishes: growth is excluded at the checked length and truncation fails the request.
 
 ### Upstream response safeguards
 
 GraphQL, sign-in, workspace creation, and readiness requests keep their timeout
-active until the complete response body is consumed. Non-upload response bodies
-are limited to 16 MiB. `upload_blob` uses the separately configurable timeout
-and response limit above.
+active until the complete response body is consumed and limit responses to
+16 MiB. `upload_blob` uses the separately configurable timeout and response
+limit above.
+
+`get_blob` limits downloaded content to 10 MiB by default; its `maxBytes` argument
+can lower that limit or raise it to at most 25 MiB. Authentication and download
+share a 30-second deadline. It accepts blob keys, not arbitrary download URLs,
+and follows at most one storage redirect issued by the configured AFFiNE
+server. Trust that server and its configured object storage destinations.
+Credentials and custom AFFiNE headers are never forwarded across origins.
+Redirect URLs with embedded credentials, HTTPS-to-HTTP downgrades, and
+cross-origin plain HTTP (except between loopback servers) are rejected.
 
 ### Authentication
 
@@ -486,6 +502,7 @@ Current group names:
 - `users.write`
 - `users.auth`
 - `blobs`
+- `blobs.read`
 - `blobs.write`
 - `notifications`
 - `notifications.read`
