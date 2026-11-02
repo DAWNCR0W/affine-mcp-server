@@ -1,3 +1,4 @@
+import { captureDocUpdate } from "./docUpdate.js";
 import type { GraphQLClient } from "../graphqlClient.js";
 import * as Y from "yjs";
 import { loadDoc, pushDocUpdate, type WorkspaceSocket } from "../ws.js";
@@ -85,13 +86,13 @@ export async function ensureDocumentCreator(
     }
     assertCreatorIsValid(existingCreator, docId);
 
-    const previousState = Y.encodeStateVector(propertiesDoc);
+    const pendingUpdate = captureDocUpdate(propertiesDoc);
     const setId = existingId !== docId;
     const setCreator = !hasNonEmptyValue(existingCreator);
     if (!setId && !setCreator) return;
     if (setId) record.set("id", docId);
     if (setCreator) record.set("createdBy", creatorId);
-    const update = Buffer.from(Y.encodeStateAsUpdate(propertiesDoc, previousState)).toString("base64");
+    const update = Buffer.from(pendingUpdate.finish()).toString("base64");
 
     try {
       await transport.pushDocUpdate(socket, workspaceId, docPropertiesDocId(workspaceId), update);

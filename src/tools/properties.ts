@@ -1,3 +1,4 @@
+import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween } from "fractional-indexing";
@@ -232,12 +233,12 @@ export function registerPropertyTools(
     return id;
   }
 
-  /** Load a WorkspaceDB sub-doc by guid and return it with its pre-mutation state vector. */
+  /** Load a WorkspaceDB sub-doc by guid and return it with its local-transaction capture. */
   async function loadSubdoc(
     socket: any,
     workspaceId: string,
     guid: string
-  ): Promise<{ doc: Y.Doc; prevSV: Uint8Array; existed: boolean }> {
+  ): Promise<{ doc: Y.Doc; pendingUpdate: DocUpdateCapture; existed: boolean }> {
     const snapshot = await loadDoc(socket, workspaceId, guid);
     const doc = new Y.Doc();
     try {
@@ -246,22 +247,22 @@ export function registerPropertyTools(
         Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
         existed = true;
       }
-      return { doc, prevSV: Y.encodeStateVector(doc), existed };
+      return { doc, pendingUpdate: captureDocUpdate(doc), existed };
     } catch (error) {
       doc.destroy();
       throw error;
     }
   }
 
-  /** Push only the delta accumulated since `prevSV` back to the sync gateway. */
+  /** Push only the captured local transactions back to the sync gateway. */
   async function pushSubdoc(
     socket: any,
     workspaceId: string,
     guid: string,
     doc: Y.Doc,
-    prevSV: Uint8Array
+    pendingUpdate: DocUpdateCapture
   ) {
-    const delta = Y.encodeStateAsUpdate(doc, prevSV);
+    const delta = pendingUpdate.finish();
     await pushDocUpdate(socket, workspaceId, guid, Buffer.from(delta).toString("base64"));
   }
 
@@ -339,7 +340,7 @@ export function registerPropertyTools(
         }
       });
       try {
-        await pushSubdoc(socket, workspaceId, guid, propsDoc, loaded.prevSV);
+        await pushSubdoc(socket, workspaceId, guid, propsDoc, loaded.pendingUpdate);
       } catch (writeError) {
         let confirmedDoc: Y.Doc | undefined;
         let confirmed = false;
@@ -449,7 +450,7 @@ export function registerPropertyTools(
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
+      const { doc, pendingUpdate } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(doc);
 
       const id = generatePropertyId();
@@ -462,7 +463,7 @@ export function registerPropertyTools(
       record.set("index", index);
       if (parsed.icon) record.set("icon", parsed.icon);
 
-      await pushSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId), doc, prevSV);
+      await pushSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId), doc, pendingUpdate);
 
       return text({
         workspaceId,
@@ -505,7 +506,7 @@ export function registerPropertyTools(
     const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
     try {
       await joinWorkspace(socket, workspaceId);
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
+      const { doc, pendingUpdate } = await loadSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId));
       const defs = readPropertyDefinitions(doc);
       const def = resolveDefinition(defs, parsed.property);
       if (!def) {
@@ -515,7 +516,7 @@ export function registerPropertyTools(
       const record = doc.getMap(def.id);
       record.set("isDeleted", true);
 
-      await pushSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId), doc, prevSV);
+      await pushSubdoc(socket, workspaceId, customPropertyInfoDocId(workspaceId), doc, pendingUpdate);
 
       return text({ workspaceId, propertyId: def.id, name: def.name, deleted: true });
     } finally {
@@ -568,12 +569,12 @@ export function registerPropertyTools(
       }
       const encoded = encodeValue(def.type as SupportedType, parsed.value);
 
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
+      const { doc, pendingUpdate } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
       const record = doc.getMap(parsed.docId);
       record.set("id", parsed.docId); // ORM keyField, required by find/observe
       record.set(CUSTOM_PREFIX + def.id, encoded);
 
-      await pushSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId), doc, prevSV);
+      await pushSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId), doc, pendingUpdate);
 
       return text({
         workspaceId,
@@ -629,7 +630,7 @@ export function registerPropertyTools(
       // Allow clearing by raw id even if the definition was already deleted.
       const propertyId = def?.id ?? parsed.property;
 
-      const { doc, prevSV } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
+      const { doc, pendingUpdate } = await loadSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId));
       let cleared = false;
       if (doc.share.has(parsed.docId)) {
         const record = doc.getMap(parsed.docId);
@@ -640,7 +641,7 @@ export function registerPropertyTools(
         }
       }
       if (cleared) {
-        await pushSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId), doc, prevSV);
+        await pushSubdoc(socket, workspaceId, docPropertiesDocId(workspaceId), doc, pendingUpdate);
       }
 
       return text({ workspaceId, docId: parsed.docId, propertyId, cleared });

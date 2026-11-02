@@ -1,3 +1,4 @@
+import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
 import { registerMindmapTools } from "./mindmap.js";
@@ -879,9 +880,9 @@ export async function deleteDocFromWorkspace(
 
   let metadataRemoved = false;
   if (metadataExisted && pages) {
-    const previousState = Y.encodeStateVector(workspaceDoc);
+    const pendingUpdate = captureDocUpdate(workspaceDoc);
     pages.delete(metadataIndex, 1);
-    const workspaceDelta = Y.encodeStateAsUpdate(workspaceDoc, previousState);
+    const workspaceDelta = pendingUpdate.finish();
     try {
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(workspaceDelta).toString("base64"));
       metadataRemoved = true;
@@ -1063,7 +1064,7 @@ export async function setDocTrashState(
     : previouslyInTrash || page.has("inTrash") || page.get("trash") === true || page.has("trashDate");
 
   if (changed) {
-    const previousState = Y.encodeStateVector(workspaceDoc);
+    const pendingUpdate = captureDocUpdate(workspaceDoc);
     workspaceDoc.transact(() => {
       page.delete("inTrash");
       page.set("trash", inTrash);
@@ -1073,7 +1074,7 @@ export async function setDocTrashState(
         page.delete("trashDate");
       }
     });
-    const delta = Y.encodeStateAsUpdate(workspaceDoc, previousState);
+    const delta = pendingUpdate.finish();
     await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
   }
 
@@ -3331,7 +3332,7 @@ export function registerDocTools(
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       resolveEdgelessLayoutHints(blocks, normalized);
       const context = resolveInsertContext(blocks, normalized);
@@ -3363,7 +3364,7 @@ export function registerDocTools(
 
       await setNewDatabaseRowCreators(databaseRows);
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
 
       // Creating an empty table is supported, but nothing on the result said the
@@ -4376,12 +4377,12 @@ export function registerDocTools(
       }
 
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const databaseRows: Y.Map<any>[] = [];
       const result = applyMarkdownOperationsToDoc(doc, parsed, databaseRows);
       await setNewDatabaseRowCreators(databaseRows);
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return result;
@@ -4901,14 +4902,14 @@ export function registerDocTools(
       return null;
     }
 
-    const prevSV = Y.encodeStateVector(workspaceDoc);
+    const pendingUpdate = captureDocUpdate(workspaceDoc);
     let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
     if (!pages) {
       pages = new Y.Array();
       wsMeta.set("pages", pages);
     }
     pages.push([makeWorkspacePageEntry(docId, title)]);
-    const wsDelta = Y.encodeStateAsUpdate(workspaceDoc, prevSV);
+    const wsDelta = pendingUpdate.finish();
     return Buffer.from(wsDelta).toString("base64");
   }
 
@@ -5176,7 +5177,7 @@ export function registerDocTools(
         throw new Error(`Document ${parsed.docId} was not found in workspace ${workspaceId}.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
 
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const noteId = ensureNoteBlock(blocks);
@@ -5198,7 +5199,7 @@ export function registerDocTools(
         { parentId: noteId, index: insertionIndex }
       );
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return {
@@ -5777,14 +5778,14 @@ export function registerDocTools(
 
       const wsDoc = new Y.Doc();
       Y.applyUpdate(wsDoc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(wsDoc);
+      const pendingUpdate = captureDocUpdate(wsDoc);
       const meta = wsDoc.getMap("meta");
       const { created } = ensureWorkspaceTagOption(meta, tag);
       if (!created) {
         return text({ workspaceId, tag, created: false });
       }
 
-      const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
       return text({ workspaceId, tag, created: true });
     } finally {
@@ -5824,7 +5825,7 @@ export function registerDocTools(
 
       const wsDoc = new Y.Doc();
       Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
-      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const workspaceUpdate = captureDocUpdate(wsDoc);
       const wsMeta = wsDoc.getMap("meta");
       const page = getWorkspacePageEntries(wsMeta).find((entry) => entry.id === parsed.docId);
       if (!page) {
@@ -5836,7 +5837,7 @@ export function registerDocTools(
       const pageSync = syncTagArrayToOption(pageTags, tag, option);
       const wsChanged = optionCreated || pageSync.changed;
       if (wsChanged) {
-        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        const wsDelta = workspaceUpdate.finish();
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
 
@@ -5898,7 +5899,7 @@ export function registerDocTools(
 
       const wsDoc = new Y.Doc();
       Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
-      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const workspaceUpdate = captureDocUpdate(wsDoc);
       const wsMeta = wsDoc.getMap("meta");
       const page = getWorkspacePageEntries(wsMeta).find((entry) => entry.id === parsed.docId);
       if (!page) {
@@ -5910,7 +5911,7 @@ export function registerDocTools(
       const pageTagIndexes = collectMatchingTagIndexes(pageTags, tag, option, true);
       const pageRemoved = deleteArrayIndexes(pageTags, pageTagIndexes);
       if (pageRemoved) {
-        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        const wsDelta = workspaceUpdate.finish();
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
 
@@ -5982,7 +5983,7 @@ export function registerDocTools(
 
       const wsDoc = new Y.Doc();
       Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
-      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const workspaceUpdate = captureDocUpdate(wsDoc);
       const wsMeta = wsDoc.getMap("meta");
 
       const { option } = findTagOptionForDeletion(wsMeta, tag);
@@ -6018,7 +6019,7 @@ export function registerDocTools(
       }
 
       if (optionRemoved || affectedDocIds.length > 0) {
-        const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+        const wsDelta = workspaceUpdate.finish();
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
 
@@ -6481,14 +6482,14 @@ export function registerDocTools(
 
     const parentDoc = new Y.Doc();
     Y.applyUpdate(parentDoc, Buffer.from(parentSnapshot.missing, "base64"));
-    const prevSV = Y.encodeStateVector(parentDoc);
+    const pendingUpdate = captureDocUpdate(parentDoc);
     const blocks = parentDoc.getMap("blocks") as Y.Map<any>;
     const removedCount = removeEmbeddedLinkedDocumentBlocks(blocks, docId);
     if (removedCount === 0) return false;
     if (collectEmbeddedLinkedDocIds(blocks).includes(docId)) {
       throw new Error(`Source parent ${parentDocId} still contains links to document ${docId}.`);
     }
-    const delta = Y.encodeStateAsUpdate(parentDoc, prevSV);
+    const delta = pendingUpdate.finish();
     await pushPageDocUpdate(
       socket,
       workspaceId,
@@ -7686,15 +7687,15 @@ export function registerDocTools(
       if (!page) {
         throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
       }
-      const prevSV = Y.encodeStateVector(wsDoc);
+      const pendingUpdate = captureDocUpdate(wsDoc);
       page.set("title", newTitle);
-      const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
       const snap = await loadDoc(socket, workspaceId, parsed.docId);
       if (snap.missing) {
         const doc = new Y.Doc();
         Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-        const prevSV = Y.encodeStateVector(doc);
+        const pendingUpdate = captureDocUpdate(doc);
         const blocks = doc.getMap("blocks") as Y.Map<any>;
         for (const [, raw] of blocks) {
           if (!(raw instanceof Y.Map)) continue;
@@ -7703,7 +7704,7 @@ export function registerDocTools(
             raw.set("prop:title", titleText); break;
           }
         }
-        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
       }
       return receipt("doc.update_title", {
@@ -7746,7 +7747,7 @@ export function registerDocTools(
 
       const wsDoc = new Y.Doc();
       Y.applyUpdate(wsDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
-      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const workspaceUpdate = captureDocUpdate(wsDoc);
       const wsMeta = wsDoc.getMap("meta");
       const page = getWorkspacePageEntries(wsMeta).find(entry => entry.id === parsed.docId);
       if (!page) {
@@ -7759,7 +7760,7 @@ export function registerDocTools(
         pageTags.push([tag]);
       }
 
-      const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+      const wsDelta = workspaceUpdate.finish();
       await pushDocUpdate(socket, parsed.workspaceId, parsed.workspaceId, Buffer.from(wsDelta).toString("base64"));
     } finally {
       socket.disconnect();
@@ -7924,7 +7925,7 @@ export function registerDocTools(
 
       const targetDoc = new Y.Doc();
       Y.applyUpdate(targetDoc, Buffer.from(targetSnapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(targetDoc);
+      const pendingUpdate = captureDocUpdate(targetDoc);
       const targetBlocks = targetDoc.getMap("blocks") as Y.Map<any>;
 
       const blockIdMap = new Map<string, string>();
@@ -7961,7 +7962,7 @@ export function registerDocTools(
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(targetDoc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(socket, workspaceId, created.docId, Buffer.from(delta).toString("base64"));
 
       if (preserveTags && rawTags.length > 0) {
@@ -8077,7 +8078,7 @@ export function registerDocTools(
   type DatabaseDocContext = DatabaseColumnLookup & {
     socket: Awaited<ReturnType<typeof connectWorkspaceSocket>>;
     doc: Y.Doc;
-    prevSV: Uint8Array;
+    pendingUpdate: DocUpdateCapture;
     blocks: Y.Map<any>;
     dbBlock: Y.Map<any>;
     cellsMap: Y.Map<any>;
@@ -8645,7 +8646,7 @@ export function registerDocTools(
     }
     Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
-    const prevSV = Y.encodeStateVector(doc);
+    const pendingUpdate = captureDocUpdate(doc);
     const blocks = doc.getMap("blocks") as Y.Map<any>;
     const dbBlock = findBlockById(blocks, databaseBlockId);
     if (!dbBlock) {
@@ -8668,7 +8669,7 @@ export function registerDocTools(
     return {
       socket,
       doc,
-      prevSV,
+      pendingUpdate,
       blocks,
       dbBlock,
       cellsMap,
@@ -8700,7 +8701,7 @@ export function registerDocTools(
         creatorId,
       });
 
-      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      const delta = ctx.pendingUpdate.finish();
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
@@ -8754,7 +8755,7 @@ export function registerDocTools(
         ctx.blocks.delete(blockId);
       }
 
-      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      const delta = ctx.pendingUpdate.finish();
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
@@ -8952,7 +8953,7 @@ export function registerDocTools(
         rowBlock.set("prop:text", makeText(titleValue));
       }
 
-      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      const delta = ctx.pendingUpdate.finish();
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
@@ -9048,7 +9049,7 @@ export function registerDocTools(
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
+      const delta = ctx.pendingUpdate.finish();
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
@@ -9139,7 +9140,7 @@ export function registerDocTools(
       if (!snapshot.missing) throw new Error("Document not found");
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
 
       const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
@@ -9247,7 +9248,7 @@ export function registerDocTools(
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
       return text({
@@ -9672,7 +9673,7 @@ export function registerDocTools(
       if (snapshot.missing) {
         Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       }
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: true })!;
       const index = params.index ?? nextSurfaceElementIndex(ctx.value);
@@ -9713,7 +9714,7 @@ export function registerDocTools(
         }
       }
       writeSurfaceElement(ctx.value, elementId, data);
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
         workspaceId,
@@ -9830,7 +9831,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: false });
       if (!ctx) throw new Error("Document has no surface elements to update.");
@@ -9951,7 +9952,7 @@ export function registerDocTools(
       }
 
       if (changed.length > 0) {
-        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
           workspaceId,
@@ -9990,7 +9991,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: false });
       if (!ctx) {
@@ -10036,7 +10037,7 @@ export function registerDocTools(
 
       pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
         workspaceId,
@@ -10075,7 +10076,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const frameBlock = blocks.get(params.blockId);
       if (!(frameBlock instanceof Y.Map) || frameBlock.get("sys:flavour") !== "affine:frame") {
@@ -10117,7 +10118,7 @@ export function registerDocTools(
         }
       }
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
         workspaceId,
@@ -10166,7 +10167,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = blocks.get(params.blockId);
       if (!(block instanceof Y.Map)) {
@@ -10211,7 +10212,7 @@ export function registerDocTools(
       }
 
       if (changed.length > 0) {
-        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
           workspaceId,
@@ -10262,7 +10263,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = findBlockById(blocks, params.blockId);
       if (!block) {
@@ -10350,7 +10351,7 @@ export function registerDocTools(
       }
 
       if (changed.length > 0) {
-        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
           workspaceId,
@@ -10396,7 +10397,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = findBlockById(blocks, params.blockId);
       if (!block) {
@@ -10437,7 +10438,7 @@ export function registerDocTools(
 
       if (changed) {
         writeTableCellText(block, rowId, columnId, nextText);
-        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
           workspaceId,
@@ -10489,7 +10490,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = findBlockById(blocks, params.blockId);
       if (!block) {
@@ -10527,7 +10528,7 @@ export function registerDocTools(
       });
 
       if (changedColumns.length > 0) {
-        const delta = Y.encodeStateAsUpdate(doc, prevSV);
+        const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
           workspaceId,
@@ -10585,7 +10586,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = findBlockById(blocks, params.blockId);
       if (!block) {
@@ -10637,7 +10638,7 @@ export function registerDocTools(
       target.children.insert(target.insertIndex, [params.blockId]);
       block.set("sys:parent", null);
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
         workspaceId,
@@ -10683,7 +10684,7 @@ export function registerDocTools(
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const prevSV = Y.encodeStateVector(doc);
+      const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const block = blocks.get(params.blockId);
       if (!(block instanceof Y.Map)) {
@@ -10769,7 +10770,7 @@ export function registerDocTools(
 
       pruneFromFrameChildElementIds(blocks, [...deletedIds, ...prunedConnectors]);
 
-      const delta = Y.encodeStateAsUpdate(doc, prevSV);
+      const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
         workspaceId,

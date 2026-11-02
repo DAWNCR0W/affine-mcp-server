@@ -1,3 +1,4 @@
+import { captureDocUpdate } from "./util/docUpdate.js";
 import { io, Socket } from "socket.io-client";
 import { setTimeout as delay } from "node:timers/promises";
 import * as Y from "yjs";
@@ -251,9 +252,9 @@ async function updateWorkspacePageUpdatedDate(
           const currentDate = page.get("updatedDate");
           if (typeof currentDate === "number" && currentDate >= updatedDate) return;
 
-          const previousState = Y.encodeStateVector(doc);
+          const pendingUpdate = captureDocUpdate(doc);
           page.set("updatedDate", updatedDate);
-          const update = Buffer.from(Y.encodeStateAsUpdate(doc, previousState)).toString("base64");
+          const update = Buffer.from(pendingUpdate.finish()).toString("base64");
           try {
             await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
             return;
