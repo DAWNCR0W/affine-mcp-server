@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `append_block` accepts an optional `preview` boolean for code blocks, `update_block` accepts optional `language` and `preview` for code blocks, and `read_doc` and block snapshots return the code block `preview` state. Omitted fields keep the existing behavior.
 - `get_blob` downloads a workspace blob by key or `affine://blob/<key>` reference, so clients can read the files behind image and attachment blocks. Supported inline images (PNG, JPEG, GIF, and WebP) are returned as MCP image content with `{ key, contentType, size, sha256 }` metadata. The tool is read-only and grouped under `blobs.read`, so it stays enabled with `AFFINE_DISABLED_GROUPS=destructive` and the `read_only` profile.
-- `upload_blob` accepts `filePath` as an alternative to inline `content`. It streams a file from the server host without Base64, is disabled by default and is limited to the directories in `AFFINE_BLOB_UPLOAD_FILE_ROOTS` (#433).
+- `upload_blob` accepts `filePath` as an alternative to inline `content`. The `filePath` mode streams a file from the server host without Base64, is disabled by default, and is limited to directories in `AFFINE_BLOB_UPLOAD_FILE_ROOTS`; inline `content` uploads remain available (#433).
 
 ### Changed
 - Update locked MCP SDK, jose, undici, markdown-it, and Playwright dependencies, including the undici and markdown-it security fixes. Update the pinned Docker login action.
