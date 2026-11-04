@@ -377,6 +377,40 @@ try {
     JSON.stringify(movedEntry?.bounds ?? null),
   );
 
+  // Half-zero geometry keeps the nonzero dimension and defaults only the other.
+  const partialNote = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[1].key,
+    name: "partial.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+    placement: { parentId: noteId },
+  });
+  await call("update_edgeless_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: partialNote.blockId,
+    width: 200,
+  });
+  await call("move_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: partialNote.blockId,
+    placement: { parentId: canvas.surfaceBlockId },
+  });
+  const canvasPartial = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const partialEntry = (canvasPartial.edgelessBlocks ?? []).find((block) => block.id === partialNote.blockId);
+  check(
+    "half-zero geometry keeps the nonzero dimension",
+    partialEntry?.bounds?.width === 200 &&
+      partialEntry?.bounds?.height === 100 &&
+      partialEntry?.width === 200 &&
+      partialEntry?.height === 100,
+    JSON.stringify(partialEntry?.bounds ?? null),
+  );
+
   for (const [index, item] of uploaded.entries()) {
     const blob = await call("get_blob", { workspaceId: WORKSPACE, key: item.key });
     check(`get_blob ${index + 1} matches uploaded bytes`, blob.sha256 === PNG_SHA, `${blob.contentType} ${blob.size}B`);

@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Positioned `image` blocks now store the same effective size in `prop:width`/`prop:height` as in `prop:xywh`, so a position without explicit dimensions no longer reports 0x0 dimensions for a 100x100 image.
 - `update_edgeless_block` rejects `image` dimensions that are not integers from 1 to 10000 instead of persisting an invalid or invisible block.
-- Images that reach the surface without geometry (explicit `placement`, or `move_block`) receive the 100x100 default instead of an invisible zero-size block.
+- Images that reach the surface without geometry (explicit `placement`, or `move_block`) reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100, instead of an invisible zero-size block or a forced 100x100.
 - `read_doc` returns `caption` and `bounds` for image blocks, so note-contained images stay fully described even though `get_edgeless_canvas` lists only surface-parented images.
 - `move_block` maps `affine:image` to the image placement type, so images can be moved onto the surface under strict validation.
 - `update_edgeless_block` reports `background` under `ignored` for image blocks, which have no background property.

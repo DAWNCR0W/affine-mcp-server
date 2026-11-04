@@ -1957,10 +1957,20 @@ export function registerDocTools(
   function applySurfaceImageDefaultSize(block: Y.Map<any>, parentFlavour: unknown): void {
     if (parentFlavour !== "affine:surface" || block.get("sys:flavour") !== "affine:image") return;
     const placed = parseXywhString(block.get("prop:xywh"));
-    if (!placed || placed.width !== 0 || placed.height !== 0) return;
-    block.set("prop:xywh", formatXywhString(placed.x, placed.y, 100, 100));
-    block.set("prop:width", 100);
-    block.set("prop:height", 100);
+    if (!placed) return;
+
+    // AFFiNE stores the intrinsic image size in prop:width/prop:height even when
+    // the block was never placed (prop:xywh stays 0). Keep those values and fill
+    // only the dimensions that are actually missing.
+    const storedWidth = Number(block.get("prop:width"));
+    const storedHeight = Number(block.get("prop:height"));
+    const width = placed.width || (Number.isFinite(storedWidth) && storedWidth > 0 ? storedWidth : 100);
+    const height = placed.height || (Number.isFinite(storedHeight) && storedHeight > 0 ? storedHeight : 100);
+
+    if (width === placed.width && height === placed.height) return;
+    block.set("prop:xywh", formatXywhString(placed.x, placed.y, width, height));
+    block.set("prop:width", width);
+    block.set("prop:height", height);
   }
 
   function normalizeBlockTypeInput(typeInput: string): {
