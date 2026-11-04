@@ -1951,6 +1951,18 @@ export function registerDocTools(
     return surfaceId;
   }
 
+  // An image can reach the surface without the geometry-based placement path
+  // (explicit placement, or move_block). Those images still need a rendered
+  // size, or AFFiNE creates an invisible zero-size block.
+  function applySurfaceImageDefaultSize(block: Y.Map<any>, parentFlavour: unknown): void {
+    if (parentFlavour !== "affine:surface" || block.get("sys:flavour") !== "affine:image") return;
+    const placed = parseXywhString(block.get("prop:xywh"));
+    if (!placed || placed.width !== 0 || placed.height !== 0) return;
+    block.set("prop:xywh", formatXywhString(placed.x, placed.y, 100, 100));
+    block.set("prop:width", 100);
+    block.set("prop:height", 100);
+  }
+
   function normalizeBlockTypeInput(typeInput: string): {
     type: AppendBlockCanonicalType;
     legacyType?: AppendBlockLegacyType;
@@ -3382,6 +3394,7 @@ export function registerDocTools(
       }
 
       blocks.set(blockId, block);
+      applySurfaceImageDefaultSize(block, context.parentBlock.get("sys:flavour"));
       if (Array.isArray(extraBlocks)) {
         for (const extra of extraBlocks) {
           blocks.set(extra.blockId, extra.block);
@@ -4806,6 +4819,7 @@ export function registerDocTools(
       const context = resolveInsertContext(blocks, normalized);
       const { blockId, block, extraBlocks } = createBlock(normalized);
       blocks.set(blockId, block);
+      applySurfaceImageDefaultSize(block, context.parentBlock.get("sys:flavour"));
       if (Array.isArray(extraBlocks)) {
         for (const extra of extraBlocks) {
           blocks.set(extra.blockId, extra.block);
@@ -6232,7 +6246,11 @@ export function registerDocTools(
           preview: typeof preview === "boolean" ? preview : null,
           childIds,
           ...(flavour === "affine:image"
-            ? { sourceId: asStringOrNull(raw.get("prop:sourceId")) }
+            ? {
+                sourceId: asStringOrNull(raw.get("prop:sourceId")),
+                caption: asStringOrNull(raw.get("prop:caption")),
+                bounds: parseXywhString(raw.get("prop:xywh")),
+              }
             : {}),
         });
 
@@ -10726,7 +10744,9 @@ export function registerDocTools(
           ? "frame"
           : flavour === "affine:edgeless-text"
             ? "edgeless_text"
-            : "paragraph";
+            : flavour === "affine:image"
+              ? "image"
+              : "paragraph";
       const target = resolveInsertContext(blocks, {
         placement: resolvedPlacement,
         strict: true,
@@ -10734,6 +10754,7 @@ export function registerDocTools(
       });
       target.children.insert(target.insertIndex, [params.blockId]);
       block.set("sys:parent", null);
+      applySurfaceImageDefaultSize(block, target.parentBlock.get("sys:flavour"));
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(

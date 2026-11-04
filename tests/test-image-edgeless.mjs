@@ -288,6 +288,82 @@ try {
     JSON.stringify(resizedEntry?.bounds ?? null),
   );
 
+  // Explicit surface placement without geometry still needs a rendered size.
+  const explicitSurface = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[2].key,
+    name: "explicit-surface.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+    placement: { parentId: canvas.surfaceBlockId },
+  });
+  const canvasExplicit = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const explicitEntry = (canvasExplicit.edgelessBlocks ?? []).find((block) => block.id === explicitSurface.blockId);
+  check(
+    "explicit surface image gets 100x100 bounds",
+    explicitEntry?.bounds?.width === 100 && explicitEntry?.bounds?.height === 100,
+    JSON.stringify(explicitEntry?.bounds ?? null),
+  );
+  check(
+    "explicit surface image stores matching dimensions",
+    explicitEntry?.width === 100 && explicitEntry?.height === 100,
+    `w=${explicitEntry?.width} h=${explicitEntry?.height}`,
+  );
+
+  // An explicit note parent wins over automatic surface attachment.
+  const noteId = (read.blocks ?? []).find((block) => block.flavour === "affine:note")?.id;
+  check("test doc exposes a page note", Boolean(noteId), noteId ?? "missing");
+  const explicitNote = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[0].key,
+    name: "explicit-note.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+    x: 0,
+    y: 900,
+    width: 120,
+    height: 80,
+    caption: "note caption",
+    placement: { parentId: noteId },
+  });
+  const canvasNote = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  check(
+    "explicit note placement keeps the image off the canvas",
+    (canvasNote.edgelessBlocks ?? []).every((block) => block.id !== explicitNote.blockId),
+  );
+
+  const readNote = await call("read_doc", { workspaceId: WORKSPACE, docId });
+  const noteRow = (readNote.blocks ?? []).find((block) => block.id === explicitNote.blockId);
+  check(
+    "read_doc returns image caption and bounds",
+    noteRow?.caption === "note caption" && noteRow?.bounds?.width === 120 && noteRow?.bounds?.height === 80,
+    `${noteRow?.caption ?? "no-caption"} ${JSON.stringify(noteRow?.bounds ?? null)}`,
+  );
+
+  // move_block must accept an image under the surface.
+  const moveResult = await call("move_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: explicitNote.blockId,
+    placement: { parentId: canvas.surfaceBlockId },
+  });
+  check(
+    "move_block moves an image onto the surface",
+    moveResult.moved === true && moveResult.toParentId === canvas.surfaceBlockId,
+    JSON.stringify({ moved: moveResult.moved, to: moveResult.toParentId }),
+  );
+  const canvasMoved = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const movedEntry = (canvasMoved.edgelessBlocks ?? []).find((block) => block.id === explicitNote.blockId);
+  check(
+    "moved image is listed on the canvas with its geometry",
+    movedEntry?.bounds?.width === 120 && movedEntry?.bounds?.height === 80,
+    JSON.stringify(movedEntry?.bounds ?? null),
+  );
+
   for (const [index, item] of uploaded.entries()) {
     const blob = await call("get_blob", { workspaceId: WORKSPACE, key: item.key });
     check(`get_blob ${index + 1} matches uploaded bytes`, blob.sha256 === PNG_SHA, `${blob.contentType} ${blob.size}B`);
