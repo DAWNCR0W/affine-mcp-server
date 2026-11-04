@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images that reach the surface without geometry (explicit `placement`, or `move_block`) receive the 100x100 default instead of an invisible zero-size block.
 - `read_doc` returns `caption` and `bounds` for image blocks, so note-contained images stay fully described even though `get_edgeless_canvas` lists only surface-parented images.
 - `move_block` maps `affine:image` to the image placement type, so images can be moved onto the surface under strict validation.
+- `update_edgeless_block` reports `background` under `ignored` for image blocks, which have no background property.
 
 ## [3.11.0] - 2026-11-02
 

@@ -288,6 +288,19 @@ try {
     JSON.stringify(resizedEntry?.bounds ?? null),
   );
 
+  // Image blocks have no background, so an update must report it as ignored.
+  const backgroundIgnored = await call("update_edgeless_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: positionOnlyId,
+    background: "#ff0000",
+  });
+  check(
+    "image updates ignore background",
+    Array.isArray(backgroundIgnored.ignored) && backgroundIgnored.ignored.includes("background"),
+    JSON.stringify(backgroundIgnored.ignored ?? null),
+  );
+
   // Explicit surface placement without geometry still needs a rendered size.
   const explicitSurface = await call("append_block", {
     workspaceId: WORKSPACE,

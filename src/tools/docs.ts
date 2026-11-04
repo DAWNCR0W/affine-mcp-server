@@ -6924,7 +6924,7 @@ export function registerDocTools(
         reference: z.string().optional().describe("Target id for surface_ref"),
         refFlavour: z.string().optional().describe("Target flavour for surface_ref (e.g. affine:frame)"),
         x: z.number().int().optional().describe("X position on the edgeless canvas for frame/edgeless_text/note/image (default 0). Prefer ≥40px between sibling bounds; BlockSuite does not auto-arrange."),
-        y: z.number().int().optional().describe("Y position on the edgeless canvas for frame/edgeless_text/note (default 0)."),
+        y: z.number().int().optional().describe("Y position on the edgeless canvas for frame/edgeless_text/note/image (default 0)."),
         width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note/image."),
         height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note/image. When `markdown` is set and height is omitted, an over-estimate is computed from the content — AFFiNE's render-time ResizeObserver corrects `prop:xywh` to the true DOM-measured height on first browser open."),
         background: z.any().optional().describe("Background for frame/note. Frame default 'transparent'. For notes, prefer AFFiNE's adaptive `--affine-note-background-<color>` family — `blue` / `purple` / `yellow` / `green` / `teal` / `red` / `orange` / `magenta` / `grey` / `white` / `black`. For specific per-theme colors, pass a `{light, dark}` hex object like `{light:'#fff', dark:'#252525'}`."),
@@ -10285,8 +10285,9 @@ export function registerDocTools(
       }
 
       if (params.background !== undefined) {
-        if (flavour === "affine:edgeless-text") {
-          ignored.push("background"); // edgeless-text has no prop:background
+        if (flavour === "affine:edgeless-text" || flavour === "affine:image") {
+          // Neither flavour has a prop:background.
+          ignored.push("background");
         } else {
           const bg = params.background;
           if (bg && typeof bg === "object" && !Array.isArray(bg) && ("light" in bg || "dark" in bg)) {
@@ -11285,7 +11286,7 @@ export function registerDocTools(
     {
       title: "Update Edgeless Block",
       description:
-        "Partially update a note/frame/edgeless-text/image block by id. x/y/width/height merge with current prop:xywh (move without resizing, or vice versa). background replaces prop:background (AFFiNE token or `{light, dark}` hex object). Fields that don't apply to the block's flavour come back under `ignored`.",
+        "Partially update a note/frame/edgeless-text/image block by id. x/y/width/height merge with current prop:xywh (move without resizing, or vice versa). background replaces prop:background (AFFiNE token or `{light, dark}` hex object); edgeless-text and image blocks have no background and report it under `ignored`. Fields that don't apply to the block's flavour come back under `ignored`.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
