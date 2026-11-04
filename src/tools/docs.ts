@@ -2893,25 +2893,22 @@ export function registerDocTools(
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:caption", normalized.caption ?? "");
         block.set("prop:sourceId", normalized.sourceId);
-        const imageWidth = normalized.widthProvided ? normalized.width : 0;
-        const imageHeight = normalized.heightProvided ? normalized.height : 0;
         const imagePlaced =
           normalized.xProvided ||
           normalized.yProvided ||
           normalized.widthProvided ||
           normalized.heightProvided;
+        // Positioned images need a rendered size: fall back to the same 100x100
+        // defaults used by prop:xywh so bounds and dimensions never disagree.
+        const imageWidth = imagePlaced ? (normalized.widthProvided ? normalized.width : 100) : 0;
+        const imageHeight = imagePlaced ? (normalized.heightProvided ? normalized.height : 100) : 0;
         block.set("prop:width", imageWidth);
         block.set("prop:height", imageHeight);
         block.set("prop:size", normalized.size || -1);
         block.set(
           "prop:xywh",
           imagePlaced
-            ? formatXywhString(
-                normalized.x,
-                normalized.y,
-                imageWidth || 100,
-                imageHeight || 100,
-              )
+            ? formatXywhString(normalized.x, normalized.y, imageWidth, imageHeight)
             : "[0,0,0,0]",
         );
         block.set("prop:index", "a0");
@@ -10235,6 +10232,20 @@ export function registerDocTools(
         );
       }
 
+      if (flavour === "affine:image") {
+        for (const [field, value] of [
+          ["width", params.width],
+          ["height", params.height],
+        ] as const) {
+          if (value === undefined) continue;
+          if (!Number.isInteger(value) || value < 1 || value > 10000) {
+            throw new Error(
+              `image ${field} must be an integer between 1 and 10000 (received ${String(value)}).`,
+            );
+          }
+        }
+      }
+
       const changed: string[] = [];
       const ignored: string[] = [];
 
@@ -10912,6 +10923,18 @@ export function registerDocTools(
         "affine:image",
       ]);
 
+      // Images are canvas elements only when AFFiNE attached them to the surface
+      // block. Images that live inside a page note stay in the document flow and
+      // must not be reported as edgeless blocks.
+      const surfaceBlockId = findBlockIdByFlavour(blocks, "affine:surface");
+      const surfaceChildIds = new Set<string>(
+        surfaceBlockId
+          ? childIdsFrom(
+              (blocks.get(surfaceBlockId) as Y.Map<any> | undefined)?.get("sys:children"),
+            )
+          : [],
+      );
+
       const collectNoteText = (rootId: string): string[] => {
         const out: string[] = [];
         const seen = new Set<string>();
@@ -10979,6 +11002,7 @@ export function registerDocTools(
         if (!(raw instanceof Y.Map)) continue;
         const flavour = raw.get("sys:flavour");
         if (typeof flavour !== "string" || !edgelessFlavours.has(flavour)) continue;
+        if (flavour === "affine:image" && !surfaceChildIds.has(String(id))) continue;
         const xywhRaw = raw.get("prop:xywh");
         const bounds = parseXywhString(xywhRaw);
         const propIndex = raw.get("prop:index");
@@ -11055,7 +11079,7 @@ export function registerDocTools(
       return text({
         docId: params.docId,
         exists: true,
-        surfaceBlockId: ctx?.surfaceId ?? null,
+        surfaceBlockId: ctx?.surfaceId ?? surfaceBlockId ?? null,
         edgelessBlocks: sortedEdgelessBlocks,
         surfaceElements: sortedSurfaceElements,
         elementCounts: counts,

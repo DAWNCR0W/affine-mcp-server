@@ -36,6 +36,7 @@ if (!BASE || !EMAIL || !PASSWORD || !WORKSPACE) {
 const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const PNG_SHA = crypto.createHash("sha256").update(Buffer.from(PNG_B64, "base64")).digest("hex");
+const PNG_BYTES = Buffer.from(PNG_B64, "base64").length;
 
 const client = new Client({ name: "affine-mcp-image-edgeless", version: "1.0.0" });
 const transport = new StdioClientTransport({
@@ -72,6 +73,16 @@ function check(name, ok, detail = "") {
   } else {
     failures.push(`${name}${detail ? ` — ${detail}` : ""}`);
     console.error(`FAIL  ${name}${detail ? ` — ${detail}` : ""}`);
+  }
+}
+
+async function expectError(name, promise, pattern) {
+  try {
+    await promise;
+    check(name, false, "expected an error but the call succeeded");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    check(name, pattern.test(message), message.slice(0, 160));
   }
 }
 
@@ -181,6 +192,100 @@ try {
     "positioned images are children of the surface block",
     readImages.length > 0 && readImages.every((block) => block.parentId === canvas.surfaceBlockId),
     `surface=${canvas.surfaceBlockId}`,
+  );
+
+  // A position without dimensions must still produce a consistent 100x100 block.
+  const positionOnly = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[0].key,
+    name: "position-only.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+    x: 0,
+    y: 400,
+  });
+  const positionOnlyId = positionOnly.blockId;
+
+  // An image appended without geometry stays inside the page note.
+  const noteImage = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[1].key,
+    name: "note-image.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+  });
+  const noteImageId = noteImage.blockId;
+
+  const canvasWithExtras = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const canvasImages = (canvasWithExtras.edgelessBlocks ?? []).filter((block) => block.flavour === "affine:image");
+  const positionOnlyEntry = canvasImages.find((block) => block.id === positionOnlyId);
+
+  check(
+    "note-contained image is not listed on the canvas",
+    canvasImages.every((block) => block.id !== noteImageId),
+    `canvasImages=${canvasImages.length}`,
+  );
+  check(
+    "position-only image uses 100x100 bounds",
+    positionOnlyEntry?.bounds?.width === 100 && positionOnlyEntry?.bounds?.height === 100,
+    JSON.stringify(positionOnlyEntry?.bounds ?? null),
+  );
+  check(
+    "position-only image stores matching dimensions",
+    positionOnlyEntry?.width === 100 && positionOnlyEntry?.height === 100,
+    `w=${positionOnlyEntry?.width} h=${positionOnlyEntry?.height}`,
+  );
+
+  const readWithExtras = await call("read_doc", { workspaceId: WORKSPACE, docId });
+  const noteImageBlock = (readWithExtras.blocks ?? []).find((block) => block.id === noteImageId);
+  check(
+    "note-contained image stays readable in read_doc",
+    Boolean(noteImageBlock) && typeof noteImageBlock.sourceId === "string" && noteImageBlock.sourceId.length > 0,
+    noteImageBlock?.parentId ?? "missing",
+  );
+
+  await expectError(
+    "rejects image width 0",
+    call("update_edgeless_block", { workspaceId: WORKSPACE, docId, blockId: positionOnlyId, width: 0 }),
+    /between 1 and 10000/,
+  );
+  await expectError(
+    "rejects image height -5",
+    call("update_edgeless_block", { workspaceId: WORKSPACE, docId, blockId: positionOnlyId, height: -5 }),
+    /between 1 and 10000/,
+  );
+  await expectError(
+    "rejects fractional image width",
+    call("update_edgeless_block", { workspaceId: WORKSPACE, docId, blockId: positionOnlyId, width: 12.5 }),
+    /between 1 and 10000/,
+  );
+
+  const canvasAfterRejects = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const untouched = (canvasAfterRejects.edgelessBlocks ?? []).find((block) => block.id === positionOnlyId);
+  check(
+    "failed updates leave the image untouched",
+    untouched?.bounds?.width === 100 && untouched?.bounds?.height === 100,
+    JSON.stringify(untouched?.bounds ?? null),
+  );
+
+  const resized = await call("update_edgeless_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: positionOnlyId,
+    width: 320,
+  });
+  check("accepts a valid image width", resized.updated === true, JSON.stringify(resized.changed ?? null));
+
+  const canvasResized = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const resizedEntry = (canvasResized.edgelessBlocks ?? []).find((block) => block.id === positionOnlyId);
+  check(
+    "resize round-trips to the canvas",
+    resizedEntry?.bounds?.width === 320 && resizedEntry?.width === 320,
+    JSON.stringify(resizedEntry?.bounds ?? null),
   );
 
   for (const [index, item] of uploaded.entries()) {
