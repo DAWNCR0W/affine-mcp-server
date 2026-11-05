@@ -1953,9 +1953,13 @@ export function registerDocTools(
     return surfaceId;
   }
 
-  // An image can reach the surface without the geometry-based placement path
-  // (explicit placement, or move_block). Those images still need a rendered
-  // size, or AFFiNE creates an invisible zero-size block.
+  /**
+   * Give a surface-parented image a rendered size.
+   *
+   * Explicit placement and `move_block` can reach the surface without the
+   * geometry-based placement path; without a size AFFiNE renders an invisible
+   * zero-size block.
+   */
   function applySurfaceImageDefaultSize(
     block: Y.Map<any>,
     parentFlavour: unknown,
@@ -2401,6 +2405,7 @@ export function registerDocTools(
     return findParentIdByChild(blocks, blockId);
   }
 
+  /** Resolve the parent block, child array and insert index for a placement. */
   function resolveInsertContext(
     blocks: Y.Map<any>,
     normalized: Pick<
@@ -2751,6 +2756,7 @@ export function registerDocTools(
     };
   }
 
+  /** Create a BlockSuite block map for an append request. */
   function createBlock(normalized: NormalizedAppendBlockInput): {
     blockId: string;
     block: Y.Map<any>;
@@ -6145,6 +6151,7 @@ export function registerDocTools(
     getDocHandler as any
   );
 
+  /** Read document blocks, plain text and optional markdown. */
   const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -6854,6 +6861,7 @@ export function registerDocTools(
     appendSemanticSectionHandler as any
   );
 
+  /** Append one block (or a markdown subtree) to a document. */
   const appendBlockHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
@@ -10219,6 +10227,7 @@ export function registerDocTools(
     }
   };
 
+  /** Update geometry or background of a note, frame, edgeless-text or image block. */
   const updateEdgelessBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10708,6 +10717,7 @@ export function registerDocTools(
     }
   };
 
+  /** Move a block to a new placement without changing its id. */
   const moveBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10944,6 +10954,7 @@ export function registerDocTools(
     }
   };
 
+  /** Read edgeless blocks and surface elements with parsed bounds. */
   const getEdgelessCanvasHandler = async (params: GetEdgelessCanvasInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {

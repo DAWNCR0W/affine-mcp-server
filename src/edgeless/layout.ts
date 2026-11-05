@@ -273,14 +273,7 @@ export interface XywhGeometry {
   height: number;
 }
 
-/**
- * Merge an `update_edgeless_block` geometry patch.
- *
- * `prop:xywh` may be zero for a page image while `prop:width`/`prop:height`
- * already hold the intrinsic size the editor measured. Omitted fields must
- * therefore fall back to the stored dimensions instead of copying a zero
- * xywh back into the block.
- */
+/** Dimension precedence for image geometry: page images prefer stored sizes, surface images prefer xywh. */
 export function pickImageDimension(
   prevValue: number,
   storedValue: number,
@@ -293,6 +286,14 @@ export function pickImageDimension(
   return 0;
 }
 
+/**
+ * Merge an `update_edgeless_block` geometry patch.
+ *
+ * `prop:xywh` may be zero or stale for a page image while `prop:width` and
+ * `prop:height` already hold the intrinsic size the editor measured. Omitted
+ * fields therefore fall back to the stored dimensions instead of copying a
+ * zero or stale xywh back into the block.
+ */
 export function resolveImageUpdateGeometry(input: {
   prev: XywhGeometry;
   storedWidth: number;
