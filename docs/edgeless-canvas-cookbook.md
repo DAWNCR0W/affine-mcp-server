@@ -229,3 +229,28 @@ Everything above writes to the native BlockSuite schema — no custom overlay:
 - `labelXYWH` is seeded at the source→target midpoint so BlockSuite's label renderer doesn't short-circuit on first render.
 - `append_block(type="edgeless_text", text=…)` auto-creates a child `affine:paragraph` — the edgeless-text view walks `sys:children` for glyphs, so without it the block renders as an invisible sliver.
 - `src/edgeless/layout.ts` is a dependency-free module citing the upstream BlockSuite files each helper mirrors (`connector.ts`, `connector-manager.ts`, `edgeless-note-mask.ts`), so future parity audits stay cheap.
+
+## Image blocks: page vs canvas
+
+AFFiNE stores an image's rendered size in `prop:width`/`prop:height` and its
+canvas placement in `prop:xywh`. The two are not interchangeable:
+
+| Concern | Page (inside a note) | Canvas (surface child) |
+| --- | --- | --- |
+| `prop:xywh` | unused or stale (`[0,0,0,0]`) | authoritative placement |
+| `prop:width` / `prop:height` | intrinsic size, written by the editor | must equal the `xywh` width/height |
+| Source of truth | stored dimensions | `xywh` (kept in sync) |
+| `get_edgeless_canvas` | excluded | listed with `sourceId`, `caption`, `bounds` |
+| `update_edgeless_block` | never overwrite stored dimensions with `0` | reject dimensions outside 1–10000 |
+| `move_block` | flavour maps to `"image"` | page → canvas prefers the stored dimensions |
+| `append_block` | no geometry → `[0,0,0,0]` | missing dimensions default to 100 |
+
+Rules:
+
+- The AFFiNE editor can resize an image without touching `prop:xywh`, so a page
+  image's `xywh` may be stale. When it moves to the surface, the stored
+  dimensions win.
+- When a parameter is omitted, preserve the existing value; never write `0`
+  over a stored dimension.
+- Only images parented to `affine:surface` are canvas elements. Images inside a
+  page note stay in `read_doc` and must not appear in `get_edgeless_canvas`.

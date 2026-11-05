@@ -411,6 +411,51 @@ try {
     JSON.stringify(partialEntry?.bounds ?? null),
   );
 
+  // An x-only update must not overwrite the stored size with the zero xywh.
+  const xOnlyNote = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[2].key,
+    name: "x-only.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+    placement: { parentId: noteId },
+  });
+  await call("update_edgeless_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: xOnlyNote.blockId,
+    width: 200,
+  });
+  await call("update_edgeless_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: xOnlyNote.blockId,
+    x: 10,
+  });
+  const readXOnly = await call("read_doc", { workspaceId: WORKSPACE, docId });
+  const xOnlyRow = (readXOnly.blocks ?? []).find((block) => block.id === xOnlyNote.blockId);
+  check(
+    "x-only update keeps the stored width",
+    xOnlyRow?.bounds?.x === 10 && xOnlyRow?.bounds?.width === 200,
+    JSON.stringify(xOnlyRow?.bounds ?? null),
+  );
+
+  await call("move_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: xOnlyNote.blockId,
+    placement: { parentId: canvas.surfaceBlockId },
+  });
+  const canvasXOnly = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const xOnlyEntry = (canvasXOnly.edgelessBlocks ?? []).find((block) => block.id === xOnlyNote.blockId);
+  check(
+    "x-only image keeps its size after moving to the surface",
+    xOnlyEntry?.bounds?.width === 200 && xOnlyEntry?.bounds?.height === 100,
+    JSON.stringify(xOnlyEntry?.bounds ?? null),
+  );
+
   for (const [index, item] of uploaded.entries()) {
     const blob = await call("get_blob", { workspaceId: WORKSPACE, key: item.key });
     check(`get_blob ${index + 1} matches uploaded bytes`, blob.sha256 === PNG_SHA, `${blob.contentType} ${blob.size}B`);

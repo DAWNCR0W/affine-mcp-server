@@ -69,6 +69,8 @@ import {
   parseXywhString,
   pickConnectorSides,
   pickFurthestInDirection,
+  resolveImageUpdateGeometry,
+  resolveSurfaceImageSize,
   sortByFractionalIndex,
   stackRelativeTo,
 } from "../edgeless/layout.js";
@@ -1954,23 +1956,26 @@ export function registerDocTools(
   // An image can reach the surface without the geometry-based placement path
   // (explicit placement, or move_block). Those images still need a rendered
   // size, or AFFiNE creates an invisible zero-size block.
-  function applySurfaceImageDefaultSize(block: Y.Map<any>, parentFlavour: unknown): void {
+  function applySurfaceImageDefaultSize(
+    block: Y.Map<any>,
+    parentFlavour: unknown,
+    preferStored = false,
+  ): void {
     if (parentFlavour !== "affine:surface" || block.get("sys:flavour") !== "affine:image") return;
     const placed = parseXywhString(block.get("prop:xywh"));
     if (!placed) return;
 
-    // AFFiNE stores the intrinsic image size in prop:width/prop:height even when
-    // the block was never placed (prop:xywh stays 0). Keep those values and fill
-    // only the dimensions that are actually missing.
-    const storedWidth = Number(block.get("prop:width"));
-    const storedHeight = Number(block.get("prop:height"));
-    const width = placed.width || (Number.isFinite(storedWidth) && storedWidth > 0 ? storedWidth : 100);
-    const height = placed.height || (Number.isFinite(storedHeight) && storedHeight > 0 ? storedHeight : 100);
+    const next = resolveSurfaceImageSize({
+      placed,
+      storedWidth: Number(block.get("prop:width")),
+      storedHeight: Number(block.get("prop:height")),
+      preferStored,
+    });
 
-    if (width === placed.width && height === placed.height) return;
-    block.set("prop:xywh", formatXywhString(placed.x, placed.y, width, height));
-    block.set("prop:width", width);
-    block.set("prop:height", height);
+    if (next.width === placed.width && next.height === placed.height) return;
+    block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
+    block.set("prop:width", next.width);
+    block.set("prop:height", next.height);
   }
 
   function normalizeBlockTypeInput(typeInput: string): {
@@ -10279,17 +10284,30 @@ export function registerDocTools(
 
       if (params.x !== undefined || params.y !== undefined || params.width !== undefined || params.height !== undefined) {
         const prev = parseXywhString(block.get("prop:xywh")) ?? { x: 0, y: 0, width: 0, height: 0 };
-        const next = {
-          x: params.x ?? prev.x,
-          y: params.y ?? prev.y,
-          width: params.width ?? prev.width,
-          height: params.height ?? prev.height,
-        };
-        block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
         if (flavour === "affine:image") {
-          // Image blocks render from prop:width/height, not prop:xywh alone.
-          block.set("prop:width", next.width);
-          block.set("prop:height", next.height);
+          // A page image can store its size in prop:width/height while xywh is
+          // still zero, so omitted dimensions fall back to the stored values.
+          const next = resolveImageUpdateGeometry({
+            prev,
+            storedWidth: Number(block.get("prop:width")),
+            storedHeight: Number(block.get("prop:height")),
+            x: params.x,
+            y: params.y,
+            width: params.width,
+            height: params.height,
+          });
+          block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
+          // Never write a zero back over a stored dimension.
+          if (next.propWidth !== undefined) block.set("prop:width", next.propWidth);
+          if (next.propHeight !== undefined) block.set("prop:height", next.propHeight);
+        } else {
+          const next = {
+            x: params.x ?? prev.x,
+            y: params.y ?? prev.y,
+            width: params.width ?? prev.width,
+            height: params.height ?? prev.height,
+          };
+          block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
         }
         changed.push("xywh");
       }
@@ -10765,7 +10783,8 @@ export function registerDocTools(
       });
       target.children.insert(target.insertIndex, [params.blockId]);
       block.set("sys:parent", null);
-      applySurfaceImageDefaultSize(block, target.parentBlock.get("sys:flavour"));
+      const preferStored = fromParent?.get("sys:flavour") !== "affine:surface";
+      applySurfaceImageDefaultSize(block, target.parentBlock.get("sys:flavour"), preferStored);
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(

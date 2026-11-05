@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `read_doc` returns `caption` and `bounds` for image blocks, so note-contained images stay fully described even though `get_edgeless_canvas` lists only surface-parented images.
 - `move_block` maps `affine:image` to the image placement type, so images can be moved onto the surface under strict validation.
 - `update_edgeless_block` reports `background` under `ignored` for image blocks, which have no background property.
+- `update_edgeless_block` keeps the stored `prop:width`/`prop:height` when only `x`/`y` are supplied, instead of copying a zero `prop:xywh` back into the block.
+- Moving a page image to the surface prefers its stored dimensions, so a resize made in the AFFiNE editor is not reverted by a stale `prop:xywh`.
 
 ## [3.11.0] - 2026-11-02
 
