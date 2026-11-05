@@ -340,3 +340,20 @@ export function resolveSurfaceImageSize(input: {
     height: pick(input.placed.height, input.storedHeight),
   };
 }
+
+/**
+ * Copy the canvas size into the stored image dimensions when a surface image
+ * moves into a note. Otherwise the note keeps stale `prop:width`/`prop:height`
+ * and a later position-only update can resurface them.
+ */
+export function resolveNoteImageSize(input: {
+  placed: XywhGeometry | null;
+  fromFlavour: unknown;
+  toFlavour: unknown;
+  isImage: boolean;
+}): { width: number; height: number } | null {
+  if (!input.isImage) return null;
+  if (input.fromFlavour !== "affine:surface" || input.toFlavour !== "affine:note") return null;
+  if (!input.placed || input.placed.width <= 0 || input.placed.height <= 0) return null;
+  return { width: input.placed.width, height: input.placed.height };
+}

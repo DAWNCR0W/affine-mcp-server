@@ -23,6 +23,7 @@ const BASE = process.env.AFFINE_BASE_URL;
 const EMAIL = process.env.AFFINE_ADMIN_EMAIL;
 const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD;
 let WORKSPACE = process.env.AFFINE_TEST_WORKSPACE_ID || process.env.AFFINE_WORKSPACE_ID;
+let createdWorkspace = false;
 
 if (!BASE || !EMAIL || !PASSWORD) {
   console.error("Set AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL and AFFINE_ADMIN_PASSWORD first.");
@@ -95,6 +96,7 @@ await client.connect(transport);
 if (!WORKSPACE) {
   const workspace = await call("create_workspace", { name: testResourceName("image-edgeless-ws") });
   WORKSPACE = workspace.id;
+  createdWorkspace = true;
   check("workspace available", Boolean(WORKSPACE), WORKSPACE);
 }
 
@@ -488,6 +490,47 @@ try {
     JSON.stringify(surfaceXEntry?.bounds ?? null),
   );
 
+  // Surface -> note -> surface keeps the image size (stored dims are synced).
+  const roundTrip = await call("append_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    type: "image",
+    sourceId: uploaded[1].key,
+    name: "round-trip.png",
+    mimeType: "image/png",
+    size: PNG_BYTES,
+    x: 0,
+    y: 1400,
+    width: 300,
+    height: 200,
+  });
+  await call("move_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: roundTrip.blockId,
+    placement: { parentId: noteId },
+  });
+  const readRoundTrip = await call("read_doc", { workspaceId: WORKSPACE, docId });
+  const roundTripRow = (readRoundTrip.blocks ?? []).find((block) => block.id === roundTrip.blockId);
+  check(
+    "surface image moved into a note keeps its size",
+    roundTripRow?.bounds?.width === 300 && roundTripRow?.bounds?.height === 200,
+    JSON.stringify(roundTripRow?.bounds ?? null),
+  );
+  await call("move_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: roundTrip.blockId,
+    placement: { parentId: canvas.surfaceBlockId },
+  });
+  const canvasRoundTrip = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const roundTripEntry = (canvasRoundTrip.edgelessBlocks ?? []).find((block) => block.id === roundTrip.blockId);
+  check(
+    "moved image returns to the surface with its size",
+    roundTripEntry?.bounds?.width === 300 && roundTripEntry?.bounds?.height === 200,
+    JSON.stringify(roundTripEntry?.bounds ?? null),
+  );
+
   for (const [index, item] of uploaded.entries()) {
     const blob = await call("get_blob", { workspaceId: WORKSPACE, key: item.key });
     check(`get_blob ${index + 1} matches uploaded bytes`, blob.sha256 === PNG_SHA, `${blob.contentType} ${blob.size}B`);
@@ -496,6 +539,13 @@ try {
   if (docId) {
     try {
       await call("trash_doc", { workspaceId: WORKSPACE, docId });
+    } catch {
+      /* cleanup is best-effort */
+    }
+  }
+  if (createdWorkspace) {
+    try {
+      await call("delete_workspace", { id: WORKSPACE, confirmWorkspaceId: WORKSPACE });
     } catch {
       /* cleanup is best-effort */
     }

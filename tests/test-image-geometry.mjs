@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   pickImageDimension,
   resolveImageUpdateGeometry,
+  resolveNoteImageSize,
   resolveSurfaceImageSize,
 } from "../src/edgeless/layout.ts";
 
@@ -140,6 +141,44 @@ assert.deepEqual(
     preferStored: true,
   }),
   { x: 0, y: 0, width: 200, height: 100 },
+);
+
+// Surface -> note: the canvas size is copied into the stored dimensions.
+assert.deepEqual(
+  resolveNoteImageSize({
+    placed: { x: 0, y: 0, width: 480, height: 300 },
+    fromFlavour: "affine:surface",
+    toFlavour: "affine:note",
+    isImage: true,
+  }),
+  { width: 480, height: 300 },
+);
+assert.equal(
+  resolveNoteImageSize({
+    placed: zero,
+    fromFlavour: "affine:surface",
+    toFlavour: "affine:note",
+    isImage: true,
+  }),
+  null,
+);
+assert.equal(
+  resolveNoteImageSize({
+    placed: { x: 0, y: 0, width: 480, height: 300 },
+    fromFlavour: "affine:note",
+    toFlavour: "affine:surface",
+    isImage: true,
+  }),
+  null,
+);
+assert.equal(
+  resolveNoteImageSize({
+    placed: { x: 0, y: 0, width: 480, height: 300 },
+    fromFlavour: "affine:surface",
+    toFlavour: "affine:note",
+    isImage: false,
+  }),
+  null,
 );
 
 console.log("Image geometry rule tests passed");

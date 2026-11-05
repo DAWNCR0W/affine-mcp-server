@@ -70,6 +70,7 @@ import {
   pickConnectorSides,
   pickFurthestInDirection,
   resolveImageUpdateGeometry,
+  resolveNoteImageSize,
   resolveSurfaceImageSize,
   sortByFractionalIndex,
   stackRelativeTo,
@@ -10799,6 +10800,16 @@ export function registerDocTools(
       });
       target.children.insert(target.insertIndex, [params.blockId]);
       block.set("sys:parent", null);
+      const noteImageSize = resolveNoteImageSize({
+        placed: parseXywhString(block.get("prop:xywh")),
+        fromFlavour: fromParent?.get("sys:flavour"),
+        toFlavour: target.parentBlock.get("sys:flavour"),
+        isImage: flavour === "affine:image",
+      });
+      if (noteImageSize) {
+        block.set("prop:width", noteImageSize.width);
+        block.set("prop:height", noteImageSize.height);
+      }
       const preferStored = fromParent?.get("sys:flavour") !== "affine:surface";
       applySurfaceImageDefaultSize(block, target.parentBlock.get("sys:flavour"), preferStored);
 
