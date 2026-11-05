@@ -22,10 +22,10 @@ const MCP = path.resolve(REPO_ROOT, "dist", "index.js");
 const BASE = process.env.AFFINE_BASE_URL;
 const EMAIL = process.env.AFFINE_ADMIN_EMAIL;
 const PASSWORD = process.env.AFFINE_ADMIN_PASSWORD;
-const WORKSPACE = process.env.AFFINE_TEST_WORKSPACE_ID || process.env.AFFINE_WORKSPACE_ID;
+let WORKSPACE = process.env.AFFINE_TEST_WORKSPACE_ID || process.env.AFFINE_WORKSPACE_ID;
 
-if (!BASE || !EMAIL || !PASSWORD || !WORKSPACE) {
-  console.error("Set AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL, AFFINE_ADMIN_PASSWORD and AFFINE_WORKSPACE_ID first.");
+if (!BASE || !EMAIL || !PASSWORD) {
+  console.error("Set AFFINE_BASE_URL, AFFINE_ADMIN_EMAIL and AFFINE_ADMIN_PASSWORD first.");
   console.error("Typical flow (from repo root):");
   console.error("  . tests/generate-test-env.sh");
   console.error("  node tests/acquire-credentials.mjs");
@@ -87,6 +87,13 @@ async function expectError(name, promise, pattern) {
 }
 
 await client.connect(transport);
+
+// CI has no configured workspace; create one per run like the other e2e suites.
+if (!WORKSPACE) {
+  const workspace = await call("create_workspace", { name: testResourceName("image-edgeless-ws") });
+  WORKSPACE = workspace.id;
+  check("workspace available", Boolean(WORKSPACE), WORKSPACE);
+}
 
 let docId;
 try {
