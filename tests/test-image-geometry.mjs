@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import {
   pickImageDimension,
   resolveImageUpdateGeometry,
-  resolveNoteImageSize,
+  resolvePageImageSize,
   resolveSurfaceImageSize,
 } from "../src/edgeless/layout.ts";
 
@@ -145,7 +145,7 @@ assert.deepEqual(
 
 // Surface -> note: the canvas size is copied into the stored dimensions.
 assert.deepEqual(
-  resolveNoteImageSize({
+  resolvePageImageSize({
     placed: { x: 0, y: 0, width: 480, height: 300 },
     fromFlavour: "affine:surface",
     toFlavour: "affine:note",
@@ -154,7 +154,7 @@ assert.deepEqual(
   { width: 480, height: 300 },
 );
 assert.equal(
-  resolveNoteImageSize({
+  resolvePageImageSize({
     placed: zero,
     fromFlavour: "affine:surface",
     toFlavour: "affine:note",
@@ -163,7 +163,7 @@ assert.equal(
   null,
 );
 assert.equal(
-  resolveNoteImageSize({
+  resolvePageImageSize({
     placed: { x: 0, y: 0, width: 480, height: 300 },
     fromFlavour: "affine:note",
     toFlavour: "affine:surface",
@@ -171,8 +171,30 @@ assert.equal(
   }),
   null,
 );
+for (const toFlavour of ["affine:paragraph", "affine:list"]) {
+  assert.deepEqual(
+    resolvePageImageSize({
+      placed: { x: 0, y: 0, width: 480, height: 300 },
+      fromFlavour: "affine:surface",
+      toFlavour,
+      isImage: true,
+    }),
+    { width: 480, height: 300 },
+  );
+}
+for (const toFlavour of ["affine:surface", "affine:database", "affine:frame", "affine:edgeless-text"]) {
+  assert.equal(
+    resolvePageImageSize({
+      placed: { x: 0, y: 0, width: 480, height: 300 },
+      fromFlavour: "affine:surface",
+      toFlavour,
+      isImage: true,
+    }),
+    null,
+  );
+}
 assert.equal(
-  resolveNoteImageSize({
+  resolvePageImageSize({
     placed: { x: 0, y: 0, width: 480, height: 300 },
     fromFlavour: "affine:surface",
     toFlavour: "affine:note",

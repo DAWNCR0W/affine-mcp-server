@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `update_edgeless_block` keeps the stored `prop:width`/`prop:height` when only `x`/`y` are supplied, instead of copying a zero `prop:xywh` back into the block.
 - Moving a page image to the surface prefers its stored dimensions, so a resize made in the AFFiNE editor is not reverted by a stale `prop:xywh`.
 - `update_edgeless_block` uses the same precedence: a page image keeps its editor-updated stored size when only `x`/`y` change, while surface images keep `xywh`.
-- `move_block` copies a surface image's canvas dimensions into `prop:width`/`prop:height` when it moves into a note, so a later position-only update cannot revive stale values.
+- `move_block` copies a surface image's canvas dimensions into `prop:width`/`prop:height` when it moves into the page flow (note, paragraph, or list), so a later position-only update cannot revive stale values.
 
 ## [3.11.0] - 2026-11-02
 

@@ -70,7 +70,7 @@ import {
   pickConnectorSides,
   pickFurthestInDirection,
   resolveImageUpdateGeometry,
-  resolveNoteImageSize,
+  resolvePageImageSize,
   resolveSurfaceImageSize,
   sortByFractionalIndex,
   stackRelativeTo,
@@ -10800,15 +10800,15 @@ export function registerDocTools(
       });
       target.children.insert(target.insertIndex, [params.blockId]);
       block.set("sys:parent", null);
-      const noteImageSize = resolveNoteImageSize({
+      const pageImageSize = resolvePageImageSize({
         placed: parseXywhString(block.get("prop:xywh")),
         fromFlavour: fromParent?.get("sys:flavour"),
         toFlavour: target.parentBlock.get("sys:flavour"),
         isImage: flavour === "affine:image",
       });
-      if (noteImageSize) {
-        block.set("prop:width", noteImageSize.width);
-        block.set("prop:height", noteImageSize.height);
+      if (pageImageSize) {
+        block.set("prop:width", pageImageSize.width);
+        block.set("prop:height", pageImageSize.height);
       }
       const preferStored = fromParent?.get("sys:flavour") !== "affine:surface";
       applySurfaceImageDefaultSize(block, target.parentBlock.get("sys:flavour"), preferStored);
@@ -11105,8 +11105,10 @@ export function registerDocTools(
         } else if (flavour === "affine:image") {
           entry.sourceId = asStringOrNull(raw.get("prop:sourceId"));
           entry.caption = asText(raw.get("prop:caption")) || null;
-          entry.width = raw.get("prop:width") ?? null;
-          entry.height = raw.get("prop:height") ?? null;
+          // Canvas images are sized by prop:xywh; keep the stored props only as
+          // a fallback so the reported size never contradicts the bounds.
+          entry.width = bounds?.width ?? raw.get("prop:width") ?? null;
+          entry.height = bounds?.height ?? raw.get("prop:height") ?? null;
         } else if (flavour === "affine:note") {
           const lines = collectNoteText(String(id));
           entry.text = lines.length ? lines.join("\n") : null;
