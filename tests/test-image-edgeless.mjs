@@ -54,6 +54,7 @@ const transport = new StdioClientTransport({
 });
 transport.stderr?.on("data", (chunk) => process.stderr.write(`[mcp] ${chunk}`));
 
+/** Call one MCP tool and parse its JSON text payload. */
 async function call(name, args = {}) {
   const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 120000 });
   const textPart = result?.content?.find((entry) => entry.type === "text")?.text;
@@ -67,6 +68,7 @@ async function call(name, args = {}) {
 }
 
 const failures = [];
+/** Record one pass/fail assertion and remember failures. */
 function check(name, ok, detail = "") {
   if (ok) {
     console.log(`PASS  ${name}${detail ? ` — ${detail}` : ""}`);
@@ -76,6 +78,7 @@ function check(name, ok, detail = "") {
   }
 }
 
+/** Assert that a tool call rejects with a message matching `pattern`. */
 async function expectError(name, promise, pattern) {
   try {
     await promise;
@@ -362,6 +365,11 @@ try {
     "read_doc returns image caption and bounds",
     noteRow?.caption === "note caption" && noteRow?.bounds?.width === 120 && noteRow?.bounds?.height === 80,
     `${noteRow?.caption ?? "no-caption"} ${JSON.stringify(noteRow?.bounds ?? null)}`,
+  );
+  check(
+    "explicit note placement keeps the requested parent",
+    noteRow?.parentId === noteId,
+    noteRow?.parentId ?? "missing",
   );
 
   // move_block must accept an image under the surface.
