@@ -241,7 +241,7 @@ canvas placement in `prop:xywh`. The two are not interchangeable:
 | `prop:width` / `prop:height` | intrinsic size, written by the editor | must equal the `xywh` width/height |
 | Source of truth | stored dimensions | `xywh` (kept in sync) |
 | `get_edgeless_canvas` | excluded | listed with `sourceId`, `caption`, `bounds` |
-| `update_edgeless_block` | never overwrite stored dimensions with `0` | reject dimensions outside 1–10000 |
+| `update_edgeless_block` | stored dimensions win for omitted fields; never write `0` | `xywh` wins for omitted fields; reject dimensions outside 1–10000 |
 | `move_block` | flavour maps to `"image"` | page → canvas prefers the stored dimensions |
 | `append_block` | no geometry → `[0,0,0,0]` | missing dimensions default to 100 |
 

@@ -456,6 +456,23 @@ try {
     JSON.stringify(xOnlyEntry?.bounds ?? null),
   );
 
+  // A surface image keeps xywh precedence when only its position changes.
+  await call("update_edgeless_block", {
+    workspaceId: WORKSPACE,
+    docId,
+    blockId: imageIds[0],
+    x: 40,
+  });
+  const canvasSurfaceX = await call("get_edgeless_canvas", { workspaceId: WORKSPACE, docId });
+  const surfaceXEntry = (canvasSurfaceX.edgelessBlocks ?? []).find((block) => block.id === imageIds[0]);
+  check(
+    "surface image keeps its xywh size on x-only update",
+    surfaceXEntry?.bounds?.x === 40 &&
+      surfaceXEntry?.bounds?.width === 480 &&
+      surfaceXEntry?.bounds?.height === 300,
+    JSON.stringify(surfaceXEntry?.bounds ?? null),
+  );
+
   for (const [index, item] of uploaded.entries()) {
     const blob = await call("get_blob", { workspaceId: WORKSPACE, key: item.key });
     check(`get_blob ${index + 1} matches uploaded bytes`, blob.sha256 === PNG_SHA, `${blob.contentType} ${blob.size}B`);

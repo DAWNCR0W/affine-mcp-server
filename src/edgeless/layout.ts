@@ -281,22 +281,31 @@ export interface XywhGeometry {
  * therefore fall back to the stored dimensions instead of copying a zero
  * xywh back into the block.
  */
+export function pickImageDimension(
+  prevValue: number,
+  storedValue: number,
+  preferStored: boolean
+): number {
+  const positive = (value: number): boolean => Number.isFinite(value) && value > 0;
+  if (preferStored && positive(storedValue)) return storedValue;
+  if (positive(prevValue)) return prevValue;
+  if (positive(storedValue)) return storedValue;
+  return 0;
+}
+
 export function resolveImageUpdateGeometry(input: {
   prev: XywhGeometry;
   storedWidth: number;
   storedHeight: number;
+  preferStored: boolean;
   x?: number;
   y?: number;
   width?: number;
   height?: number;
 }): XywhGeometry & { propWidth?: number; propHeight?: number } {
   const positive = (value: number): boolean => Number.isFinite(value) && value > 0;
-  const width = input.width ?? (positive(input.prev.width)
-    ? input.prev.width
-    : positive(input.storedWidth) ? input.storedWidth : 0);
-  const height = input.height ?? (positive(input.prev.height)
-    ? input.prev.height
-    : positive(input.storedHeight) ? input.storedHeight : 0);
+  const width = input.width ?? pickImageDimension(input.prev.width, input.storedWidth, input.preferStored);
+  const height = input.height ?? pickImageDimension(input.prev.height, input.storedHeight, input.preferStored);
 
   return {
     x: input.x ?? input.prev.x,
@@ -321,13 +330,8 @@ export function resolveSurfaceImageSize(input: {
   storedHeight: number;
   preferStored: boolean;
 }): XywhGeometry {
-  const positive = (value: number): boolean => Number.isFinite(value) && value > 0;
-  const pick = (placedValue: number, storedValue: number): number => {
-    if (input.preferStored && positive(storedValue)) return storedValue;
-    if (positive(placedValue)) return placedValue;
-    if (positive(storedValue)) return storedValue;
-    return 100;
-  };
+  const pick = (placedValue: number, storedValue: number): number =>
+    pickImageDimension(placedValue, storedValue, input.preferStored) || 100;
   return {
     x: input.placed.x,
     y: input.placed.y,

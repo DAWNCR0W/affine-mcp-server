@@ -10286,11 +10286,17 @@ export function registerDocTools(
         const prev = parseXywhString(block.get("prop:xywh")) ?? { x: 0, y: 0, width: 0, height: 0 };
         if (flavour === "affine:image") {
           // A page image can store its size in prop:width/height while xywh is
-          // still zero, so omitted dimensions fall back to the stored values.
+          // still zero or stale, so omitted dimensions fall back to the stored
+          // values. Surface images keep xywh precedence.
+          const currentParentId = resolveBlockParentId(blocks, params.blockId);
+          const currentParentFlavour = currentParentId
+            ? findBlockById(blocks, currentParentId)?.get("sys:flavour")
+            : undefined;
           const next = resolveImageUpdateGeometry({
             prev,
             storedWidth: Number(block.get("prop:width")),
             storedHeight: Number(block.get("prop:height")),
+            preferStored: currentParentFlavour !== "affine:surface",
             x: params.x,
             y: params.y,
             width: params.width,

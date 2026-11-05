@@ -9,11 +9,17 @@
 import assert from "node:assert/strict";
 
 import {
+  pickImageDimension,
   resolveImageUpdateGeometry,
   resolveSurfaceImageSize,
 } from "../src/edgeless/layout.ts";
 
 const zero = { x: 0, y: 0, width: 0, height: 0 };
+
+assert.equal(pickImageDimension(200, 300, true), 300);
+assert.equal(pickImageDimension(200, 300, false), 200);
+assert.equal(pickImageDimension(0, 300, true), 300);
+assert.equal(pickImageDimension(0, 0, true), 0);
 
 // Updating only x must keep the stored dimensions and never write zero back.
 assert.deepEqual(
@@ -21,6 +27,7 @@ assert.deepEqual(
     prev: zero,
     storedWidth: 640,
     storedHeight: 480,
+    preferStored: false,
     x: 10,
   }),
   { x: 10, y: 0, width: 640, height: 480, propWidth: 640, propHeight: 480 },
@@ -32,25 +39,57 @@ assert.deepEqual(
     prev: zero,
     storedWidth: 640,
     storedHeight: 480,
+    preferStored: false,
     width: 300,
   }),
   { x: 0, y: 0, width: 300, height: 480, propWidth: 300, propHeight: 480 },
 );
 
-// A non-zero xywh wins over stored dimensions when nothing is supplied.
+// A surface image keeps xywh precedence for omitted fields.
 assert.deepEqual(
   resolveImageUpdateGeometry({
     prev: { x: 5, y: 6, width: 200, height: 100 },
     storedWidth: 300,
     storedHeight: 150,
+    preferStored: false,
     x: 7,
   }),
   { x: 7, y: 6, width: 200, height: 100, propWidth: 200, propHeight: 100 },
 );
 
+// A page image prefers the editor-updated stored size over stale xywh.
+assert.deepEqual(
+  resolveImageUpdateGeometry({
+    prev: { x: 5, y: 6, width: 200, height: 100 },
+    storedWidth: 300,
+    storedHeight: 150,
+    preferStored: true,
+    x: 7,
+  }),
+  { x: 7, y: 6, width: 300, height: 150, propWidth: 300, propHeight: 150 },
+);
+
+// Page preference falls back to xywh when nothing was stored.
+assert.deepEqual(
+  resolveImageUpdateGeometry({
+    prev: { x: 0, y: 0, width: 200, height: 100 },
+    storedWidth: 0,
+    storedHeight: 0,
+    preferStored: true,
+    x: 1,
+  }),
+  { x: 1, y: 0, width: 200, height: 100, propWidth: 200, propHeight: 100 },
+);
+
 // All-zero input returns no prop writes, so an existing value is left alone.
 assert.deepEqual(
-  resolveImageUpdateGeometry({ prev: zero, storedWidth: 0, storedHeight: 0, x: 1 }),
+  resolveImageUpdateGeometry({
+    prev: zero,
+    storedWidth: 0,
+    storedHeight: 0,
+    preferStored: false,
+    x: 1,
+  }),
   { x: 1, y: 0, width: 0, height: 0, propWidth: undefined, propHeight: undefined },
 );
 

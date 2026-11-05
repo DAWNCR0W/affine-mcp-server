@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `update_edgeless_block` reports `background` under `ignored` for image blocks, which have no background property.
 - `update_edgeless_block` keeps the stored `prop:width`/`prop:height` when only `x`/`y` are supplied, instead of copying a zero `prop:xywh` back into the block.
 - Moving a page image to the surface prefers its stored dimensions, so a resize made in the AFFiNE editor is not reverted by a stale `prop:xywh`.
+- `update_edgeless_block` uses the same precedence: a page image keeps its editor-updated stored size when only `x`/`y` change, while surface images keep `xywh`.
 
 ## [3.11.0] - 2026-11-02
 
