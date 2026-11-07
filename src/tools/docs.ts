@@ -9295,6 +9295,131 @@ export function registerDocTools(
     addDatabaseColumnHandler as any
   );
 
+  // ADD DATABASE VIEW (mosi local patch, 2026-11-07: upstream lacks view creation for existing databases)
+  const addDatabaseViewHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    name?: string;
+    mode: string;
+    groupBy?: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error("Document not found");
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
+      if (!dbBlock) throw new Error(`Database block '${parsed.databaseBlockId}' not found`);
+      if (dbBlock.get("sys:flavour") !== "affine:database") {
+        throw new Error("Block is not a database");
+      }
+
+      const mode = parsed.mode === "kanban" ? "kanban" : "table";
+      const views = dbBlock.get("prop:views");
+      if (!(views instanceof Y.Array)) throw new Error("Database has no views array");
+
+      const existingNames: string[] = [];
+      for (let i = 0; i < views.length; i += 1) {
+        const v = views.get(i);
+        const n = v instanceof Y.Map ? v.get("name") : v?.name;
+        if (n) existingNames.push(String(n));
+      }
+      const viewName = (parsed.name || "").trim() || (mode === "kanban" ? "Kanban View" : "Table View");
+      if (existingNames.includes(viewName)) {
+        throw new Error(`View '${viewName}' already exists`);
+      }
+
+      const columnDefs = readColumnDefs(dbBlock);
+      // Align with native AFFiNE behavior: preset databases carry a title column
+      // definition, while manually created databases (append_block) have none —
+      // native views on those use { titleColumn: null, iconColumn: null }.
+      const titleCol = columnDefs.find(c => c.type === "title");
+      if (columnDefs.length === 0) throw new Error("Database has no columns");
+
+      let groupBy: Record<string, unknown> | null = null;
+      let groupProperties: unknown[] | null = null;
+      if (mode === "kanban") {
+        const colName = (parsed.groupBy || "").trim();
+        if (!colName) throw new Error("Kanban view requires groupBy (a select/multi-select column name)");
+        const target = columnDefs.find(c => c.name === colName);
+        if (!target) throw new Error(`Column '${colName}' not found`);
+        if (target.type !== "select" && target.type !== "multi-select") {
+          throw new Error(`Column '${colName}' is type '${target.type}'; kanban groupBy needs select/multi-select`);
+        }
+        groupBy = { columnId: target.id, name: target.type, type: "groupBy" };
+        groupProperties = [];
+      }
+
+      const viewColumns = new Y.Array<any>();
+      for (const c of columnDefs) {
+        const rawWidth = c.raw instanceof Y.Map ? c.raw.get("width") : (c.raw as any)?.width;
+        const width = typeof rawWidth === "number" && rawWidth > 0 ? rawWidth : 200;
+        const vc = new Y.Map<any>();
+        vc.set("id", c.id);
+        vc.set("hide", false);
+        vc.set("width", width);
+        viewColumns.push([vc]);
+      }
+
+      const view = new Y.Map<any>();
+      const viewId = generateId();
+      view.set("id", viewId);
+      view.set("name", viewName);
+      view.set("mode", mode);
+      view.set("columns", viewColumns);
+      view.set("filter", { type: "group", op: "and", conditions: [] });
+      view.set("groupBy", groupBy);
+      if (groupProperties) view.set("groupProperties", groupProperties);
+      view.set("sort", null);
+      view.set("header", titleCol ? { titleColumn: titleCol.id, iconColumn: "type" } : { titleColumn: null, iconColumn: null });
+
+      views.push([view]);
+
+      const delta = pendingUpdate.finish();
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        added: true,
+        viewId,
+        name: viewName,
+        mode,
+        groupBy: (parsed.groupBy || "").trim() || null,
+        totalViews: existingNames.length + 1,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_view",
+    {
+      title: "Add Database View",
+      description: "Add a new view (table or kanban) to an existing AFFiNE database block. Kanban mode requires groupBy: the name of a select/multi-select column to group cards by. Duplicate view names are rejected.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        name: z.string().optional().describe("View display name. Defaults to 'Table View' / 'Kanban View'"),
+        mode: z.enum(["table", "kanban"]).default("table").describe("View mode"),
+        groupBy: z.string().optional().describe("Kanban only: column name to group cards by (must be select/multi-select)"),
+      },
+    },
+    addDatabaseViewHandler as any
+  );
+
   type SurfaceElementType = "shape" | "connector" | "text" | "group";
 
   type SurfaceElementFields = {
