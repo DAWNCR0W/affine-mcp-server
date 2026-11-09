@@ -149,7 +149,7 @@ try {
   legacy.set('prop:index', 'Zz');
   surface.get('sys:children').push(['legacy-frame']);
   const afterLegacy = await call('append_block', { type: 'frame', text: 'After legacy slides' });
-  assert.ok(blocks.get(afterLegacy.blockId).get('prop:presentationIndex') > 'a0', 'new slides must follow native a0-prefixed defaults');
+  assert.ok(blocks.get(afterLegacy.blockId).get('prop:presentationIndex') > `a00${'z'.repeat(32)}`, 'new slides must follow even the greatest native legacy default');
   assert.equal(legacy.has('prop:presentationIndex'), false, 'do not migrate existing frames');
   console.log('PASS: ten-frame presentation order, native background layers, mixed canvas indexing, unchanged existing keys, page images and default-note allocation');
 } finally {
