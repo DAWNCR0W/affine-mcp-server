@@ -6452,6 +6452,11 @@ export function registerDocTools(
         fidelityReport: true,
         snapshotBundle: false,
       },
+      // upload_blob `filePath` needs AFFINE_BLOB_UPLOAD_FILE_ROOTS; inline content always works.
+      blobUpload: {
+        filePath: Boolean(process.env.AFFINE_BLOB_UPLOAD_FILE_ROOTS?.trim()),
+        inline: true,
+      },
     });
   };
   server.registerTool(

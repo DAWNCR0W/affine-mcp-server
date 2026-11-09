@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `get_capabilities` reports `blobUpload.filePath` (whether `AFFINE_BLOB_UPLOAD_FILE_ROOTS` enables disk-path uploads) and `blobUpload.inline`, so clients can tell before calling `upload_blob`.
+
 ## [3.12.0] - 2026-11-09
 
 ### Added
