@@ -42,6 +42,7 @@ Highlights:
 - Exposes 108 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
+- Appends canvas frames in creation-order presentation sequence while preserving their native background layering
 - Sets and clears native AFFiNE Journal dates with `set_doc_journal`
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage

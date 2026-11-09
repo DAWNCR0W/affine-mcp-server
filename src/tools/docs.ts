@@ -1889,7 +1889,7 @@ export function registerDocTools(
     const noteChildren = new Y.Array<string>();
     note.set("sys:children", noteChildren);
     note.set("prop:xywh", DEFAULT_NOTE_XYWH);
-    note.set("prop:index", "a0");
+    note.set("prop:index", nextCanvasBlockIndex(blocks));
     note.set("prop:hidden", false);
     note.set("prop:displayMode", "both");
     note.set("prop:background", buildDefaultNoteBackground());
@@ -2757,8 +2757,49 @@ export function registerDocTools(
     };
   }
 
+  /** Allocate a shared canvas layer key, keeping new frames behind their contents.
+   * Mirrors AFFiNE v0.27.4 blocksuite/framework/std/src/gfx/layer.ts generateIndex.
+   */
+  function nextCanvasBlockIndex(blocks: Y.Map<any>, reverse = false): string {
+    const surface = getSurfaceElementsValueMap(blocks, { create: false });
+    const surfaceId = findBlockIdByFlavour(blocks, "affine:surface");
+    const surfaceChildren = new Set(surfaceId
+      ? childIdsFrom(findBlockById(blocks, surfaceId)?.get("sys:children"))
+      : []);
+    let boundary: string | null = null;
+    const include = (index: unknown) => {
+      if (typeof index !== "string" || !index) return;
+      if (boundary === null || (reverse ? index < boundary : index > boundary)) boundary = index;
+    };
+    for (const [id, block] of blocks) {
+      if (!(block instanceof Y.Map)) continue;
+      if (block.get("sys:flavour") === "affine:note" || surfaceChildren.has(String(id))) {
+        include(block.get("prop:index"));
+      }
+    }
+    for (const element of surface?.value.values() ?? []) {
+      if (element instanceof Y.Map) include(element.get("index"));
+    }
+    return reverse ? generateKeyBetween(null, boundary) : generateKeyBetween(boundary, null);
+  }
+
+  /** Append after existing frame presentation keys without changing their layer order.
+   * Mirrors AFFiNE v0.27.4 blocksuite/affine/blocks/frame/src/frame-manager.ts.
+   */
+  function nextFramePresentationIndex(blocks: Y.Map<any>): string {
+    let lastIndex: string | null = null;
+    for (const block of blocks.values()) {
+      if (!(block instanceof Y.Map) || block.get("sys:flavour") !== "affine:frame") continue;
+      const index = block.get("prop:presentationIndex");
+      if (typeof index === "string" && index && (lastIndex === null || index > lastIndex)) {
+        lastIndex = index;
+      }
+    }
+    return generateKeyBetween(lastIndex, null);
+  }
+
   /** Create a BlockSuite block map for an append request. */
-  function createBlock(normalized: NormalizedAppendBlockInput): {
+  function createBlock(normalized: NormalizedAppendBlockInput, blocks: Y.Map<any>, parentFlavour: unknown): {
     blockId: string;
     block: Y.Map<any>;
     flavour: string;
@@ -2768,6 +2809,9 @@ export function registerDocTools(
     const blockId = generateId();
     const block = new Y.Map<any>();
     const content = normalized.text;
+    const nextIndex = () => normalized.type === "note" || parentFlavour === "affine:surface"
+      ? nextCanvasBlockIndex(blocks, normalized.type === "frame")
+      : "a0";
     // Keep parity with AFFiNE UI-created docs: sys:parent stays null and hierarchy is represented by sys:children.
 
     switch (normalized.type) {
@@ -2843,7 +2887,7 @@ export function registerDocTools(
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:xywh", "[0,0,16,16]");
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
         block.set("prop:rotate", 0);
@@ -2915,7 +2959,7 @@ export function registerDocTools(
         block.set("prop:image", null);
         block.set("prop:title", null);
         block.set("prop:xywh", "[0,0,0,0]");
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
         block.set("prop:footnoteIdentifier", null);
@@ -2945,7 +2989,7 @@ export function registerDocTools(
             ? formatXywhString(normalized.x, normalized.y, imageWidth, imageHeight)
             : "[0,0,0,0]",
         );
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
         return { blockId, block, flavour: "affine:image" };
@@ -2961,7 +3005,7 @@ export function registerDocTools(
         block.set("prop:caption", normalized.caption ?? undefined);
         block.set("prop:embed", normalized.embed);
         block.set("prop:style", "horizontalThin");
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2972,7 +3016,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-youtube");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2992,7 +3036,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-github");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3016,7 +3060,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-figma");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3031,7 +3075,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-loom");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3048,7 +3092,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-html");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3062,7 +3106,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-linked-doc");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3078,7 +3122,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-synced-doc");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,800,100]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3095,7 +3139,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-iframe");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
@@ -3156,11 +3200,11 @@ export function registerDocTools(
         // solid fill (the border is separate).
         block.set("prop:background", normalized.background ?? "transparent");
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         const childIds = new Y.Map<boolean>();
         for (const id of normalized._frameOwnedIds ?? []) childIds.set(id, true);
         block.set("prop:childElementIds", childIds);
-        block.set("prop:presentationIndex", "a0");
+        block.set("prop:presentationIndex", nextFramePresentationIndex(blocks));
         block.set("prop:lockedBySelf", false);
         return { blockId, block, flavour: "affine:frame" };
       }
@@ -3169,7 +3213,7 @@ export function registerDocTools(
         block.set("sys:parent", null);
         const edgelessTextChildren = new Y.Array<string>();
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
         block.set("prop:rotate", 0);
@@ -3212,7 +3256,7 @@ export function registerDocTools(
         } else {
           block.set("prop:background", bg);
         }
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
         block.set("prop:displayMode", "both");
@@ -3409,7 +3453,7 @@ export function registerDocTools(
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       resolveEdgelessLayoutHints(blocks, normalized);
       const context = resolveInsertContext(blocks, normalized);
-      const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized);
+      const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
       const databaseRows: Y.Map<any>[] = [];
       if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
         databaseRows.push(block);
@@ -4386,7 +4430,7 @@ export function registerDocTools(
       try {
         const normalized = normalizeAppendBlockInput(appendInput);
         const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, flavour, extraBlocks } = createBlock(normalized);
+        const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
         blocks.set(blockId, block);
         if (Array.isArray(extraBlocks)) {
           for (const extra of extraBlocks) {
@@ -4486,7 +4530,7 @@ export function registerDocTools(
           ),
         );
         const context = resolveInsertContext(skeleton.blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized);
+        const { blockId, block, extraBlocks } = createBlock(normalized, skeleton.blocks, context.parentBlock.get("sys:flavour"));
         skeleton.blocks.set(blockId, block);
         for (const extra of extraBlocks ?? []) {
           skeleton.blocks.set(extra.blockId, extra.block);
@@ -4839,7 +4883,7 @@ export function registerDocTools(
         ...input,
       });
       const context = resolveInsertContext(blocks, normalized);
-      const { blockId, block, extraBlocks } = createBlock(normalized);
+      const { blockId, block, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
       blocks.set(blockId, block);
       applySurfaceImageDefaultSize(block, context.parentBlock.get("sys:flavour"));
       if (Array.isArray(extraBlocks)) {
@@ -9703,6 +9747,8 @@ export function registerDocTools(
   }
 
   function nextSurfaceElementIndex(valueMap: Y.Map<any>): string {
+    const blocks = valueMap.doc?.getMap("blocks");
+    if (blocks?.size) return nextCanvasBlockIndex(blocks);
     let maxIndex: string | null = null;
     for (const [, el] of valueMap.entries()) {
       if (!(el instanceof Y.Map)) continue;
@@ -11093,6 +11139,7 @@ export function registerDocTools(
           index: typeof propIndex === "string" ? propIndex : null,
         };
         if (flavour === "affine:frame") {
+          entry.presentationIndex = asStringOrNull(raw.get("prop:presentationIndex"));
           entry.title = asText(raw.get("prop:title")) || null;
           const bg = raw.get("prop:background");
           entry.background = bg instanceof Y.Map ? bg.toJSON() : bg ?? null;

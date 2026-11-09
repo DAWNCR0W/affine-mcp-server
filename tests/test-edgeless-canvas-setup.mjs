@@ -156,12 +156,38 @@ async function main() {
       `caption should stack below frame, got bounds=${JSON.stringify(captionBlock.bounds)}`,
     );
 
+    // Issue #447: exercise sequential tool calls against a real AFFiNE server.
+    // Keep the slides in their own doc so their bounds do not change this
+    // canvas fixture's initial viewport or its note-visibility assertions.
+    const presentationDoc = await call("create_doc", { workspaceId: W, title: "Frame Order Verify" });
+    const slideIds = [];
+    for (let i = 0; i < 10; i++) {
+      const slide = await call("append_block", {
+        workspaceId: W, docId: presentationDoc.docId,
+        type: "frame", text: `Slide ${i + 1}`, y: i * 1200,
+      });
+      slideIds.push(slide.blockId);
+    }
+    const presentation = await call("get_edgeless_canvas", { workspaceId: W, docId: presentationDoc.docId });
+    const slides = presentation.edgelessBlocks.filter(b => b.flavour === "affine:frame");
+    expect(slides.length === 10, `presentation should contain ten frames, got ${slides.length}`);
+    expect(new Set(slides.map(b => b.index)).size === 10, "frame layer keys must be unique");
+    expect(new Set(slides.map(b => b.presentationIndex)).size === 10, "frame presentation keys must be unique");
+    slides.sort((a, b) => a.presentationIndex < b.presentationIndex ? -1 : a.presentationIndex > b.presentationIndex ? 1 : 0);
+    expect(slides.every((slide, i) => slide.id === slideIds[i]), "presentation order must match frame creation order");
+    console.log("[edgeless-setup] PASS: ten sequential frames keep unique layer keys and creation-order presentation keys");
+
     const state = {
       baseUrl: BASE,
       email: EMAIL,
       workspaceId: W,
       docId: D,
       docUrl: `${BASE}/workspace/${W}/${D}`,
+      presentationDoc: {
+        docId: presentationDoc.docId,
+        docUrl: `${BASE}/workspace/${W}/${presentationDoc.docId}`,
+        slideIds,
+      },
       expectations: {
         defaultNoteXywh: "[0,0,800,92]",
         userNote: {

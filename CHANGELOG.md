@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_edgeless_canvas` includes `affine:image` blocks with `sourceId`, `caption`, `width`, and `height`; `read_doc` returns `sourceId` for image blocks; `update_edgeless_block` moves and resizes image blocks. Together these make an image diagram round-trip: write geometry, read the graph, and fetch pixels with `get_blob`. Only images attached to the surface block are reported as canvas blocks; images inside page notes stay in `read_doc`.
 
 ### Fixed
+- Allocate distinct canvas layer keys for appended edgeless blocks and surface elements. Frames keep their native background layering and receive separate, increasing presentation keys, so sequentially created frames present in creation order instead of sharing `a0` (#447). `get_edgeless_canvas` includes each frame's `presentationIndex`.
 - Positioned `image` blocks now store the same effective size in `prop:width`/`prop:height` as in `prop:xywh`, so a position without explicit dimensions no longer reports 0x0 dimensions for a 100x100 image.
 - `update_edgeless_block` rejects `image` dimensions that are not integers from 1 to 10000 instead of persisting an invalid or invisible block.
 - Images that reach the surface without geometry (explicit `placement`, or `move_block`) reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100, instead of an invisible zero-size block or a forced 100x100.
