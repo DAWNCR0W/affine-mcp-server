@@ -1,7 +1,7 @@
 import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
-import { registerMindmapTools } from "./mindmap.js";
+import { deleteNativeMindmap, registerMindmapTools } from "./mindmap.js";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
@@ -10149,7 +10149,17 @@ export function registerDocTools(
           prunedConnectors: [],
         });
       }
-      ctx.value.delete(params.elementId);
+      // A native mindmap owns its node shapes; deleting only the mindmap would orphan them.
+      const deletedNodes: string[] = [];
+      if (existing.get("type") === "mindmap") {
+        try {
+          deletedNodes.push(...deleteNativeMindmap(ctx.value, params.elementId).slice(1));
+        } catch {
+          ctx.value.delete(params.elementId); // Malformed map: remove the element itself only.
+        }
+      } else {
+        ctx.value.delete(params.elementId);
+      }
 
       const prunedConnectors: string[] = [];
       if (params.pruneConnectors) {
@@ -10173,7 +10183,7 @@ export function registerDocTools(
         }
       }
 
-      pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
+      pruneFromFrameChildElementIds(blocks, [params.elementId, ...deletedNodes, ...prunedConnectors]);
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
@@ -10182,7 +10192,7 @@ export function registerDocTools(
         params.docId,
         Buffer.from(delta).toString("base64")
       );
-      return text({ deleted: true, elementId: params.elementId, prunedConnectors });
+      return text({ deleted: true, elementId: params.elementId, deletedNodes, prunedConnectors });
     } finally {
       socket.disconnect();
     }
@@ -11349,7 +11359,7 @@ export function registerDocTools(
     {
       title: "Delete Surface Element",
       description:
-        "Delete a surface element by id. Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
+        "Delete a surface element by id. Deleting a native mindmap also deletes all of its node shapes (reported in deletedNodes). Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),

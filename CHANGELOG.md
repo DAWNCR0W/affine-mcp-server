@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `delete_surface_element` on a native mindmap now deletes the mindmap's node shapes instead of leaving them orphaned on the canvas, and reports them in `deletedNodes`.
+
 ## [3.12.0] - 2026-11-09
 
 ### Added

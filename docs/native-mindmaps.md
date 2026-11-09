@@ -29,6 +29,10 @@ Successful responses include `ok`, `workspaceId`, `docId`, `surfaceBlockId`,
 MCP errors have `isError=true`; never treat their text or structured body as a
 successful mutation receipt.
 
+Deleting a mindmap with `delete_surface_element` also deletes its node shapes and
+lists them in `deletedNodes`. Nodes are plain shapes and the connectors are derived
+by the editor, so removing only the mindmap element would leave orphaned shapes.
+
 ## Example: projects and individual tasks
 
 Use a connected MCP SDK `client` and the exact IDs returned by your workspace
