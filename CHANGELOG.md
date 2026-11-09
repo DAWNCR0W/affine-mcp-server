@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `add_surface_elements` and `update_surface_elements` write many canvas elements in one atomic call. `add_surface_elements` items accept a local `key` that later connectors can use as `sourceId`/`targetId`, so a whole diagram is built in one call.
+- `list_surface_elements` and `get_edgeless_canvas` accept `compact` to return only id, type, index, geometry, text and links.
+
 ## [3.12.0] - 2026-11-09
 
 ### Added

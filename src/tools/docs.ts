@@ -46,6 +46,7 @@ import {
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
+import { addBatch, compactSurfaceElement, type BatchItem } from "./surfaceBatch.js";
 import {
   AFFINE_LINKED_PAGE_REFERENCE_NODE,
   normalizeLinkedPageReferenceDeltas,
@@ -9471,11 +9472,13 @@ export function registerDocTools(
     docId: string;
     type?: SurfaceElementType;
     elementId?: string;
+    compact?: boolean;
   };
 
   type GetEdgelessCanvasInput = {
     workspaceId?: string;
     docId: string;
+    compact?: boolean;
   };
 
   function resolveSurfaceNewlines(s: string): string {
@@ -9793,6 +9796,53 @@ export function registerDocTools(
     valueMap.set(elementId, el);
   }
 
+  /** Builds one element in the open surface map; shared by the single and batch add tools. */
+  function addSurfaceElementTo(
+    ctx: { value: Y.Map<any> },
+    blocks: Y.Map<any>,
+    params: SurfaceElementFields & { type: SurfaceElementType }
+  ) {
+    const index = params.index ?? nextSurfaceElementIndex(ctx.value);
+
+    // Mirror updateSurfaceElementHandler: report inapplicable gated fields
+    // in `ignored` instead of silently dropping them at the per-type builder.
+    const ignored: string[] = [];
+    for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
+      if (params[field as keyof SurfaceElementFields] === undefined) continue;
+      if (!applicable.includes(params.type)) ignored.push(field);
+    }
+
+    const { elementId, data } = buildSurfaceElementData(params.type, index, params);
+    if (params.type === "connector") {
+      const srcBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.sourceId);
+      const tgtBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.targetId);
+
+      // Auto-snap to the four tangent-carrying sides when the caller only
+      // supplied ids — the renderer needs tangents to draw arrow heads.
+      if (srcBounds && tgtBounds && !params.sourcePosition && !params.targetPosition) {
+        const natural = pickConnectorSides(srcBounds, tgtBounds);
+        data.source = { ...(data.source as any), position: SIDE_TO_NORMALIZED_POSITION[natural.from] };
+        data.target = { ...(data.target as any), position: SIDE_TO_NORMALIZED_POSITION[natural.to] };
+      }
+
+      if (params.label) {
+        const srcCenter = srcBounds
+          ? { x: srcBounds.x + srcBounds.w / 2, y: srcBounds.y + srcBounds.h / 2 }
+          : resolveConnectorEndpointCenter(ctx.value, blocks, params.sourceId, params.sourcePosition as [number, number] | undefined);
+        const tgtCenter = tgtBounds
+          ? { x: tgtBounds.x + tgtBounds.w / 2, y: tgtBounds.y + tgtBounds.h / 2 }
+          : resolveConnectorEndpointCenter(ctx.value, blocks, params.targetId, params.targetPosition as [number, number] | undefined);
+        const midpoint =
+          srcCenter && tgtCenter
+            ? { x: (srcCenter.x + tgtCenter.x) / 2, y: (srcCenter.y + tgtCenter.y) / 2 }
+            : (srcCenter ?? tgtCenter);
+        data.labelXYWH = estimateConnectorLabelXYWH(params.label, 16, midpoint, 280);
+      }
+    }
+    writeSurfaceElement(ctx.value, elementId, data);
+    return { elementId, type: params.type, ignored };
+  }
+
   const addSurfaceElementHandler = async (params: AddSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -9814,44 +9864,7 @@ export function registerDocTools(
       const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: true })!;
-      const index = params.index ?? nextSurfaceElementIndex(ctx.value);
-
-      // Mirror updateSurfaceElementHandler: report inapplicable gated fields
-      // in `ignored` instead of silently dropping them at the per-type builder.
-      const ignored: string[] = [];
-      for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
-        if (params[field as keyof SurfaceElementFields] === undefined) continue;
-        if (!applicable.includes(params.type)) ignored.push(field);
-      }
-
-      const { elementId, data } = buildSurfaceElementData(params.type, index, params);
-      if (params.type === "connector") {
-        const srcBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.sourceId);
-        const tgtBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.targetId);
-
-        // Auto-snap to the four tangent-carrying sides when the caller only
-        // supplied ids — the renderer needs tangents to draw arrow heads.
-        if (srcBounds && tgtBounds && !params.sourcePosition && !params.targetPosition) {
-          const natural = pickConnectorSides(srcBounds, tgtBounds);
-          data.source = { ...(data.source as any), position: SIDE_TO_NORMALIZED_POSITION[natural.from] };
-          data.target = { ...(data.target as any), position: SIDE_TO_NORMALIZED_POSITION[natural.to] };
-        }
-
-        if (params.label) {
-          const srcCenter = srcBounds
-            ? { x: srcBounds.x + srcBounds.w / 2, y: srcBounds.y + srcBounds.h / 2 }
-            : resolveConnectorEndpointCenter(ctx.value, blocks, params.sourceId, params.sourcePosition as [number, number] | undefined);
-          const tgtCenter = tgtBounds
-            ? { x: tgtBounds.x + tgtBounds.w / 2, y: tgtBounds.y + tgtBounds.h / 2 }
-            : resolveConnectorEndpointCenter(ctx.value, blocks, params.targetId, params.targetPosition as [number, number] | undefined);
-          const midpoint =
-            srcCenter && tgtCenter
-              ? { x: (srcCenter.x + tgtCenter.x) / 2, y: (srcCenter.y + tgtCenter.y) / 2 }
-              : (srcCenter ?? tgtCenter);
-          data.labelXYWH = estimateConnectorLabelXYWH(params.label, 16, midpoint, 280);
-        }
-      }
-      writeSurfaceElement(ctx.value, elementId, data);
+      const { elementId, ignored } = addSurfaceElementTo(ctx, blocks, params);
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
@@ -9922,7 +9935,7 @@ export function registerDocTools(
         exists: true,
         surfaceBlockId: ctx.surfaceId,
         count: sorted.length,
-        elements: sorted,
+        elements: params.compact ? sorted.map(compactSurfaceElement) : sorted,
       });
     } finally {
       socket.disconnect();
@@ -9950,6 +9963,127 @@ export function registerDocTools(
     rearEndpointStyle:  ["connector"],
   };
 
+  /** Applies one partial update to an element of the open surface map; shared by the single and batch update tools. */
+  function updateSurfaceElementIn(valueMap: Y.Map<any>, params: SurfaceElementFields & { elementId: string }) {
+    const el = valueMap.get(params.elementId);
+    if (!(el instanceof Y.Map)) {
+      throw new Error(`Surface element '${params.elementId}' not found.`);
+    }
+
+    const elementType = el.get("type");
+    const changed: string[] = [];
+    const ignored: string[] = [];
+
+    const geomProvided =
+      params.x !== undefined ||
+      params.y !== undefined ||
+      params.width !== undefined ||
+      params.height !== undefined;
+    if (geomProvided) {
+      if (elementType === "shape" || elementType === "text") {
+        const current = parseXywhString(el.get("xywh")) ?? {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        };
+        const nx = params.x ?? current.x;
+        const ny = params.y ?? current.y;
+        const nw = params.width ?? current.width;
+        const nh = params.height ?? current.height;
+        el.set("xywh", formatXywhString(nx, ny, nw, nh));
+        changed.push("xywh");
+      } else {
+        if (params.x !== undefined) ignored.push("x");
+        if (params.y !== undefined) ignored.push("y");
+        if (params.width !== undefined) ignored.push("width");
+        if (params.height !== undefined) ignored.push("height");
+      }
+    }
+
+    const setYText = (key: string, value: string) => {
+      const yText = new Y.Text();
+      yText.insert(0, resolveSurfaceNewlines(value));
+      el.set(key, yText);
+      changed.push(key);
+    };
+
+    if (params.text !== undefined) {
+      if (elementType === "shape" || elementType === "text" || elementType === "connector") {
+        setYText("text", params.text);
+      } else {
+        ignored.push("text");
+      }
+    }
+    if (params.label !== undefined) {
+      if (elementType === "connector") {
+        setYText("text", params.label);
+      } else {
+        ignored.push("label");
+      }
+    }
+    if (params.title !== undefined) {
+      if (elementType === "group") {
+        setYText("title", params.title);
+      } else {
+        ignored.push("title");
+      }
+    }
+
+    for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
+      const key = field as keyof SurfaceElementFields;
+      if (params[key] === undefined) continue;
+      if (applicable.includes(elementType as SurfaceElementType)) {
+        el.set(field, params[key]);
+        changed.push(field);
+      } else {
+        ignored.push(field);
+      }
+    }
+
+    if (params.index !== undefined) {
+      el.set("index", params.index);
+      changed.push("index");
+    }
+
+    if (params.sourceId !== undefined || params.sourcePosition !== undefined) {
+      if (elementType === "connector") {
+        const source: Record<string, any> = {};
+        if (params.sourceId) source.id = params.sourceId;
+        if (params.sourcePosition) source.position = params.sourcePosition;
+        el.set("source", source);
+        changed.push("source");
+      } else {
+        if (params.sourceId !== undefined) ignored.push("sourceId");
+        if (params.sourcePosition !== undefined) ignored.push("sourcePosition");
+      }
+    }
+    if (params.targetId !== undefined || params.targetPosition !== undefined) {
+      if (elementType === "connector") {
+        const target: Record<string, any> = {};
+        if (params.targetId) target.id = params.targetId;
+        if (params.targetPosition) target.position = params.targetPosition;
+        el.set("target", target);
+        changed.push("target");
+      } else {
+        if (params.targetId !== undefined) ignored.push("targetId");
+        if (params.targetPosition !== undefined) ignored.push("targetPosition");
+      }
+    }
+    if (params.children !== undefined) {
+      if (elementType === "group") {
+        const childMap = new Y.Map<boolean>();
+        for (const childId of params.children) childMap.set(childId, true);
+        el.set("children", childMap);
+        changed.push("children");
+      } else {
+        ignored.push("children");
+      }
+    }
+
+    return { elementId: params.elementId, type: typeof elementType === "string" ? elementType : null, changed, ignored };
+  }
+
   const updateSurfaceElementHandler = async (params: UpdateSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -9973,123 +10107,8 @@ export function registerDocTools(
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: false });
       if (!ctx) throw new Error("Document has no surface elements to update.");
-      const el = ctx.value.get(params.elementId);
-      if (!(el instanceof Y.Map)) {
-        throw new Error(`Surface element '${params.elementId}' not found.`);
-      }
-
-      const elementType = el.get("type");
-      const changed: string[] = [];
-      const ignored: string[] = [];
-
-      const geomProvided =
-        params.x !== undefined ||
-        params.y !== undefined ||
-        params.width !== undefined ||
-        params.height !== undefined;
-      if (geomProvided) {
-        if (elementType === "shape" || elementType === "text") {
-          const current = parseXywhString(el.get("xywh")) ?? {
-            x: 0,
-            y: 0,
-            width: 100,
-            height: 100,
-          };
-          const nx = params.x ?? current.x;
-          const ny = params.y ?? current.y;
-          const nw = params.width ?? current.width;
-          const nh = params.height ?? current.height;
-          el.set("xywh", formatXywhString(nx, ny, nw, nh));
-          changed.push("xywh");
-        } else {
-          if (params.x !== undefined) ignored.push("x");
-          if (params.y !== undefined) ignored.push("y");
-          if (params.width !== undefined) ignored.push("width");
-          if (params.height !== undefined) ignored.push("height");
-        }
-      }
-
-      const setYText = (key: string, value: string) => {
-        const yText = new Y.Text();
-        yText.insert(0, resolveSurfaceNewlines(value));
-        el.set(key, yText);
-        changed.push(key);
-      };
-
-      if (params.text !== undefined) {
-        if (elementType === "shape" || elementType === "text" || elementType === "connector") {
-          setYText("text", params.text);
-        } else {
-          ignored.push("text");
-        }
-      }
-      if (params.label !== undefined) {
-        if (elementType === "connector") {
-          setYText("text", params.label);
-        } else {
-          ignored.push("label");
-        }
-      }
-      if (params.title !== undefined) {
-        if (elementType === "group") {
-          setYText("title", params.title);
-        } else {
-          ignored.push("title");
-        }
-      }
-
-      for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
-        const key = field as keyof SurfaceElementFields;
-        if (params[key] === undefined) continue;
-        if (applicable.includes(elementType as SurfaceElementType)) {
-          el.set(field, params[key]);
-          changed.push(field);
-        } else {
-          ignored.push(field);
-        }
-      }
-
-      if (params.index !== undefined) {
-        el.set("index", params.index);
-        changed.push("index");
-      }
-
-      if (params.sourceId !== undefined || params.sourcePosition !== undefined) {
-        if (elementType === "connector") {
-          const source: Record<string, any> = {};
-          if (params.sourceId) source.id = params.sourceId;
-          if (params.sourcePosition) source.position = params.sourcePosition;
-          el.set("source", source);
-          changed.push("source");
-        } else {
-          if (params.sourceId !== undefined) ignored.push("sourceId");
-          if (params.sourcePosition !== undefined) ignored.push("sourcePosition");
-        }
-      }
-      if (params.targetId !== undefined || params.targetPosition !== undefined) {
-        if (elementType === "connector") {
-          const target: Record<string, any> = {};
-          if (params.targetId) target.id = params.targetId;
-          if (params.targetPosition) target.position = params.targetPosition;
-          el.set("target", target);
-          changed.push("target");
-        } else {
-          if (params.targetId !== undefined) ignored.push("targetId");
-          if (params.targetPosition !== undefined) ignored.push("targetPosition");
-        }
-      }
-      if (params.children !== undefined) {
-        if (elementType === "group") {
-          const childMap = new Y.Map<boolean>();
-          for (const childId of params.children) childMap.set(childId, true);
-          el.set("children", childMap);
-          changed.push("children");
-        } else {
-          ignored.push("children");
-        }
-      }
-
-      if (changed.length > 0) {
+      const result = updateSurfaceElementIn(ctx.value, params);
+      if (result.changed.length > 0) {
         const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
@@ -10098,17 +10117,67 @@ export function registerDocTools(
           Buffer.from(delta).toString("base64")
         );
       }
-      return text({
-        updated: changed.length > 0,
-        elementId: params.elementId,
-        type: typeof elementType === "string" ? elementType : null,
-        changed,
-        ignored,
-      });
+      return text({ updated: result.changed.length > 0, ...result });
     } finally {
       socket.disconnect();
     }
   };
+
+  /**
+   * Loads a document's surface, runs `edit`, and pushes one delta only if it reports a change.
+   * Atomic: `edit` throwing means nothing is pushed.
+   */
+  async function editSurface<T>(
+    params: { workspaceId?: string; docId: string },
+    create: boolean,
+    edit: (ctx: { surfaceId: string; value: Y.Map<any> }, blocks: Y.Map<any>) => { changed: boolean; result: T }
+  ): Promise<T & { surfaceBlockId: string }> {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing && !create) throw new Error(`Document '${params.docId}' not found or has no content.`);
+      if (snapshot.missing) Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const ctx = getSurfaceElementsValueMap(blocks, { create });
+      if (!ctx) throw new Error("Document has no surface elements.");
+      const { changed, result } = edit(ctx, blocks);
+      if (changed) {
+        await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(pendingUpdate.finish()).toString("base64"));
+      }
+      return { ...result, surfaceBlockId: ctx.surfaceId };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  const addSurfaceElementsHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    elements: Array<BatchItem & SurfaceElementFields & { type: SurfaceElementType }>;
+  }) =>
+    text(await editSurface(params, true, (ctx, blocks) => {
+      const elements = addBatch(params.elements, item => addSurfaceElementTo(ctx, blocks, item as any));
+      return { changed: true, result: { added: elements.length, elements } };
+    }));
+
+  const updateSurfaceElementsHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    updates: Array<SurfaceElementFields & { elementId: string }>;
+  }) =>
+    text(await editSurface(params, false, ctx => {
+      const updates = params.updates.map(update => updateSurfaceElementIn(ctx.value, update));
+      const changed = updates.filter(update => update.changed.length > 0).length;
+      return { changed: changed > 0, result: { updated: changed, updates } };
+    }));
 
   const deleteSurfaceElementHandler = async (params: DeleteSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
@@ -11212,7 +11281,7 @@ export function registerDocTools(
         exists: true,
         surfaceBlockId: ctx?.surfaceId ?? surfaceBlockId ?? null,
         edgelessBlocks: sortedEdgelessBlocks,
-        surfaceElements: sortedSurfaceElements,
+        surfaceElements: params.compact ? sortedSurfaceElements.map(compactSurfaceElement) : sortedSurfaceElements,
         elementCounts: counts,
         bounds: hasAny
           ? { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
@@ -11310,6 +11379,43 @@ export function registerDocTools(
   );
 
   server.registerTool(
+    "add_surface_elements",
+    {
+      title: "Add Surface Elements",
+      description:
+        "Add many shapes, connectors, texts or groups to the edgeless canvas in ONE atomic write. Each item takes the same fields as add_surface_element plus an optional `key`: a local name that LATER connectors may use as sourceId/targetId, so a whole diagram needs one call. Any other id is treated as an existing element. Invalid items, duplicate keys or forward references reject the whole call. Returns each element's id in input order.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        elements: z.array(z.object({
+          key: z.string().optional().describe("Local name usable as sourceId/targetId by later connectors in this batch."),
+          type: z.enum(["shape", "connector", "text", "group"]).describe("Element type"),
+          ...surfaceElementFieldSchemas,
+        })).min(1).max(200),
+      },
+    },
+    addSurfaceElementsHandler as any
+  );
+
+  server.registerTool(
+    "update_surface_elements",
+    {
+      title: "Update Surface Elements",
+      description:
+        "Partially update many surface elements in ONE atomic write. Each item takes the same fields as update_surface_element. A missing element rejects the whole call. Returns per-element changed/ignored lists.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        updates: z.array(z.object({
+          elementId: z.string().min(1).describe("Element ID to update"),
+          ...surfaceElementFieldSchemas,
+        })).min(1).max(200),
+      },
+    },
+    updateSurfaceElementsHandler as any
+  );
+
+  server.registerTool(
     "list_surface_elements",
     {
       title: "List Surface Elements",
@@ -11323,6 +11429,7 @@ export function registerDocTools(
           .optional()
           .describe("Filter by element type"),
         elementId: z.string().optional().describe("Filter to a single element id"),
+        compact: z.boolean().optional().describe("Return only id, type, index, geometry, text and links per element (no style data) to keep large canvases cheap to read."),
       },
     },
     listSurfaceElementsHandler as any
@@ -11526,6 +11633,7 @@ export function registerDocTools(
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
+        compact: z.boolean().optional().describe("Return only id, type, index, geometry, text and links per surface element (no style data) to keep large canvases cheap to read."),
       },
     },
     getEdgelessCanvasHandler as any

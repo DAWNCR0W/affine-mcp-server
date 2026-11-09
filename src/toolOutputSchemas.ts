@@ -67,6 +67,8 @@ const OUTPUT_SPECS = {
   add_doc_to_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   add_organize_link: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string" }),
   add_surface_element: spec({ added: "boolean", elementId: "string", type: "string", surfaceBlockId: "string", ignored: "stringArray" }),
+  update_surface_elements: spec({ updated: "number", updates: "unknownArray", surfaceBlockId: "string" }),
+  add_surface_elements: spec({ added: "number", elements: "unknownArray", surfaceBlockId: "string" }),
   add_tag_to_doc: spec({ workspaceId: "string", docId: "string", tag: "string", added: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   analyze_doc_fidelity: spec({ docId: "string", exists: "boolean", unsupportedBlocks: "unknownArray", conditionallyRiskyBlocks: "unknownArray" }),
   append_block: receipt({ workspaceId: "nullableString", docId: "string", appended: "boolean", blockId: "string", flavour: "string", type: "nullableString", blockType: "nullableString", normalizedType: "string", legacyType: "nullableString" }),
