@@ -260,9 +260,10 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
+| `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables. `intent: "table"` builds a table view from your own `columns` (after the automatic Title column) and optional `seedRows` in one call. |
 | `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
+| `add_database_rows` | Add many rows to a database block in one write | Atomic; each row is `{cells, linkedDocId?}` with the same cell rules as `add_database_row` |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |

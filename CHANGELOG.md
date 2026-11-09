@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `add_database_rows` adds many rows to a database block in one atomic write; an invalid row rejects the whole call.
+- `compose_database_from_intent` supports `intent: "table"`: a table view with an automatic Title column, your own `columns`, and optional `seedRows`, created in one call.
+
 ## [3.12.0] - 2026-11-09
 
 ### Added

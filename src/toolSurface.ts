@@ -1,6 +1,7 @@
 export const ALL_TOOLS = [
   "add_database_column",
   "add_database_row",
+  "add_database_rows",
   "add_doc_to_collection",
   "add_mindmap_node",
   "add_organize_link",
@@ -129,6 +130,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   update_mindmap_node: ["docs", "docs.edgeless", "docs.surface", "docs.write", "write"],
   add_database_column: ["docs", "docs.database", "docs.write", "write"],
   add_database_row: ["docs", "docs.database", "docs.write", "write"],
+  add_database_rows: ["docs", "docs.database", "docs.write", "write"],
   add_doc_to_collection: ["organize", "organize.collections", "organize.write", "write"],
   add_organize_link: ["organize", "organize.folders", "organize.write", "experimental", "write"],
   add_surface_element: ["docs", "docs.edgeless", "docs.surface", "docs.write", "write"],
