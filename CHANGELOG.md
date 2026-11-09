@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `create_mindmap` accepts an optional nested `children` outline and builds the whole map in one call; the outline is validated against the 500-node and depth limits before anything is written.
+- The mutating mindmap tools accept `compact` to return `nodeCount` and ids with an empty `nodes` list, which keeps responses small for large maps.
+- Document the native mindmap rendering caveat and the shapes-and-connectors fallback in `docs/native-mindmaps.md`.
+
 ## [3.12.0] - 2026-11-09
 
 ### Added
