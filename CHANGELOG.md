@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-11-09
+
+### Added
+- `append_block` positions `image` blocks on the edgeless canvas: `x`/`y`/`width`/`height` now write `prop:xywh` plus `prop:width`/`prop:height`, so images can be laid out and used as `connector` endpoints. Omitting them preserves the previous `[0,0,0,0]` placement.
+- `get_edgeless_canvas` includes `affine:image` blocks with `sourceId`, `caption`, `width`, and `height`; `read_doc` returns `sourceId` for image blocks; `update_edgeless_block` moves and resizes image blocks. Together these make an image diagram round-trip: write geometry, read the graph, and fetch pixels with `get_blob`. Only images attached to the surface block are reported as canvas blocks; images inside page notes stay in `read_doc`.
+
+### Fixed
+- Allocate distinct canvas layer keys for appended edgeless blocks and surface elements. Frames keep their native background layering and receive separate, increasing presentation keys, so sequentially created frames present in creation order instead of sharing `a0` (#447). `get_edgeless_canvas` includes each frame's `presentationIndex`.
+- Positioned `image` blocks now store the same effective size in `prop:width`/`prop:height` as in `prop:xywh`, so a position without explicit dimensions no longer reports 0x0 dimensions for a 100x100 image.
+- `update_edgeless_block` rejects `image` dimensions that are not integers from 1 to 10000 instead of persisting an invalid or invisible block.
+- Images that reach the surface without geometry (explicit `placement`, or `move_block`) reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100, instead of an invisible zero-size block or a forced 100x100.
+- `read_doc` returns `caption` and `bounds` for image blocks, so note-contained images stay fully described even though `get_edgeless_canvas` lists only surface-parented images.
+- `move_block` maps `affine:image` to the image placement type, so images can be moved onto the surface under strict validation.
+- `update_edgeless_block` reports `background` under `ignored` for image blocks, which have no background property.
+- `update_edgeless_block` keeps the stored `prop:width`/`prop:height` when only `x`/`y` are supplied, instead of copying a zero `prop:xywh` back into the block.
+- Moving a page image to the surface prefers its stored dimensions, so a resize made in the AFFiNE editor is not reverted by a stale `prop:xywh`.
+- `update_edgeless_block` uses the same precedence: a page image keeps its editor-updated stored size when only `x`/`y` change, while surface images keep `xywh`.
+- `move_block` copies a surface image's canvas dimensions into `prop:width`/`prop:height` when it moves into the page flow (note, paragraph, or list), so a later position-only update cannot revive stale values.
+
+### Changed
+- Update locked jose from 6.2.13 to 6.2.15 (#445).
+
 ## [3.11.0] - 2026-11-02
 
 ### Fixed
@@ -1012,4 +1034,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
 [3.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.11.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.11.0...HEAD
+[3.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.12.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.12.0...HEAD
