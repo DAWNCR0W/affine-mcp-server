@@ -78,6 +78,10 @@ shell profile, CI environment, or repository file.
 - Avoid adding tools that require special environment setup unless they provide clear value.
 - Update `tool-manifest.json` whenever tool list changes.
 - Any tool addition/removal must keep `npm run test:tool-manifest` green.
+- When a block stores geometry twice (`prop:xywh` and `prop:width`/`prop:height`), document which one wins per layer and keep them consistent.
+- Omitted optional parameters must preserve existing state and legacy behavior; never overwrite a stored value with a default or zero by accident.
+- When AFFiNE or BlockSuite owns a value (for example the editor resizing an image), treat the stored property as authoritative over derived data.
+- Cite the upstream BlockSuite file when changing block properties, and record the invariant in `docs/edgeless-canvas-cookbook.md`.
 
 ## Pull Request Guidelines
 
@@ -110,6 +114,20 @@ Use conventional, readable commits:
 - `docs: ...`
 - `chore: ...`
 - `refactor: ...`
+
+## Definition of Done
+
+Before opening or updating a pull request:
+
+- `npm run build`
+- `npm test` (fast suite)
+- integration test for the touched area (for example `node tests/test-image-edgeless.mjs`)
+- `npm run test:pr-route-policy`
+- `docs/tool-reference.md` updated when tool behavior changes
+- `docs/edgeless-canvas-cookbook.md` updated when a BlockSuite invariant changes
+- `CHANGELOG.md` entry under `[Unreleased]`
+- `tool-manifest.json` updated only when the tool list changes
+- backward-compatibility impact stated in the pull request description
 
 ## Reporting Bugs
 
