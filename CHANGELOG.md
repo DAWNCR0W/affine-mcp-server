@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-11-09
+
 ### Added
 - `append_block` positions `image` blocks on the edgeless canvas: `x`/`y`/`width`/`height` now write `prop:xywh` plus `prop:width`/`prop:height`, so images can be laid out and used as `connector` endpoints. Omitting them preserves the previous `[0,0,0,0]` placement.
 - `get_edgeless_canvas` includes `affine:image` blocks with `sourceId`, `caption`, `width`, and `height`; `read_doc` returns `sourceId` for image blocks; `update_edgeless_block` moves and resizes image blocks. Together these make an image diagram round-trip: write geometry, read the graph, and fetch pixels with `get_blob`. Only images attached to the surface block are reported as canvas blocks; images inside page notes stay in `read_doc`.
@@ -23,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moving a page image to the surface prefers its stored dimensions, so a resize made in the AFFiNE editor is not reverted by a stale `prop:xywh`.
 - `update_edgeless_block` uses the same precedence: a page image keeps its editor-updated stored size when only `x`/`y` change, while surface images keep `xywh`.
 - `move_block` copies a surface image's canvas dimensions into `prop:width`/`prop:height` when it moves into the page flow (note, paragraph, or list), so a later position-only update cannot revive stale values.
+
+### Changed
+- Update locked jose from 6.2.13 to 6.2.15 (#445).
 
 ## [3.11.0] - 2026-11-02
 
@@ -1029,4 +1034,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
 [3.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.11.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.11.0...HEAD
+[3.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.12.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.12.0...HEAD

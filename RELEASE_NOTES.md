@@ -1,5 +1,31 @@
 # Release Notes
 
+## Version 3.12.0 (2026-11-09)
+
+### Highlights
+- Place, resize, and connect images on edgeless canvases, then read their geometry and blob identifiers back through MCP.
+- Keep newly created frames in creation-order presentation sequence while preserving native background layering.
+
+### What Changed
+- Support image geometry in `append_block`; positioned images attach to the surface and can serve as connector endpoints. Missing dimensions default to 100, while an explicit note placement keeps the image in document flow (#444).
+- Move and resize images with `update_edgeless_block`, validate dimensions as integers from 1 to 10000, and preserve editor-updated dimensions across page and canvas moves. Unsupported image backgrounds are reported as ignored (#444).
+- Include surface images and their source IDs, captions, bounds, and dimensions in `get_edgeless_canvas`; `read_doc` also returns image source IDs, captions, and bounds. Use the existing `get_blob` tool to retrieve the image bytes (#444).
+- Allocate distinct shared layer keys for canvas blocks and surface elements. Give frames separate, increasing presentation keys and keep their layer keys behind their contents. Account for legacy frames whose presentation key is supplied by AFFiNE on load (#447, #448).
+- Return each frame's `presentationIndex` from `get_edgeless_canvas` so clients can inspect the presentation sequence (#448).
+- Update locked jose from 6.2.13 to 6.2.15 (#445).
+- Add image geometry and frame-order regressions, including ten sequential frames against a real AFFiNE instance.
+
+### Compatibility
+- The canonical MCP surface remains at 108 tools. Existing tool names and required inputs are unchanged; read responses gain image metadata and frame presentation keys.
+- Omitting image geometry preserves page-mode placement. An explicit note parent or note sibling overrides automatic surface attachment even when geometry is supplied.
+- Canvas response arrays remain sorted by layer `index`. Sort frame entries by `presentationIndex` to read the presentation sequence.
+- No data migration is required. Existing frame keys and document order are not automatically rewritten; the fix prevents collisions in newly created content.
+- Node.js 20.18.1 or newer remains required; release integration targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.12.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @modpanyakorn for image support, follow-up fixes, and regression tests, and to @mikerigler for the frame-order report and reproduction steps.
+
 ## Version 3.11.0 (2026-11-02)
 
 ### Highlights
