@@ -2790,8 +2790,11 @@ export function registerDocTools(
     let lastIndex: string | null = null;
     for (const block of blocks.values()) {
       if (!(block instanceof Y.Map) || block.get("sys:flavour") !== "affine:frame") continue;
-      const index = block.get("prop:presentationIndex");
-      if (typeof index === "string" && index && (lastIndex === null || index > lastIndex)) {
+      // AFFiNE materializes a missing key as an a0-prefixed default on load.
+      // Append after those legacy frames without writing defaults into them.
+      const stored = block.get("prop:presentationIndex");
+      const index = typeof stored === "string" && stored ? stored : "a0";
+      if (lastIndex === null || index > lastIndex) {
         lastIndex = index;
       }
     }

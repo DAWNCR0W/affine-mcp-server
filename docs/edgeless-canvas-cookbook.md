@@ -244,6 +244,8 @@ appended frame receives a key after all existing frame presentation keys.
 sorted by layer `index`, so sort frames by `presentationIndex` to read the
 presentation sequence. Do not use document children or Y.Map iteration order
 as a substitute. Existing frame keys are not automatically renumbered.
+For legacy frames without a stored presentation key, allocation accounts for
+AFFiNE's `a0`-prefixed default so a new frame still follows them on browser load.
 
 This follows AFFiNE v0.27.4's
 [`LayerManager.generateIndex`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/framework/std/src/gfx/layer.ts)

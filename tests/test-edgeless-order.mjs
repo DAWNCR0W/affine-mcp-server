@@ -139,6 +139,18 @@ try {
   await call('append_block', { type: 'paragraph', text: 'Creates a default note' });
   const defaultNote = [...blocks.values()].find(block => block.get('sys:flavour') === 'affine:note');
   assert.ok(defaultNote.get('prop:index') > 'b00');
+
+  // AFFiNE fills unstored presentation keys with an a0-prefixed default.
+  // New frames must follow those defaults without migrating the old blocks.
+  for (const [id, block] of [...blocks]) {
+    if (block instanceof Y.Map && block.get('sys:flavour') === 'affine:frame') blocks.delete(id);
+  }
+  const legacy = seedBlock('legacy-frame', 'affine:frame');
+  legacy.set('prop:index', 'Zz');
+  surface.get('sys:children').push(['legacy-frame']);
+  const afterLegacy = await call('append_block', { type: 'frame', text: 'After legacy slides' });
+  assert.ok(blocks.get(afterLegacy.blockId).get('prop:presentationIndex') > 'a0', 'new slides must follow native a0-prefixed defaults');
+  assert.equal(legacy.has('prop:presentationIndex'), false, 'do not migrate existing frames');
   console.log('PASS: ten-frame presentation order, native background layers, mixed canvas indexing, unchanged existing keys, page images and default-note allocation');
 } finally {
   for (const socket of wss.clients) socket.terminate();
