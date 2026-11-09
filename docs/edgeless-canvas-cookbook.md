@@ -230,6 +230,30 @@ Everything above writes to the native BlockSuite schema — no custom overlay:
 - `append_block(type="edgeless_text", text=…)` auto-creates a child `affine:paragraph` — the edgeless-text view walks `sys:children` for glyphs, so without it the block renders as an invisible sliver.
 - `src/edgeless/layout.ts` is a dependency-free module citing the upstream BlockSuite files each helper mirrors (`connector.ts`, `connector-manager.ts`, `edgeless-note-mask.ts`), so future parity audits stay cheap.
 
+## Canvas layer and frame presentation order
+
+Canvas blocks and surface elements share one fractional-index layer space.
+New notes, canvas text, surface-parented images and surface elements receive a
+key after the greatest existing layer key. Frames receive a key before the
+lowest existing layer key so their backgrounds stay behind their contents.
+Page-contained media retain their legacy properties.
+
+Frame presentation order uses a separate `prop:presentationIndex`: each newly
+appended frame receives a key after all existing frame presentation keys.
+`get_edgeless_canvas` reports this as `presentationIndex`; its array remains
+sorted by layer `index`, so sort frames by `presentationIndex` to read the
+presentation sequence. Do not use document children or Y.Map iteration order
+as a substitute. Existing frame keys are not automatically renumbered.
+For legacy frames without a stored presentation key, allocation accounts for
+AFFiNE's `a0`-prefixed default so a new frame still follows them on browser load.
+
+This follows AFFiNE v0.27.4's
+[`LayerManager.generateIndex`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/framework/std/src/gfx/layer.ts)
+and
+[`EdgelessFrameManager`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/affine/blocks/frame/src/frame-manager.ts):
+`generateIndex(true)` places frames behind content, while
+`generatePresentationIndex()` and `framePresentationComparator` govern slides.
+
 ## Image blocks: page vs canvas
 
 AFFiNE stores an image's rendered size in `prop:width`/`prop:height` and its
