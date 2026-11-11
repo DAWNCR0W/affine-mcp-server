@@ -146,7 +146,7 @@ test.describe.serial('AFFiNE Database Verification', () => {
       await expect(databaseBlock.first()).toBeVisible({ timeout: 30_000 });
 
       // Verify column headers
-      const columnNames = ['Title', 'Status', 'Estimate'];
+      const columnNames = ['Title', 'Status', 'Estimate', 'Legacy Estimate', 'Share'];
       for (const colName of columnNames) {
         const colHeader = page.getByText(colName, { exact: true });
         await expect(colHeader.first()).toBeVisible({ timeout: 10_000 });
@@ -165,7 +165,8 @@ test.describe.serial('AFFiNE Database Verification', () => {
 
       // Number columns need property data ({ decimal, format }); without it
       // AFFiNE's number cell renderer throws and the cells render blank.
-      for (const value of ['1301', '1302', '1303']) {
+      // 'Legacy Estimate' had its data removed and was repaired by the writes.
+      for (const value of ['1301', '1302', '1303', '1401', '1402', '1403']) {
         const numberCell = page.getByText(value, { exact: true });
         await expect(numberCell.first()).toBeVisible({ timeout: 10_000 });
       }
