@@ -306,6 +306,7 @@ async function main() {
     const columnDefs = [
       { name: 'Title', type: 'title' },
       { name: 'Status', type: 'select', options: ['Active', 'Inactive', 'Pending'] },
+      { name: 'Estimate', type: 'number' },
     ];
 
     for (const colDef of columnDefs) {
@@ -361,11 +362,15 @@ async function main() {
     if (statusColumn?.type !== 'select') {
       throw new Error('read_database_columns did not return a select Status column');
     }
+    const estimateColumn = schema?.columns?.find(column => column.name === 'Estimate');
+    if (estimateColumn?.type !== 'number') {
+      throw new Error('read_database_columns did not return a number Estimate column');
+    }
     if (schema.titleColumnId !== titleColumn.id) {
       throw new Error(`titleColumnId mismatch: expected ${titleColumn.id}, got ${schema.titleColumnId}`);
     }
-    if (schema.columnCount !== 2) {
-      throw new Error(`expected a minimal two-column database, got ${schema.columnCount} columns`);
+    if (schema.columnCount !== 3) {
+      throw new Error(`expected a minimal three-column database, got ${schema.columnCount} columns`);
     }
     if (!Array.isArray(schema.views) || schema.views.length !== 3) {
       throw new Error(`expected all three database view representations, got ${JSON.stringify(schema.views)}`);
@@ -374,16 +379,16 @@ async function main() {
       if (view.header?.titleColumn !== titleColumn.id) {
         throw new Error(`view ${view.id} is not bound to title column ${titleColumn.id}`);
       }
-      if (!view.columnIds?.includes(titleColumn.id) || !view.columnIds?.includes(statusColumn.id)) {
+      if (![titleColumn, statusColumn, estimateColumn].every(column => view.columnIds?.includes(column.id))) {
         throw new Error(`view ${view.id} does not expose both minimal database columns`);
       }
     }
 
     // 5. Add rows
     const rowDefs = [
-      { Title: 'Build feature', Status: 'Active' },
-      { Title: 'Write tests', Status: 'Pending' },
-      { Title: 'Deploy release', Status: 'Inactive' },
+      { Title: 'Build feature', Status: 'Active', Estimate: 1301 },
+      { Title: 'Write tests', Status: 'Pending', Estimate: 1302 },
+      { Title: 'Deploy release', Status: 'Inactive', Estimate: 1303 },
     ];
 
     for (const rowDef of rowDefs) {
