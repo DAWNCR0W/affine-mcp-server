@@ -229,3 +229,71 @@ Everything above writes to the native BlockSuite schema — no custom overlay:
 - `labelXYWH` is seeded at the source→target midpoint so BlockSuite's label renderer doesn't short-circuit on first render.
 - `append_block(type="edgeless_text", text=…)` auto-creates a child `affine:paragraph` — the edgeless-text view walks `sys:children` for glyphs, so without it the block renders as an invisible sliver.
 - `src/edgeless/layout.ts` is a dependency-free module citing the upstream BlockSuite files each helper mirrors (`connector.ts`, `connector-manager.ts`, `edgeless-note-mask.ts`), so future parity audits stay cheap.
+
+## Canvas layer and frame presentation order
+
+Canvas blocks and surface elements share one fractional-index layer space.
+New notes, canvas text, surface-parented images and surface elements receive a
+key after the greatest existing layer key. Frames receive a key before the
+lowest existing layer key so their backgrounds stay behind their contents.
+Page-contained media retain their legacy properties.
+
+Frame presentation order uses a separate `prop:presentationIndex`: each newly
+appended frame receives a key after all existing frame presentation keys.
+`get_edgeless_canvas` reports this as `presentationIndex`; its array remains
+sorted by layer `index`, so sort frames by `presentationIndex` to read the
+presentation sequence. Do not use document children or Y.Map iteration order
+as a substitute. Existing frame keys are not automatically renumbered.
+For legacy frames without a stored presentation key, allocation accounts for
+AFFiNE's `a0`-prefixed default so a new frame still follows them on browser load.
+
+This follows AFFiNE v0.27.4's
+[`LayerManager.generateIndex`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/framework/std/src/gfx/layer.ts)
+and
+[`EdgelessFrameManager`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/affine/blocks/frame/src/frame-manager.ts):
+`generateIndex(true)` places frames behind content, while
+`generatePresentationIndex()` and `framePresentationComparator` govern slides.
+
+## Image blocks: page vs canvas
+
+AFFiNE stores an image's rendered size in `prop:width`/`prop:height` and its
+canvas placement in `prop:xywh`. The two are not interchangeable:
+
+| Concern | Page (inside a note) | Canvas (surface child) |
+| --- | --- | --- |
+| `prop:xywh` | unused or stale (`[0,0,0,0]`) | authoritative placement |
+| `prop:width` / `prop:height` | intrinsic size, written by the editor | must equal the `xywh` width/height |
+| Source of truth | stored dimensions | `xywh` (kept in sync) |
+| `get_edgeless_canvas` | excluded | listed with `sourceId`, `caption`, `bounds` |
+| `update_edgeless_block` | stored dimensions win for omitted fields; never write `0` | `xywh` wins for omitted fields; reject dimensions outside 1–10000 |
+| `move_block` | flavour maps to `"image"` | page → canvas prefers the stored dimensions; canvas → page flow (note/paragraph/list) copies the canvas size into the stored dimensions |
+| `append_block` | no geometry → `[0,0,0,0]` | missing dimensions default to 100 |
+
+Rules:
+
+- The AFFiNE editor can resize an image without touching `prop:xywh`, so a page
+  image's `xywh` may be stale. When it moves to the surface, the stored
+  dimensions win.
+- When a parameter is omitted, preserve the existing value; never write `0`
+  over a stored dimension.
+- Only images parented to `affine:surface` are canvas elements. Images inside a
+  page note stay in `read_doc` and must not appear in `get_edgeless_canvas`.
+
+## Native mindmap deletion
+
+Native mindmaps own their node shapes through their `children` map, as defined
+by AFFiNE's [native mindmap model](https://github.com/toeverything/AFFiNE/blob/174ad9bc5/blocksuite/affine/model/src/elements/mindmap/mindmap.ts).
+Deleting a valid map removes these shapes too. With `pruneConnectors: true`,
+cleanup covers endpoints bound to every deleted ID and removes those IDs from
+frame ownership. A malformed map is removed without guessing which shapes it owns.
+
+## Markdown lists inside notes
+
+Markdown-seeded notes use native `affine:list` blocks. A nested item belongs in
+its parent list's `sys:children`, while `sys:parent` may remain `null`, as for
+other native blocks in this server. Each sibling sequence keeps its own
+insertion anchor so an item following a subtree remains at its original level.
+This follows AFFiNE v0.27.4's
+[`ListBlockSchema`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/affine/model/src/blocks/list/list-model.ts)
+and
+[`BlockModel`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/framework/store/src/model/block/block-model.ts).

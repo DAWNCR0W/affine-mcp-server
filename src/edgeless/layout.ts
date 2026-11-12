@@ -265,3 +265,99 @@ export function sortByFractionalIndex<T extends { index?: unknown }>(
     return 0;
   });
 }
+
+export interface XywhGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Dimension precedence for image geometry: page images prefer stored sizes, surface images prefer xywh. */
+export function pickImageDimension(
+  prevValue: number,
+  storedValue: number,
+  preferStored: boolean
+): number {
+  const positive = (value: number): boolean => Number.isFinite(value) && value > 0;
+  if (preferStored && positive(storedValue)) return storedValue;
+  if (positive(prevValue)) return prevValue;
+  if (positive(storedValue)) return storedValue;
+  return 0;
+}
+
+/**
+ * Merge an `update_edgeless_block` geometry patch.
+ *
+ * `prop:xywh` may be zero or stale for a page image while `prop:width` and
+ * `prop:height` already hold the intrinsic size the editor measured. Omitted
+ * fields therefore fall back to the stored dimensions instead of copying a
+ * zero or stale xywh back into the block.
+ */
+export function resolveImageUpdateGeometry(input: {
+  prev: XywhGeometry;
+  storedWidth: number;
+  storedHeight: number;
+  preferStored: boolean;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}): XywhGeometry & { propWidth?: number; propHeight?: number } {
+  const positive = (value: number): boolean => Number.isFinite(value) && value > 0;
+  const width = input.width ?? pickImageDimension(input.prev.width, input.storedWidth, input.preferStored);
+  const height = input.height ?? pickImageDimension(input.prev.height, input.storedHeight, input.preferStored);
+
+  return {
+    x: input.x ?? input.prev.x,
+    y: input.y ?? input.prev.y,
+    width,
+    height,
+    propWidth: positive(width) ? width : undefined,
+    propHeight: positive(height) ? height : undefined,
+  };
+}
+
+/**
+ * Pick the size an image should get when it becomes a surface child.
+ *
+ * `preferStored` is true when the image comes from a page note: the editor
+ * updates `prop:width`/`prop:height` on resize and leaves `prop:xywh` stale, so
+ * the stored size wins. Otherwise the existing xywh is authoritative.
+ */
+export function resolveSurfaceImageSize(input: {
+  placed: XywhGeometry;
+  storedWidth: number;
+  storedHeight: number;
+  preferStored: boolean;
+}): XywhGeometry {
+  const pick = (placedValue: number, storedValue: number): number =>
+    pickImageDimension(placedValue, storedValue, input.preferStored) || 100;
+  return {
+    x: input.placed.x,
+    y: input.placed.y,
+    width: pick(input.placed.width, input.storedWidth),
+    height: pick(input.placed.height, input.storedHeight),
+  };
+}
+
+/**
+ * Copy the canvas size into the stored image dimensions when a surface image
+ * moves into the page flow (a note, paragraph, list, or the page itself).
+ * Otherwise the destination keeps stale `prop:width`/`prop:height` and a later
+ * position-only update can resurface them.
+ */
+const PAGE_FLOW_IMAGE_FLAVOURS = new Set(["affine:note", "affine:paragraph", "affine:list"]);
+
+export function resolvePageImageSize(input: {
+  placed: XywhGeometry | null;
+  fromFlavour: unknown;
+  toFlavour: unknown;
+  isImage: boolean;
+}): { width: number; height: number } | null {
+  if (!input.isImage) return null;
+  if (input.fromFlavour !== "affine:surface") return null;
+  if (!PAGE_FLOW_IMAGE_FLAVOURS.has(String(input.toFlavour))) return null;
+  if (!input.placed || input.placed.width <= 0 || input.placed.height <= 0) return null;
+  return { width: input.placed.width, height: input.placed.height };
+}

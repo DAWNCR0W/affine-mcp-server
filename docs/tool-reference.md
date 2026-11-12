@@ -95,8 +95,8 @@ Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, `linkedDocIds` for inline LinkedPage references, and code block `language`/`preview` state (`preview` is `null` when unset) |
-| `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, `linkedDocIds` for inline LinkedPage references, code block `language`/`preview` state (`preview` is `null` when unset), and image `sourceId`, `caption`, and `bounds` |
+| `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients. Reports `blobUpload.filePath` so clients can tell whether `upload_blob` disk paths are enabled. |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
 
@@ -148,6 +148,14 @@ links, quotes, tables, code fences, or math. `create_doc.content` does not parse
 when structured Markdown is detected, its receipt warns that the content was
 stored as one plain paragraph.
 
+`create_doc_from_markdown`, `append_markdown`, and `replace_doc_with_markdown`
+preserve nested bullet, numbered, and task lists as native parent/child blocks,
+including supported inline formatting and checked states. Export uses the
+parent's list marker width for indentation, so mixed list hierarchies survive
+re-import. Parsed and applied block counts include nested items. Other import
+losses remain reported; nested list structure alone no longer produces a
+flattening warning.
+
 Markdown import and export map LaTeX math to AFFiNE's native equations: a
 `$$...$$` block becomes an equation block and `$...$` becomes an inline
 equation. TeX backslashes such as `\,` are kept as written. Inline `$` follows
@@ -162,11 +170,11 @@ imported as an inline equation in that block.
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
-| `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note`/`image` accept `x`/`y`/`width`/`height`; for `image` they set `prop:xywh` plus `prop:width`/`prop:height`, attach the block to the `affine:surface` block (edgeless, not inside a note), and make it a valid connector endpoint. When only a position is supplied, the omitted dimensions default to 100 so bounds and rendered size agree; surface-parented images that omit geometry reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100 (note images keep `[0,0,0,0]`). An explicit `placement` (a note `parentId` or a note sibling) overrides the automatic surface attachment: the image keeps its geometry but stays in the document flow and is not listed by `get_edgeless_canvas`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, code block `language` and `preview` state, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
 | `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. |
 | `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. |
-| `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. |
+| `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. `affine:image` blocks are moved as images, so an image can be moved onto the surface. A page image keeps its stored `prop:width`/`prop:height` (the editor may have resized it after `prop:xywh` was written), a dimensionless image receives the 100x100 default there, and moving a surface image into the page flow (note, paragraph, or list) copies its canvas size into the stored dimensions. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
@@ -263,7 +271,7 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 | `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
 | `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
-| `add_database_view` | Add a view (table or kanban) to an existing database block | Kanban requires `groupBy`: the name of a select/multi-select column; rejects duplicate view names; the new view inherits all current columns |
+| `add_database_view` | Add a view (table or kanban) to an existing database block | Kanban requires `groupBy`: the name of a select/multi-select column; rejects duplicate view names; the new view inherits all current columns. Table views also support an empty stored columns array. `totalViews` includes unnamed views. Accepts optional `expectedRevision` from `read_doc` to reject stale edits before writing. |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
@@ -282,13 +290,13 @@ AFFiNE's edgeless doc has two layers: top-level edgeless blocks (`note`, `frame`
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `get_edgeless_canvas` | Read the full canvas: edgeless blocks + surface elements with parsed `{x,y,width,height}`, aggregate `bounds`, per-type `elementCounts` | Deterministic z-order (fractional-index sorted). Note entries carry a structured `children` array of their block descendants (`flavour`, `type`, `text`, `language`, `checked`) so markdown-seeded content round-trips faithfully. |
+| `get_edgeless_canvas` | Read the full canvas: edgeless blocks (note/frame/edgeless-text/image) + surface elements with parsed `{x,y,width,height}`, aggregate `bounds`, per-type `elementCounts` | Image entries include `sourceId`, `caption`, `width`, and `height`, so a reader can map a block to its blob and fetch it with `get_blob`. Only images attached to the surface block are listed; images inside page notes are excluded from canvas results and remain available through `read_doc`. Deterministic z-order (fractional-index sorted). Frame entries also include `presentationIndex`: sort by this separate key to obtain the presentation sequence; frames appended in sequence receive increasing presentation keys while remaining behind their contents in layer order. Note entries carry a structured `children` array of their block descendants (`flavour`, `type`, `text`, `language`, `checked`) so markdown-seeded content round-trips faithfully. |
 | `add_surface_element` | Add a `shape`, `connector`, `text`, or `group` to the surface | Shapes: rect/ellipse/diamond/triangle with fill, stroke, and text. Connectors accept `sourceId`/`targetId` and optional `sourcePosition`/`targetPosition` relative `[x,y]` in `[0,1]`. When both endpoints are bound by id and neither position is supplied, they auto-snap to BlockSuite's four tangent-carrying side-midpoints based on relative bounds. Creates the surface block if the doc doesn't have one. |
 | `list_surface_elements` | List all surface elements (optionally filter by `type` or `elementId`) | Returns raw `xywh` plus parsed `bounds` sorted by fractional `index` ascending; serializes `Y.Text` fields to plain strings. |
 | `update_surface_element` | Partially update an element by id | `x`/`y`/`width`/`height` merge with current `xywh` (move without resizing, or vice versa). `text`/`label`/`title` replace their `Y.Text` wholesale. Fields not applicable to the element's type come back in the response `ignored` list. |
-| `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes any connectors referencing the deleted element. |
+| `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes connectors referencing the deleted element or any cascaded node shape, listed in `prunedConnectors`. Deleting a native mindmap also deletes its node shapes, listed in `deletedNodes`. |
 | `update_frame_children` | Replace a frame block's contents wholesale | Every resolved id (surface element or edgeless block) goes into `prop:childElementIds` and comes back in `ownedIds`; unknown ids in `missing`. Default `resizeToFit: true` recomputes xywh to match new contents + `padding` + title band; pass `resizeToFit: false` to preserve the current box. Pass `[]` to clear ownership (resize skipped). |
-| `update_edgeless_block` | Partially update a note/frame/edgeless-text block | `x`/`y`/`width`/`height` merge with current `prop:xywh`; `background` replaces `prop:background`. Fields not applicable to the flavour come back under `ignored`. Use for repositioning / resizing / recoloring without re-creating the block. |
+| `update_edgeless_block` | Partially update a note/frame/edgeless-text/image block | `x`/`y`/`width`/`height` merge with current `prop:xywh` (image blocks also update `prop:width`/`prop:height` so the rendered size follows, reuse their stored dimensions when a field is omitted (for page images the editor may have resized after `xywh` was written) instead of copying a stale or zero `xywh`, and reject `width`/`height` that are not integers from 1 to 10000); `background` replaces `prop:background` (edgeless-text and image blocks have none and report it under `ignored`). Fields not applicable to the flavour come back under `ignored`. Use for repositioning / resizing / recoloring without re-creating the block. |
 | `delete_block` | Delete a block by id | Returns the deleted root and descendant snapshots so callers can reconstruct content. Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
 
 ### Layout helpers on `append_block`
@@ -363,7 +371,7 @@ an executable workflow example, validation behavior, and deployment links.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE |
+| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE. Optional `children` outline `[{text, children?}]` builds the whole map in one call (max 500 nodes); `compact: true`, also on the other mutating mindmap tools, returns an empty `nodes` list. |
 | `get_mindmap` | Read validated topology, child order, labels, collapsed state and geometry | Discover IDs with `get_edgeless_canvas` |
 | `add_mindmap_node` | Append or insert a child of `parentId` | `beforeId` must be a sibling; returns `nodeId` |
 | `update_mindmap_node` | Replace text or change collapsed state | Keeps IDs and parent links |

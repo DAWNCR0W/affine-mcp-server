@@ -28,6 +28,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['append_semantic_section', 'test-semantic-page-composer.mjs'],
   ['clear_doc_property', 'test-doc-properties.mjs'],
   ['compose_database_from_intent', 'test-database-intent.mjs'],
+  ['add_database_view', 'test-database-view-live.mjs'],
   ['create_collection', 'test-organize-tools.mjs'],
   ['create_custom_property', 'test-doc-properties.mjs'],
   ['create_folder', 'test-organize-tools.mjs'],

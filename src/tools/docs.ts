@@ -1,7 +1,7 @@
 import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
-import { registerMindmapTools } from "./mindmap.js";
+import { deleteNativeMindmap, registerMindmapTools } from "./mindmap.js";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
@@ -69,6 +69,9 @@ import {
   parseXywhString,
   pickConnectorSides,
   pickFurthestInDirection,
+  resolveImageUpdateGeometry,
+  resolvePageImageSize,
+  resolveSurfaceImageSize,
   sortByFractionalIndex,
   stackRelativeTo,
 } from "../edgeless/layout.js";
@@ -497,7 +500,6 @@ type DatabaseIntentPreset = {
 const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
-  "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
   "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
@@ -1886,7 +1888,7 @@ export function registerDocTools(
     const noteChildren = new Y.Array<string>();
     note.set("sys:children", noteChildren);
     note.set("prop:xywh", DEFAULT_NOTE_XYWH);
-    note.set("prop:index", "a0");
+    note.set("prop:index", nextCanvasBlockIndex(blocks));
     note.set("prop:hidden", false);
     note.set("prop:displayMode", "both");
     note.set("prop:background", buildDefaultNoteBackground());
@@ -1949,6 +1951,35 @@ export function registerDocTools(
     }
     pageChildren.push([surfaceId]);
     return surfaceId;
+  }
+
+  /**
+   * Give a surface-parented image a rendered size.
+   *
+   * Explicit placement and `move_block` can reach the surface without the
+   * geometry-based placement path; without a size AFFiNE renders an invisible
+   * zero-size block.
+   */
+  function applySurfaceImageDefaultSize(
+    block: Y.Map<any>,
+    parentFlavour: unknown,
+    preferStored = false,
+  ): void {
+    if (parentFlavour !== "affine:surface" || block.get("sys:flavour") !== "affine:image") return;
+    const placed = parseXywhString(block.get("prop:xywh"));
+    if (!placed) return;
+
+    const next = resolveSurfaceImageSize({
+      placed,
+      storedWidth: Number(block.get("prop:width")),
+      storedHeight: Number(block.get("prop:height")),
+      preferStored,
+    });
+
+    if (next.width === placed.width && next.height === placed.height) return;
+    block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
+    block.set("prop:width", next.width);
+    block.set("prop:height", next.height);
   }
 
   function normalizeBlockTypeInput(typeInput: string): {
@@ -2156,7 +2187,7 @@ export function registerDocTools(
       throw new Error("The 'reference'/'refFlavour' fields can only be used with type='surface_ref'.");
     }
 
-    if (normalized.type === "frame" || normalized.type === "edgeless_text" || normalized.type === "note") {
+    if (normalized.type === "frame" || normalized.type === "edgeless_text" || normalized.type === "note" || normalized.type === "image") {
       if (!Number.isInteger(normalized.width) || normalized.width < 1 || normalized.width > 10000) {
         throw new Error(`${normalized.type} width must be an integer between 1 and 10000.`);
       }
@@ -2164,7 +2195,7 @@ export function registerDocTools(
         throw new Error(`${normalized.type} height must be an integer between 1 and 10000.`);
       }
     } else if ((raw.width !== undefined || raw.height !== undefined) && normalized.strict) {
-      throw new Error("The 'width'/'height' fields are only valid for frame/edgeless_text/note.");
+      throw new Error("The 'width'/'height' fields are only valid for frame/edgeless_text/note/image.");
     }
 
     if (normalized.type !== "frame" && normalized.type !== "note" && raw.background !== undefined && normalized.strict) {
@@ -2374,9 +2405,13 @@ export function registerDocTools(
     return findParentIdByChild(blocks, blockId);
   }
 
+  /** Resolve the parent block, child array and insert index for a placement. */
   function resolveInsertContext(
     blocks: Y.Map<any>,
-    normalized: Pick<NormalizedAppendBlockInput, "placement" | "strict" | "type">,
+    normalized: Pick<
+      NormalizedAppendBlockInput,
+      "placement" | "strict" | "type" | "xProvided" | "yProvided" | "widthProvided" | "heightProvided"
+    >,
   ): {
     parentId: string;
     parentBlock: Y.Map<any>;
@@ -2421,6 +2456,16 @@ export function registerDocTools(
         if (!parentId) {
           throw new Error("Document has no page block; unable to insert note.");
         }
+      } else if (
+        normalized.type === "image" &&
+        (normalized.xProvided ||
+          normalized.yProvided ||
+          normalized.widthProvided ||
+          normalized.heightProvided)
+      ) {
+        // A positioned image is an edgeless element; AFFiNE stores those as
+        // children of the surface block, not inside a note.
+        parentId = ensureSurfaceBlock(blocks);
       } else {
         parentId = ensureNoteBlock(blocks);
       }
@@ -2437,7 +2482,8 @@ export function registerDocTools(
       if (
         parentFlavour === "affine:surface" &&
         normalized.type !== "frame" &&
-        normalized.type !== "edgeless_text"
+        normalized.type !== "edgeless_text" &&
+        normalized.type !== "image"
       ) {
         throw new Error(`Cannot append '${normalized.type}' directly under 'affine:surface'.`);
       }
@@ -2554,6 +2600,34 @@ export function registerDocTools(
     });
   }
 
+  /**
+   * Default property data for a new database column, mirroring BlockSuite's
+   * `propertyData.default()` per property type. AFFiNE's cell renderers read
+   * `column.data` without a fallback (number reads `data.decimal`/`data.format`,
+   * select/multi-select read `data.options`), so a column without `data`
+   * renders blank cells even though the cell values are stored correctly.
+   * See blocksuite/affine/data-view/src/property-presets/number/define.ts and
+   * select/define.ts, multi-select/define.ts.
+   */
+  function createDefaultDatabaseColumnData(type: string, options: string[] = []): Y.Map<any> {
+    const data = new Y.Map<any>();
+    if (type === "number") {
+      data.set("decimal", 0);
+      data.set("format", "number");
+    } else if (type === "select" || type === "multi-select") {
+      const rawOptions = new Y.Array<any>();
+      options.forEach((value, index) => {
+        const option = new Y.Map<any>();
+        option.set("id", generateId());
+        option.set("value", value);
+        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+        rawOptions.push([option]);
+      });
+      data.set("options", rawOptions);
+    }
+    return data;
+  }
+
   function createDatabaseColumnDefinition(input: {
     id: string;
     name: string;
@@ -2566,21 +2640,7 @@ export function registerDocTools(
     column.set("name", input.name);
     column.set("type", input.type);
     column.set("width", input.width ?? 200);
-
-    if ((input.type === "select" || input.type === "multi-select") && input.options?.length) {
-      const data = new Y.Map<any>();
-      const options = new Y.Array<any>();
-      input.options.forEach((value, index) => {
-        const option = new Y.Map<any>();
-        option.set("id", generateId());
-        option.set("value", value);
-        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
-        options.push([option]);
-      });
-      data.set("options", options);
-      column.set("data", data);
-    }
-
+    column.set("data", createDefaultDatabaseColumnData(input.type, input.options));
     return column;
   }
 
@@ -2710,7 +2770,52 @@ export function registerDocTools(
     };
   }
 
-  function createBlock(normalized: NormalizedAppendBlockInput): {
+  /** Allocate a shared canvas layer key, keeping new frames behind their contents.
+   * Mirrors AFFiNE v0.27.4 blocksuite/framework/std/src/gfx/layer.ts generateIndex.
+   */
+  function nextCanvasBlockIndex(blocks: Y.Map<any>, reverse = false): string {
+    const surface = getSurfaceElementsValueMap(blocks, { create: false });
+    const surfaceId = findBlockIdByFlavour(blocks, "affine:surface");
+    const surfaceChildren = new Set(surfaceId
+      ? childIdsFrom(findBlockById(blocks, surfaceId)?.get("sys:children"))
+      : []);
+    let boundary: string | null = null;
+    const include = (index: unknown) => {
+      if (typeof index !== "string" || !index) return;
+      if (boundary === null || (reverse ? index < boundary : index > boundary)) boundary = index;
+    };
+    for (const [id, block] of blocks) {
+      if (!(block instanceof Y.Map)) continue;
+      if (block.get("sys:flavour") === "affine:note" || surfaceChildren.has(String(id))) {
+        include(block.get("prop:index"));
+      }
+    }
+    for (const element of surface?.value.values() ?? []) {
+      if (element instanceof Y.Map) include(element.get("index"));
+    }
+    return reverse ? generateKeyBetween(null, boundary) : generateKeyBetween(boundary, null);
+  }
+
+  /** Append after existing frame presentation keys without changing their layer order.
+   * Mirrors AFFiNE v0.27.4 blocksuite/affine/blocks/frame/src/frame-manager.ts.
+   */
+  function nextFramePresentationIndex(blocks: Y.Map<any>): string {
+    let lastIndex: string | null = null;
+    for (const block of blocks.values()) {
+      if (!(block instanceof Y.Map) || block.get("sys:flavour") !== "affine:frame") continue;
+      // AFFiNE materializes a missing key as an a0-prefixed default on load.
+      // Append after those legacy frames without writing defaults into them.
+      const stored = block.get("prop:presentationIndex");
+      const index = typeof stored === "string" && stored ? stored : "a0";
+      if (lastIndex === null || index > lastIndex) {
+        lastIndex = index;
+      }
+    }
+    return generateKeyBetween(lastIndex, null);
+  }
+
+  /** Create a BlockSuite block map for an append request. */
+  function createBlock(normalized: NormalizedAppendBlockInput, blocks: Y.Map<any>, parentFlavour: unknown): {
     blockId: string;
     block: Y.Map<any>;
     flavour: string;
@@ -2720,6 +2825,9 @@ export function registerDocTools(
     const blockId = generateId();
     const block = new Y.Map<any>();
     const content = normalized.text;
+    const nextIndex = () => normalized.type === "note" || parentFlavour === "affine:surface"
+      ? nextCanvasBlockIndex(blocks, normalized.type === "frame")
+      : "a0";
     // Keep parity with AFFiNE UI-created docs: sys:parent stays null and hierarchy is represented by sys:children.
 
     switch (normalized.type) {
@@ -2795,7 +2903,7 @@ export function registerDocTools(
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:xywh", "[0,0,16,16]");
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
         block.set("prop:rotate", 0);
@@ -2867,7 +2975,7 @@ export function registerDocTools(
         block.set("prop:image", null);
         block.set("prop:title", null);
         block.set("prop:xywh", "[0,0,0,0]");
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
         block.set("prop:footnoteIdentifier", null);
@@ -2879,11 +2987,25 @@ export function registerDocTools(
         block.set("sys:children", new Y.Array<string>());
         block.set("prop:caption", normalized.caption ?? "");
         block.set("prop:sourceId", normalized.sourceId);
-        block.set("prop:width", 0);
-        block.set("prop:height", 0);
+        const imagePlaced =
+          normalized.xProvided ||
+          normalized.yProvided ||
+          normalized.widthProvided ||
+          normalized.heightProvided;
+        // Positioned images need a rendered size: fall back to the same 100x100
+        // defaults used by prop:xywh so bounds and dimensions never disagree.
+        const imageWidth = imagePlaced ? (normalized.widthProvided ? normalized.width : 100) : 0;
+        const imageHeight = imagePlaced ? (normalized.heightProvided ? normalized.height : 100) : 0;
+        block.set("prop:width", imageWidth);
+        block.set("prop:height", imageHeight);
         block.set("prop:size", normalized.size || -1);
-        block.set("prop:xywh", "[0,0,0,0]");
-        block.set("prop:index", "a0");
+        block.set(
+          "prop:xywh",
+          imagePlaced
+            ? formatXywhString(normalized.x, normalized.y, imageWidth, imageHeight)
+            : "[0,0,0,0]",
+        );
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
         return { blockId, block, flavour: "affine:image" };
@@ -2899,7 +3021,7 @@ export function registerDocTools(
         block.set("prop:caption", normalized.caption ?? undefined);
         block.set("prop:embed", normalized.embed);
         block.set("prop:style", "horizontalThin");
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2910,7 +3032,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-youtube");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2930,7 +3052,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-github");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2954,7 +3076,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-figma");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2969,7 +3091,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-loom");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -2986,7 +3108,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-html");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3000,7 +3122,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-linked-doc");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3016,7 +3138,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-synced-doc");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,800,100]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:rotate", 0);
@@ -3033,7 +3155,7 @@ export function registerDocTools(
         setSysFields(block, blockId, "affine:embed-iframe");
         block.set("sys:parent", null);
         block.set("sys:children", new Y.Array<string>());
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:xywh", "[0,0,0,0]");
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
@@ -3094,11 +3216,11 @@ export function registerDocTools(
         // solid fill (the border is separate).
         block.set("prop:background", normalized.background ?? "transparent");
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         const childIds = new Y.Map<boolean>();
         for (const id of normalized._frameOwnedIds ?? []) childIds.set(id, true);
         block.set("prop:childElementIds", childIds);
-        block.set("prop:presentationIndex", "a0");
+        block.set("prop:presentationIndex", nextFramePresentationIndex(blocks));
         block.set("prop:lockedBySelf", false);
         return { blockId, block, flavour: "affine:frame" };
       }
@@ -3107,7 +3229,7 @@ export function registerDocTools(
         block.set("sys:parent", null);
         const edgelessTextChildren = new Y.Array<string>();
         block.set("prop:xywh", `[${normalized.x},${normalized.y},${normalized.width},${normalized.height}]`);
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:scale", 1);
         block.set("prop:rotate", 0);
@@ -3150,7 +3272,7 @@ export function registerDocTools(
         } else {
           block.set("prop:background", bg);
         }
-        block.set("prop:index", "a0");
+        block.set("prop:index", nextIndex());
         block.set("prop:lockedBySelf", false);
         block.set("prop:hidden", false);
         block.set("prop:displayMode", "both");
@@ -3347,13 +3469,14 @@ export function registerDocTools(
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       resolveEdgelessLayoutHints(blocks, normalized);
       const context = resolveInsertContext(blocks, normalized);
-      const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized);
+      const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
       const databaseRows: Y.Map<any>[] = [];
       if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
         databaseRows.push(block);
       }
 
       blocks.set(blockId, block);
+      applySurfaceImageDefaultSize(block, context.parentBlock.get("sys:flavour"));
       if (Array.isArray(extraBlocks)) {
         for (const extra of extraBlocks) {
           blocks.set(extra.blockId, extra.block);
@@ -4270,8 +4393,6 @@ export function registerDocTools(
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
     const blocks = doc.getMap("blocks") as Y.Map<any>;
-    let anchorPlacement: AppendPlacement | undefined = parsed.placement;
-    let lastInsertedBlockId: string | undefined;
     let replaceParentId: string | undefined;
     let skippedCount = 0;
     let removedCount = 0;
@@ -4305,53 +4426,62 @@ export function registerDocTools(
       }
     }
 
-    for (const [operationIndex, operation] of parsed.operations.entries()) {
-      const placement =
-        lastInsertedBlockId
-          ? { afterBlockId: lastInsertedBlockId }
-          : replaceParentId
-            ? { parentId: replaceParentId }
-            : anchorPlacement;
-      const appendInput = markdownOperationToAppendInput(
-        operation,
-        parsed.docId,
-        parsed.workspaceId,
-        strict,
-        placement
-      );
+    let operationIndex = 0;
+    const subtreeSize = (operation: MarkdownOperation): number => 1 + (
+      operation.type === "list"
+        ? (operation.children ?? []).reduce((count, child) => count + subtreeSize(child), 0)
+        : 0
+    );
 
-      try {
-        const normalized = normalizeAppendBlockInput(appendInput);
-        const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, flavour, extraBlocks } = createBlock(normalized);
-        blocks.set(blockId, block);
-        if (Array.isArray(extraBlocks)) {
-          for (const extra of extraBlocks) {
+    // AFFiNE v0.27.4 list/list-model.ts permits affine:list parents, and its
+    // BlockModel derives hierarchy from sys:children (sys:parent stays null).
+    // Each sibling sequence owns its anchor so descendants do not move the next
+    // sibling into their parent's subtree.
+    const appendOperations = (operations: MarkdownOperation[], initialPlacement?: AppendPlacement): void => {
+      let lastInsertedBlockId: string | undefined;
+      for (const operation of operations) {
+        const currentOperationIndex = operationIndex++;
+        const placement = lastInsertedBlockId ? { afterBlockId: lastInsertedBlockId } : initialPlacement;
+        let insertedBlockId: string;
+        try {
+          const normalized = normalizeAppendBlockInput(markdownOperationToAppendInput(
+            operation, parsed.docId, parsed.workspaceId, strict, placement,
+          ));
+          const context = resolveInsertContext(blocks, normalized);
+          const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
+          blocks.set(blockId, block);
+          for (const extra of extraBlocks ?? []) {
             blocks.set(extra.blockId, extra.block);
           }
+          if (context.insertIndex >= context.children.length) {
+            context.children.push([blockId]);
+          } else {
+            context.children.insert(context.insertIndex, [blockId]);
+          }
+          if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+            databaseRows.push(block);
+          }
+          blockIds.push(blockId);
+          lastInsertedBlockId = insertedBlockId = blockId;
+        } catch (error) {
+          handleMarkdownOperationFailure(error, {
+            strict,
+            replaceExisting,
+            operationIndex: currentOperationIndex,
+          });
+          // A failed parent cannot own children. Skip the whole subtree rather
+          // than silently promoting its descendants into the current level.
+          const skipped = subtreeSize(operation);
+          skippedCount += skipped;
+          operationIndex += skipped - 1;
+          continue;
         }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
+        if (operation.type === "list" && operation.children?.length) {
+          appendOperations(operation.children, { parentId: insertedBlockId });
         }
-        if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
-          databaseRows.push(block);
-        }
-        blockIds.push(blockId);
-        lastInsertedBlockId = blockId;
-        if (!replaceParentId) {
-          anchorPlacement = { afterBlockId: blockId };
-        }
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting,
-          operationIndex,
-        });
-        skippedCount += 1;
       }
-    }
+    };
+    appendOperations(parsed.operations, replaceParentId ? { parentId: replaceParentId } : parsed.placement);
     return {
       appendedCount: blockIds.length,
       skippedCount,
@@ -4407,40 +4537,17 @@ export function registerDocTools(
     workspaceId: string,
     strict: boolean,
   ): void {
-    const validationDocId = "markdown-preflight";
     const skeleton = createDocSkeleton("Markdown preflight");
-    let placement: AppendPlacement = { parentId: skeleton.noteId };
-
-    for (const [operationIndex, operation] of operations.entries()) {
-      try {
-        const normalized = normalizeAppendBlockInput(
-          markdownOperationToAppendInput(
-            operation,
-            validationDocId,
-            workspaceId,
-            strict,
-            placement,
-          ),
-        );
-        const context = resolveInsertContext(skeleton.blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized);
-        skeleton.blocks.set(blockId, block);
-        for (const extra of extraBlocks ?? []) {
-          skeleton.blocks.set(extra.blockId, extra.block);
-        }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
-        }
-        placement = { afterBlockId: blockId };
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting: false,
-          operationIndex,
-        });
-      }
+    try {
+      applyMarkdownOperationsToDoc(skeleton.doc, {
+        workspaceId,
+        docId: "markdown-preflight",
+        operations,
+        strict,
+        placement: { parentId: skeleton.noteId },
+      }, []);
+    } finally {
+      skeleton.doc.destroy();
     }
   }
 
@@ -4776,8 +4883,9 @@ export function registerDocTools(
         ...input,
       });
       const context = resolveInsertContext(blocks, normalized);
-      const { blockId, block, extraBlocks } = createBlock(normalized);
+      const { blockId, block, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
       blocks.set(blockId, block);
+      applySurfaceImageDefaultSize(block, context.parentBlock.get("sys:flavour"));
       if (Array.isArray(extraBlocks)) {
         for (const extra of extraBlocks) {
           blocks.set(extra.blockId, extra.block);
@@ -6088,6 +6196,7 @@ export function registerDocTools(
     getDocHandler as any
   );
 
+  /** Read document blocks, plain text and optional markdown. */
   const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -6203,6 +6312,13 @@ export function registerDocTools(
           language: typeof language === "string" ? language : null,
           preview: typeof preview === "boolean" ? preview : null,
           childIds,
+          ...(flavour === "affine:image"
+            ? {
+                sourceId: asStringOrNull(raw.get("prop:sourceId")),
+                caption: asStringOrNull(raw.get("prop:caption")),
+                bounds: parseXywhString(raw.get("prop:xywh")),
+              }
+            : {}),
         });
 
         for (const childId of childIds) {
@@ -6332,6 +6448,11 @@ export function registerDocTools(
         html: false,
         fidelityReport: true,
         snapshotBundle: false,
+      },
+      // upload_blob `filePath` needs AFFINE_BLOB_UPLOAD_FILE_ROOTS; inline content always works.
+      blobUpload: {
+        filePath: Boolean(process.env.AFFINE_BLOB_UPLOAD_FILE_ROOTS?.trim()),
+        inline: true,
       },
     });
   };
@@ -6790,6 +6911,7 @@ export function registerDocTools(
     appendSemanticSectionHandler as any
   );
 
+  /** Append one block (or a markdown subtree) to a document. */
   const appendBlockHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
@@ -6874,10 +6996,10 @@ export function registerDocTools(
         design: z.string().optional().describe("Design payload for embed_html"),
         reference: z.string().optional().describe("Target id for surface_ref"),
         refFlavour: z.string().optional().describe("Target flavour for surface_ref (e.g. affine:frame)"),
-        x: z.number().int().optional().describe("X position on the edgeless canvas for frame/edgeless_text/note (default 0). Prefer ≥40px between sibling bounds; BlockSuite does not auto-arrange."),
-        y: z.number().int().optional().describe("Y position on the edgeless canvas for frame/edgeless_text/note (default 0)."),
-        width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note."),
-        height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note. When `markdown` is set and height is omitted, an over-estimate is computed from the content — AFFiNE's render-time ResizeObserver corrects `prop:xywh` to the true DOM-measured height on first browser open."),
+        x: z.number().int().optional().describe("X position on the edgeless canvas for frame/edgeless_text/note/image (default 0). Prefer ≥40px between sibling bounds; BlockSuite does not auto-arrange."),
+        y: z.number().int().optional().describe("Y position on the edgeless canvas for frame/edgeless_text/note/image (default 0)."),
+        width: z.number().int().min(1).max(10000).optional().describe("Width for frame/edgeless_text/note/image."),
+        height: z.number().int().min(1).max(10000).optional().describe("Height for frame/edgeless_text/note/image. When `markdown` is set and height is omitted, an over-estimate is computed from the content — AFFiNE's render-time ResizeObserver corrects `prop:xywh` to the true DOM-measured height on first browser open."),
         background: z.any().optional().describe("Background for frame/note. Frame default 'transparent'. For notes, prefer AFFiNE's adaptive `--affine-note-background-<color>` family — `blue` / `purple` / `yellow` / `green` / `teal` / `red` / `orange` / `magenta` / `grey` / `white` / `black`. For specific per-theme colors, pass a `{light, dark}` hex object like `{light:'#fff', dark:'#252525'}`."),
         markdown: z.string().optional().describe("When type='note', parse this markdown into heading/paragraph/list/code child blocks inside the note (BlockSuite-native: mirrors what happens when you paste markdown into an edgeless note). Takes precedence over 'text' for note children. Ignored for other block types."),
         childElementIds: z.array(z.string()).optional().describe("For type='frame' only. The frame's contents. Accepts ids of surface elements (shapes/connectors/groups) AND edgeless blocks (notes/frames/edgeless-text) — BlockSuite's prop:childElementIds holds both, matching what the editor writes when you drag a note into a frame. Dragging the frame drags every owned member. Ids that don't resolve come back under 'missing'. When width/height are omitted the frame is sized to the union of resolvable child bounds + padding + a 30px title band."),
@@ -7219,7 +7341,7 @@ export function registerDocTools(
       warnings,
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7356,7 +7478,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7430,7 +7552,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -8595,6 +8717,11 @@ export function registerDocTools(
         if (Number.isNaN(num)) {
           throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
         }
+        // Repair number columns created without property data (older server
+        // versions): AFFiNE renders their cells blank until `data` exists.
+        if (col.raw instanceof Y.Map && col.raw.get("data") === undefined) {
+          col.raw.set("data", createDefaultDatabaseColumnData("number"));
+        }
         cellValue.set("value", num);
         break;
       }
@@ -9178,28 +9305,13 @@ export function registerDocTools(
       }
 
       const columnId = generateId();
-      const column = new Y.Map<any>();
-      column.set("id", columnId);
-      column.set("name", parsed.name);
-      column.set("type", parsed.type || "rich-text");
-      column.set("width", parsed.width || 200);
-
-      // For select/multi-select, create options
-      if ((parsed.type === "select" || parsed.type === "multi-select") && parsed.options?.length) {
-        const data = new Y.Map<any>();
-        const opts = new Y.Array<any>();
-        for (let i = 0; i < parsed.options.length; i++) {
-          const optMap = new Y.Map<any>();
-          optMap.set("id", generateId());
-          optMap.set("value", parsed.options[i]);
-          optMap.set("color", SELECT_COLORS[i % SELECT_COLORS.length]);
-          opts.push([optMap]);
-        }
-        data.set("options", opts);
-        column.set("data", data);
-      }
-
-      columns.push([column]);
+      columns.push([createDatabaseColumnDefinition({
+        id: columnId,
+        name: parsed.name,
+        type: parsed.type || "rich-text",
+        width: parsed.width || 200,
+        options: parsed.options,
+      })]);
 
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
@@ -9347,7 +9459,12 @@ export function registerDocTools(
       // definition, while manually created databases (append_block) have none —
       // native views on those use { titleColumn: null, iconColumn: null }.
       const titleCol = columnDefs.find(c => c.type === "title");
-      if (columnDefs.length === 0) throw new Error("Database has no columns");
+      const storedColumns = dbBlock.get("prop:columns");
+      if (columnDefs.length === 0 && !(
+        mode === "table" && storedColumns instanceof Y.Array && storedColumns.length === 0
+      )) {
+        throw new Error("Database has no columns");
+      }
 
       let groupBy: Record<string, unknown> | null = null;
       let groupProperties: unknown[] | null = null;
@@ -9397,7 +9514,7 @@ export function registerDocTools(
         name: viewName,
         mode,
         groupBy: (parsed.groupBy || "").trim() || null,
-        totalViews: existingNames.length + 1,
+        totalViews: views.length,
       });
     } finally {
       socket.disconnect();
@@ -9755,6 +9872,8 @@ export function registerDocTools(
   }
 
   function nextSurfaceElementIndex(valueMap: Y.Map<any>): string {
+    const blocks = valueMap.doc?.getMap("blocks");
+    if (blocks?.size) return nextCanvasBlockIndex(blocks);
     let maxIndex: string | null = null;
     for (const [, el] of valueMap.entries()) {
       if (!(el instanceof Y.Map)) continue;
@@ -10152,10 +10271,21 @@ export function registerDocTools(
           prunedConnectors: [],
         });
       }
-      ctx.value.delete(params.elementId);
+      // A native mindmap owns its node shapes; deleting only the mindmap would orphan them.
+      const deletedNodes: string[] = [];
+      if (existing.get("type") === "mindmap") {
+        try {
+          deletedNodes.push(...deleteNativeMindmap(ctx.value, params.elementId).slice(1));
+        } catch {
+          ctx.value.delete(params.elementId); // Malformed map: remove the element itself only.
+        }
+      } else {
+        ctx.value.delete(params.elementId);
+      }
 
       const prunedConnectors: string[] = [];
       if (params.pruneConnectors) {
+        const deletedIds = new Set([params.elementId, ...deletedNodes]);
         const toDelete: string[] = [];
         for (const [otherId, otherVal] of ctx.value.entries()) {
           if (!(otherVal instanceof Y.Map)) continue;
@@ -10163,10 +10293,10 @@ export function registerDocTools(
           const source = otherVal.get("source");
           const target = otherVal.get("target");
           const srcId =
-            source && typeof source === "object" ? (source as any).id : undefined;
+            source instanceof Y.Map ? source.get("id") : source && typeof source === "object" ? (source as any).id : undefined;
           const tgtId =
-            target && typeof target === "object" ? (target as any).id : undefined;
-          if (srcId === params.elementId || tgtId === params.elementId) {
+            target instanceof Y.Map ? target.get("id") : target && typeof target === "object" ? (target as any).id : undefined;
+          if (deletedIds.has(srcId) || deletedIds.has(tgtId)) {
             toDelete.push(String(otherId));
           }
         }
@@ -10176,7 +10306,7 @@ export function registerDocTools(
         }
       }
 
-      pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
+      pruneFromFrameChildElementIds(blocks, [params.elementId, ...deletedNodes, ...prunedConnectors]);
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
@@ -10185,7 +10315,7 @@ export function registerDocTools(
         params.docId,
         Buffer.from(delta).toString("base64")
       );
-      return text({ deleted: true, elementId: params.elementId, prunedConnectors });
+      return text({ deleted: true, elementId: params.elementId, deletedNodes, prunedConnectors });
     } finally {
       socket.disconnect();
     }
@@ -10280,6 +10410,7 @@ export function registerDocTools(
     }
   };
 
+  /** Update geometry or background of a note, frame, edgeless-text or image block. */
   const updateEdgelessBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10315,10 +10446,29 @@ export function registerDocTools(
         throw new Error(`Block '${params.blockId}' not found.`);
       }
       const flavour = block.get("sys:flavour");
-      if (flavour !== "affine:note" && flavour !== "affine:frame" && flavour !== "affine:edgeless-text") {
+      if (
+        flavour !== "affine:note" &&
+        flavour !== "affine:frame" &&
+        flavour !== "affine:edgeless-text" &&
+        flavour !== "affine:image"
+      ) {
         throw new Error(
-          `Block '${params.blockId}' has flavour '${String(flavour)}' — update_edgeless_block only mutates note/frame/edgeless-text blocks.`
+          `Block '${params.blockId}' has flavour '${String(flavour)}' — update_edgeless_block only mutates note/frame/edgeless-text/image blocks.`
         );
+      }
+
+      if (flavour === "affine:image") {
+        for (const [field, value] of [
+          ["width", params.width],
+          ["height", params.height],
+        ] as const) {
+          if (value === undefined) continue;
+          if (!Number.isInteger(value) || value < 1 || value > 10000) {
+            throw new Error(
+              `image ${field} must be an integer between 1 and 10000 (received ${String(value)}).`,
+            );
+          }
+        }
       }
 
       const changed: string[] = [];
@@ -10326,18 +10476,44 @@ export function registerDocTools(
 
       if (params.x !== undefined || params.y !== undefined || params.width !== undefined || params.height !== undefined) {
         const prev = parseXywhString(block.get("prop:xywh")) ?? { x: 0, y: 0, width: 0, height: 0 };
-        block.set("prop:xywh", formatXywhString(
-          params.x ?? prev.x,
-          params.y ?? prev.y,
-          params.width ?? prev.width,
-          params.height ?? prev.height,
-        ));
+        if (flavour === "affine:image") {
+          // A page image can store its size in prop:width/height while xywh is
+          // still zero or stale, so omitted dimensions fall back to the stored
+          // values. Surface images keep xywh precedence.
+          const currentParentId = resolveBlockParentId(blocks, params.blockId);
+          const currentParentFlavour = currentParentId
+            ? findBlockById(blocks, currentParentId)?.get("sys:flavour")
+            : undefined;
+          const next = resolveImageUpdateGeometry({
+            prev,
+            storedWidth: Number(block.get("prop:width")),
+            storedHeight: Number(block.get("prop:height")),
+            preferStored: currentParentFlavour !== "affine:surface",
+            x: params.x,
+            y: params.y,
+            width: params.width,
+            height: params.height,
+          });
+          block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
+          // Never write a zero back over a stored dimension.
+          if (next.propWidth !== undefined) block.set("prop:width", next.propWidth);
+          if (next.propHeight !== undefined) block.set("prop:height", next.propHeight);
+        } else {
+          const next = {
+            x: params.x ?? prev.x,
+            y: params.y ?? prev.y,
+            width: params.width ?? prev.width,
+            height: params.height ?? prev.height,
+          };
+          block.set("prop:xywh", formatXywhString(next.x, next.y, next.width, next.height));
+        }
         changed.push("xywh");
       }
 
       if (params.background !== undefined) {
-        if (flavour === "affine:edgeless-text") {
-          ignored.push("background"); // edgeless-text has no prop:background
+        if (flavour === "affine:edgeless-text" || flavour === "affine:image") {
+          // Neither flavour has a prop:background.
+          ignored.push("background");
         } else {
           const bg = params.background;
           if (bg && typeof bg === "object" && !Array.isArray(bg) && ("light" in bg || "dark" in bg)) {
@@ -10724,6 +10900,7 @@ export function registerDocTools(
     }
   };
 
+  /** Move a block to a new placement without changing its id. */
   const moveBlockHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -10795,7 +10972,9 @@ export function registerDocTools(
           ? "frame"
           : flavour === "affine:edgeless-text"
             ? "edgeless_text"
-            : "paragraph";
+            : flavour === "affine:image"
+              ? "image"
+              : "paragraph";
       const target = resolveInsertContext(blocks, {
         placement: resolvedPlacement,
         strict: true,
@@ -10803,6 +10982,18 @@ export function registerDocTools(
       });
       target.children.insert(target.insertIndex, [params.blockId]);
       block.set("sys:parent", null);
+      const pageImageSize = resolvePageImageSize({
+        placed: parseXywhString(block.get("prop:xywh")),
+        fromFlavour: fromParent?.get("sys:flavour"),
+        toFlavour: target.parentBlock.get("sys:flavour"),
+        isImage: flavour === "affine:image",
+      });
+      if (pageImageSize) {
+        block.set("prop:width", pageImageSize.width);
+        block.set("prop:height", pageImageSize.height);
+      }
+      const preferStored = fromParent?.get("sys:flavour") !== "affine:surface";
+      applySurfaceImageDefaultSize(block, target.parentBlock.get("sys:flavour"), preferStored);
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
@@ -10956,6 +11147,7 @@ export function registerDocTools(
     }
   };
 
+  /** Read edgeless blocks and surface elements with parsed bounds. */
   const getEdgelessCanvasHandler = async (params: GetEdgelessCanvasInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -10989,7 +11181,20 @@ export function registerDocTools(
         "affine:frame",
         "affine:edgeless-text",
         "affine:note",
+        "affine:image",
       ]);
+
+      // Images are canvas elements only when AFFiNE attached them to the surface
+      // block. Images that live inside a page note stay in the document flow and
+      // must not be reported as edgeless blocks.
+      const surfaceBlockId = findBlockIdByFlavour(blocks, "affine:surface");
+      const surfaceChildIds = new Set<string>(
+        surfaceBlockId
+          ? childIdsFrom(
+              (blocks.get(surfaceBlockId) as Y.Map<any> | undefined)?.get("sys:children"),
+            )
+          : [],
+      );
 
       const collectNoteText = (rootId: string): string[] => {
         const out: string[] = [];
@@ -11058,6 +11263,7 @@ export function registerDocTools(
         if (!(raw instanceof Y.Map)) continue;
         const flavour = raw.get("sys:flavour");
         if (typeof flavour !== "string" || !edgelessFlavours.has(flavour)) continue;
+        if (flavour === "affine:image" && !surfaceChildIds.has(String(id))) continue;
         const xywhRaw = raw.get("prop:xywh");
         const bounds = parseXywhString(xywhRaw);
         const propIndex = raw.get("prop:index");
@@ -11069,6 +11275,7 @@ export function registerDocTools(
           index: typeof propIndex === "string" ? propIndex : null,
         };
         if (flavour === "affine:frame") {
+          entry.presentationIndex = asStringOrNull(raw.get("prop:presentationIndex"));
           entry.title = asText(raw.get("prop:title")) || null;
           const bg = raw.get("prop:background");
           entry.background = bg instanceof Y.Map ? bg.toJSON() : bg ?? null;
@@ -11078,6 +11285,13 @@ export function registerDocTools(
           const lines = collectNoteText(String(id));
           entry.text = lines.length ? lines.join("\n") : null;
           entry.color = raw.get("prop:color") ?? null;
+        } else if (flavour === "affine:image") {
+          entry.sourceId = asStringOrNull(raw.get("prop:sourceId"));
+          entry.caption = asText(raw.get("prop:caption")) || null;
+          // Canvas images are sized by prop:xywh; keep the stored props only as
+          // a fallback so the reported size never contradicts the bounds.
+          entry.width = bounds?.width ?? raw.get("prop:width") ?? null;
+          entry.height = bounds?.height ?? raw.get("prop:height") ?? null;
         } else if (flavour === "affine:note") {
           const lines = collectNoteText(String(id));
           entry.text = lines.length ? lines.join("\n") : null;
@@ -11129,7 +11343,7 @@ export function registerDocTools(
       return text({
         docId: params.docId,
         exists: true,
-        surfaceBlockId: ctx?.surfaceId ?? null,
+        surfaceBlockId: ctx?.surfaceId ?? surfaceBlockId ?? null,
         edgelessBlocks: sortedEdgelessBlocks,
         surfaceElements: sortedSurfaceElements,
         elementCounts: counts,
@@ -11268,7 +11482,7 @@ export function registerDocTools(
     {
       title: "Delete Surface Element",
       description:
-        "Delete a surface element by id. Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
+        "Delete a surface element by id. Deleting a native mindmap also deletes all of its node shapes (reported in deletedNodes). Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
@@ -11314,11 +11528,11 @@ export function registerDocTools(
     {
       title: "Update Edgeless Block",
       description:
-        "Partially update a note/frame/edgeless-text block by id. x/y/width/height merge with current prop:xywh (move without resizing, or vice versa). background replaces prop:background (AFFiNE token or `{light, dark}` hex object). Fields that don't apply to the block's flavour come back under `ignored`.",
+        "Partially update a note/frame/edgeless-text/image block by id. x/y/width/height merge with current prop:xywh (move without resizing, or vice versa). background replaces prop:background (AFFiNE token or `{light, dark}` hex object); edgeless-text and image blocks have no background and report it under `ignored`. Fields that don't apply to the block's flavour come back under `ignored`.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
-        blockId: z.string().min(1).describe("Block id (flavour affine:note/affine:frame/affine:edgeless-text)."),
+        blockId: z.string().min(1).describe("Block id (flavour affine:note/affine:frame/affine:edgeless-text/affine:image)."),
         x: z.number().optional(),
         y: z.number().optional(),
         width: z.number().optional(),
@@ -11441,7 +11655,7 @@ export function registerDocTools(
     {
       title: "Get Edgeless Canvas",
       description:
-        "Read the full edgeless canvas: all edgeless-positioned blocks (notes, frames, edgeless-text) with their xywh, plus all surface elements (shapes, connectors, text, groups). Includes aggregate bounding box and per-type element counts. Use this when you need to understand canvas layout end-to-end before placing new elements.",
+        "Read the full edgeless canvas: all edgeless-positioned blocks (notes, frames, edgeless-text, images) with their xywh, plus all surface elements (shapes, connectors, text, groups). Includes aggregate bounding box and per-type element counts. Use this when you need to understand canvas layout end-to-end before placing new elements.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
