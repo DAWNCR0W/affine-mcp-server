@@ -227,6 +227,8 @@ Everything above writes to the native BlockSuite schema — no custom overlay:
 - Frame ownership uses `prop:childElementIds` as a `Y.Map<boolean>` keyed by element id — identical shape to a group's `children` map.
 - Connectors with both endpoints bound by id and no explicit position auto-snap to the four tangent-carrying side-midpoints (`[0.5,0]`, `[0.5,1]`, `[0,0.5]`, `[1,0.5]`).
 - `labelXYWH` is seeded at the source→target midpoint so BlockSuite's label renderer doesn't short-circuit on first render.
+- Compact canvas reads preserve `labelXYWH`, including label bounds moved by the editor.
+- Group members resolve to surface models or native GFX block models (`model/src/utils/helper.ts` and `model/src/blocks/*` in AFFiNE v0.27.4). Self/ancestor rejection follows `canSafeAddToContainer` in `framework/std/src/utils/tree.ts`, including group/mindmap children and frame ownership.
 - `append_block(type="edgeless_text", text=…)` auto-creates a child `affine:paragraph` — the edgeless-text view walks `sys:children` for glyphs, so without it the block renders as an invisible sliver.
 - `src/edgeless/layout.ts` is a dependency-free module citing the upstream BlockSuite files each helper mirrors (`connector.ts`, `connector-manager.ts`, `edgeless-note-mask.ts`), so future parity audits stay cheap.
 
@@ -237,6 +239,15 @@ New notes, canvas text, surface-parented images and surface elements receive a
 key after the greatest existing layer key. Frames receive a key before the
 lowest existing layer key so their backgrounds stay behind their contents.
 Page-contained media retain their legacy properties.
+
+Explicit layer indexes on single and batch surface writes must be valid
+base-62 fractional-index keys. Validation preserves native integer keys and
+long legacy fractional suffixes; it does not rewrite stored indexes. Malformed
+keys are rejected before persistence so future automatic allocation remains
+usable. ID-bound connector endpoints must exist in the request's surface map
+or document blocks, which also permits native image and edgeless-text targets.
+Earlier local batch keys resolve to their newly created surface IDs before
+this check; absolute endpoint coordinates do not require an ID.
 
 Frame presentation order uses a separate `prop:presentationIndex`: each newly
 appended frame receives a key after all existing frame presentation keys.
