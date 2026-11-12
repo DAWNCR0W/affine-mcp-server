@@ -9,6 +9,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import * as Y from "yjs";
 
 import { wsUrlFromGraphQLEndpoint, connectWorkspaceSocket, joinWorkspace, loadDoc } from "../dist/ws.js";
+import { parseMarkdownToOperations } from "../dist/markdown/parse.js";
 import { acquireCredentials } from "./acquire-credentials.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -127,6 +128,51 @@ function listBlockDeltas(blocks) {
     deltas.push(text.toDelta());
   }
   return deltas;
+}
+
+function expectNativeNestedLists(blocks, flow) {
+  const listWithText = expected => findBlock(blocks, (_, block) => {
+    const text = block.get("prop:text");
+    return block.get("sys:flavour") === "affine:list"
+      && text instanceof Y.Text && text.toString() === expected;
+  });
+  const top = listWithText("Top level item");
+  const nested = listWithText("Nested level item");
+  expect(top && nested, `${flow} must materialize both native list items`);
+  const parentsOf = childId => [...blocks]
+    .filter(([, block]) => block instanceof Y.Map && childIdsFrom(block.get("sys:children")).includes(childId))
+    .map(([id]) => String(id));
+  const nestedParents = parentsOf(nested.id);
+  expect(
+    nestedParents.length === 1 && nestedParents[0] === top.id,
+    `${flow} must attach the nested item only beneath the top-level item (parents=${JSON.stringify(nestedParents)})`,
+  );
+  const topParents = parentsOf(top.id);
+  expect(
+    topParents.length === 1 && blocks.get(topParents[0])?.get("sys:flavour") === "affine:note",
+    `${flow} must keep the top-level item in its note (parents=${JSON.stringify(topParents)})`,
+  );
+  expect(
+    childIdsFrom(top.block.get("sys:children")).length === 1,
+    `${flow} must preserve exactly one child beneath the top-level item`,
+  );
+  expect(
+    childIdsFrom(nested.block.get("sys:children")).length === 0,
+    `${flow} must preserve the nested leaf item`,
+  );
+}
+
+function expectNestedMarkdownExport(markdown, flow) {
+  const { operations } = parseMarkdownToOperations(markdown);
+  const top = operations.find(operation => operation.type === "list" && operation.text === "Top level item");
+  expect(
+    top?.children?.some(operation => operation.type === "list" && operation.text === "Nested level item"),
+    `${flow} export must retain indentation that reparses into a nested list`,
+  );
+  expect(
+    !operations.some(operation => operation.type === "list" && operation.text === "Nested level item"),
+    `${flow} export must not promote the nested item to the root list level`,
+  );
 }
 
 function tableCellDeltas(tableBlock) {
@@ -349,6 +395,9 @@ async function main() {
     const createdListDeltas = listBlockDeltas(createdBlocks);
     expect(createdListDeltas.some(delta => hasBoldRun(delta, "Top level")), "top-level list item did not preserve bold");
     expect(createdListDeltas.some(delta => hasBoldRun(delta, "Nested level")), "nested list item did not preserve bold");
+    expectNativeNestedLists(createdBlocks, "create_doc_from_markdown");
+    const createdExport = await call("export_doc_markdown", { workspaceId, docId: createdDocId });
+    expectNestedMarkdownExport(createdExport.markdown, "create_doc_from_markdown");
 
     const createdTable = findBlock(createdBlocks, (_, block) => block.get("sys:flavour") === "affine:table");
     expect(createdTable, "table block not found after create_doc_from_markdown");
@@ -403,6 +452,9 @@ async function main() {
     const replacedListDeltas = listBlockDeltas(replacedBlocks);
     expect(replacedListDeltas.some(delta => hasBoldRun(delta, "Top level")), "replace_doc_with_markdown top-level list item lost bold");
     expect(replacedListDeltas.some(delta => hasBoldRun(delta, "Nested level")), "replace_doc_with_markdown nested list item lost bold");
+    expectNativeNestedLists(replacedBlocks, "replace_doc_with_markdown");
+    const replacedExport = await call("export_doc_markdown", { workspaceId, docId: replaceDocId });
+    expectNestedMarkdownExport(replacedExport.markdown, "replace_doc_with_markdown");
 
     const replacedTable = findBlock(replacedBlocks, (_, block) => block.get("sys:flavour") === "affine:table");
     expect(replacedTable, "table block not found after replace_doc_with_markdown");

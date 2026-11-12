@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_capabilities` reports `blobUpload.filePath` (whether `AFFINE_BLOB_UPLOAD_FILE_ROOTS` enables disk-path uploads) and `blobUpload.inline`, so clients can tell before calling `upload_blob`.
 
 ### Fixed
+- Preserve nested bullet, numbered, and task lists during Markdown creation, append, replacement, and export (#456). Child items retain their native hierarchy, inline formatting, and checked state; preflight validates the same recursive insertion path before creating a document, and block counts include descendants.
 - Number columns created by `add_database_column` (and by database intent / data view presets) now store BlockSuite's default property data `{ decimal: 0, format: "number" }`, so the AFFiNE UI renders their cells instead of showing them blank (#457). Select and multi-select columns created without options get an empty `options` list for the same reason, and other types get `{}`. Writing a value to an existing number column that has no property data adds the default data, which repairs columns created by earlier versions.
 
 ## [3.12.0] - 2026-11-09

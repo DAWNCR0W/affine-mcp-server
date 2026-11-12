@@ -231,8 +231,11 @@ function testListTextAfterDisplayMathIsPreserved() {
   }
 
   const nested = parseMarkdownToOperations('- Before\n  $$x$$\n  After\n  - Child $y$');
-  assert.deepEqual(nested.operations.map(operation => operation.text), ['Before\n \nAfter', 'Child  ']);
-  assert.deepEqual(nested.operations.map(operation => latexValues(operation.deltas)), [['x'], ['y']]);
+  assert.equal(nested.operations.length, 1);
+  assert.equal(nested.operations[0].text, 'Before\n \nAfter');
+  assert.deepEqual(latexValues(nested.operations[0].deltas), ['x']);
+  assert.equal(nested.operations[0].children[0].text, 'Child  ');
+  assert.deepEqual(latexValues(nested.operations[0].children[0].deltas), ['y']);
 }
 
 function testLatexBlockExport() {
