@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initialize database intent columns and seed rows in one content update. Invalid custom columns or seed cells no longer leave a partially created database in the document.
 - `add_database_rows` accepts the shared document `expectedRevision` precondition and rejects stale batches before changing any rows.
 
+### Security
+- Refresh vulnerable runtime dependencies: body-parser to 2.4.0, Zod to 4.6.7, @hono/node-server to 2.1.7, Hono to 4.13.18, fast-uri to 3.1.9, ip-address to 10.7.6, and qs to 6.17.1. Preserve legacy tool schemas through `zod/v3` compatibility imports.
+- Require MCP SDK 1.32.2 or newer and reject tool arguments above 20,000 nested object members and array elements before tool-input schema validation on both stdio and HTTP transports. Larger batches must be split into smaller calls.
+
 ## [3.12.0] - 2026-11-09
 
 ### Added

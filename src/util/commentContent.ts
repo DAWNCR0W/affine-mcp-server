@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { secureAffineId } from "./random.js";
 
 // AFFiNE 0.27.4's comment editor consumes a BlockSuite DocSnapshot, not { text }.

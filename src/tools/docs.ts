@@ -2,7 +2,7 @@ import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
 import { deleteNativeMindmap, registerMindmapTools } from "./mindmap.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";

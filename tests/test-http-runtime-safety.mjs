@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, request as requestHttp } from "node:http";
 import { connect as connectTcp } from "node:net";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { gzipSync } from "node:zlib";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -293,6 +294,67 @@ async function testBodyLimitErrors() {
     assertEqual(malformed.status, 400, "malformed JSON status");
     const malformedBody = await readJson(malformed);
     assertEqual(malformedBody.error?.code, -32700, "malformed JSON error code");
+  } finally {
+    await server.close();
+  }
+}
+
+async function testCompressedTrailingBytesDoNotCrashServer() {
+  const token = "compressed-request-runtime-test-token";
+  const server = await startHealthyServer({ AFFINE_MCP_HTTP_TOKEN: token });
+  try {
+    // The maintainer's GHSA-27r3-jxmh-p828 regression fixture finishes a gzip
+    // frame before its corrupt tail reaches the decoder. Sending only a broken
+    // gzip frame would exercise the ordinary parser error path, not the crash.
+    const body = Buffer.concat([
+      gzipSync(Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 90, method: "tools/list", params: {} }))),
+      Buffer.from([0x00]),
+      Buffer.alloc(100 * 1024, 0x58),
+    ]);
+    const response = await new Promise((resolve, reject) => {
+      const request = requestHttp(`${server.baseUrl}/mcp`, {
+        method: "POST",
+        agent: false,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Content-Encoding": "gzip",
+          "Content-Length": body.length,
+        },
+      }, (incoming) => {
+        let text = "";
+        incoming.setEncoding("utf8");
+        incoming.on("data", chunk => { text += chunk; });
+        incoming.once("error", reject);
+        incoming.once("end", () => resolve({ status: incoming.statusCode, text }));
+      });
+      request.once("error", reject);
+      request.setTimeout(3_000, () => request.destroy(new Error("Compressed request timed out")));
+      request.end(body);
+    });
+    // This is valid JSON but cannot dispatch a tool without an MCP session.
+    // body-parser may finish the valid frame before observing its trailing bytes.
+    assertEqual(response.status, 400, `compressed sessionless request: ${response.text}`);
+
+    // The original vulnerability emitted an unhandled decoder error after the
+    // response. Allow that late event before checking the disposable process.
+    await delay(200);
+    assert(server.child.exitCode === null, `compressed request crashed the server: ${JSON.stringify(server.logs())}`);
+    await waitForHealth(server.child, `${server.baseUrl}/healthz`, server.logs);
+    const initialized = await fetch(`${server.baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json, text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(initializeBody(91)),
+      signal: AbortSignal.timeout(3_000),
+    });
+    const initializedBody = await initialized.text();
+    assertEqual(initialized.status, 200, `initialize after compressed request: ${initializedBody}`);
+    assert(initialized.headers.get("mcp-session-id"), "initialize after compressed request returns a session ID");
   } finally {
     await server.close();
   }
@@ -593,6 +655,7 @@ async function main() {
   await testRuntimeConfig();
   await testStartupErrors();
   await testBodyLimitErrors();
+  await testCompressedTrailingBytesDoNotCrashServer();
   await testUnknownSessionReturnsNotFound();
   await testSessionCapacityActivityAndIdleCleanup();
   await testPendingAndSharedSessionCapacity();

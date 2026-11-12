@@ -18,9 +18,12 @@
 - Store BlockSuite default property data for new database columns so number cells and empty select/multi-select columns render correctly (#458, #457).
 - Preserve native parent/child list hierarchy, supported inline formatting, and checked states across Markdown creation, append, replacement, and export. Validate the same recursive insertion path before creation (#459, #456).
 - Add fast and live regressions for stale revisions, atomic rollback, native database readback, group safety, connector cleanup, and Markdown round-trips.
+- Refresh vulnerable runtime dependencies, including body-parser 2.4.0 and Zod 4.6.7. Keep legacy tool schemas on the `zod/v3` compatibility API and require MCP SDK 1.32.2 or newer for input-cost protection.
+- Reject tool arguments above 20,000 nested object members and array elements before tool-input schema validation, across stdio and HTTP transports.
 
 ### Compatibility
 - The canonical MCP surface increases from 108 to 112 tools. Existing tool names and required inputs remain unchanged; new tools and optional fields are additive.
+- Tool calls now have a 20,000-element structural input ceiling, including unknown fields. Split larger batches into smaller calls; this is separate from the HTTP request-body byte limit.
 - Single and batch canvas writes now reject malformed indexes, missing connector targets, and invalid group membership that older versions could accept. Existing valid elements and indexes are preserved.
 - Optional `expectedRevision` checks apply to the new database and canvas mutations. Coordination requires a shared MCP server; independent servers and native editor writes do not gain cross-client compare-and-swap protection.
 - No data migration is required. Older number columns without property data are repaired on their next numeric cell write; custom number formatting is preserved.

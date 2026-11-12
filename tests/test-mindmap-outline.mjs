@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { compactMindmap, mutateNativeMindmap, readNativeMindmap, registerMindmapTools } from '../dist/tools/mindmap.js';
 
 function fixture() {

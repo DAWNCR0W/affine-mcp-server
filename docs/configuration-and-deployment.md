@@ -243,6 +243,14 @@ HTTP mode exposes:
 
 ### Runtime limits and shutdown
 
+Across stdio and HTTP transports, each tool call accepts at most 20,000 nested
+object members and array elements in total. This input-cost ceiling is checked
+before tool-schema validation and handler execution, including fields a tool
+would otherwise ignore. Calls above the ceiling are rejected without running
+the tool; split large batches or rich-text payloads into smaller calls. This
+ceiling supplements the HTTP body-size limit and does not replace each tool's
+own row, element, or table-size limits.
+
 The HTTP transport limits JSON request bodies and the number of active sessions
 to prevent accidental resource exhaustion. Both Streamable HTTP and legacy SSE
 sessions, including pending initialization, count toward

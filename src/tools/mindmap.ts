@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { generateKeyBetween } from "fractional-indexing";
 import * as Y from "yjs";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { GraphQLClient } from "../graphqlClient.js";
 import { text, toolError } from "../util/mcp.js";
 import { secureRandomInt31, secureRandomString } from "../util/random.js";

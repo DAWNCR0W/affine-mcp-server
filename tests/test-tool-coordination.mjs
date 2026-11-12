@@ -1,7 +1,7 @@
 import './require-destructive-test-safety.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import * as Y from 'yjs';
 import { coordinateTool } from '../dist/toolCoordination.js';
 import { documentRevision, isDocumentRegistered } from '../dist/util/documentRevision.js';

@@ -4,7 +4,7 @@ import "./require-destructive-test-safety.mjs";
 import assert from "node:assert/strict";
 import * as Y from "yjs";
 import { WebSocketServer } from "ws";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { coordinateTool } from "../dist/toolCoordination.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { documentRevision } from "../dist/util/documentRevision.js";
