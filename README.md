@@ -39,7 +39,7 @@ Highlights:
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 109 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Exposes 112 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Places, resizes, and connects images on edgeless canvases, with blob identifiers and geometry in readback
@@ -266,7 +266,7 @@ Domains:
 - Workspace: create, inspect, update, delete, and traverse workspaces
 - Organization: collections, collection-rule sync, workspace blueprints, and experimental organize or folder helpers
 - Documents: search, read, create, publish, move, tag, custom properties, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and block-level mutation
-- Databases: create columns, add rows, update rows, inspect schema, and compose database structures from intent
+- Databases: create columns, add rows, update rows, inspect schema, add table/kanban views, and compose database structures from intent
 - Comments: list, create, update, delete, and resolve
 - History: version history listing
 - Users and authentication: current user, sign-in, and profile/settings

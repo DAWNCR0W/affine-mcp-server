@@ -5,14 +5,18 @@ import { testResourceName, testTempPath } from './require-destructive-test-safet
  * Focused integration test for intent-driven database composition.
  *
  * Verifies that compose_database_from_intent can build useful task board and
- * issue tracker presets, returns essential handles, and persists schema + rows.
+ * issue tracker presets and custom tables, preserves native number defaults,
+ * adds atomic row batches, and leaves backend content unchanged on invalid input.
  */
+import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import * as Y from 'yjs';
 import { acquireCredentials, ensureAdminUser, waitForHealthy } from './acquire-credentials.mjs';
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from '../dist/ws.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
@@ -105,6 +109,91 @@ async function main() {
     }
     console.log('    ✓ OK');
     return parsed;
+  }
+
+  async function inspectDocument(workspaceId, docId, inspect) {
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), auth.cookie);
+    const doc = new Y.Doc();
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, docId);
+      assert.ok(snapshot.missing, 'backend document snapshot must exist');
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, 'base64'));
+      return inspect(doc.getMap('blocks'));
+    } finally {
+      doc.destroy();
+      socket.disconnect();
+    }
+  }
+
+  async function backendBlockCounts(workspaceId, docId) {
+    return inspectDocument(workspaceId, docId, blocks => ({
+      blocks: blocks.size,
+      databases: [...blocks.values()].filter(block => block.get('sys:flavour') === 'affine:database').length,
+    }));
+  }
+
+  async function rejectWithoutBackendBlocks(toolName, args, pattern) {
+    const before = await backendBlockCounts(args.workspaceId, args.docId);
+    await assert.rejects(call(toolName, args), pattern);
+    assert.deepEqual(await backendBlockCounts(args.workspaceId, args.docId), before,
+      `${toolName}: invalid input must not persist database or row blocks`);
+  }
+
+  async function validateCustomTable(workspaceId) {
+    const doc = await call('create_doc', { workspaceId, title: 'Custom Table Intent Doc', content: '' });
+    const args = { workspaceId, docId: doc.docId, intent: 'table' };
+    const columns = [{ name: 'Status', type: 'select', options: ['Todo'] }, { name: 'Estimate', type: 'number' }];
+    await rejectWithoutBackendBlocks('compose_database_from_intent', {
+      ...args, columns: [{ name: 'Title', type: 'rich-text' }], seedRows: [],
+    }, /Column 'Title' already exists/);
+    await rejectWithoutBackendBlocks('compose_database_from_intent', {
+      ...args, columns,
+      seedRows: [{ title: 'Must roll back', Status: 'Discarded option', Estimate: 1 }, { title: 'Invalid', Estimate: 'not-a-number' }],
+    }, /expected a number/);
+
+    const table = await call('compose_database_from_intent', {
+      ...args, title: 'Custom Tasks', columns, seedRows: [{ title: 'First task', Status: 'Todo', Estimate: 42 }],
+    });
+    assert.equal(table.views[0].mode, 'table');
+    assert.equal(table.stats.seededRowCount, 1);
+    assert.deepEqual(table.columns.map(column => column.name), ['Title', 'Status', 'Estimate']);
+    const databaseArgs = { workspaceId, docId: doc.docId, databaseBlockId: table.databaseBlockId };
+    async function assertNumberDefaults() {
+      const data = await inspectDocument(workspaceId, doc.docId, blocks => {
+        const database = [...blocks.values()].find(block => block.get('sys:id') === table.databaseBlockId);
+        assert.ok(database instanceof Y.Map, 'custom database must exist in the backend snapshot');
+        const estimate = database.get('prop:columns').toArray().find(column => column.get('name') === 'Estimate');
+        assert.ok(estimate instanceof Y.Map, 'number column must exist in the backend snapshot');
+        const propertyData = estimate.get('data');
+        return propertyData instanceof Y.Map ? propertyData.toJSON() : propertyData;
+      });
+      assert.deepEqual(data, { decimal: 0, format: 'number' }, 'custom number columns must retain native property defaults');
+    }
+    await assertNumberDefaults();
+    const revision = (await call('read_doc', { workspaceId, docId: doc.docId })).revision;
+    const batch = await call('add_database_rows', {
+      ...databaseArgs, expectedRevision: revision,
+      rows: [{ cells: { title: 'Second task', Status: 'Done', Estimate: 7 } }, { cells: { title: 'Third task', Status: 'Done', Estimate: 0 } }],
+    });
+    assert.equal(batch.added, 2);
+    const rows = (await call('read_database_cells', databaseArgs)).rows;
+    assert.deepEqual(rows.map(row => row.rowBlockId), [...table.rowBlockIds, ...batch.rowBlockIds]);
+    assert.deepEqual(rows.map(row => [row.title, row.cells.Estimate.value, row.cells.Status.value]), [
+      ['First task', 42, 'Todo'], ['Second task', 7, 'Done'], ['Third task', 0, 'Done'],
+    ]);
+    await assertNumberDefaults();
+    const statusOptions = async () => (await call('read_database_columns', databaseArgs)).columns
+      .find(column => column.name === 'Status').options.map(option => option.value).sort();
+    assert.deepEqual(await statusOptions(), ['Done', 'Todo'], 'batch rows must reuse newly created select options');
+    await rejectWithoutBackendBlocks('add_database_rows', {
+      ...databaseArgs,
+      rows: [{ cells: { title: 'Must roll back', Status: 'Rollback option', Estimate: 1 } }, { cells: { Estimate: 'invalid' } }],
+    }, /expected a number/);
+    assert.deepEqual(await statusOptions(), ['Done', 'Todo'], 'failed batches must not persist select options');
+    await rejectWithoutBackendBlocks('add_database_rows', {
+      ...databaseArgs, expectedRevision: revision, rows: [{ cells: { title: 'Stale request' } }],
+    }, /STALE_DOCUMENT_REVISION/);
   }
 
   async function validateIntentBoard({
@@ -239,6 +328,8 @@ async function main() {
         { name: 'Due Date', type: 'date' },
       ],
     });
+
+    await validateCustomTable(workspaceId);
 
     console.log();
     console.log('=== Intent-driven database builder test passed ===');

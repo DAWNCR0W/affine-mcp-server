@@ -198,6 +198,17 @@ function mapLock(values: Values, mindmapId: string) {
   return { lockedBySelf, lockedByAncestor, locked: lockedBySelf || lockedByAncestor };
 }
 
+/**
+ * Removes a native mindmap and every node shape it owns; returns the removed IDs.
+ * Pre: `mindmapId` passes native validation. Post: no removed ID remains in `values`.
+ * Nodes are plain shapes, so deleting only the mindmap element would orphan them.
+ */
+export function deleteNativeMindmap(values: Values, mindmapId: string): string[] {
+  const ids = [mindmapId, ...readTree(values, mindmapId).nodes.keys()];
+  for (const id of ids) values.delete(id);
+  return ids;
+}
+
 /** Creates a uniquely identified shape while preserving literal label text. */
 function addShape(values: Values, helpers: MindmapHelpers, label: string) {
   const built = helpers.buildSurfaceElementData("shape", helpers.nextSurfaceElementIndex(values), { text: label });
@@ -221,9 +232,31 @@ export function readNativeMindmap(values: Values, mindmapId: string) {
   };
 }
 
+/**
+ * Builds a root plus a nested outline in one request-local mutation.
+ * Pre: outline is well-formed and fits MAX_NODES/MAX_DEPTH, checked before any write.
+ * Post: the stored map holds exactly 1 + outline node count nodes.
+ */
+function createWithOutline(values: Values, p: Record<string, any>, helpers: MindmapHelpers): ReturnType<typeof readNativeMindmap> & { nodeId?: string } {
+  const outline = z.array(OutlineNode).parse(p.children);
+  const { count, depth } = outlineStats(outline);
+  if (1 + count > MAX_NODES) fail("Native mindmap exceeds maximum node count 500");
+  if (1 + depth > MAX_DEPTH) fail("Native mindmap exceeds maximum depth 64");
+  const root = mutateNativeMindmap(values, "create", { ...p, children: undefined }, helpers);
+  const attach = (parentId: string, children: Outline[]) => children.forEach(child => {
+    const added = mutateNativeMindmap(values, "add", { mindmapId: root.mindmapId, parentId, text: child.text }, helpers);
+    attach(added.nodeId!, child.children ?? []);
+  });
+  attach(root.rootId, outline);
+  const result = { ...readNativeMindmap(values, root.mindmapId), nodeId: root.nodeId };
+  if (result.nodeCount !== 1 + count) fail("Outline node count mismatch");
+  return result;
+}
+
 type Operation = "create" | "add" | "update" | "reparent" | "layout" | "style" | "lock";
 /** Mutates a request-local document; callers persist its delta only after success. */
-export function mutateNativeMindmap(values: Values, operation: Operation, p: Record<string, any>, helpers: MindmapHelpers) {
+export function mutateNativeMindmap(values: Values, operation: Operation, p: Record<string, any>, helpers: MindmapHelpers): ReturnType<typeof readNativeMindmap> & { nodeId?: string } {
+  if (operation === "create" && p.children !== undefined) return createWithOutline(values, p, helpers);
   let mindmapId = p.mindmapId as string;
   let nodeId: string | undefined;
   // All mutations run on the request-local doc. No delta is pushed on failure.
@@ -290,10 +323,30 @@ export function mutateNativeMindmap(values: Values, operation: Operation, p: Rec
   return { ...readNativeMindmap(values, mindmapId), ...(nodeId ? { nodeId } : {}) };
 }
 
+/** Outline accepted by `create_mindmap`: a label plus optional nested children. */
+export type Outline = { text: string; children?: Outline[] };
+const OutlineNode: z.ZodType<Outline> = z.lazy(() => z.object({ text: Label, children: z.array(OutlineNode).optional() }));
+
+/** Counts outline nodes and the longest chain so limits can be checked before any write. */
+function outlineStats(nodes: Outline[]): { count: number; depth: number } {
+  let count = 0, depth = 0;
+  for (const n of nodes) {
+    const s = outlineStats(n.children ?? []);
+    count += 1 + s.count; depth = Math.max(depth, 1 + s.depth);
+  }
+  return { count, depth };
+}
+
+/** Drops the node list from a response so large maps stay cheap to return. */
+export function compactMindmap<T extends { nodes: unknown[] }>(result: T): T & { compact: true } {
+  return { ...result, nodes: [], compact: true };
+}
+
 /** Registers native mindmap tools with per-request Yjs documents and socket cleanup. */
 export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }, helpers: MindmapHelpers) {
   const base = { workspaceId: z.string().min(1).optional(), docId: Id };
   const target = { ...base, mindmapId: Id };
+  const compact = { compact: z.boolean().optional().describe("Return nodeCount and ids but an empty `nodes` list. Use for large maps; read the hierarchy with get_mindmap.") };
   /** Loads and validates one document, persists successful mutations, and releases resources. */
   const run = (operation: Operation | "get") => async (p: Record<string, any>): Promise<CallToolResult> => {
     const workspaceId = p.workspaceId || defaults.workspaceId;
@@ -319,15 +372,15 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
         const delta = pendingUpdate.finish();
         await pushPageDocUpdate(socket, workspaceId, p.docId, Buffer.from(delta).toString("base64"));
       }
-      return text({ ok: true, workspaceId, docId: p.docId, surfaceBlockId: ctx.surfaceId, ...result }) as CallToolResult;
+      return text({ ok: true, workspaceId, docId: p.docId, surfaceBlockId: ctx.surfaceId, ...(p.compact ? compactMindmap(result) : result) }) as CallToolResult;
     } catch (error) {
       return toolError(error, { code: "mindmap_operation_failed" }) as CallToolResult;
     } finally { socket?.disconnect(); doc.destroy(); }
   };
   server.registerTool("create_mindmap", {
     title: "Create Native Mindmap",
-    description: "Create a native AFFiNE mindmap with one root shape in an existing document. Returns mindmapId/rootId for add_mindmap_node. Only right/left/balance are supported; down/up are unsupported by BlockSuite. Does not create a document or sidebar link.",
-    inputSchema: { ...base, text: Label, layout: Direction.optional(), style: Style.optional(), x: Coordinate.optional(), y: Coordinate.optional() },
+    description: "Create a native AFFiNE mindmap with one root shape in an existing document. Returns mindmapId/rootId for add_mindmap_node. Only right/left/balance are supported; down/up are unsupported by BlockSuite. Does not create a document or sidebar link. Rendering of native mindmaps depends on the AFFiNE client version; if nodes do not appear, rebuild the diagram with add_surface_element (shapes + connectors).",
+    inputSchema: { ...base, ...compact, text: Label, layout: Direction.optional(), style: Style.optional(), x: Coordinate.optional(), y: Coordinate.optional(), children: z.array(OutlineNode).max(MAX_NODES - 1).optional().describe("Optional nested outline [{text, children?}] built under the root in the same call; max 500 nodes in total.") },
   }, run("create"));
   server.registerTool("get_mindmap", {
     title: "Get Native Mindmap",
@@ -337,22 +390,22 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
   server.registerTool("add_mindmap_node", {
     title: "Add Native Mindmap Node",
     description: "Add one native child shape to parentId inside mindmapId. beforeId optionally inserts before a sibling; otherwise append. Returns nodeId. Persists hierarchy and layout together. Maximum 500 nodes, depth 64; shape nodes only.",
-    inputSchema: { ...target, parentId: Id, text: Label, beforeId: Id.optional() },
+    inputSchema: { ...target, ...compact, parentId: Id, text: Label, beforeId: Id.optional() },
   }, run("add"));
   server.registerTool("update_mindmap_node", {
     title: "Update Native Mindmap Node",
     description: "Replace a native node's text and/or set collapsed. Keeps node IDs and hierarchy. Recalculates geometry; the editor may refine text dimensions when opened.",
-    inputSchema: { ...target, nodeId: Id, text: Label.optional(), collapsed: z.boolean().optional() },
+    inputSchema: { ...target, ...compact, nodeId: Id, text: Label.optional(), collapsed: z.boolean().optional() },
   }, run("update"));
   server.registerTool("reparent_mindmap_node", {
     title: "Reparent Native Mindmap Node",
     description: "Move a node with all descendants to a parent in the SAME native mindmap; beforeId optionally reorders siblings. Rejects root moves, cycles, missing/foreign IDs. Preserve collapsed state. One shared MCP server serializes workspace mutations; independent servers and native editors have no compare-and-swap protection.",
-    inputSchema: { ...target, nodeId: Id, parentId: Id, beforeId: Id.optional() },
+    inputSchema: { ...target, ...compact, nodeId: Id, parentId: Id, beforeId: Id.optional() },
   }, run("reparent"));
   server.registerTool("set_mindmap_style", {
     title: "Set Native Mindmap Style",
     description: "Switch native style ONE=1, TWO=2, THREE=3, FOUR=4. Persists the preset on all nodes, sizes and layout; native connectors follow style. Keeps IDs, hierarchy, collapsed state and root anchor. Rejects locked maps/nodes.",
-    inputSchema: { ...target, style: Style },
+    inputSchema: { ...target, ...compact, style: Style },
   }, run("style"));
   server.registerTool("set_mindmap_lock", {
     title: "Set Native Mindmap Lock",
@@ -362,6 +415,6 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
   server.registerTool("set_mindmap_layout", {
     title: "Set Native Mindmap Layout",
     description: "Set right, left, or balance and persist native node positions. Root stays anchored; collapsed flags remain unchanged. BlockSuite does not support down/up. This is a native mindmap, with editor-derived connectors.",
-    inputSchema: { ...target, layout: Direction },
+    inputSchema: { ...target, ...compact, layout: Direction },
   }, run("layout"));
 }

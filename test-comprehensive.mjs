@@ -25,10 +25,12 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['add_database_rows', 'test-database-batch.mjs'],
   ['add_doc_to_collection', 'test-organize-tools.mjs'],
   ['add_organize_link', 'test-organize-tools.mjs'],
+  ['add_surface_elements', 'test-surface-batch.mjs'],
   ['analyze_doc_fidelity', 'test-capabilities-fidelity.mjs'],
   ['append_semantic_section', 'test-semantic-page-composer.mjs'],
   ['clear_doc_property', 'test-doc-properties.mjs'],
   ['compose_database_from_intent', 'test-database-intent.mjs'],
+  ['add_database_view', 'test-database-view-live.mjs'],
   ['create_collection', 'test-organize-tools.mjs'],
   ['create_custom_property', 'test-doc-properties.mjs'],
   ['create_folder', 'test-organize-tools.mjs'],
@@ -69,6 +71,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['update_doc_icon', 'test-icons.mjs'],
   ['update_doc_title', 'test-create-placement.mjs'],
   ['update_folder_icon', 'test-icons.mjs'],
+  ['update_surface_elements', 'test-surface-batch.mjs'],
   ['update_table_cell', 'test-block-editing.mjs'],
 ]);
 
