@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.12.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.13.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -39,7 +39,7 @@ Highlights:
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 108 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Exposes 112 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Places, resizes, and connects images on edgeless canvases, with blob identifiers and geometry in readback
@@ -97,7 +97,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.10.1
+  ghcr.io/dawncr0w/affine-mcp-server:3.13.0
 ```
 
 Then point your client at:
@@ -266,7 +266,7 @@ Domains:
 - Workspace: create, inspect, update, delete, and traverse workspaces
 - Organization: collections, collection-rule sync, workspace blueprints, and experimental organize or folder helpers
 - Documents: search, read, create, publish, move, tag, custom properties, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and block-level mutation
-- Databases: create columns, add rows, update rows, inspect schema, and compose database structures from intent
+- Databases: create columns, add rows, update rows, inspect schema, add table/kanban views, and compose database structures from intent
 - Comments: list, create, update, delete, and resolve
 - History: version history listing
 - Users and authentication: current user, sign-in, and profile/settings

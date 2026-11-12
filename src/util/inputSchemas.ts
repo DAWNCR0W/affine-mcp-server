@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const BoundedPageSize = z.number().int().min(1).max(200);
 export const BoundedOffset = z.number().int().min(0).max(1_000_000);

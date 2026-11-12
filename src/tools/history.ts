@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { BoundedHistoryTake } from "../util/inputSchemas.js";
 
 export function registerHistoryTools(server: McpServer, gql: GraphQLClient, defaults: { workspaceId?: string }) {

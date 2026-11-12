@@ -1,6 +1,6 @@
 import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import * as Y from "yjs";
 import { generateKeyBetween } from "fractional-indexing";
 

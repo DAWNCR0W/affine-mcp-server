@@ -1,8 +1,8 @@
 import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
-import { registerMindmapTools } from "./mindmap.js";
-import { z } from "zod";
+import { deleteNativeMindmap, registerMindmapTools } from "./mindmap.js";
+import { z } from "zod/v3";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { GraphQLClient } from "../graphqlClient.js";
@@ -46,6 +46,7 @@ import {
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
+import { addBatch, compactSurfaceElement, isValidSurfaceIndex, type BatchItem } from "./surfaceBatch.js";
 import {
   AFFINE_LINKED_PAGE_REFERENCE_NODE,
   normalizeLinkedPageReferenceDeltas,
@@ -480,7 +481,7 @@ const AppendBlockBookmarkStyle = z.enum(APPEND_BLOCK_BOOKMARK_STYLE_VALUES);
 const APPEND_BLOCK_DATA_VIEW_MODE_VALUES = ["table", "kanban"] as const;
 type AppendBlockDataViewMode = typeof APPEND_BLOCK_DATA_VIEW_MODE_VALUES[number];
 const AppendBlockDataViewMode = z.enum(APPEND_BLOCK_DATA_VIEW_MODE_VALUES);
-const DATABASE_INTENT_VALUES = ["task_board", "issue_tracker"] as const;
+const DATABASE_INTENT_VALUES = ["task_board", "issue_tracker", "table"] as const;
 type DatabaseIntent = typeof DATABASE_INTENT_VALUES[number];
 const DatabaseIntent = z.enum(DATABASE_INTENT_VALUES);
 type DatabaseIntentSeedRow = Record<string, unknown>;
@@ -500,7 +501,6 @@ type DatabaseIntentPreset = {
 const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
-  "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
   "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
@@ -2601,6 +2601,34 @@ export function registerDocTools(
     });
   }
 
+  /**
+   * Default property data for a new database column, mirroring BlockSuite's
+   * `propertyData.default()` per property type. AFFiNE's cell renderers read
+   * `column.data` without a fallback (number reads `data.decimal`/`data.format`,
+   * select/multi-select read `data.options`), so a column without `data`
+   * renders blank cells even though the cell values are stored correctly.
+   * See blocksuite/affine/data-view/src/property-presets/number/define.ts and
+   * select/define.ts, multi-select/define.ts.
+   */
+  function createDefaultDatabaseColumnData(type: string, options: string[] = []): Y.Map<any> {
+    const data = new Y.Map<any>();
+    if (type === "number") {
+      data.set("decimal", 0);
+      data.set("format", "number");
+    } else if (type === "select" || type === "multi-select") {
+      const rawOptions = new Y.Array<any>();
+      options.forEach((value, index) => {
+        const option = new Y.Map<any>();
+        option.set("id", generateId());
+        option.set("value", value);
+        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+        rawOptions.push([option]);
+      });
+      data.set("options", rawOptions);
+    }
+    return data;
+  }
+
   function createDatabaseColumnDefinition(input: {
     id: string;
     name: string;
@@ -2613,21 +2641,7 @@ export function registerDocTools(
     column.set("name", input.name);
     column.set("type", input.type);
     column.set("width", input.width ?? 200);
-
-    if ((input.type === "select" || input.type === "multi-select") && input.options?.length) {
-      const data = new Y.Map<any>();
-      const options = new Y.Array<any>();
-      input.options.forEach((value, index) => {
-        const option = new Y.Map<any>();
-        option.set("id", generateId());
-        option.set("value", value);
-        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
-        options.push([option]);
-      });
-      data.set("options", options);
-      column.set("data", data);
-    }
-
+    column.set("data", createDefaultDatabaseColumnData(input.type, input.options));
     return column;
   }
 
@@ -4380,8 +4394,6 @@ export function registerDocTools(
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
     const blocks = doc.getMap("blocks") as Y.Map<any>;
-    let anchorPlacement: AppendPlacement | undefined = parsed.placement;
-    let lastInsertedBlockId: string | undefined;
     let replaceParentId: string | undefined;
     let skippedCount = 0;
     let removedCount = 0;
@@ -4415,53 +4427,62 @@ export function registerDocTools(
       }
     }
 
-    for (const [operationIndex, operation] of parsed.operations.entries()) {
-      const placement =
-        lastInsertedBlockId
-          ? { afterBlockId: lastInsertedBlockId }
-          : replaceParentId
-            ? { parentId: replaceParentId }
-            : anchorPlacement;
-      const appendInput = markdownOperationToAppendInput(
-        operation,
-        parsed.docId,
-        parsed.workspaceId,
-        strict,
-        placement
-      );
+    let operationIndex = 0;
+    const subtreeSize = (operation: MarkdownOperation): number => 1 + (
+      operation.type === "list"
+        ? (operation.children ?? []).reduce((count, child) => count + subtreeSize(child), 0)
+        : 0
+    );
 
-      try {
-        const normalized = normalizeAppendBlockInput(appendInput);
-        const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
-        blocks.set(blockId, block);
-        if (Array.isArray(extraBlocks)) {
-          for (const extra of extraBlocks) {
+    // AFFiNE v0.27.4 list/list-model.ts permits affine:list parents, and its
+    // BlockModel derives hierarchy from sys:children (sys:parent stays null).
+    // Each sibling sequence owns its anchor so descendants do not move the next
+    // sibling into their parent's subtree.
+    const appendOperations = (operations: MarkdownOperation[], initialPlacement?: AppendPlacement): void => {
+      let lastInsertedBlockId: string | undefined;
+      for (const operation of operations) {
+        const currentOperationIndex = operationIndex++;
+        const placement = lastInsertedBlockId ? { afterBlockId: lastInsertedBlockId } : initialPlacement;
+        let insertedBlockId: string;
+        try {
+          const normalized = normalizeAppendBlockInput(markdownOperationToAppendInput(
+            operation, parsed.docId, parsed.workspaceId, strict, placement,
+          ));
+          const context = resolveInsertContext(blocks, normalized);
+          const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
+          blocks.set(blockId, block);
+          for (const extra of extraBlocks ?? []) {
             blocks.set(extra.blockId, extra.block);
           }
+          if (context.insertIndex >= context.children.length) {
+            context.children.push([blockId]);
+          } else {
+            context.children.insert(context.insertIndex, [blockId]);
+          }
+          if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+            databaseRows.push(block);
+          }
+          blockIds.push(blockId);
+          lastInsertedBlockId = insertedBlockId = blockId;
+        } catch (error) {
+          handleMarkdownOperationFailure(error, {
+            strict,
+            replaceExisting,
+            operationIndex: currentOperationIndex,
+          });
+          // A failed parent cannot own children. Skip the whole subtree rather
+          // than silently promoting its descendants into the current level.
+          const skipped = subtreeSize(operation);
+          skippedCount += skipped;
+          operationIndex += skipped - 1;
+          continue;
         }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
+        if (operation.type === "list" && operation.children?.length) {
+          appendOperations(operation.children, { parentId: insertedBlockId });
         }
-        if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
-          databaseRows.push(block);
-        }
-        blockIds.push(blockId);
-        lastInsertedBlockId = blockId;
-        if (!replaceParentId) {
-          anchorPlacement = { afterBlockId: blockId };
-        }
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting,
-          operationIndex,
-        });
-        skippedCount += 1;
       }
-    }
+    };
+    appendOperations(parsed.operations, replaceParentId ? { parentId: replaceParentId } : parsed.placement);
     return {
       appendedCount: blockIds.length,
       skippedCount,
@@ -4517,40 +4538,17 @@ export function registerDocTools(
     workspaceId: string,
     strict: boolean,
   ): void {
-    const validationDocId = "markdown-preflight";
     const skeleton = createDocSkeleton("Markdown preflight");
-    let placement: AppendPlacement = { parentId: skeleton.noteId };
-
-    for (const [operationIndex, operation] of operations.entries()) {
-      try {
-        const normalized = normalizeAppendBlockInput(
-          markdownOperationToAppendInput(
-            operation,
-            validationDocId,
-            workspaceId,
-            strict,
-            placement,
-          ),
-        );
-        const context = resolveInsertContext(skeleton.blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized, skeleton.blocks, context.parentBlock.get("sys:flavour"));
-        skeleton.blocks.set(blockId, block);
-        for (const extra of extraBlocks ?? []) {
-          skeleton.blocks.set(extra.blockId, extra.block);
-        }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
-        }
-        placement = { afterBlockId: blockId };
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting: false,
-          operationIndex,
-        });
-      }
+    try {
+      applyMarkdownOperationsToDoc(skeleton.doc, {
+        workspaceId,
+        docId: "markdown-preflight",
+        operations,
+        strict,
+        placement: { parentId: skeleton.noteId },
+      }, []);
+    } finally {
+      skeleton.doc.destroy();
     }
   }
 
@@ -6452,6 +6450,11 @@ export function registerDocTools(
         fidelityReport: true,
         snapshotBundle: false,
       },
+      // upload_blob `filePath` needs AFFINE_BLOB_UPLOAD_FILE_ROOTS; inline content always works.
+      blobUpload: {
+        filePath: Boolean(process.env.AFFINE_BLOB_UPLOAD_FILE_ROOTS?.trim()),
+        inline: true,
+      },
     });
   };
   server.registerTool(
@@ -7339,7 +7342,7 @@ export function registerDocTools(
       warnings,
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7476,7 +7479,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7550,7 +7553,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -8292,6 +8295,8 @@ export function registerDocTools(
             },
           ],
         };
+      case "table":
+        return { title: "Table", viewName: "Table", statusOptions: [], extraColumns: [], starterRows: [] };
       default: {
         const exhaustiveCheck: never = intent;
         throw new Error(`Unsupported database intent '${exhaustiveCheck}'`);
@@ -8715,6 +8720,11 @@ export function registerDocTools(
         if (Number.isNaN(num)) {
           throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
         }
+        // Repair number columns created without property data (older server
+        // versions): AFFiNE renders their cells blank until `data` exists.
+        if (col.raw instanceof Y.Map && col.raw.get("data") === undefined) {
+          col.raw.set("data", createDefaultDatabaseColumnData("number"));
+        }
         cellValue.set("value", num);
         break;
       }
@@ -8865,6 +8875,53 @@ export function registerDocTools(
       },
     },
     addDatabaseRowHandler as any
+  );
+
+  const addDatabaseRowsHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rows: Array<{ cells: Record<string, unknown>; linkedDocId?: string }>;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const creatorId = await fetchCurrentUserId(gql);
+      const rowBlockIds = parsed.rows.map(row => addDatabaseRowToBlock({
+        blocks: ctx.blocks,
+        dbBlock: ctx.dbBlock,
+        cellsMap: ctx.cellsMap,
+        databaseBlockId: parsed.databaseBlockId,
+        lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)), // Rebuilt so options created by earlier rows resolve.
+        cells: row.cells,
+        linkedDocId: row.linkedDocId,
+        creatorId,
+      }));
+      // Nothing is pushed unless every row was valid.
+      const delta = ctx.pendingUpdate.finish();
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      return text({ added: rowBlockIds.length, rowBlockIds, databaseBlockId: parsed.databaseBlockId });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_rows",
+    {
+      title: "Add Database Rows",
+      description: "Add many rows to an AFFiNE database block with one write. Each row is {cells, linkedDocId?} with the same cell rules as add_database_row. Atomic: an invalid row rejects the whole call. Returns row block ids in input order.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rows: z.array(z.object({
+          cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value, as in add_database_row."),
+          linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID."),
+        })).min(1).max(200),
+      },
+    },
+    addDatabaseRowsHandler as any
   );
 
   const deleteDatabaseRowHandler = async (parsed: {
@@ -9125,48 +9182,79 @@ export function registerDocTools(
     intent: DatabaseIntent;
     title?: string;
     seedRows?: DatabaseIntentSeedRow[];
+    columns?: DatabaseIntentColumnSpec[];
     placement?: AppendPlacement;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
       throw new Error("workspaceId is required");
     }
+    const custom = parsed.intent === "table";
+    if (custom && !parsed.columns?.length) throw new Error('intent "table" requires a non-empty columns list');
+    if (custom) {
+      // Cell lookup trims and case-folds names; reserve the implicit Title with
+      // that same policy so every requested column has an unambiguous identity.
+      const names = new Set(["title"]);
+      for (const column of parsed.columns!) {
+        const name = column.name.trim().toLowerCase();
+        if (names.has(name)) throw new Error(`Column '${column.name}' already exists in the table schema.`);
+        names.add(name);
+      }
+    }
 
     const preset = buildDatabaseIntentPreset(parsed.intent);
     const title = (parsed.title ?? preset.title).trim() || preset.title;
     const starterRows = Array.isArray(parsed.seedRows) ? parsed.seedRows : preset.starterRows;
     const creatorId = starterRows.length > 0 ? await fetchCurrentUserId(gql) : undefined;
-    const creation = await appendBlockInternal({
+    const normalized = normalizeAppendBlockInput({
       workspaceId,
       docId: parsed.docId,
       type: "data_view",
-      viewMode: "kanban",
+      viewMode: custom ? "table" : "kanban",
       text: title,
       placement: parsed.placement,
     });
-
-    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, creation.blockId);
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    const doc = new Y.Doc();
     try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error(`Document '${parsed.docId}' not found`);
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks");
+      const context = resolveInsertContext(blocks, normalized);
+      const creation = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
+      const dbBlock = creation.block;
+      blocks.set(creation.blockId, dbBlock);
+      context.children.insert(context.insertIndex, [creation.blockId]);
+      const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
+
+      // Build the complete database in this request-local document. A bad column
+      // or a late invalid seed row must not leave a persisted, half-built block.
       const warnings: string[] = [];
 
-      const statusLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
-      const statusColumn = statusLookup.colByNameLower.get("status");
-      if (statusColumn?.raw instanceof Y.Map) {
-        replaceSelectColumnOptions(statusColumn.raw, preset.statusOptions);
-      } else {
-        warnings.push("Status column was not found after database creation.");
+      if (!custom) {
+        const statusLookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+        const statusColumn = statusLookup.colByNameLower.get("status");
+        if (statusColumn?.raw instanceof Y.Map) {
+          replaceSelectColumnOptions(statusColumn.raw, preset.statusOptions);
+        } else {
+          warnings.push("Status column was not found after database creation.");
+        }
       }
 
       const addedColumnIds: string[] = [];
-      for (const columnSpec of preset.extraColumns) {
-        addedColumnIds.push(addDatabaseColumnToBlock(ctx.dbBlock, columnSpec));
+      for (const columnSpec of custom ? parsed.columns! : preset.extraColumns) {
+        addedColumnIds.push(addDatabaseColumnToBlock(dbBlock, columnSpec));
       }
 
-      const viewEntries = ctx.dbBlock.get("prop:views");
+      const viewEntries = dbBlock.get("prop:views");
       if (viewEntries instanceof Y.Array) {
         const primaryView = viewEntries.get(0);
         if (primaryView instanceof Y.Map) {
-          primaryView.set("name", preset.viewName);
+          primaryView.set("name", custom ? title : preset.viewName);
         }
       }
 
@@ -9174,22 +9262,22 @@ export function registerDocTools(
       if (creatorId !== undefined) {
         for (const rowInput of starterRows) {
           rowBlockIds.push(addDatabaseRowToBlock({
-            blocks: ctx.blocks,
-            dbBlock: ctx.dbBlock,
-            cellsMap: ctx.cellsMap,
+            blocks,
+            dbBlock,
+            cellsMap,
             databaseBlockId: creation.blockId,
-            lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
+            lookup: buildDatabaseColumnLookup(readColumnDefs(dbBlock)),
             cells: rowInput,
             creatorId,
           }));
         }
       }
 
-      const delta = ctx.pendingUpdate.finish();
-      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      const delta = pendingUpdate.finish();
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
-      const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
-      const finalViews = readDatabaseViewDefs(ctx.dbBlock, finalLookup);
+      const finalLookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+      const finalViews = readDatabaseViewDefs(dbBlock, finalLookup);
       const columnSummary = finalLookup.columnDefs.map(column => ({
         id: column.id,
         name: column.name || null,
@@ -9206,7 +9294,7 @@ export function registerDocTools(
         primaryViewId: finalViews[0]?.id || null,
         viewIds: finalViews.map(view => view.id),
         columnIds: finalLookup.columnDefs.map(column => column.id),
-        rowBlockIds: getDatabaseRowIds(ctx.dbBlock),
+        rowBlockIds: getDatabaseRowIds(dbBlock),
         columns: columnSummary,
         views: finalViews,
         warnings: mergeWarnings(warnings),
@@ -9214,26 +9302,33 @@ export function registerDocTools(
         stats: {
           columnCount: columnSummary.length,
           viewCount: finalViews.length,
-          rowCount: getDatabaseRowIds(ctx.dbBlock).length,
+          rowCount: getDatabaseRowIds(dbBlock).length,
           addedColumnCount: addedColumnIds.length,
           seededRowCount: rowBlockIds.length,
         },
       };
     } finally {
-      ctx.socket.disconnect();
+      doc.destroy();
+      socket.disconnect();
     }
   };
   server.registerTool(
     "compose_database_from_intent",
     {
       title: "Compose Database From Intent",
-      description: "Create a useful AFFiNE database/data-view from declarative intent. Supports task_board and issue_tracker presets with starter schema, kanban view, and optional starter rows.",
+      description: "Create a useful AFFiNE database/data-view from declarative intent. Supports task_board and issue_tracker presets (kanban) and intent \"table\": a table view with a Title column plus your own `columns` and optional `seedRows`, all in one call. Columns and seed rows are validated together before a single content write; invalid input leaves the document unchanged.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         intent: DatabaseIntent.describe("Declarative database intent to compose."),
         title: z.string().optional().describe("Optional database title. Defaults to the intent preset title."),
-        seedRows: z.array(z.record(z.unknown())).optional().describe("Optional starter rows. If omitted, the preset starter rows are used."),
+        seedRows: z.array(z.record(z.unknown())).optional().describe("Optional starter rows keyed by column name (`title` for the title column). If omitted, the preset starter rows are used."),
+        columns: z.array(z.object({
+          name: z.string().trim().min(1),
+          type: z.enum(["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"]),
+          options: z.array(z.string()).optional(),
+          width: z.number().optional(),
+        })).optional().describe('Required for intent "table": columns to add after the automatic Title column.'),
         placement: z.object({
           parentId: z.string().optional(),
           afterBlockId: z.string().optional(),
@@ -9248,6 +9343,7 @@ export function registerDocTools(
       intent: DatabaseIntent;
       title?: string;
       seedRows?: DatabaseIntentSeedRow[];
+      columns?: DatabaseIntentColumnSpec[];
       placement?: AppendPlacement;
     }) => text(await composeDatabaseFromIntentCore(parsed)) as any
   );
@@ -9298,28 +9394,13 @@ export function registerDocTools(
       }
 
       const columnId = generateId();
-      const column = new Y.Map<any>();
-      column.set("id", columnId);
-      column.set("name", parsed.name);
-      column.set("type", parsed.type || "rich-text");
-      column.set("width", parsed.width || 200);
-
-      // For select/multi-select, create options
-      if ((parsed.type === "select" || parsed.type === "multi-select") && parsed.options?.length) {
-        const data = new Y.Map<any>();
-        const opts = new Y.Array<any>();
-        for (let i = 0; i < parsed.options.length; i++) {
-          const optMap = new Y.Map<any>();
-          optMap.set("id", generateId());
-          optMap.set("value", parsed.options[i]);
-          optMap.set("color", SELECT_COLORS[i % SELECT_COLORS.length]);
-          opts.push([optMap]);
-        }
-        data.set("options", opts);
-        column.set("data", data);
-      }
-
-      columns.push([column]);
+      columns.push([createDatabaseColumnDefinition({
+        id: columnId,
+        name: parsed.name,
+        type: parsed.type || "rich-text",
+        width: parsed.width || 200,
+        options: parsed.options,
+      })]);
 
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
@@ -9415,6 +9496,136 @@ export function registerDocTools(
     addDatabaseColumnHandler as any
   );
 
+  // ADD DATABASE VIEW (mosi local patch, 2026-11-07: upstream lacks view creation for existing databases)
+  const addDatabaseViewHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    name?: string;
+    mode: string;
+    groupBy?: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error("Document not found");
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
+      if (!dbBlock) throw new Error(`Database block '${parsed.databaseBlockId}' not found`);
+      if (dbBlock.get("sys:flavour") !== "affine:database") {
+        throw new Error("Block is not a database");
+      }
+
+      const mode = parsed.mode === "kanban" ? "kanban" : "table";
+      const views = dbBlock.get("prop:views");
+      if (!(views instanceof Y.Array)) throw new Error("Database has no views array");
+
+      const existingNames: string[] = [];
+      for (let i = 0; i < views.length; i += 1) {
+        const v = views.get(i);
+        const n = v instanceof Y.Map ? v.get("name") : v?.name;
+        if (n) existingNames.push(String(n));
+      }
+      const viewName = (parsed.name || "").trim() || (mode === "kanban" ? "Kanban View" : "Table View");
+      if (existingNames.includes(viewName)) {
+        throw new Error(`View '${viewName}' already exists`);
+      }
+
+      const columnDefs = readColumnDefs(dbBlock);
+      // Align with native AFFiNE behavior: preset databases carry a title column
+      // definition, while manually created databases (append_block) have none —
+      // native views on those use { titleColumn: null, iconColumn: null }.
+      const titleCol = columnDefs.find(c => c.type === "title");
+      const storedColumns = dbBlock.get("prop:columns");
+      if (columnDefs.length === 0 && !(
+        mode === "table" && storedColumns instanceof Y.Array && storedColumns.length === 0
+      )) {
+        throw new Error("Database has no columns");
+      }
+
+      let groupBy: Record<string, unknown> | null = null;
+      let groupProperties: unknown[] | null = null;
+      if (mode === "kanban") {
+        const colName = (parsed.groupBy || "").trim();
+        if (!colName) throw new Error("Kanban view requires groupBy (a select/multi-select column name)");
+        const target = columnDefs.find(c => c.name === colName);
+        if (!target) throw new Error(`Column '${colName}' not found`);
+        if (target.type !== "select" && target.type !== "multi-select") {
+          throw new Error(`Column '${colName}' is type '${target.type}'; kanban groupBy needs select/multi-select`);
+        }
+        groupBy = { columnId: target.id, name: target.type, type: "groupBy" };
+        groupProperties = [];
+      }
+
+      const viewColumns = new Y.Array<any>();
+      for (const c of columnDefs) {
+        const rawWidth = c.raw instanceof Y.Map ? c.raw.get("width") : (c.raw as any)?.width;
+        const width = typeof rawWidth === "number" && rawWidth > 0 ? rawWidth : 200;
+        const vc = new Y.Map<any>();
+        vc.set("id", c.id);
+        vc.set("hide", false);
+        vc.set("width", width);
+        viewColumns.push([vc]);
+      }
+
+      const view = new Y.Map<any>();
+      const viewId = generateId();
+      view.set("id", viewId);
+      view.set("name", viewName);
+      view.set("mode", mode);
+      view.set("columns", viewColumns);
+      view.set("filter", { type: "group", op: "and", conditions: [] });
+      view.set("groupBy", groupBy);
+      if (groupProperties) view.set("groupProperties", groupProperties);
+      view.set("sort", null);
+      view.set("header", titleCol ? { titleColumn: titleCol.id, iconColumn: "type" } : { titleColumn: null, iconColumn: null });
+
+      views.push([view]);
+
+      const delta = pendingUpdate.finish();
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        added: true,
+        viewId,
+        name: viewName,
+        mode,
+        groupBy: mode === "kanban" ? (parsed.groupBy || "").trim() || null : null,
+        totalViews: views.length,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_view",
+    {
+      title: "Add Database View",
+      description: "Add a new view (table or kanban) to an existing AFFiNE database block. Kanban mode requires groupBy: the name of a select/multi-select column to group cards by. Duplicate view names are rejected.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        name: z.string().optional().describe("View display name. Defaults to 'Table View' / 'Kanban View'"),
+        mode: z.enum(["table", "kanban"]).default("table").describe("View mode"),
+        groupBy: z.string().optional().describe("Kanban only: column name to group cards by (must be select/multi-select)"),
+      },
+    },
+    addDatabaseViewHandler as any
+  );
+
   type SurfaceElementType = "shape" | "connector" | "text" | "group";
 
   type SurfaceElementFields = {
@@ -9471,11 +9682,13 @@ export function registerDocTools(
     docId: string;
     type?: SurfaceElementType;
     elementId?: string;
+    compact?: boolean;
   };
 
   type GetEdgelessCanvasInput = {
     workspaceId?: string;
     docId: string;
+    compact?: boolean;
   };
 
   function resolveSurfaceNewlines(s: string): string {
@@ -9793,6 +10006,70 @@ export function registerDocTools(
     valueMap.set(elementId, el);
   }
 
+  /** Builds one element in the open surface map; shared by the single and batch add tools. */
+  function addSurfaceElementTo(
+    ctx: { value: Y.Map<any> },
+    blocks: Y.Map<any>,
+    params: SurfaceElementFields & { type: SurfaceElementType }
+  ) {
+    if (params.index !== undefined && !isValidSurfaceIndex(params.index)) {
+      throw new Error("index must be a valid BlockSuite fractional-index key.");
+    }
+    if (params.type === "connector") {
+      // AFFiNE v0.27.4 connector.ts Connection requires an ID or position;
+      // an empty endpoint is not the native free-endpoint representation.
+      if (!params.sourceId && params.sourcePosition === undefined) {
+        throw new Error("Connector source requires sourceId or sourcePosition.");
+      }
+      if (!params.targetId && params.targetPosition === undefined) {
+        throw new Error("Connector target requires targetId or targetPosition.");
+      }
+      assertConnectorEndpointsExist(ctx.value, blocks, params);
+    }
+    if (params.type === "group") {
+      assertGroupChildrenExist(ctx.value, blocks, params.children);
+    }
+    const index = params.index ?? nextSurfaceElementIndex(ctx.value);
+
+    // Mirror updateSurfaceElementHandler: report inapplicable gated fields
+    // in `ignored` instead of silently dropping them at the per-type builder.
+    const ignored: string[] = [];
+    for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
+      if (params[field as keyof SurfaceElementFields] === undefined) continue;
+      if (!applicable.includes(params.type)) ignored.push(field);
+    }
+
+    const { elementId, data } = buildSurfaceElementData(params.type, index, params);
+    if (params.type === "connector") {
+      const srcBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.sourceId);
+      const tgtBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.targetId);
+
+      // Auto-snap to the four tangent-carrying sides when the caller only
+      // supplied ids — the renderer needs tangents to draw arrow heads.
+      if (srcBounds && tgtBounds && !params.sourcePosition && !params.targetPosition) {
+        const natural = pickConnectorSides(srcBounds, tgtBounds);
+        data.source = { ...(data.source as any), position: SIDE_TO_NORMALIZED_POSITION[natural.from] };
+        data.target = { ...(data.target as any), position: SIDE_TO_NORMALIZED_POSITION[natural.to] };
+      }
+
+      if (params.label) {
+        const srcCenter = srcBounds
+          ? { x: srcBounds.x + srcBounds.w / 2, y: srcBounds.y + srcBounds.h / 2 }
+          : resolveConnectorEndpointCenter(ctx.value, blocks, params.sourceId, params.sourcePosition as [number, number] | undefined);
+        const tgtCenter = tgtBounds
+          ? { x: tgtBounds.x + tgtBounds.w / 2, y: tgtBounds.y + tgtBounds.h / 2 }
+          : resolveConnectorEndpointCenter(ctx.value, blocks, params.targetId, params.targetPosition as [number, number] | undefined);
+        const midpoint =
+          srcCenter && tgtCenter
+            ? { x: (srcCenter.x + tgtCenter.x) / 2, y: (srcCenter.y + tgtCenter.y) / 2 }
+            : (srcCenter ?? tgtCenter);
+        data.labelXYWH = estimateConnectorLabelXYWH(params.label, 16, midpoint, 280);
+      }
+    }
+    writeSurfaceElement(ctx.value, elementId, data);
+    return { elementId, type: params.type, ignored };
+  }
+
   const addSurfaceElementHandler = async (params: AddSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -9814,44 +10091,7 @@ export function registerDocTools(
       const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: true })!;
-      const index = params.index ?? nextSurfaceElementIndex(ctx.value);
-
-      // Mirror updateSurfaceElementHandler: report inapplicable gated fields
-      // in `ignored` instead of silently dropping them at the per-type builder.
-      const ignored: string[] = [];
-      for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
-        if (params[field as keyof SurfaceElementFields] === undefined) continue;
-        if (!applicable.includes(params.type)) ignored.push(field);
-      }
-
-      const { elementId, data } = buildSurfaceElementData(params.type, index, params);
-      if (params.type === "connector") {
-        const srcBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.sourceId);
-        const tgtBounds = resolveConnectorEndpointBoundAsBound(ctx.value, blocks, params.targetId);
-
-        // Auto-snap to the four tangent-carrying sides when the caller only
-        // supplied ids — the renderer needs tangents to draw arrow heads.
-        if (srcBounds && tgtBounds && !params.sourcePosition && !params.targetPosition) {
-          const natural = pickConnectorSides(srcBounds, tgtBounds);
-          data.source = { ...(data.source as any), position: SIDE_TO_NORMALIZED_POSITION[natural.from] };
-          data.target = { ...(data.target as any), position: SIDE_TO_NORMALIZED_POSITION[natural.to] };
-        }
-
-        if (params.label) {
-          const srcCenter = srcBounds
-            ? { x: srcBounds.x + srcBounds.w / 2, y: srcBounds.y + srcBounds.h / 2 }
-            : resolveConnectorEndpointCenter(ctx.value, blocks, params.sourceId, params.sourcePosition as [number, number] | undefined);
-          const tgtCenter = tgtBounds
-            ? { x: tgtBounds.x + tgtBounds.w / 2, y: tgtBounds.y + tgtBounds.h / 2 }
-            : resolveConnectorEndpointCenter(ctx.value, blocks, params.targetId, params.targetPosition as [number, number] | undefined);
-          const midpoint =
-            srcCenter && tgtCenter
-              ? { x: (srcCenter.x + tgtCenter.x) / 2, y: (srcCenter.y + tgtCenter.y) / 2 }
-              : (srcCenter ?? tgtCenter);
-          data.labelXYWH = estimateConnectorLabelXYWH(params.label, 16, midpoint, 280);
-        }
-      }
-      writeSurfaceElement(ctx.value, elementId, data);
+      const { elementId, ignored } = addSurfaceElementTo(ctx, blocks, params);
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
         socket,
@@ -9922,7 +10162,7 @@ export function registerDocTools(
         exists: true,
         surfaceBlockId: ctx.surfaceId,
         count: sorted.length,
-        elements: sorted,
+        elements: params.compact ? sorted.map(compactSurfaceElement) : sorted,
       });
     } finally {
       socket.disconnect();
@@ -9950,6 +10190,220 @@ export function registerDocTools(
     rearEndpointStyle:  ["connector"],
   };
 
+  function assertConnectorEndpointsExist(
+    valueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    params: Pick<SurfaceElementFields, "sourceId" | "targetId">
+  ): void {
+    for (const field of ["sourceId", "targetId"] as const) {
+      const id = params[field];
+      if (id && !(valueMap.get(id) instanceof Y.Map) && !(blocks.get(id) instanceof Y.Map)) {
+        throw new Error(`Connector ${field} '${id}' was not found in the surface or document blocks.`);
+      }
+    }
+  }
+
+  // AFFiNE v0.27.4 model/src/blocks/* and model/src/utils/helper.ts:
+  // native GfxCompatible blocks, including defineEmbedModel subclasses.
+  const groupChildBlockFlavours = new Set([
+    "affine:note", "affine:frame", "affine:edgeless-text", "affine:image",
+    "affine:attachment", "affine:bookmark", "affine:latex",
+    "affine:embed-figma", "affine:embed-github", "affine:embed-html", "affine:embed-iframe",
+    "affine:embed-linked-doc", "affine:embed-loom", "affine:embed-synced-doc", "affine:embed-youtube",
+  ]);
+
+  function assertGroupChildrenExist(
+    valueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    children: string[] | undefined,
+    groupId?: string,
+  ): void {
+    const mindmapNodes = new Set<string>();
+    if (children?.length) {
+      for (const value of valueMap.values()) {
+        if (!(value instanceof Y.Map) || value.get("type") !== "mindmap") continue;
+        const nodes = value.get("children");
+        if (nodes instanceof Y.Map) {
+          for (const id of nodes.keys()) mindmapNodes.add(id);
+        }
+      }
+    }
+    for (const childId of children ?? []) {
+      if (childId === groupId) throw new Error("A group cannot contain itself.");
+      if (mindmapNodes.has(childId)) {
+        throw new Error(`Group child '${childId}' is owned by a mindmap; group the mindmap itself instead.`);
+      }
+      if (valueMap.get(childId) instanceof Y.Map) continue;
+      const block = blocks.get(childId);
+      if (!(block instanceof Y.Map) || !groupChildBlockFlavours.has(block.get("sys:flavour"))) {
+        throw new Error(`Group child '${childId}' was not found or is not an eligible canvas block.`);
+      }
+    }
+    if (groupId !== undefined) {
+      // Mirrors canSafeAddToContainer in framework/std/src/utils/tree.ts:
+      // a group cannot acquire an ancestor as a child. Do not rewrite owners.
+      const pending = [...(children ?? [])];
+      const visited = new Set<string>();
+      while (pending.length > 0) {
+        const id = pending.pop()!;
+        if (id === groupId) throw new Error("Group children would create a cycle.");
+        if (visited.has(id)) continue;
+        visited.add(id);
+        const element = valueMap.get(id);
+        if (element instanceof Y.Map) {
+          const members = element.get("children");
+          if (members instanceof Y.Map) pending.push(...members.keys());
+        } else {
+          const block = blocks.get(id);
+          if (block instanceof Y.Map) {
+            pending.push(...childIdsFrom(block.get("sys:children")));
+            const members = block.get("prop:childElementIds");
+            if (members instanceof Y.Map) pending.push(...members.keys());
+            else if (members && (
+              Object.getPrototypeOf(members) === Object.prototype || Object.getPrototypeOf(members) === null
+            )) pending.push(...Object.keys(members));
+          }
+        }
+      }
+    }
+  }
+
+  /** Applies one partial update to an element of the open surface map; shared by the single and batch update tools. */
+  function updateSurfaceElementIn(valueMap: Y.Map<any>, blocks: Y.Map<any>, params: SurfaceElementFields & { elementId: string }) {
+    const el = valueMap.get(params.elementId);
+    if (!(el instanceof Y.Map)) {
+      throw new Error(`Surface element '${params.elementId}' not found.`);
+    }
+
+    const elementType = el.get("type");
+    if (params.index !== undefined && !isValidSurfaceIndex(params.index)) {
+      throw new Error("index must be a valid BlockSuite fractional-index key.");
+    }
+    if (elementType === "connector") {
+      if (params.sourceId === "" && params.sourcePosition === undefined) {
+        throw new Error("Connector source requires sourceId or sourcePosition.");
+      }
+      if (params.targetId === "" && params.targetPosition === undefined) {
+        throw new Error("Connector target requires targetId or targetPosition.");
+      }
+      assertConnectorEndpointsExist(valueMap, blocks, params);
+    }
+    if (elementType === "group") {
+      assertGroupChildrenExist(valueMap, blocks, params.children, params.elementId);
+    }
+    const changed: string[] = [];
+    const ignored: string[] = [];
+
+    const geomProvided =
+      params.x !== undefined ||
+      params.y !== undefined ||
+      params.width !== undefined ||
+      params.height !== undefined;
+    if (geomProvided) {
+      if (elementType === "shape" || elementType === "text") {
+        const current = parseXywhString(el.get("xywh")) ?? {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        };
+        const nx = params.x ?? current.x;
+        const ny = params.y ?? current.y;
+        const nw = params.width ?? current.width;
+        const nh = params.height ?? current.height;
+        el.set("xywh", formatXywhString(nx, ny, nw, nh));
+        changed.push("xywh");
+      } else {
+        if (params.x !== undefined) ignored.push("x");
+        if (params.y !== undefined) ignored.push("y");
+        if (params.width !== undefined) ignored.push("width");
+        if (params.height !== undefined) ignored.push("height");
+      }
+    }
+
+    const setYText = (key: string, value: string) => {
+      const yText = new Y.Text();
+      yText.insert(0, resolveSurfaceNewlines(value));
+      el.set(key, yText);
+      changed.push(key);
+    };
+
+    if (params.text !== undefined) {
+      if (elementType === "shape" || elementType === "text" || elementType === "connector") {
+        setYText("text", params.text);
+      } else {
+        ignored.push("text");
+      }
+    }
+    if (params.label !== undefined) {
+      if (elementType === "connector") {
+        setYText("text", params.label);
+      } else {
+        ignored.push("label");
+      }
+    }
+    if (params.title !== undefined) {
+      if (elementType === "group") {
+        setYText("title", params.title);
+      } else {
+        ignored.push("title");
+      }
+    }
+
+    for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
+      const key = field as keyof SurfaceElementFields;
+      if (params[key] === undefined) continue;
+      if (applicable.includes(elementType as SurfaceElementType)) {
+        el.set(field, params[key]);
+        changed.push(field);
+      } else {
+        ignored.push(field);
+      }
+    }
+
+    if (params.index !== undefined) {
+      el.set("index", params.index);
+      changed.push("index");
+    }
+
+    if (params.sourceId !== undefined || params.sourcePosition !== undefined) {
+      if (elementType === "connector") {
+        const source: Record<string, any> = {};
+        if (params.sourceId) source.id = params.sourceId;
+        if (params.sourcePosition) source.position = params.sourcePosition;
+        el.set("source", source);
+        changed.push("source");
+      } else {
+        if (params.sourceId !== undefined) ignored.push("sourceId");
+        if (params.sourcePosition !== undefined) ignored.push("sourcePosition");
+      }
+    }
+    if (params.targetId !== undefined || params.targetPosition !== undefined) {
+      if (elementType === "connector") {
+        const target: Record<string, any> = {};
+        if (params.targetId) target.id = params.targetId;
+        if (params.targetPosition) target.position = params.targetPosition;
+        el.set("target", target);
+        changed.push("target");
+      } else {
+        if (params.targetId !== undefined) ignored.push("targetId");
+        if (params.targetPosition !== undefined) ignored.push("targetPosition");
+      }
+    }
+    if (params.children !== undefined) {
+      if (elementType === "group") {
+        const childMap = new Y.Map<boolean>();
+        for (const childId of params.children) childMap.set(childId, true);
+        el.set("children", childMap);
+        changed.push("children");
+      } else {
+        ignored.push("children");
+      }
+    }
+
+    return { elementId: params.elementId, type: typeof elementType === "string" ? elementType : null, changed, ignored };
+  }
+
   const updateSurfaceElementHandler = async (params: UpdateSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -9973,123 +10427,8 @@ export function registerDocTools(
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: false });
       if (!ctx) throw new Error("Document has no surface elements to update.");
-      const el = ctx.value.get(params.elementId);
-      if (!(el instanceof Y.Map)) {
-        throw new Error(`Surface element '${params.elementId}' not found.`);
-      }
-
-      const elementType = el.get("type");
-      const changed: string[] = [];
-      const ignored: string[] = [];
-
-      const geomProvided =
-        params.x !== undefined ||
-        params.y !== undefined ||
-        params.width !== undefined ||
-        params.height !== undefined;
-      if (geomProvided) {
-        if (elementType === "shape" || elementType === "text") {
-          const current = parseXywhString(el.get("xywh")) ?? {
-            x: 0,
-            y: 0,
-            width: 100,
-            height: 100,
-          };
-          const nx = params.x ?? current.x;
-          const ny = params.y ?? current.y;
-          const nw = params.width ?? current.width;
-          const nh = params.height ?? current.height;
-          el.set("xywh", formatXywhString(nx, ny, nw, nh));
-          changed.push("xywh");
-        } else {
-          if (params.x !== undefined) ignored.push("x");
-          if (params.y !== undefined) ignored.push("y");
-          if (params.width !== undefined) ignored.push("width");
-          if (params.height !== undefined) ignored.push("height");
-        }
-      }
-
-      const setYText = (key: string, value: string) => {
-        const yText = new Y.Text();
-        yText.insert(0, resolveSurfaceNewlines(value));
-        el.set(key, yText);
-        changed.push(key);
-      };
-
-      if (params.text !== undefined) {
-        if (elementType === "shape" || elementType === "text" || elementType === "connector") {
-          setYText("text", params.text);
-        } else {
-          ignored.push("text");
-        }
-      }
-      if (params.label !== undefined) {
-        if (elementType === "connector") {
-          setYText("text", params.label);
-        } else {
-          ignored.push("label");
-        }
-      }
-      if (params.title !== undefined) {
-        if (elementType === "group") {
-          setYText("title", params.title);
-        } else {
-          ignored.push("title");
-        }
-      }
-
-      for (const [field, applicable] of Object.entries(FIELD_APPLICABILITY)) {
-        const key = field as keyof SurfaceElementFields;
-        if (params[key] === undefined) continue;
-        if (applicable.includes(elementType as SurfaceElementType)) {
-          el.set(field, params[key]);
-          changed.push(field);
-        } else {
-          ignored.push(field);
-        }
-      }
-
-      if (params.index !== undefined) {
-        el.set("index", params.index);
-        changed.push("index");
-      }
-
-      if (params.sourceId !== undefined || params.sourcePosition !== undefined) {
-        if (elementType === "connector") {
-          const source: Record<string, any> = {};
-          if (params.sourceId) source.id = params.sourceId;
-          if (params.sourcePosition) source.position = params.sourcePosition;
-          el.set("source", source);
-          changed.push("source");
-        } else {
-          if (params.sourceId !== undefined) ignored.push("sourceId");
-          if (params.sourcePosition !== undefined) ignored.push("sourcePosition");
-        }
-      }
-      if (params.targetId !== undefined || params.targetPosition !== undefined) {
-        if (elementType === "connector") {
-          const target: Record<string, any> = {};
-          if (params.targetId) target.id = params.targetId;
-          if (params.targetPosition) target.position = params.targetPosition;
-          el.set("target", target);
-          changed.push("target");
-        } else {
-          if (params.targetId !== undefined) ignored.push("targetId");
-          if (params.targetPosition !== undefined) ignored.push("targetPosition");
-        }
-      }
-      if (params.children !== undefined) {
-        if (elementType === "group") {
-          const childMap = new Y.Map<boolean>();
-          for (const childId of params.children) childMap.set(childId, true);
-          el.set("children", childMap);
-          changed.push("children");
-        } else {
-          ignored.push("children");
-        }
-      }
-
-      if (changed.length > 0) {
+      const result = updateSurfaceElementIn(ctx.value, blocks, params);
+      if (result.changed.length > 0) {
         const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
           socket,
@@ -10098,17 +10437,67 @@ export function registerDocTools(
           Buffer.from(delta).toString("base64")
         );
       }
-      return text({
-        updated: changed.length > 0,
-        elementId: params.elementId,
-        type: typeof elementType === "string" ? elementType : null,
-        changed,
-        ignored,
-      });
+      return text({ updated: result.changed.length > 0, ...result });
     } finally {
       socket.disconnect();
     }
   };
+
+  /**
+   * Loads a document's surface, runs `edit`, and pushes one delta only if it reports a change.
+   * Atomic: `edit` throwing means nothing is pushed.
+   */
+  async function editSurface<T>(
+    params: { workspaceId?: string; docId: string },
+    create: boolean,
+    edit: (ctx: { surfaceId: string; value: Y.Map<any> }, blocks: Y.Map<any>) => { changed: boolean; result: T }
+  ): Promise<T & { surfaceBlockId: string }> {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing && !create) throw new Error(`Document '${params.docId}' not found or has no content.`);
+      if (snapshot.missing) Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const ctx = getSurfaceElementsValueMap(blocks, { create });
+      if (!ctx) throw new Error("Document has no surface elements.");
+      const { changed, result } = edit(ctx, blocks);
+      if (changed) {
+        await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(pendingUpdate.finish()).toString("base64"));
+      }
+      return { ...result, surfaceBlockId: ctx.surfaceId };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
+  const addSurfaceElementsHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    elements: Array<BatchItem & SurfaceElementFields & { type: SurfaceElementType }>;
+  }) =>
+    text(await editSurface(params, true, (ctx, blocks) => {
+      const elements = addBatch(params.elements, item => addSurfaceElementTo(ctx, blocks, item as any));
+      return { changed: true, result: { added: elements.length, elements } };
+    }));
+
+  const updateSurfaceElementsHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    updates: Array<SurfaceElementFields & { elementId: string }>;
+  }) =>
+    text(await editSurface(params, false, (ctx, blocks) => {
+      const updates = params.updates.map(update => updateSurfaceElementIn(ctx.value, blocks, update));
+      const changed = updates.filter(update => update.changed.length > 0).length;
+      return { changed: changed > 0, result: { updated: changed, updates } };
+    }));
 
   const deleteSurfaceElementHandler = async (params: DeleteSurfaceElementInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
@@ -10149,10 +10538,21 @@ export function registerDocTools(
           prunedConnectors: [],
         });
       }
-      ctx.value.delete(params.elementId);
+      // A native mindmap owns its node shapes; deleting only the mindmap would orphan them.
+      const deletedNodes: string[] = [];
+      if (existing.get("type") === "mindmap") {
+        try {
+          deletedNodes.push(...deleteNativeMindmap(ctx.value, params.elementId).slice(1));
+        } catch {
+          ctx.value.delete(params.elementId); // Malformed map: remove the element itself only.
+        }
+      } else {
+        ctx.value.delete(params.elementId);
+      }
 
       const prunedConnectors: string[] = [];
       if (params.pruneConnectors) {
+        const deletedIds = new Set([params.elementId, ...deletedNodes]);
         const toDelete: string[] = [];
         for (const [otherId, otherVal] of ctx.value.entries()) {
           if (!(otherVal instanceof Y.Map)) continue;
@@ -10160,10 +10560,10 @@ export function registerDocTools(
           const source = otherVal.get("source");
           const target = otherVal.get("target");
           const srcId =
-            source && typeof source === "object" ? (source as any).id : undefined;
+            source instanceof Y.Map ? source.get("id") : source && typeof source === "object" ? (source as any).id : undefined;
           const tgtId =
-            target && typeof target === "object" ? (target as any).id : undefined;
-          if (srcId === params.elementId || tgtId === params.elementId) {
+            target instanceof Y.Map ? target.get("id") : target && typeof target === "object" ? (target as any).id : undefined;
+          if (deletedIds.has(srcId) || deletedIds.has(tgtId)) {
             toDelete.push(String(otherId));
           }
         }
@@ -10173,7 +10573,7 @@ export function registerDocTools(
         }
       }
 
-      pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
+      pruneFromFrameChildElementIds(blocks, [params.elementId, ...deletedNodes, ...prunedConnectors]);
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
@@ -10182,7 +10582,7 @@ export function registerDocTools(
         params.docId,
         Buffer.from(delta).toString("base64")
       );
-      return text({ deleted: true, elementId: params.elementId, prunedConnectors });
+      return text({ deleted: true, elementId: params.elementId, deletedNodes, prunedConnectors });
     } finally {
       socket.disconnect();
     }
@@ -11212,7 +11612,7 @@ export function registerDocTools(
         exists: true,
         surfaceBlockId: ctx?.surfaceId ?? surfaceBlockId ?? null,
         edgelessBlocks: sortedEdgelessBlocks,
-        surfaceElements: sortedSurfaceElements,
+        surfaceElements: params.compact ? sortedSurfaceElements.map(compactSurfaceElement) : sortedSurfaceElements,
         elementCounts: counts,
         bounds: hasAny
           ? { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
@@ -11283,10 +11683,11 @@ export function registerDocTools(
       .describe("Rear endpoint style (default Arrow). Connector only."),
     stroke: z.string().optional().describe("Connector stroke color (default '--affine-text-primary-color' — theme-adaptive, near-black in light / near-white in dark). Accepts any CSS color or AFFiNE palette token. Connector only."),
     label: z.string().optional().describe("Connector label (stored as text on the connector). Connector only."),
-    children: z.array(z.string()).optional().describe("Child element ids. Group only."),
+    children: z.array(z.string()).optional().describe("Existing surface element or native GFX block ids. Group only; self/ancestor references are rejected."),
     title: z.string().optional().describe("Group title. Group only."),
     index: z
       .string()
+      .refine(isValidSurfaceIndex, "index must be a valid BlockSuite fractional-index key.")
       .optional()
       .describe(
         "BlockSuite fractional-index string controlling z-order. On add, defaults to a key above every existing element's index (new elements render on top). On update, replaces the stored value — pass a key less than some existing index to send-to-back, or greater to bring-to-front. Use the value returned by list_surface_elements to pick a specific position."
@@ -11310,6 +11711,43 @@ export function registerDocTools(
   );
 
   server.registerTool(
+    "add_surface_elements",
+    {
+      title: "Add Surface Elements",
+      description:
+        "Add many shapes, connectors, texts or groups to the edgeless canvas in ONE atomic write. Each item takes the same fields as add_surface_element plus an optional `key`: a local name that LATER connectors may use as sourceId/targetId, so a whole diagram needs one call. Other endpoint ids must exist in the surface or document blocks. Invalid items, duplicate keys or forward references reject the whole call. Returns each element's id in input order.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        elements: z.array(z.object({
+          key: z.string().optional().describe("Local name usable as sourceId/targetId by later connectors in this batch."),
+          type: z.enum(["shape", "connector", "text", "group"]).describe("Element type"),
+          ...surfaceElementFieldSchemas,
+        })).min(1).max(200),
+      },
+    },
+    addSurfaceElementsHandler as any
+  );
+
+  server.registerTool(
+    "update_surface_elements",
+    {
+      title: "Update Surface Elements",
+      description:
+        "Partially update many surface elements in ONE atomic write. Each item takes the same fields as update_surface_element. A missing element rejects the whole call. Returns per-element changed/ignored lists.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID"),
+        updates: z.array(z.object({
+          elementId: z.string().min(1).describe("Element ID to update"),
+          ...surfaceElementFieldSchemas,
+        })).min(1).max(200),
+      },
+    },
+    updateSurfaceElementsHandler as any
+  );
+
+  server.registerTool(
     "list_surface_elements",
     {
       title: "List Surface Elements",
@@ -11323,6 +11761,7 @@ export function registerDocTools(
           .optional()
           .describe("Filter by element type"),
         elementId: z.string().optional().describe("Filter to a single element id"),
+        compact: z.boolean().optional().describe("Return only id, type, index, geometry, text and links per element (no style data) to keep large canvases cheap to read."),
       },
     },
     listSurfaceElementsHandler as any
@@ -11349,7 +11788,7 @@ export function registerDocTools(
     {
       title: "Delete Surface Element",
       description:
-        "Delete a surface element by id. Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
+        "Delete a surface element by id. Deleting a native mindmap also deletes all of its node shapes (reported in deletedNodes). Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
@@ -11526,6 +11965,7 @@ export function registerDocTools(
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
+        compact: z.boolean().optional().describe("Return only id, type, index, geometry, text and links per surface element (no style data) to keep large canvases cheap to read."),
       },
     },
     getEdgelessCanvasHandler as any

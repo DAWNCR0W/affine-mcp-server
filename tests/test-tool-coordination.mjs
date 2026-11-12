@@ -1,7 +1,7 @@
 import './require-destructive-test-safety.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import * as Y from 'yjs';
 import { coordinateTool } from '../dist/toolCoordination.js';
 import { documentRevision, isDocumentRegistered } from '../dist/util/documentRevision.js';
@@ -46,7 +46,7 @@ test('registration detection follows the workspace page entry through deletion',
 });
 
 test('document writes advertise a validated optional revision; reads preserve their schema', () => {
-  for (const name of ['update_block', 'update_table_cell', 'update_table_column_widths', 'replace_doc_with_markdown', 'move_block', 'reparent_mindmap_node']) {
+  for (const name of ['update_block', 'update_table_cell', 'update_table_column_widths', 'replace_doc_with_markdown', 'move_block', 'reparent_mindmap_node', 'add_surface_elements', 'update_surface_elements']) {
     const { inputSchema } = coordinateTool(name, shape, async () => ({}), context);
     const schema = z.object(inputSchema);
     assert(schema.safeParse({ docId: 'doc' }).success);

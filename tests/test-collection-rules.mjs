@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { registerOrganizeTools } from "../dist/tools/organize.js";
 

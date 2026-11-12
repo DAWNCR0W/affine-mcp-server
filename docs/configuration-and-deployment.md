@@ -208,7 +208,7 @@ Important note for AFFiNE Cloud:
 Prebuilt images are published to GHCR:
 
 - `ghcr.io/dawncr0w/affine-mcp-server:latest`
-- `ghcr.io/dawncr0w/affine-mcp-server:3.10.1`
+- `ghcr.io/dawncr0w/affine-mcp-server:3.13.0`
 
 Example:
 
@@ -221,7 +221,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.10.1
+  ghcr.io/dawncr0w/affine-mcp-server:3.13.0
 ```
 
 Health endpoints:
@@ -242,6 +242,14 @@ HTTP mode exposes:
 `/readyz` returns `503` with the failing component when the configured AFFiNE GraphQL endpoint is unavailable. Keep both diagnostic routes private to your load balancer or trusted monitoring network.
 
 ### Runtime limits and shutdown
+
+Across stdio and HTTP transports, each tool call accepts at most 20,000 nested
+object members and array elements in total. This input-cost ceiling is checked
+before tool-schema validation and handler execution, including fields a tool
+would otherwise ignore. Calls above the ceiling are rejected without running
+the tool; split large batches or rich-text payloads into smaller calls. This
+ceiling supplements the HTTP body-size limit and does not replace each tool's
+own row, element, or table-size limits.
 
 The HTTP transport limits JSON request bodies and the number of active sessions
 to prevent accidental resource exhaustion. Both Streamable HTTP and legacy SSE

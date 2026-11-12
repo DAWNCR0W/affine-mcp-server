@@ -100,6 +100,108 @@ function testParserRetainsInlineDeltas() {
   );
 }
 
+function testNestedListParserPreservesHierarchyAndRichText() {
+  const parsed = parseMarkdownToOperations([
+    '## Plan',
+    '',
+    '- Parent **A**',
+    '  - Child *A1*',
+    '    - [x] Grandchild ~~done~~',
+    '  - Child A2',
+    '- Parent B',
+  ].join('\n'));
+
+  assert.equal(parsed.operations.length, 3);
+  const [, parent, sibling] = parsed.operations;
+  assert.equal(parent.type, 'list');
+  assert.equal(parent.text, 'Parent A');
+  assert.equal(sibling.text, 'Parent B');
+  assert.deepEqual(parent.children.map(child => child.text), ['Child A1', 'Child A2']);
+  const grandchild = parent.children[0].children[0];
+  assert.equal(grandchild.style, 'todo');
+  assert.equal(grandchild.checked, true);
+  assert.ok(hasDelta(parent.deltas, 'A', { bold: true }));
+  assert.ok(hasDelta(parent.children[0].deltas, 'A1', { italic: true }));
+  assert.ok(hasDelta(grandchild.deltas, 'done', { strike: true }));
+  assert.equal(parsed.stats.blockCount, 6, 'count every descendant and the heading');
+  assert.equal(parsed.stats.unsupportedCount, 0);
+  assert.equal(parsed.lossy, false);
+  assert.deepEqual(parsed.warnings, []);
+}
+
+function testMixedNestedListParserPreservesOrderAndTaskStates() {
+  const parsed = parseMarkdownToOperations([
+    '1. First',
+    '   - [ ] [pending](https://example.com)',
+    '     1. `code`',
+    '     2. Done',
+    '   - [X] complete',
+    '2. Second',
+  ].join('\n'));
+
+  assert.deepEqual(parsed.operations.map(item => [item.text, item.style]), [
+    ['First', 'numbered'],
+    ['Second', 'numbered'],
+  ]);
+  const [pending, complete] = parsed.operations[0].children;
+  assert.deepEqual([pending.style, pending.checked], ['todo', false]);
+  assert.deepEqual([complete.style, complete.checked], ['todo', true]);
+  assert.deepEqual(pending.children.map(item => [item.text, item.style]), [
+    ['code', 'numbered'],
+    ['Done', 'numbered'],
+  ]);
+  assert.ok(hasDelta(pending.deltas, 'pending', { link: 'https://example.com' }));
+  assert.ok(hasDelta(pending.children[0].deltas, 'code', { code: true }));
+  assert.equal(parsed.stats.blockCount, 6);
+  assert.equal(parsed.lossy, false);
+  assert.deepEqual(parsed.warnings, []);
+
+  const emptyParent = parseMarkdownToOperations('-\n  - Child');
+  assert.equal(emptyParent.operations.length, 1);
+  assert.equal(emptyParent.operations[0].text, '');
+  assert.equal(emptyParent.operations[0].children[0].text, 'Child');
+  assert.equal(emptyParent.stats.blockCount, 2);
+  assert.equal(emptyParent.lossy, false);
+}
+
+function testUnsupportedListContentRetainsTruthfulWarnings() {
+  const trailing = parseMarkdownToOperations('- Parent\n  - Child\n\n  Tail **after**\n- Next');
+  assert.equal(trailing.operations[0].text, 'Parent\nTail after');
+  assert.equal(trailing.operations[0].children[0].text, 'Child');
+  assert.equal(trailing.operations[1].text, 'Next');
+  assert.ok(hasDelta(trailing.operations[0].deltas, 'after', { bold: true }));
+  assert.equal(trailing.stats.blockCount, 3);
+  assert.equal(trailing.lossy, true);
+  assert.ok(trailing.warnings.some(warning => /text after a nested list.*moved before/.test(warning)));
+
+  const code = parseMarkdownToOperations('- Parent\n\n  ```js\n  ignored()\n  ```\n  - Child');
+  assert.equal(code.operations[0].text, 'Parent');
+  assert.equal(code.operations[0].children[0].text, 'Child');
+  assert.equal(code.lossy, true);
+  assert.ok(code.warnings.some(warning => /Code blocks inside.*ignored/.test(warning)));
+
+  const table = parseMarkdownToOperations('- Parent\n\n  | Header | Value |\n  | --- | --- |\n  | A | B |');
+  assert.match(table.operations[0].text, /Header\nValue\nA\nB/);
+  assert.equal(table.lossy, true);
+  assert.ok(table.warnings.some(warning => /Tables inside.*flattened/.test(warning)));
+}
+
+function testMarkdownNestingLimitReportsPossibleLoss() {
+  const nestedList = depth => Array.from({ length: depth }, (_, index) =>
+    `${'  '.repeat(index)}- node${index}`,
+  ).join('\n');
+  const supported = parseMarkdownToOperations(nestedList(49));
+  assert.equal(supported.stats.blockCount, 49);
+  assert.equal(supported.lossy, false);
+  assert.deepEqual(supported.warnings, []);
+
+  for (const depth of [50, 60]) {
+    const limited = parseMarkdownToOperations(nestedList(depth));
+    assert.equal(limited.lossy, true);
+    assert.ok(limited.warnings.some(warning => /nesting limit.*omitted/.test(warning)));
+  }
+}
+
 function testPlainTextExportCompatibility() {
   const legacy = renderSingleBlock(markdownBlock({ text: '  Plain text  ' }));
   const deltaBacked = renderSingleBlock(markdownBlock({
@@ -365,6 +467,10 @@ function testLinkedPageReferenceBoundaryExport() {
 testRenderCalloutAsAdmonition();
 testParseAdmonitionAsCallout();
 testParserRetainsInlineDeltas();
+testNestedListParserPreservesHierarchyAndRichText();
+testMixedNestedListParserPreservesOrderAndTaskStates();
+testUnsupportedListContentRetainsTruthfulWarnings();
+testMarkdownNestingLimitReportsPossibleLoss();
 testPlainTextExportCompatibility();
 testSupportedRichTextExport();
 testAllSupportedAttributeCombinationsRoundTrip();

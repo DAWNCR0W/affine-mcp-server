@@ -141,7 +141,10 @@ if (
 }
 
 async function buildServer() {
-  const server = new McpServer({ name: "affine-mcp", version: VERSION });
+  const server = new McpServer(
+    { name: "affine-mcp", version: VERSION },
+    { maxToolInputElements: 20_000 },
+  );
   const gqlHeaders = { ...(config.headers || {}) };
 
   // Initialize GraphQL client with authentication

@@ -417,7 +417,7 @@ function childList(block: MarkdownRenderableBlock): string[] {
 
 function renderBlock(
   blockId: string,
-  listDepth: number,
+  listIndent: number,
   state: RenderState,
   container?: "callout" | "quote" | "list",
 ): RenderChunk {
@@ -462,7 +462,7 @@ function renderBlock(
 
       const childContainer = container === "callout" || type !== "quote" ? container : "quote";
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, childContainer);
+        const child = renderBlock(childId, listIndent, state, childContainer);
         if (child.lines.length > 0) {
           lines.push(...child.lines);
         }
@@ -472,7 +472,7 @@ function renderBlock(
     }
 
     case "affine:list": {
-      const indent = "  ".repeat(Math.max(0, listDepth));
+      const indent = " ".repeat(Math.max(0, listIndent));
       const style = type === "numbered" ? "numbered" : type === "todo" ? "todo" : "bulleted";
       const marker =
         style === "numbered"
@@ -482,12 +482,19 @@ function renderBlock(
               ? "- [x]"
               : "- [ ]"
             : "-";
-      const lines: string[] = [`${indent}${marker}${text ? ` ${text}` : ""}`];
+      // CommonMark content starts after "1. " for ordered lists and "- "
+      // for bullet/task lists. Accumulate columns, not a fixed two per level.
+      const contentIndent = listIndent + (style === "numbered" ? 3 : 2);
+      const [firstLine, ...continuationLines] = text.split(/\r\n|\r|\n/);
+      const lines: string[] = [
+        `${indent}${marker}${firstLine ? ` ${firstLine}` : ""}`,
+        ...continuationLines.map(line => `${" ".repeat(contentIndent)}${line}`),
+      ];
 
       for (const childId of children) {
         const child = state.blocksById.get(childId);
-        const nextDepth = child?.flavour === "affine:list" ? listDepth + 1 : listDepth;
-        const rendered = renderBlock(childId, nextDepth, state, container === "callout" ? container : "list");
+        const nextIndent = child?.flavour === "affine:list" ? contentIndent : listIndent;
+        const rendered = renderBlock(childId, nextIndent, state, container === "callout" ? container : "list");
         if (rendered.lines.length > 0) {
           lines.push(...rendered.lines);
         }
@@ -596,7 +603,7 @@ function renderBlock(
     case "affine:callout": {
       const contentLines: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, "callout");
+        const child = renderBlock(childId, listIndent, state, "callout");
         if (child.lines.length > 0) {
           if (contentLines.length > 0 && !child.isList) {
             contentLines.push("");
@@ -618,7 +625,7 @@ function renderBlock(
     case "affine:surface": {
       const chunks: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, container);
+        const child = renderBlock(childId, listIndent, state, container);
         if (child.lines.length > 0) {
           if (chunks.length > 0 && !child.isList) {
             chunks.push("");

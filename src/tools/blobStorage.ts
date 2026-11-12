@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { GraphQLClient } from "../graphqlClient.js";
 import { createHash } from "node:crypto";
 import { receipt, text, toolError, ToolFailure } from "../util/mcp.js";
