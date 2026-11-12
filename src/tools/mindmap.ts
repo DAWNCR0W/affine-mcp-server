@@ -368,7 +368,7 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
   };
   server.registerTool("create_mindmap", {
     title: "Create Native Mindmap",
-    description: "Create a native AFFiNE mindmap with one root shape in an existing document. Returns mindmapId/rootId for add_mindmap_node. Only right/left/balance are supported; down/up are unsupported by BlockSuite. Does not create a document or sidebar link. Rendering of native mindmaps depends on the AFFiNE client version; if nodes do not appear, rebuild the diagram with add_surface_elements (shapes + connectors).",
+    description: "Create a native AFFiNE mindmap with one root shape in an existing document. Returns mindmapId/rootId for add_mindmap_node. Only right/left/balance are supported; down/up are unsupported by BlockSuite. Does not create a document or sidebar link. Rendering of native mindmaps depends on the AFFiNE client version; if nodes do not appear, rebuild the diagram with add_surface_element (shapes + connectors).",
     inputSchema: { ...base, ...compact, text: Label, layout: Direction.optional(), style: Style.optional(), x: Coordinate.optional(), y: Coordinate.optional(), children: z.array(OutlineNode).max(MAX_NODES - 1).optional().describe("Optional nested outline [{text, children?}] built under the root in the same call; max 500 nodes in total.") },
   }, run("create"));
   server.registerTool("get_mindmap", {

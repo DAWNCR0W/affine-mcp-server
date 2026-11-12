@@ -40,7 +40,7 @@ function parseContent(result) {
   }
 }
 
-async function mutateDatabaseViews(workspaceId, docId, databaseBlockId, mutate) {
+async function withDatabaseBlock(workspaceId, docId, databaseBlockId, mutate) {
   const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
   const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(`${BASE_URL}/graphql`), cookie, undefined);
   try {
@@ -65,15 +65,66 @@ async function mutateDatabaseViews(workspaceId, docId, databaseBlockId, mutate) 
       throw new Error(`Database block ${databaseBlockId} not found`);
     }
 
+    let changed = false;
+    doc.on('update', () => { changed = true; });
+    const result = mutate(databaseBlock);
+    if (changed) {
+      const delta = Y.encodeStateAsUpdate(doc, previousState);
+      await pushDocUpdate(socket, workspaceId, docId, Buffer.from(delta).toString('base64'));
+    }
+    return result;
+  } finally {
+    socket.disconnect();
+  }
+}
+
+async function mutateDatabaseViews(workspaceId, docId, databaseBlockId, mutate) {
+  await withDatabaseBlock(workspaceId, docId, databaseBlockId, databaseBlock => {
     const views = databaseBlock.get('prop:views');
     if (!(views instanceof Y.Array)) throw new Error('Database views are not a Y.Array');
     const changed = mutate(views);
     if (changed === 0) throw new Error('Expected database views to change');
+  });
+}
 
-    const delta = Y.encodeStateAsUpdate(doc, previousState);
-    await pushDocUpdate(socket, workspaceId, docId, Buffer.from(delta).toString('base64'));
-  } finally {
-    socket.disconnect();
+function findRawDatabaseColumn(databaseBlock, columnId) {
+  const columns = databaseBlock.get('prop:columns');
+  if (!(columns instanceof Y.Array)) throw new Error('Database columns are not a Y.Array');
+  const column = columns.toArray().find(entry => entry instanceof Y.Map && entry.get('id') === columnId);
+  if (!column) throw new Error(`Database column ${columnId} not found as a Y.Map`);
+  return column;
+}
+
+/** Number property data as stored in the doc, or null when the column has none. */
+async function readNumberColumnData(workspaceId, docId, databaseBlockId, columnId) {
+  return withDatabaseBlock(workspaceId, docId, databaseBlockId, databaseBlock => {
+    const data = findRawDatabaseColumn(databaseBlock, columnId).get('data');
+    if (data === undefined) return null;
+    return data instanceof Y.Map ? data.toJSON() : data;
+  });
+}
+
+/**
+ * Rewrites number column property data the way other clients may have left it:
+ * `null` deletes it (columns created by earlier affine-mcp-server versions), an
+ * object replaces it (a format chosen in the AFFiNE UI).
+ */
+async function setNumberColumnData(workspaceId, docId, databaseBlockId, columnId, value) {
+  await withDatabaseBlock(workspaceId, docId, databaseBlockId, databaseBlock => {
+    const column = findRawDatabaseColumn(databaseBlock, columnId);
+    if (value === null) {
+      column.delete('data');
+      return;
+    }
+    const data = new Y.Map();
+    for (const [key, entry] of Object.entries(value)) data.set(key, entry);
+    column.set('data', data);
+  });
+}
+
+function expectColumnData(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label}: expected property data ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
 }
 
@@ -306,6 +357,9 @@ async function main() {
     const columnDefs = [
       { name: 'Title', type: 'title' },
       { name: 'Status', type: 'select', options: ['Active', 'Inactive', 'Pending'] },
+      { name: 'Estimate', type: 'number' },
+      { name: 'Legacy Estimate', type: 'number' },
+      { name: 'Share', type: 'number' },
     ];
 
     for (const colDef of columnDefs) {
@@ -350,6 +404,29 @@ async function main() {
     await convertDatabaseHeadersToYMaps(state.workspaceId, state.docId, state.databaseBlockId);
     await settle();
 
+    // Number columns get BlockSuite's default property data on creation. Then
+    // simulate a column created by an older server (no data) and one whose
+    // format was changed in the AFFiNE UI; the row writes below must repair
+    // the first and leave the second alone.
+    const columnIdByName = name => state.columns.find(column => column.name === name)?.columnId;
+    const DEFAULT_NUMBER_DATA = { decimal: 0, format: 'number' };
+    const CUSTOM_NUMBER_DATA = { decimal: 2, format: 'percent' };
+    for (const name of ['Estimate', 'Legacy Estimate', 'Share']) {
+      expectColumnData(
+        await readNumberColumnData(state.workspaceId, state.docId, state.databaseBlockId, columnIdByName(name)),
+        DEFAULT_NUMBER_DATA,
+        `new number column ${name}`,
+      );
+    }
+    await setNumberColumnData(state.workspaceId, state.docId, state.databaseBlockId, columnIdByName('Legacy Estimate'), null);
+    await setNumberColumnData(state.workspaceId, state.docId, state.databaseBlockId, columnIdByName('Share'), CUSTOM_NUMBER_DATA);
+    expectColumnData(
+      await readNumberColumnData(state.workspaceId, state.docId, state.databaseBlockId, columnIdByName('Legacy Estimate')),
+      null,
+      'legacy number column before repair',
+    );
+    await settle();
+
     const schema = await call('read_database_columns', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -361,11 +438,15 @@ async function main() {
     if (statusColumn?.type !== 'select') {
       throw new Error('read_database_columns did not return a select Status column');
     }
+    const estimateColumn = schema?.columns?.find(column => column.name === 'Estimate');
+    if (estimateColumn?.type !== 'number') {
+      throw new Error('read_database_columns did not return a number Estimate column');
+    }
     if (schema.titleColumnId !== titleColumn.id) {
       throw new Error(`titleColumnId mismatch: expected ${titleColumn.id}, got ${schema.titleColumnId}`);
     }
-    if (schema.columnCount !== 2) {
-      throw new Error(`expected a minimal two-column database, got ${schema.columnCount} columns`);
+    if (schema.columnCount !== 5) {
+      throw new Error(`expected a five-column database, got ${schema.columnCount} columns`);
     }
     if (!Array.isArray(schema.views) || schema.views.length !== 3) {
       throw new Error(`expected all three database view representations, got ${JSON.stringify(schema.views)}`);
@@ -374,16 +455,16 @@ async function main() {
       if (view.header?.titleColumn !== titleColumn.id) {
         throw new Error(`view ${view.id} is not bound to title column ${titleColumn.id}`);
       }
-      if (!view.columnIds?.includes(titleColumn.id) || !view.columnIds?.includes(statusColumn.id)) {
+      if (![titleColumn, statusColumn, estimateColumn].every(column => view.columnIds?.includes(column.id))) {
         throw new Error(`view ${view.id} does not expose both minimal database columns`);
       }
     }
 
     // 5. Add rows
     const rowDefs = [
-      { Title: 'Build feature', Status: 'Active' },
-      { Title: 'Write tests', Status: 'Pending' },
-      { Title: 'Deploy release', Status: 'Inactive' },
+      { Title: 'Build feature', Status: 'Active', Estimate: 1301, 'Legacy Estimate': 1401, Share: 0.25 },
+      { Title: 'Write tests', Status: 'Pending', Estimate: 1302, 'Legacy Estimate': 1402, Share: 0.5 },
+      { Title: 'Deploy release', Status: 'Inactive', Estimate: 1303, 'Legacy Estimate': 1403, Share: 0.75 },
     ];
 
     for (const rowDef of rowDefs) {
@@ -399,6 +480,17 @@ async function main() {
       });
       await settle();
     }
+
+    expectColumnData(
+      await readNumberColumnData(state.workspaceId, state.docId, state.databaseBlockId, columnIdByName('Legacy Estimate')),
+      DEFAULT_NUMBER_DATA,
+      'legacy number column after a number write',
+    );
+    expectColumnData(
+      await readNumberColumnData(state.workspaceId, state.docId, state.databaseBlockId, columnIdByName('Share')),
+      CUSTOM_NUMBER_DATA,
+      'customised number column after a number write',
+    );
 
     // Write state file
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
