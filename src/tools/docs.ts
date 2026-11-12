@@ -2601,6 +2601,34 @@ export function registerDocTools(
     });
   }
 
+  /**
+   * Default property data for a new database column, mirroring BlockSuite's
+   * `propertyData.default()` per property type. AFFiNE's cell renderers read
+   * `column.data` without a fallback (number reads `data.decimal`/`data.format`,
+   * select/multi-select read `data.options`), so a column without `data`
+   * renders blank cells even though the cell values are stored correctly.
+   * See blocksuite/affine/data-view/src/property-presets/number/define.ts and
+   * select/define.ts, multi-select/define.ts.
+   */
+  function createDefaultDatabaseColumnData(type: string, options: string[] = []): Y.Map<any> {
+    const data = new Y.Map<any>();
+    if (type === "number") {
+      data.set("decimal", 0);
+      data.set("format", "number");
+    } else if (type === "select" || type === "multi-select") {
+      const rawOptions = new Y.Array<any>();
+      options.forEach((value, index) => {
+        const option = new Y.Map<any>();
+        option.set("id", generateId());
+        option.set("value", value);
+        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+        rawOptions.push([option]);
+      });
+      data.set("options", rawOptions);
+    }
+    return data;
+  }
+
   function createDatabaseColumnDefinition(input: {
     id: string;
     name: string;
@@ -2613,21 +2641,7 @@ export function registerDocTools(
     column.set("name", input.name);
     column.set("type", input.type);
     column.set("width", input.width ?? 200);
-
-    if ((input.type === "select" || input.type === "multi-select") && input.options?.length) {
-      const data = new Y.Map<any>();
-      const options = new Y.Array<any>();
-      input.options.forEach((value, index) => {
-        const option = new Y.Map<any>();
-        option.set("id", generateId());
-        option.set("value", value);
-        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
-        options.push([option]);
-      });
-      data.set("options", options);
-      column.set("data", data);
-    }
-
+    column.set("data", createDefaultDatabaseColumnData(input.type, input.options));
     return column;
   }
 
@@ -8720,6 +8734,11 @@ export function registerDocTools(
         if (Number.isNaN(num)) {
           throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
         }
+        // Repair number columns created without property data (older server
+        // versions): AFFiNE renders their cells blank until `data` exists.
+        if (col.raw instanceof Y.Map && col.raw.get("data") === undefined) {
+          col.raw.set("data", createDefaultDatabaseColumnData("number"));
+        }
         cellValue.set("value", num);
         break;
       }
@@ -9303,28 +9322,13 @@ export function registerDocTools(
       }
 
       const columnId = generateId();
-      const column = new Y.Map<any>();
-      column.set("id", columnId);
-      column.set("name", parsed.name);
-      column.set("type", parsed.type || "rich-text");
-      column.set("width", parsed.width || 200);
-
-      // For select/multi-select, create options
-      if ((parsed.type === "select" || parsed.type === "multi-select") && parsed.options?.length) {
-        const data = new Y.Map<any>();
-        const opts = new Y.Array<any>();
-        for (let i = 0; i < parsed.options.length; i++) {
-          const optMap = new Y.Map<any>();
-          optMap.set("id", generateId());
-          optMap.set("value", parsed.options[i]);
-          optMap.set("color", SELECT_COLORS[i % SELECT_COLORS.length]);
-          opts.push([optMap]);
-        }
-        data.set("options", opts);
-        column.set("data", data);
-      }
-
-      columns.push([column]);
+      columns.push([createDatabaseColumnDefinition({
+        id: columnId,
+        name: parsed.name,
+        type: parsed.type || "rich-text",
+        width: parsed.width || 200,
+        options: parsed.options,
+      })]);
 
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
