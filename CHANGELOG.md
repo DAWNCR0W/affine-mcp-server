@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve nested bullet, numbered, and task lists during Markdown creation, append, replacement, and export (#456). Child items retain their native hierarchy, inline formatting, and checked state; preflight validates the same recursive insertion path before creating a document, and block counts include descendants.
 - Number columns created by `add_database_column` (and by database intent / data view presets) now store BlockSuite's default property data `{ decimal: 0, format: "number" }`, so the AFFiNE UI renders their cells instead of showing them blank (#457). Select and multi-select columns created without options get an empty `options` list for the same reason, and other types get `{}`. Writing a value to an existing number column that has no property data adds the default data, which repairs columns created by earlier versions.
 - Batch surface writes support `expectedRevision`, matching the single-element tools. Single and batch surface additions/updates reject malformed layer indexes and nonexistent connector endpoint IDs before saving; existing surface elements, image/edgeless blocks and earlier batch keys remain valid connector targets.
-
+- Groups reject missing, non-GFX, self-referencing and cyclic members before saving. Compact canvas reads retain connector `labelXYWH` bounds, and table-view responses report `groupBy: null` to match stored state.
 - Initialize database intent columns and seed rows in one content update. Invalid custom columns or seed cells no longer leave a partially created database in the document.
 - `add_database_rows` accepts the shared document `expectedRevision` precondition and rejects stale batches before changing any rows.
 

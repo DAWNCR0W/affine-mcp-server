@@ -49,8 +49,8 @@ test('compactSurfaceElement keeps identity, geometry, text and links but drops s
     compactSurfaceElement({ id: 'a', type: 'shape', index: 'a0', xywh: '[0,0,10,10]', bounds, text: 'T', fillColor: '#fff', fontFamily: 'x', shadow: { blur: 1 }, seed: 1 }),
     { id: 'a', type: 'shape', index: 'a0', xywh: '[0,0,10,10]', bounds, text: 'T' },
   );
-  const connector = { id: 'c', type: 'connector', source: { id: 'a' }, target: { id: 'b' }, stroke: '#000', labelStyle: {} };
-  assert.deepEqual(compactSurfaceElement(connector), { id: 'c', type: 'connector', source: { id: 'a' }, target: { id: 'b' } });
+  const connector = { id: 'c', type: 'connector', source: { id: 'a' }, target: { id: 'b' }, labelXYWH: [1, 2, 30, 20], stroke: '#000', labelStyle: {} };
+  assert.deepEqual(compactSurfaceElement(connector), { id: 'c', type: 'connector', source: { id: 'a' }, target: { id: 'b' }, labelXYWH: [1, 2, 30, 20] });
 });
 
 const tools = new Map();
