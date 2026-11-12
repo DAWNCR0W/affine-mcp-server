@@ -481,7 +481,7 @@ const AppendBlockBookmarkStyle = z.enum(APPEND_BLOCK_BOOKMARK_STYLE_VALUES);
 const APPEND_BLOCK_DATA_VIEW_MODE_VALUES = ["table", "kanban"] as const;
 type AppendBlockDataViewMode = typeof APPEND_BLOCK_DATA_VIEW_MODE_VALUES[number];
 const AppendBlockDataViewMode = z.enum(APPEND_BLOCK_DATA_VIEW_MODE_VALUES);
-const DATABASE_INTENT_VALUES = ["task_board", "issue_tracker"] as const;
+const DATABASE_INTENT_VALUES = ["task_board", "issue_tracker", "table"] as const;
 type DatabaseIntent = typeof DATABASE_INTENT_VALUES[number];
 const DatabaseIntent = z.enum(DATABASE_INTENT_VALUES);
 type DatabaseIntentSeedRow = Record<string, unknown>;
@@ -8295,6 +8295,8 @@ export function registerDocTools(
             },
           ],
         };
+      case "table":
+        return { title: "Table", viewName: "Table", statusOptions: [], extraColumns: [], starterRows: [] };
       default: {
         const exhaustiveCheck: never = intent;
         throw new Error(`Unsupported database intent '${exhaustiveCheck}'`);
@@ -8875,6 +8877,53 @@ export function registerDocTools(
     addDatabaseRowHandler as any
   );
 
+  const addDatabaseRowsHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rows: Array<{ cells: Record<string, unknown>; linkedDocId?: string }>;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      const creatorId = await fetchCurrentUserId(gql);
+      const rowBlockIds = parsed.rows.map(row => addDatabaseRowToBlock({
+        blocks: ctx.blocks,
+        dbBlock: ctx.dbBlock,
+        cellsMap: ctx.cellsMap,
+        databaseBlockId: parsed.databaseBlockId,
+        lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)), // Rebuilt so options created by earlier rows resolve.
+        cells: row.cells,
+        linkedDocId: row.linkedDocId,
+        creatorId,
+      }));
+      // Nothing is pushed unless every row was valid.
+      const delta = ctx.pendingUpdate.finish();
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      return text({ added: rowBlockIds.length, rowBlockIds, databaseBlockId: parsed.databaseBlockId });
+    } finally {
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_rows",
+    {
+      title: "Add Database Rows",
+      description: "Add many rows to an AFFiNE database block with one write. Each row is {cells, linkedDocId?} with the same cell rules as add_database_row. Atomic: an invalid row rejects the whole call. Returns row block ids in input order.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        rows: z.array(z.object({
+          cells: z.record(z.unknown()).describe("Map of column name (or column ID) to cell value, as in add_database_row."),
+          linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID."),
+        })).min(1).max(200),
+      },
+    },
+    addDatabaseRowsHandler as any
+  );
+
   const deleteDatabaseRowHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
@@ -9133,48 +9182,69 @@ export function registerDocTools(
     intent: DatabaseIntent;
     title?: string;
     seedRows?: DatabaseIntentSeedRow[];
+    columns?: DatabaseIntentColumnSpec[];
     placement?: AppendPlacement;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
       throw new Error("workspaceId is required");
     }
+    const custom = parsed.intent === "table";
+    if (custom && !parsed.columns?.length) throw new Error('intent "table" requires a non-empty columns list');
 
     const preset = buildDatabaseIntentPreset(parsed.intent);
     const title = (parsed.title ?? preset.title).trim() || preset.title;
     const starterRows = Array.isArray(parsed.seedRows) ? parsed.seedRows : preset.starterRows;
     const creatorId = starterRows.length > 0 ? await fetchCurrentUserId(gql) : undefined;
-    const creation = await appendBlockInternal({
+    const normalized = normalizeAppendBlockInput({
       workspaceId,
       docId: parsed.docId,
       type: "data_view",
-      viewMode: "kanban",
+      viewMode: custom ? "table" : "kanban",
       text: title,
       placement: parsed.placement,
     });
-
-    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, creation.blockId);
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    const doc = new Y.Doc();
     try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error(`Document '${parsed.docId}' not found`);
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks");
+      const context = resolveInsertContext(blocks, normalized);
+      const creation = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
+      const dbBlock = creation.block;
+      blocks.set(creation.blockId, dbBlock);
+      context.children.insert(context.insertIndex, [creation.blockId]);
+      const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
+
+      // Build the complete database in this request-local document. A bad column
+      // or a late invalid seed row must not leave a persisted, half-built block.
       const warnings: string[] = [];
 
-      const statusLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
-      const statusColumn = statusLookup.colByNameLower.get("status");
-      if (statusColumn?.raw instanceof Y.Map) {
-        replaceSelectColumnOptions(statusColumn.raw, preset.statusOptions);
-      } else {
-        warnings.push("Status column was not found after database creation.");
+      if (!custom) {
+        const statusLookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+        const statusColumn = statusLookup.colByNameLower.get("status");
+        if (statusColumn?.raw instanceof Y.Map) {
+          replaceSelectColumnOptions(statusColumn.raw, preset.statusOptions);
+        } else {
+          warnings.push("Status column was not found after database creation.");
+        }
       }
 
       const addedColumnIds: string[] = [];
-      for (const columnSpec of preset.extraColumns) {
-        addedColumnIds.push(addDatabaseColumnToBlock(ctx.dbBlock, columnSpec));
+      for (const columnSpec of custom ? parsed.columns! : preset.extraColumns) {
+        addedColumnIds.push(addDatabaseColumnToBlock(dbBlock, columnSpec));
       }
 
-      const viewEntries = ctx.dbBlock.get("prop:views");
+      const viewEntries = dbBlock.get("prop:views");
       if (viewEntries instanceof Y.Array) {
         const primaryView = viewEntries.get(0);
         if (primaryView instanceof Y.Map) {
-          primaryView.set("name", preset.viewName);
+          primaryView.set("name", custom ? title : preset.viewName);
         }
       }
 
@@ -9182,22 +9252,22 @@ export function registerDocTools(
       if (creatorId !== undefined) {
         for (const rowInput of starterRows) {
           rowBlockIds.push(addDatabaseRowToBlock({
-            blocks: ctx.blocks,
-            dbBlock: ctx.dbBlock,
-            cellsMap: ctx.cellsMap,
+            blocks,
+            dbBlock,
+            cellsMap,
             databaseBlockId: creation.blockId,
-            lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
+            lookup: buildDatabaseColumnLookup(readColumnDefs(dbBlock)),
             cells: rowInput,
             creatorId,
           }));
         }
       }
 
-      const delta = ctx.pendingUpdate.finish();
-      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      const delta = pendingUpdate.finish();
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
 
-      const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
-      const finalViews = readDatabaseViewDefs(ctx.dbBlock, finalLookup);
+      const finalLookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+      const finalViews = readDatabaseViewDefs(dbBlock, finalLookup);
       const columnSummary = finalLookup.columnDefs.map(column => ({
         id: column.id,
         name: column.name || null,
@@ -9214,7 +9284,7 @@ export function registerDocTools(
         primaryViewId: finalViews[0]?.id || null,
         viewIds: finalViews.map(view => view.id),
         columnIds: finalLookup.columnDefs.map(column => column.id),
-        rowBlockIds: getDatabaseRowIds(ctx.dbBlock),
+        rowBlockIds: getDatabaseRowIds(dbBlock),
         columns: columnSummary,
         views: finalViews,
         warnings: mergeWarnings(warnings),
@@ -9222,26 +9292,33 @@ export function registerDocTools(
         stats: {
           columnCount: columnSummary.length,
           viewCount: finalViews.length,
-          rowCount: getDatabaseRowIds(ctx.dbBlock).length,
+          rowCount: getDatabaseRowIds(dbBlock).length,
           addedColumnCount: addedColumnIds.length,
           seededRowCount: rowBlockIds.length,
         },
       };
     } finally {
-      ctx.socket.disconnect();
+      doc.destroy();
+      socket.disconnect();
     }
   };
   server.registerTool(
     "compose_database_from_intent",
     {
       title: "Compose Database From Intent",
-      description: "Create a useful AFFiNE database/data-view from declarative intent. Supports task_board and issue_tracker presets with starter schema, kanban view, and optional starter rows.",
+      description: "Create a useful AFFiNE database/data-view from declarative intent. Supports task_board and issue_tracker presets (kanban) and intent \"table\": a table view with a Title column plus your own `columns` and optional `seedRows`, all in one call. Columns and seed rows are validated together before a single content write; invalid input leaves the document unchanged.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         intent: DatabaseIntent.describe("Declarative database intent to compose."),
         title: z.string().optional().describe("Optional database title. Defaults to the intent preset title."),
-        seedRows: z.array(z.record(z.unknown())).optional().describe("Optional starter rows. If omitted, the preset starter rows are used."),
+        seedRows: z.array(z.record(z.unknown())).optional().describe("Optional starter rows keyed by column name (`title` for the title column). If omitted, the preset starter rows are used."),
+        columns: z.array(z.object({
+          name: z.string().trim().min(1),
+          type: z.enum(["rich-text", "select", "multi-select", "number", "checkbox", "link", "date"]),
+          options: z.array(z.string()).optional(),
+          width: z.number().optional(),
+        })).optional().describe('Required for intent "table": columns to add after the automatic Title column.'),
         placement: z.object({
           parentId: z.string().optional(),
           afterBlockId: z.string().optional(),
@@ -9256,6 +9333,7 @@ export function registerDocTools(
       intent: DatabaseIntent;
       title?: string;
       seedRows?: DatabaseIntentSeedRow[];
+      columns?: DatabaseIntentColumnSpec[];
       placement?: AppendPlacement;
     }) => text(await composeDatabaseFromIntentCore(parsed)) as any
   );

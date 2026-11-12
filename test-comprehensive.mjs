@@ -22,6 +22,7 @@ const MANIFEST_PATH = path.join(process.cwd(), 'tool-manifest.json');
 const EXPECTED_TOOLS = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).tools;
 const ASSUME_FOCUSED_COVERAGE = process.env.AFFINE_COMPREHENSIVE_ASSUME_FOCUSED_COVERAGE === 'true';
 const FOCUSED_TOOL_COVERAGE = new Map([
+  ['add_database_rows', 'test-database-batch.mjs'],
   ['add_doc_to_collection', 'test-organize-tools.mjs'],
   ['add_organize_link', 'test-organize-tools.mjs'],
   ['add_surface_elements', 'test-surface-batch.mjs'],

@@ -268,16 +268,17 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
+| `compose_database_from_intent` | Create a database block from a high-level schema intent | Useful for project boards and structured tables. `intent: "table"` builds a table view from your own `columns` (after the automatic Title column) and optional `seedRows`. The database, columns and rows are initialized in one content write; invalid columns or seed cells leave the document unchanged. |
 | `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
+| `add_database_rows` | Add many rows to a database block in one write | Atomic; each row is `{cells, linkedDocId?}` with the same cell rules as `add_database_row`. Optional `expectedRevision` rejects stale content before adding rows. |
 | `add_database_view` | Add a view (table or kanban) to an existing database block | Kanban requires `groupBy`: the name of a select/multi-select column; rejects duplicate view names; the new view inherits all current columns. Table views also support an empty stored columns array and return `groupBy: null` even when grouping input was supplied. `totalViews` includes unnamed views. Accepts optional `expectedRevision` from `read_doc` to reject stale edits before writing. |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
 | `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
 
-New rows created by `add_database_row` and `compose_database_from_intent` record the
+New rows created by `add_database_row`, `add_database_rows` and `compose_database_from_intent` record the
 authenticated AFFiNE account and creation time in native block metadata. Paragraphs
 inserted directly under a database by `append_block` or `append_markdown` do the same.
 HTTP/OAuth deployments using a shared AFFiNE account attribute rows to that backend

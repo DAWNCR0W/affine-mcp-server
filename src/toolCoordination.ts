@@ -12,7 +12,7 @@ type Handler = (args: Record<string, any>, extra: any) => Promise<any>;
 // Workspace metadata, properties, and GraphQL mutations need their own revision
 // contract; a page-content token must not imply protection for those resources.
 const DOCUMENT_CONTENT_MUTATIONS = new Set<ToolName>([
-  "add_database_column", "add_database_row", "add_database_view", "add_mindmap_node", "add_surface_element", "add_surface_elements",
+  "add_database_column", "add_database_row", "add_database_rows", "add_database_view", "add_mindmap_node", "add_surface_element", "add_surface_elements",
   "append_block", "append_markdown", "append_semantic_section", "compose_database_from_intent",
   "create_mindmap", "delete_block", "delete_database_row", "delete_doc", "delete_surface_element",
   "move_block", "reparent_mindmap_node", "replace_doc_with_markdown", "set_mindmap_layout",
