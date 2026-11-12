@@ -106,7 +106,55 @@ async function main() {
     expect(JSON.parse(afterUpdate.xywh)[0] === 40, "rejected batch left earlier updates untouched");
 
     await rejects("add_surface_elements", { workspaceId, docId: canvas.docId, elements: [{ type: "connector", sourceId: "later", targetId: "later" }, { key: "later", type: "shape" }] }, "forward reference rejected");
-    expectEqual((await call("list_surface_elements", { workspaceId, docId: canvas.docId })).count, 3, "rejected batch added nothing")
+    expectEqual((await call("list_surface_elements", { workspaceId, docId: canvas.docId })).count, 3, "rejected batch added nothing");
+
+    const uploaded = await call("upload_blob", {
+      workspaceId, encoding: "base64", filename: "surface-endpoint.png", contentType: "image/png",
+      content: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    });
+    const image = await call("append_block", {
+      workspaceId, docId: canvas.docId, type: "image", sourceId: uploaded.key,
+      x: 0, y: 150, width: 120, height: 80,
+    });
+    const canvasText = await call("append_block", {
+      workspaceId, docId: canvas.docId, type: "edgeless_text", text: "Block endpoint", x: 300, y: 150,
+    });
+    const revision = (await call("read_doc", { workspaceId, docId: canvas.docId })).revision;
+    const blockLinks = await call("add_surface_elements", {
+      workspaceId, docId: canvas.docId, expectedRevision: revision,
+      elements: [
+        { type: "connector", sourceId: shapeA.elementId, targetId: image.blockId },
+        { type: "connector", sourceId: canvasText.blockId, targetId: shapeB.elementId },
+        { type: "connector", sourcePosition: [0, 0], targetPosition: [100, 100] },
+      ],
+    });
+    expectEqual(blockLinks.added, 3, "native block targets and absolute endpoints are accepted");
+    await rejects("add_surface_elements", {
+      workspaceId, docId: canvas.docId, expectedRevision: revision, elements: [{ type: "shape" }],
+    }, "stale batch additions reject before persistence");
+    const updateRevision = (await call("read_doc", { workspaceId, docId: canvas.docId })).revision;
+    await call("update_surface_elements", {
+      workspaceId, docId: canvas.docId, expectedRevision: updateRevision,
+      updates: [{ elementId: connector.elementId, sourceId: image.blockId, targetId: canvasText.blockId }],
+    });
+    await rejects("update_surface_elements", {
+      workspaceId, docId: canvas.docId, expectedRevision: updateRevision,
+      updates: [{ elementId: connector.elementId, sourceId: shapeA.elementId }],
+    }, "stale batch updates reject before persistence");
+    const updatedConnector = (await call("list_surface_elements", {
+      workspaceId, docId: canvas.docId, elementId: connector.elementId,
+    })).elements[0];
+    expectEqual([updatedConnector.source.id, updatedConnector.target.id], [image.blockId, canvasText.blockId],
+      "updated connectors retain native image and edgeless-text block IDs");
+    await rejects("add_surface_elements", {
+      workspaceId, docId: canvas.docId,
+      elements: [{ key: "discarded", type: "shape" }, { type: "connector", sourceId: "discarded", targetId: "missing-endpoint" }],
+    }, "missing endpoints reject the whole batch");
+    await rejects("add_surface_elements", {
+      workspaceId, docId: canvas.docId, elements: [{ type: "shape", index: "~" }],
+    }, "malformed layer indexes reject before persistence");
+    expectEqual((await call("list_surface_elements", { workspaceId, docId: canvas.docId })).count, 6,
+      "rejected endpoint, index and stale-revision writes add nothing");
 
     console.log("\nSurface Batch Integration Test passed");
   } finally {

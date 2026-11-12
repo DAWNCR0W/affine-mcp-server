@@ -238,6 +238,15 @@ key after the greatest existing layer key. Frames receive a key before the
 lowest existing layer key so their backgrounds stay behind their contents.
 Page-contained media retain their legacy properties.
 
+Explicit layer indexes on single and batch surface writes must be valid
+base-62 fractional-index keys. Validation preserves native integer keys and
+long legacy fractional suffixes; it does not rewrite stored indexes. Malformed
+keys are rejected before persistence so future automatic allocation remains
+usable. ID-bound connector endpoints must exist in the request's surface map
+or document blocks, which also permits native image and edgeless-text targets.
+Earlier local batch keys resolve to their newly created surface IDs before
+this check; absolute endpoint coordinates do not require an ID.
+
 Frame presentation order uses a separate `prop:presentationIndex`: each newly
 appended frame receives a key after all existing frame presentation keys.
 `get_edgeless_canvas` reports this as `presentationIndex`; its array remains
@@ -278,3 +287,22 @@ Rules:
   over a stored dimension.
 - Only images parented to `affine:surface` are canvas elements. Images inside a
   page note stay in `read_doc` and must not appear in `get_edgeless_canvas`.
+
+## Native mindmap deletion
+
+Native mindmaps own their node shapes through their `children` map, as defined
+by AFFiNE's [native mindmap model](https://github.com/toeverything/AFFiNE/blob/174ad9bc5/blocksuite/affine/model/src/elements/mindmap/mindmap.ts).
+Deleting a valid map removes these shapes too. With `pruneConnectors: true`,
+cleanup covers endpoints bound to every deleted ID and removes those IDs from
+frame ownership. A malformed map is removed without guessing which shapes it owns.
+
+## Markdown lists inside notes
+
+Markdown-seeded notes use native `affine:list` blocks. A nested item belongs in
+its parent list's `sys:children`, while `sys:parent` may remain `null`, as for
+other native blocks in this server. Each sibling sequence keeps its own
+insertion anchor so an item following a subtree remains at its original level.
+This follows AFFiNE v0.27.4's
+[`ListBlockSchema`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/affine/model/src/blocks/list/list-model.ts)
+and
+[`BlockModel`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/framework/store/src/model/block/block-model.ts).

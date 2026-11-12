@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `add_surface_elements` and `update_surface_elements` write many canvas elements in one atomic call. `add_surface_elements` items accept a local `key` that later connectors can use as `sourceId`/`targetId`, so a whole diagram is built in one call.
 - `list_surface_elements` and `get_edgeless_canvas` accept `compact` to return only id, type, index, geometry, text and links.
+- `add_database_view` adds table or kanban views to an existing database. Table views also support native databases with no column definitions; kanban requires a select or multi-select grouping column. The tool supports optional document revision checks and counts all stored views, including unnamed views.
+- `create_mindmap` accepts an optional nested `children` outline and builds the whole map in one call; the outline is validated against the 500-node and depth limits before anything is written.
+- The mutating mindmap tools accept `compact` to return `nodeCount` and ids with an empty `nodes` list, which keeps responses small for large maps.
+- Document the native mindmap rendering caveat and the shapes-and-connectors fallback in `docs/native-mindmaps.md`.
+- `get_capabilities` reports `blobUpload.filePath` (whether `AFFINE_BLOB_UPLOAD_FILE_ROOTS` enables disk-path uploads) and `blobUpload.inline`, so clients can tell before calling `upload_blob`.
+
+### Fixed
+- `delete_surface_element` on a native mindmap now deletes the mindmap's node shapes instead of leaving them orphaned on the canvas, and reports them in `deletedNodes`. With `pruneConnectors: true`, external connectors bound to any deleted node are also removed and reported in `prunedConnectors`.
+- Preserve nested bullet, numbered, and task lists during Markdown creation, append, replacement, and export (#456). Child items retain their native hierarchy, inline formatting, and checked state; preflight validates the same recursive insertion path before creating a document, and block counts include descendants.
+- Number columns created by `add_database_column` (and by database intent / data view presets) now store BlockSuite's default property data `{ decimal: 0, format: "number" }`, so the AFFiNE UI renders their cells instead of showing them blank (#457). Select and multi-select columns created without options get an empty `options` list for the same reason, and other types get `{}`. Writing a value to an existing number column that has no property data adds the default data, which repairs columns created by earlier versions.
+
+- Batch surface writes support `expectedRevision`, matching the single-element tools. Single and batch surface additions/updates reject malformed layer indexes and nonexistent connector endpoint IDs before saving; existing surface elements, image/edgeless blocks and earlier batch keys remain valid connector targets.
 
 ## [3.12.0] - 2026-11-09
 

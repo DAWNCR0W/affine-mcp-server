@@ -1,7 +1,7 @@
 import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
-import { registerMindmapTools } from "./mindmap.js";
+import { deleteNativeMindmap, registerMindmapTools } from "./mindmap.js";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
@@ -46,7 +46,7 @@ import {
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
-import { addBatch, compactSurfaceElement, type BatchItem } from "./surfaceBatch.js";
+import { addBatch, compactSurfaceElement, isValidSurfaceIndex, type BatchItem } from "./surfaceBatch.js";
 import {
   AFFINE_LINKED_PAGE_REFERENCE_NODE,
   normalizeLinkedPageReferenceDeltas,
@@ -501,7 +501,6 @@ type DatabaseIntentPreset = {
 const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
-  "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
   "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
@@ -2602,6 +2601,34 @@ export function registerDocTools(
     });
   }
 
+  /**
+   * Default property data for a new database column, mirroring BlockSuite's
+   * `propertyData.default()` per property type. AFFiNE's cell renderers read
+   * `column.data` without a fallback (number reads `data.decimal`/`data.format`,
+   * select/multi-select read `data.options`), so a column without `data`
+   * renders blank cells even though the cell values are stored correctly.
+   * See blocksuite/affine/data-view/src/property-presets/number/define.ts and
+   * select/define.ts, multi-select/define.ts.
+   */
+  function createDefaultDatabaseColumnData(type: string, options: string[] = []): Y.Map<any> {
+    const data = new Y.Map<any>();
+    if (type === "number") {
+      data.set("decimal", 0);
+      data.set("format", "number");
+    } else if (type === "select" || type === "multi-select") {
+      const rawOptions = new Y.Array<any>();
+      options.forEach((value, index) => {
+        const option = new Y.Map<any>();
+        option.set("id", generateId());
+        option.set("value", value);
+        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+        rawOptions.push([option]);
+      });
+      data.set("options", rawOptions);
+    }
+    return data;
+  }
+
   function createDatabaseColumnDefinition(input: {
     id: string;
     name: string;
@@ -2614,21 +2641,7 @@ export function registerDocTools(
     column.set("name", input.name);
     column.set("type", input.type);
     column.set("width", input.width ?? 200);
-
-    if ((input.type === "select" || input.type === "multi-select") && input.options?.length) {
-      const data = new Y.Map<any>();
-      const options = new Y.Array<any>();
-      input.options.forEach((value, index) => {
-        const option = new Y.Map<any>();
-        option.set("id", generateId());
-        option.set("value", value);
-        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
-        options.push([option]);
-      });
-      data.set("options", options);
-      column.set("data", data);
-    }
-
+    column.set("data", createDefaultDatabaseColumnData(input.type, input.options));
     return column;
   }
 
@@ -4381,8 +4394,6 @@ export function registerDocTools(
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
     const blocks = doc.getMap("blocks") as Y.Map<any>;
-    let anchorPlacement: AppendPlacement | undefined = parsed.placement;
-    let lastInsertedBlockId: string | undefined;
     let replaceParentId: string | undefined;
     let skippedCount = 0;
     let removedCount = 0;
@@ -4416,53 +4427,62 @@ export function registerDocTools(
       }
     }
 
-    for (const [operationIndex, operation] of parsed.operations.entries()) {
-      const placement =
-        lastInsertedBlockId
-          ? { afterBlockId: lastInsertedBlockId }
-          : replaceParentId
-            ? { parentId: replaceParentId }
-            : anchorPlacement;
-      const appendInput = markdownOperationToAppendInput(
-        operation,
-        parsed.docId,
-        parsed.workspaceId,
-        strict,
-        placement
-      );
+    let operationIndex = 0;
+    const subtreeSize = (operation: MarkdownOperation): number => 1 + (
+      operation.type === "list"
+        ? (operation.children ?? []).reduce((count, child) => count + subtreeSize(child), 0)
+        : 0
+    );
 
-      try {
-        const normalized = normalizeAppendBlockInput(appendInput);
-        const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
-        blocks.set(blockId, block);
-        if (Array.isArray(extraBlocks)) {
-          for (const extra of extraBlocks) {
+    // AFFiNE v0.27.4 list/list-model.ts permits affine:list parents, and its
+    // BlockModel derives hierarchy from sys:children (sys:parent stays null).
+    // Each sibling sequence owns its anchor so descendants do not move the next
+    // sibling into their parent's subtree.
+    const appendOperations = (operations: MarkdownOperation[], initialPlacement?: AppendPlacement): void => {
+      let lastInsertedBlockId: string | undefined;
+      for (const operation of operations) {
+        const currentOperationIndex = operationIndex++;
+        const placement = lastInsertedBlockId ? { afterBlockId: lastInsertedBlockId } : initialPlacement;
+        let insertedBlockId: string;
+        try {
+          const normalized = normalizeAppendBlockInput(markdownOperationToAppendInput(
+            operation, parsed.docId, parsed.workspaceId, strict, placement,
+          ));
+          const context = resolveInsertContext(blocks, normalized);
+          const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
+          blocks.set(blockId, block);
+          for (const extra of extraBlocks ?? []) {
             blocks.set(extra.blockId, extra.block);
           }
+          if (context.insertIndex >= context.children.length) {
+            context.children.push([blockId]);
+          } else {
+            context.children.insert(context.insertIndex, [blockId]);
+          }
+          if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+            databaseRows.push(block);
+          }
+          blockIds.push(blockId);
+          lastInsertedBlockId = insertedBlockId = blockId;
+        } catch (error) {
+          handleMarkdownOperationFailure(error, {
+            strict,
+            replaceExisting,
+            operationIndex: currentOperationIndex,
+          });
+          // A failed parent cannot own children. Skip the whole subtree rather
+          // than silently promoting its descendants into the current level.
+          const skipped = subtreeSize(operation);
+          skippedCount += skipped;
+          operationIndex += skipped - 1;
+          continue;
         }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
+        if (operation.type === "list" && operation.children?.length) {
+          appendOperations(operation.children, { parentId: insertedBlockId });
         }
-        if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
-          databaseRows.push(block);
-        }
-        blockIds.push(blockId);
-        lastInsertedBlockId = blockId;
-        if (!replaceParentId) {
-          anchorPlacement = { afterBlockId: blockId };
-        }
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting,
-          operationIndex,
-        });
-        skippedCount += 1;
       }
-    }
+    };
+    appendOperations(parsed.operations, replaceParentId ? { parentId: replaceParentId } : parsed.placement);
     return {
       appendedCount: blockIds.length,
       skippedCount,
@@ -4518,40 +4538,17 @@ export function registerDocTools(
     workspaceId: string,
     strict: boolean,
   ): void {
-    const validationDocId = "markdown-preflight";
     const skeleton = createDocSkeleton("Markdown preflight");
-    let placement: AppendPlacement = { parentId: skeleton.noteId };
-
-    for (const [operationIndex, operation] of operations.entries()) {
-      try {
-        const normalized = normalizeAppendBlockInput(
-          markdownOperationToAppendInput(
-            operation,
-            validationDocId,
-            workspaceId,
-            strict,
-            placement,
-          ),
-        );
-        const context = resolveInsertContext(skeleton.blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized, skeleton.blocks, context.parentBlock.get("sys:flavour"));
-        skeleton.blocks.set(blockId, block);
-        for (const extra of extraBlocks ?? []) {
-          skeleton.blocks.set(extra.blockId, extra.block);
-        }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
-        }
-        placement = { afterBlockId: blockId };
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting: false,
-          operationIndex,
-        });
-      }
+    try {
+      applyMarkdownOperationsToDoc(skeleton.doc, {
+        workspaceId,
+        docId: "markdown-preflight",
+        operations,
+        strict,
+        placement: { parentId: skeleton.noteId },
+      }, []);
+    } finally {
+      skeleton.doc.destroy();
     }
   }
 
@@ -6453,6 +6450,11 @@ export function registerDocTools(
         fidelityReport: true,
         snapshotBundle: false,
       },
+      // upload_blob `filePath` needs AFFINE_BLOB_UPLOAD_FILE_ROOTS; inline content always works.
+      blobUpload: {
+        filePath: Boolean(process.env.AFFINE_BLOB_UPLOAD_FILE_ROOTS?.trim()),
+        inline: true,
+      },
     });
   };
   server.registerTool(
@@ -7340,7 +7342,7 @@ export function registerDocTools(
       warnings,
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7477,7 +7479,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7551,7 +7553,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -8716,6 +8718,11 @@ export function registerDocTools(
         if (Number.isNaN(num)) {
           throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
         }
+        // Repair number columns created without property data (older server
+        // versions): AFFiNE renders their cells blank until `data` exists.
+        if (col.raw instanceof Y.Map && col.raw.get("data") === undefined) {
+          col.raw.set("data", createDefaultDatabaseColumnData("number"));
+        }
         cellValue.set("value", num);
         break;
       }
@@ -9299,28 +9306,13 @@ export function registerDocTools(
       }
 
       const columnId = generateId();
-      const column = new Y.Map<any>();
-      column.set("id", columnId);
-      column.set("name", parsed.name);
-      column.set("type", parsed.type || "rich-text");
-      column.set("width", parsed.width || 200);
-
-      // For select/multi-select, create options
-      if ((parsed.type === "select" || parsed.type === "multi-select") && parsed.options?.length) {
-        const data = new Y.Map<any>();
-        const opts = new Y.Array<any>();
-        for (let i = 0; i < parsed.options.length; i++) {
-          const optMap = new Y.Map<any>();
-          optMap.set("id", generateId());
-          optMap.set("value", parsed.options[i]);
-          optMap.set("color", SELECT_COLORS[i % SELECT_COLORS.length]);
-          opts.push([optMap]);
-        }
-        data.set("options", opts);
-        column.set("data", data);
-      }
-
-      columns.push([column]);
+      columns.push([createDatabaseColumnDefinition({
+        id: columnId,
+        name: parsed.name,
+        type: parsed.type || "rich-text",
+        width: parsed.width || 200,
+        options: parsed.options,
+      })]);
 
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
@@ -9414,6 +9406,136 @@ export function registerDocTools(
       },
     },
     addDatabaseColumnHandler as any
+  );
+
+  // ADD DATABASE VIEW (mosi local patch, 2026-11-07: upstream lacks view creation for existing databases)
+  const addDatabaseViewHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    name?: string;
+    mode: string;
+    groupBy?: string;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) throw new Error("Document not found");
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+
+      const dbBlock = findBlockById(blocks, parsed.databaseBlockId);
+      if (!dbBlock) throw new Error(`Database block '${parsed.databaseBlockId}' not found`);
+      if (dbBlock.get("sys:flavour") !== "affine:database") {
+        throw new Error("Block is not a database");
+      }
+
+      const mode = parsed.mode === "kanban" ? "kanban" : "table";
+      const views = dbBlock.get("prop:views");
+      if (!(views instanceof Y.Array)) throw new Error("Database has no views array");
+
+      const existingNames: string[] = [];
+      for (let i = 0; i < views.length; i += 1) {
+        const v = views.get(i);
+        const n = v instanceof Y.Map ? v.get("name") : v?.name;
+        if (n) existingNames.push(String(n));
+      }
+      const viewName = (parsed.name || "").trim() || (mode === "kanban" ? "Kanban View" : "Table View");
+      if (existingNames.includes(viewName)) {
+        throw new Error(`View '${viewName}' already exists`);
+      }
+
+      const columnDefs = readColumnDefs(dbBlock);
+      // Align with native AFFiNE behavior: preset databases carry a title column
+      // definition, while manually created databases (append_block) have none —
+      // native views on those use { titleColumn: null, iconColumn: null }.
+      const titleCol = columnDefs.find(c => c.type === "title");
+      const storedColumns = dbBlock.get("prop:columns");
+      if (columnDefs.length === 0 && !(
+        mode === "table" && storedColumns instanceof Y.Array && storedColumns.length === 0
+      )) {
+        throw new Error("Database has no columns");
+      }
+
+      let groupBy: Record<string, unknown> | null = null;
+      let groupProperties: unknown[] | null = null;
+      if (mode === "kanban") {
+        const colName = (parsed.groupBy || "").trim();
+        if (!colName) throw new Error("Kanban view requires groupBy (a select/multi-select column name)");
+        const target = columnDefs.find(c => c.name === colName);
+        if (!target) throw new Error(`Column '${colName}' not found`);
+        if (target.type !== "select" && target.type !== "multi-select") {
+          throw new Error(`Column '${colName}' is type '${target.type}'; kanban groupBy needs select/multi-select`);
+        }
+        groupBy = { columnId: target.id, name: target.type, type: "groupBy" };
+        groupProperties = [];
+      }
+
+      const viewColumns = new Y.Array<any>();
+      for (const c of columnDefs) {
+        const rawWidth = c.raw instanceof Y.Map ? c.raw.get("width") : (c.raw as any)?.width;
+        const width = typeof rawWidth === "number" && rawWidth > 0 ? rawWidth : 200;
+        const vc = new Y.Map<any>();
+        vc.set("id", c.id);
+        vc.set("hide", false);
+        vc.set("width", width);
+        viewColumns.push([vc]);
+      }
+
+      const view = new Y.Map<any>();
+      const viewId = generateId();
+      view.set("id", viewId);
+      view.set("name", viewName);
+      view.set("mode", mode);
+      view.set("columns", viewColumns);
+      view.set("filter", { type: "group", op: "and", conditions: [] });
+      view.set("groupBy", groupBy);
+      if (groupProperties) view.set("groupProperties", groupProperties);
+      view.set("sort", null);
+      view.set("header", titleCol ? { titleColumn: titleCol.id, iconColumn: "type" } : { titleColumn: null, iconColumn: null });
+
+      views.push([view]);
+
+      const delta = pendingUpdate.finish();
+      await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+
+      return text({
+        added: true,
+        viewId,
+        name: viewName,
+        mode,
+        groupBy: (parsed.groupBy || "").trim() || null,
+        totalViews: views.length,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "add_database_view",
+    {
+      title: "Add Database View",
+      description: "Add a new view (table or kanban) to an existing AFFiNE database block. Kanban mode requires groupBy: the name of a select/multi-select column to group cards by. Duplicate view names are rejected.",
+      inputSchema: {
+        workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
+        docId: DocId.describe("Document ID containing the database"),
+        databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
+        name: z.string().optional().describe("View display name. Defaults to 'Table View' / 'Kanban View'"),
+        mode: z.enum(["table", "kanban"]).default("table").describe("View mode"),
+        groupBy: z.string().optional().describe("Kanban only: column name to group cards by (must be select/multi-select)"),
+      },
+    },
+    addDatabaseViewHandler as any
   );
 
   type SurfaceElementType = "shape" | "connector" | "text" | "group";
@@ -9802,6 +9924,12 @@ export function registerDocTools(
     blocks: Y.Map<any>,
     params: SurfaceElementFields & { type: SurfaceElementType }
   ) {
+    if (params.index !== undefined && !isValidSurfaceIndex(params.index)) {
+      throw new Error("index must be a valid BlockSuite fractional-index key.");
+    }
+    if (params.type === "connector") {
+      assertConnectorEndpointsExist(ctx.value, blocks, params);
+    }
     const index = params.index ?? nextSurfaceElementIndex(ctx.value);
 
     // Mirror updateSurfaceElementHandler: report inapplicable gated fields
@@ -9963,14 +10091,33 @@ export function registerDocTools(
     rearEndpointStyle:  ["connector"],
   };
 
+  function assertConnectorEndpointsExist(
+    valueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    params: Pick<SurfaceElementFields, "sourceId" | "targetId">
+  ): void {
+    for (const field of ["sourceId", "targetId"] as const) {
+      const id = params[field];
+      if (id && !(valueMap.get(id) instanceof Y.Map) && !(blocks.get(id) instanceof Y.Map)) {
+        throw new Error(`Connector ${field} '${id}' was not found in the surface or document blocks.`);
+      }
+    }
+  }
+
   /** Applies one partial update to an element of the open surface map; shared by the single and batch update tools. */
-  function updateSurfaceElementIn(valueMap: Y.Map<any>, params: SurfaceElementFields & { elementId: string }) {
+  function updateSurfaceElementIn(valueMap: Y.Map<any>, blocks: Y.Map<any>, params: SurfaceElementFields & { elementId: string }) {
     const el = valueMap.get(params.elementId);
     if (!(el instanceof Y.Map)) {
       throw new Error(`Surface element '${params.elementId}' not found.`);
     }
 
     const elementType = el.get("type");
+    if (params.index !== undefined && !isValidSurfaceIndex(params.index)) {
+      throw new Error("index must be a valid BlockSuite fractional-index key.");
+    }
+    if (elementType === "connector") {
+      assertConnectorEndpointsExist(valueMap, blocks, params);
+    }
     const changed: string[] = [];
     const ignored: string[] = [];
 
@@ -10107,7 +10254,7 @@ export function registerDocTools(
       const blocks = doc.getMap("blocks") as Y.Map<any>;
       const ctx = getSurfaceElementsValueMap(blocks, { create: false });
       if (!ctx) throw new Error("Document has no surface elements to update.");
-      const result = updateSurfaceElementIn(ctx.value, params);
+      const result = updateSurfaceElementIn(ctx.value, blocks, params);
       if (result.changed.length > 0) {
         const delta = pendingUpdate.finish();
         await pushPageDocUpdate(
@@ -10173,8 +10320,8 @@ export function registerDocTools(
     docId: string;
     updates: Array<SurfaceElementFields & { elementId: string }>;
   }) =>
-    text(await editSurface(params, false, ctx => {
-      const updates = params.updates.map(update => updateSurfaceElementIn(ctx.value, update));
+    text(await editSurface(params, false, (ctx, blocks) => {
+      const updates = params.updates.map(update => updateSurfaceElementIn(ctx.value, blocks, update));
       const changed = updates.filter(update => update.changed.length > 0).length;
       return { changed: changed > 0, result: { updated: changed, updates } };
     }));
@@ -10218,10 +10365,21 @@ export function registerDocTools(
           prunedConnectors: [],
         });
       }
-      ctx.value.delete(params.elementId);
+      // A native mindmap owns its node shapes; deleting only the mindmap would orphan them.
+      const deletedNodes: string[] = [];
+      if (existing.get("type") === "mindmap") {
+        try {
+          deletedNodes.push(...deleteNativeMindmap(ctx.value, params.elementId).slice(1));
+        } catch {
+          ctx.value.delete(params.elementId); // Malformed map: remove the element itself only.
+        }
+      } else {
+        ctx.value.delete(params.elementId);
+      }
 
       const prunedConnectors: string[] = [];
       if (params.pruneConnectors) {
+        const deletedIds = new Set([params.elementId, ...deletedNodes]);
         const toDelete: string[] = [];
         for (const [otherId, otherVal] of ctx.value.entries()) {
           if (!(otherVal instanceof Y.Map)) continue;
@@ -10229,10 +10387,10 @@ export function registerDocTools(
           const source = otherVal.get("source");
           const target = otherVal.get("target");
           const srcId =
-            source && typeof source === "object" ? (source as any).id : undefined;
+            source instanceof Y.Map ? source.get("id") : source && typeof source === "object" ? (source as any).id : undefined;
           const tgtId =
-            target && typeof target === "object" ? (target as any).id : undefined;
-          if (srcId === params.elementId || tgtId === params.elementId) {
+            target instanceof Y.Map ? target.get("id") : target && typeof target === "object" ? (target as any).id : undefined;
+          if (deletedIds.has(srcId) || deletedIds.has(tgtId)) {
             toDelete.push(String(otherId));
           }
         }
@@ -10242,7 +10400,7 @@ export function registerDocTools(
         }
       }
 
-      pruneFromFrameChildElementIds(blocks, [params.elementId, ...prunedConnectors]);
+      pruneFromFrameChildElementIds(blocks, [params.elementId, ...deletedNodes, ...prunedConnectors]);
 
       const delta = pendingUpdate.finish();
       await pushPageDocUpdate(
@@ -10251,7 +10409,7 @@ export function registerDocTools(
         params.docId,
         Buffer.from(delta).toString("base64")
       );
-      return text({ deleted: true, elementId: params.elementId, prunedConnectors });
+      return text({ deleted: true, elementId: params.elementId, deletedNodes, prunedConnectors });
     } finally {
       socket.disconnect();
     }
@@ -11356,6 +11514,7 @@ export function registerDocTools(
     title: z.string().optional().describe("Group title. Group only."),
     index: z
       .string()
+      .refine(isValidSurfaceIndex, "index must be a valid BlockSuite fractional-index key.")
       .optional()
       .describe(
         "BlockSuite fractional-index string controlling z-order. On add, defaults to a key above every existing element's index (new elements render on top). On update, replaces the stored value — pass a key less than some existing index to send-to-back, or greater to bring-to-front. Use the value returned by list_surface_elements to pick a specific position."
@@ -11383,7 +11542,7 @@ export function registerDocTools(
     {
       title: "Add Surface Elements",
       description:
-        "Add many shapes, connectors, texts or groups to the edgeless canvas in ONE atomic write. Each item takes the same fields as add_surface_element plus an optional `key`: a local name that LATER connectors may use as sourceId/targetId, so a whole diagram needs one call. Any other id is treated as an existing element. Invalid items, duplicate keys or forward references reject the whole call. Returns each element's id in input order.",
+        "Add many shapes, connectors, texts or groups to the edgeless canvas in ONE atomic write. Each item takes the same fields as add_surface_element plus an optional `key`: a local name that LATER connectors may use as sourceId/targetId, so a whole diagram needs one call. Other endpoint ids must exist in the surface or document blocks. Invalid items, duplicate keys or forward references reject the whole call. Returns each element's id in input order.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
@@ -11456,7 +11615,7 @@ export function registerDocTools(
     {
       title: "Delete Surface Element",
       description:
-        "Delete a surface element by id. Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
+        "Delete a surface element by id. Deleting a native mindmap also deletes all of its node shapes (reported in deletedNodes). Set pruneConnectors=true to also delete any connectors whose source or target referenced the deleted element.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),

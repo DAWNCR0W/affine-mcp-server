@@ -43,6 +43,7 @@ export type MarkdownOperation =
       style: MarkdownListStyle;
       checked?: boolean;
       deltas?: TextDelta[];
+      children?: MarkdownOperation[];
     }
   | {
       type: "code";

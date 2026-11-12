@@ -3,6 +3,7 @@
   "tools": [
     "add_database_column",
     "add_database_row",
+    "add_database_view",
     "add_doc_to_collection",
     "add_mindmap_node",
     "add_organize_link",

@@ -1,3 +1,18 @@
+import { generateKeyBetween } from "fractional-indexing";
+
+/** Accept native base-62 layer keys, including long legacy fractional suffixes. */
+export function isValidSurfaceIndex(index: string): boolean {
+  if (!/^[A-Za-z][0-9A-Za-z]+$/.test(index)) return false;
+  try {
+    // The allocator validates head length, integer length and fractional zeros.
+    // Check the alphabet separately: its lookup table assumes valid digits.
+    generateKeyBetween(index, null);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** One element of a batch; `key` is a caller-chosen local name later connectors may reference. */
 export type BatchItem = { key?: string; type?: string; sourceId?: string; targetId?: string; [field: string]: unknown };
 
