@@ -18,11 +18,15 @@ type TokenLike = {
   attrGet?: (name: string) => string | null;
 };
 
-const md = new MarkdownIt({
+const MAX_MARKDOWN_NESTING = 100;
+// markdown-it supports maxNesting; its DefinitelyTyped Options omits that field.
+const markdownOptions = {
   html: false,
   linkify: true,
   breaks: false,
-}).use(markdownItMath);
+  maxNesting: MAX_MARKDOWN_NESTING,
+};
+const md = new MarkdownIt(markdownOptions).use(markdownItMath);
 
 type ParseState = {
   operations: MarkdownOperation[];
@@ -516,7 +520,6 @@ function parseList(
   end: number,
   defaultStyle: Exclude<MarkdownListStyle, "todo">,
   state: ParseState,
-  depth: number
 ): MarkdownOperation[] {
   const operations: MarkdownOperation[] = [];
   let i = start;
@@ -540,6 +543,10 @@ function parseList(
       while (cursor < close) {
         const current = tokens[cursor];
         if (current.type === "inline") {
+          if (hasNestedList && current.content.trim()) {
+            state.unsupportedCount += 1;
+            addWarning(state, "List item text after a nested list was moved before its child items.");
+          }
           if (itemDeltas.length > 0) {
             itemDeltas.push({ insert: "\n" });
           }
@@ -548,7 +555,28 @@ function parseList(
         }
 
         if (current.type === "math_block" && appendContainedDisplayMath(itemDeltas, current, state)) {
+          if (hasNestedList) {
+            state.unsupportedCount += 1;
+            addWarning(state, "List item text after a nested list was moved before its child items.");
+          }
           itemText = deltaToText(itemDeltas);
+        }
+
+        if (current.type === "fence" || current.type === "code_block") {
+          state.unsupportedCount += 1;
+          addWarning(state, "Code blocks inside markdown list items were ignored.");
+        }
+        if (current.type === "table_open") {
+          state.unsupportedCount += 1;
+          addWarning(state, "Tables inside markdown list items were flattened to list item text.");
+        }
+        if (current.type === "blockquote_open") {
+          state.unsupportedCount += 1;
+          addWarning(state, "Blockquotes inside markdown list items were flattened to list item text.");
+        }
+        if (current.type === "hr") {
+          state.unsupportedCount += 1;
+          addWarning(state, "Horizontal rules inside markdown list items were ignored.");
         }
 
         if (current.type === "bullet_list_open" || current.type === "ordered_list_open") {
@@ -565,7 +593,7 @@ function parseList(
           }
           hasNestedList = true;
           const nestedStyle = current.type === "ordered_list_open" ? "numbered" : "bulleted";
-          nestedOperations.push(...parseList(tokens, cursor + 1, nestedClose, nestedStyle, state, depth + 1));
+          nestedOperations.push(...parseList(tokens, cursor + 1, nestedClose, nestedStyle, state));
           cursor = nestedClose + 1;
           continue;
         }
@@ -616,23 +644,13 @@ function parseList(
         style,
         ...(style === "todo" ? { checked: Boolean(checked) } : {}),
         deltas: itemDeltas,
+        ...(nestedOperations.length > 0 ? { children: nestedOperations } : {}),
       });
-
-      if (hasNestedList) {
-        state.unsupportedCount += 1;
-        addWarning(state, "Nested markdown lists were flattened to sequential list items.");
-      }
-      operations.push(...nestedOperations);
       i = close + 1;
       continue;
     }
 
     i += 1;
-  }
-
-  if (depth > 0 && operations.length > 0) {
-    state.unsupportedCount += 1;
-    addWarning(state, "List nesting depth was reduced during markdown import.");
   }
 
   return operations;
@@ -774,7 +792,7 @@ function parseTokens(tokens: TokenLike[], start: number, end: number, state: Par
           break;
         }
         const style = token.type === "ordered_list_open" ? "numbered" : "bulleted";
-        state.operations.push(...parseList(tokens, i + 1, close, style, state, 0));
+        state.operations.push(...parseList(tokens, i + 1, close, style, state));
         i = close + 1;
         break;
       }
@@ -834,7 +852,17 @@ export function parseMarkdownToOperations(markdown: string): MarkdownParseResult
   const source = markdown ?? "";
   const body = stripGeneratedFrontmatter(source);
   const tokens = md.parse(body, {}) as unknown as TokenLike[];
+  // Markdown-it skips a container's body once its opener reaches maxNesting.
+  // Inline tokens can legitimately have this level without losing any content.
+  if (tokens.some(token => token.type.endsWith("_open") && token.level >= MAX_MARKDOWN_NESTING - 1)) {
+    state.unsupportedCount += 1;
+    addWarning(state, "Markdown nesting limit was reached; deeply nested content may have been omitted.");
+  }
   parseTokens(tokens, 0, tokens.length, state);
+  const countBlocks = (operations: MarkdownOperation[]): number => operations.reduce(
+    (count, operation) => count + 1 + (operation.type === "list" ? countBlocks(operation.children ?? []) : 0),
+    0,
+  );
 
   return {
     operations: state.operations,
@@ -842,7 +870,7 @@ export function parseMarkdownToOperations(markdown: string): MarkdownParseResult
     lossy: state.unsupportedCount > 0,
     stats: {
       inputChars: source.length,
-      blockCount: state.operations.length,
+      blockCount: countBlocks(state.operations),
       unsupportedCount: state.unsupportedCount,
     },
   };

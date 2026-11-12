@@ -148,6 +148,14 @@ links, quotes, tables, code fences, or math. `create_doc.content` does not parse
 when structured Markdown is detected, its receipt warns that the content was
 stored as one plain paragraph.
 
+`create_doc_from_markdown`, `append_markdown`, and `replace_doc_with_markdown`
+preserve nested bullet, numbered, and task lists as native parent/child blocks,
+including supported inline formatting and checked states. Export uses the
+parent's list marker width for indentation, so mixed list hierarchies survive
+re-import. Parsed and applied block counts include nested items. Other import
+losses remain reported; nested list structure alone no longer produces a
+flattening warning.
+
 Markdown import and export map LaTeX math to AFFiNE's native equations: a
 `$$...$$` block becomes an equation block and `$...$` becomes an inline
 equation. TeX backslashes such as `\,` are kept as written. Inline `$` follows
