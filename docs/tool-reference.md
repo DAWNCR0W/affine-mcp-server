@@ -386,7 +386,7 @@ an executable workflow example, validation behavior, and deployment links.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE. Optional `children` outline `[{text, children?}]` builds the whole map in one call (max 500 nodes); `compact: true`, also on the other mutating mindmap tools, returns an empty `nodes` list. |
+| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE. Optional `children` outline `[{text, children?}]` builds the whole map in one call (max 500 nodes); `compact: true` returns an empty `nodes` list and is also supported by node edits, reparenting, layout and style tools. |
 | `get_mindmap` | Read validated topology, child order, labels, collapsed state and geometry | Discover IDs with `get_edgeless_canvas` |
 | `add_mindmap_node` | Append or insert a child of `parentId` | `beforeId` must be a sibling; returns `nodeId` |
 | `update_mindmap_node` | Replace text or change collapsed state | Keeps IDs and parent links |

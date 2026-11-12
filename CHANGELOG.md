@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-11-12
+
 ### Added
 - `add_database_rows` adds many rows to a database block in one atomic write; an invalid row rejects the whole call.
 - `compose_database_from_intent` supports `intent: "table"`: a table view with an automatic Title column, your own `columns`, and optional `seedRows`, created in one call.
@@ -14,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `list_surface_elements` and `get_edgeless_canvas` accept `compact` to return only id, type, index, geometry, text and links.
 - `add_database_view` adds table or kanban views to an existing database. Table views also support native databases with no column definitions; kanban requires a select or multi-select grouping column. The tool supports optional document revision checks and counts all stored views, including unnamed views.
 - `create_mindmap` accepts an optional nested `children` outline and builds the whole map in one call; the outline is validated against the 500-node and depth limits before anything is written.
-- The mutating mindmap tools accept `compact` to return `nodeCount` and ids with an empty `nodes` list, which keeps responses small for large maps.
+- Mindmap creation, node edits, reparenting, layout and style tools accept `compact` to return `nodeCount` and ids with an empty `nodes` list, which keeps responses small for large maps.
 - Document the native mindmap rendering caveat and the shapes-and-connectors fallback in `docs/native-mindmaps.md`.
 - `get_capabilities` reports `blobUpload.filePath` (whether `AFFINE_BLOB_UPLOAD_FILE_ROOTS` enables disk-path uploads) and `blobUpload.inline`, so clients can tell before calling `upload_blob`.
 
@@ -1055,4 +1057,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
 [3.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.11.0
 [3.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.12.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.12.0...HEAD
+[3.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.13.0...HEAD
