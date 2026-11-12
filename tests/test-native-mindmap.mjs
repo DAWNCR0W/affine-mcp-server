@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
 import { z } from 'zod';
-import { mutateNativeMindmap, readNativeMindmap, registerMindmapTools } from '../dist/tools/mindmap.js';
+import { deleteNativeMindmap, mutateNativeMindmap, readNativeMindmap, registerMindmapTools } from '../dist/tools/mindmap.js';
 import { toolOutputSchemaFor } from '../dist/toolOutputSchemas.js';
 import { createToolFilter } from '../dist/toolSurface.js';
 
@@ -205,4 +205,14 @@ test('unlock cannot clear a containing group lock or move its geometry', () => {
   assert.equal(f.values.get('outer').get('lockedBySelf'),true);
   assert.equal(f.values.get(f.map.rootId).get('xywh'),geometry);
   assert.throws(()=>f.mutate('layout',{...target,layout:'left'}),/locked/);
+});
+
+test('deleting a mindmap removes its node shapes and nothing else', () => {
+  const f = fixture(), a = f.add(f.map.rootId, 'A'), b = f.add(a, 'B');
+  const other = f.mutate('create', { text: 'Other' });
+  const removed = deleteNativeMindmap(f.values, f.map.mindmapId);
+  assert.deepEqual([...removed].sort(), [f.map.mindmapId, f.map.rootId, a, b].sort());
+  assert.ok(removed.every(id => !f.values.has(id)));
+  assert.equal(readNativeMindmap(f.values, other.mindmapId).nodeCount, 1);
+  assert.throws(() => deleteNativeMindmap(f.values, a), /native mindmap/);
 });

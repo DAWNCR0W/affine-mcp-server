@@ -28,6 +28,7 @@
     "test-database-row-creators.mjs": "integration",
     "test-database-schema.mjs": "integration",
     "test-database-ui-rows.mjs": "browser",
+    "test-delete-surface-element-cascade.mjs": "integration",
     "test-destructive-mutation-ack.mjs": "fast",
     "test-discovery-ux.mjs": "fast",
     "test-doc-discovery.mjs": "integration",
@@ -57,6 +58,7 @@
     "test-markdown-rich-text-import.mjs": "integration",
     "test-markdown-roundtrip.mjs": "fast",
     "test-mcp-result-contract.mjs": "fast",
+    "test-mindmap-delete-contract.mjs": "fast",
     "test-mindmap-outline.mjs": "fast",
     "test-mindmap-overlay.mjs": "fast",
     "test-native-mindmap.mjs": "fast",
@@ -123,6 +125,7 @@
       "test-markdown-output-safety.mjs",
       "test-markdown-roundtrip.mjs",
       "test-mcp-result-contract.mjs",
+      "test-mindmap-delete-contract.mjs",
       "test-mindmap-outline.mjs",
       "test-mindmap-overlay.mjs",
       "test-native-mindmap.mjs",
@@ -176,7 +179,8 @@
       "test-edgeless-canvas-cookbook.mjs",
       "test-stack-after-directions.mjs",
       "test-theme-defaults-setup.mjs",
-      "test-supporting-tools.mjs"
+      "test-supporting-tools.mjs",
+      "test-delete-surface-element-cascade.mjs"
     ],
     "comprehensive": [
       "test-blob-live.mjs",
@@ -196,7 +200,8 @@
       "test-database-cells.mjs",
       "test-native-template-instantiation.mjs",
       "test-organize-tools.mjs",
-      "test-supporting-tools.mjs"
+      "test-supporting-tools.mjs",
+      "test-delete-surface-element-cascade.mjs"
     ],
     "manual": [
       "test-database-schema.mjs",

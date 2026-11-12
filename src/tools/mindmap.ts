@@ -198,6 +198,17 @@ function mapLock(values: Values, mindmapId: string) {
   return { lockedBySelf, lockedByAncestor, locked: lockedBySelf || lockedByAncestor };
 }
 
+/**
+ * Removes a native mindmap and every node shape it owns; returns the removed IDs.
+ * Pre: `mindmapId` passes native validation. Post: no removed ID remains in `values`.
+ * Nodes are plain shapes, so deleting only the mindmap element would orphan them.
+ */
+export function deleteNativeMindmap(values: Values, mindmapId: string): string[] {
+  const ids = [mindmapId, ...readTree(values, mindmapId).nodes.keys()];
+  for (const id of ids) values.delete(id);
+  return ids;
+}
+
 /** Creates a uniquely identified shape while preserving literal label text. */
 function addShape(values: Values, helpers: MindmapHelpers, label: string) {
   const built = helpers.buildSurfaceElementData("shape", helpers.nextSurfaceElementIndex(values), { text: label });
