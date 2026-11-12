@@ -500,7 +500,6 @@ type DatabaseIntentPreset = {
 const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
-  "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
   "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
@@ -2601,6 +2600,34 @@ export function registerDocTools(
     });
   }
 
+  /**
+   * Default property data for a new database column, mirroring BlockSuite's
+   * `propertyData.default()` per property type. AFFiNE's cell renderers read
+   * `column.data` without a fallback (number reads `data.decimal`/`data.format`,
+   * select/multi-select read `data.options`), so a column without `data`
+   * renders blank cells even though the cell values are stored correctly.
+   * See blocksuite/affine/data-view/src/property-presets/number/define.ts and
+   * select/define.ts, multi-select/define.ts.
+   */
+  function createDefaultDatabaseColumnData(type: string, options: string[] = []): Y.Map<any> {
+    const data = new Y.Map<any>();
+    if (type === "number") {
+      data.set("decimal", 0);
+      data.set("format", "number");
+    } else if (type === "select" || type === "multi-select") {
+      const rawOptions = new Y.Array<any>();
+      options.forEach((value, index) => {
+        const option = new Y.Map<any>();
+        option.set("id", generateId());
+        option.set("value", value);
+        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
+        rawOptions.push([option]);
+      });
+      data.set("options", rawOptions);
+    }
+    return data;
+  }
+
   function createDatabaseColumnDefinition(input: {
     id: string;
     name: string;
@@ -2613,21 +2640,7 @@ export function registerDocTools(
     column.set("name", input.name);
     column.set("type", input.type);
     column.set("width", input.width ?? 200);
-
-    if ((input.type === "select" || input.type === "multi-select") && input.options?.length) {
-      const data = new Y.Map<any>();
-      const options = new Y.Array<any>();
-      input.options.forEach((value, index) => {
-        const option = new Y.Map<any>();
-        option.set("id", generateId());
-        option.set("value", value);
-        option.set("color", SELECT_COLORS[index % SELECT_COLORS.length]);
-        options.push([option]);
-      });
-      data.set("options", options);
-      column.set("data", data);
-    }
-
+    column.set("data", createDefaultDatabaseColumnData(input.type, input.options));
     return column;
   }
 
@@ -4380,8 +4393,6 @@ export function registerDocTools(
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
     const blocks = doc.getMap("blocks") as Y.Map<any>;
-    let anchorPlacement: AppendPlacement | undefined = parsed.placement;
-    let lastInsertedBlockId: string | undefined;
     let replaceParentId: string | undefined;
     let skippedCount = 0;
     let removedCount = 0;
@@ -4415,53 +4426,62 @@ export function registerDocTools(
       }
     }
 
-    for (const [operationIndex, operation] of parsed.operations.entries()) {
-      const placement =
-        lastInsertedBlockId
-          ? { afterBlockId: lastInsertedBlockId }
-          : replaceParentId
-            ? { parentId: replaceParentId }
-            : anchorPlacement;
-      const appendInput = markdownOperationToAppendInput(
-        operation,
-        parsed.docId,
-        parsed.workspaceId,
-        strict,
-        placement
-      );
+    let operationIndex = 0;
+    const subtreeSize = (operation: MarkdownOperation): number => 1 + (
+      operation.type === "list"
+        ? (operation.children ?? []).reduce((count, child) => count + subtreeSize(child), 0)
+        : 0
+    );
 
-      try {
-        const normalized = normalizeAppendBlockInput(appendInput);
-        const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
-        blocks.set(blockId, block);
-        if (Array.isArray(extraBlocks)) {
-          for (const extra of extraBlocks) {
+    // AFFiNE v0.27.4 list/list-model.ts permits affine:list parents, and its
+    // BlockModel derives hierarchy from sys:children (sys:parent stays null).
+    // Each sibling sequence owns its anchor so descendants do not move the next
+    // sibling into their parent's subtree.
+    const appendOperations = (operations: MarkdownOperation[], initialPlacement?: AppendPlacement): void => {
+      let lastInsertedBlockId: string | undefined;
+      for (const operation of operations) {
+        const currentOperationIndex = operationIndex++;
+        const placement = lastInsertedBlockId ? { afterBlockId: lastInsertedBlockId } : initialPlacement;
+        let insertedBlockId: string;
+        try {
+          const normalized = normalizeAppendBlockInput(markdownOperationToAppendInput(
+            operation, parsed.docId, parsed.workspaceId, strict, placement,
+          ));
+          const context = resolveInsertContext(blocks, normalized);
+          const { blockId, block, flavour, extraBlocks } = createBlock(normalized, blocks, context.parentBlock.get("sys:flavour"));
+          blocks.set(blockId, block);
+          for (const extra of extraBlocks ?? []) {
             blocks.set(extra.blockId, extra.block);
           }
+          if (context.insertIndex >= context.children.length) {
+            context.children.push([blockId]);
+          } else {
+            context.children.insert(context.insertIndex, [blockId]);
+          }
+          if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+            databaseRows.push(block);
+          }
+          blockIds.push(blockId);
+          lastInsertedBlockId = insertedBlockId = blockId;
+        } catch (error) {
+          handleMarkdownOperationFailure(error, {
+            strict,
+            replaceExisting,
+            operationIndex: currentOperationIndex,
+          });
+          // A failed parent cannot own children. Skip the whole subtree rather
+          // than silently promoting its descendants into the current level.
+          const skipped = subtreeSize(operation);
+          skippedCount += skipped;
+          operationIndex += skipped - 1;
+          continue;
         }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
+        if (operation.type === "list" && operation.children?.length) {
+          appendOperations(operation.children, { parentId: insertedBlockId });
         }
-        if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
-          databaseRows.push(block);
-        }
-        blockIds.push(blockId);
-        lastInsertedBlockId = blockId;
-        if (!replaceParentId) {
-          anchorPlacement = { afterBlockId: blockId };
-        }
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting,
-          operationIndex,
-        });
-        skippedCount += 1;
       }
-    }
+    };
+    appendOperations(parsed.operations, replaceParentId ? { parentId: replaceParentId } : parsed.placement);
     return {
       appendedCount: blockIds.length,
       skippedCount,
@@ -4517,40 +4537,17 @@ export function registerDocTools(
     workspaceId: string,
     strict: boolean,
   ): void {
-    const validationDocId = "markdown-preflight";
     const skeleton = createDocSkeleton("Markdown preflight");
-    let placement: AppendPlacement = { parentId: skeleton.noteId };
-
-    for (const [operationIndex, operation] of operations.entries()) {
-      try {
-        const normalized = normalizeAppendBlockInput(
-          markdownOperationToAppendInput(
-            operation,
-            validationDocId,
-            workspaceId,
-            strict,
-            placement,
-          ),
-        );
-        const context = resolveInsertContext(skeleton.blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized, skeleton.blocks, context.parentBlock.get("sys:flavour"));
-        skeleton.blocks.set(blockId, block);
-        for (const extra of extraBlocks ?? []) {
-          skeleton.blocks.set(extra.blockId, extra.block);
-        }
-        if (context.insertIndex >= context.children.length) {
-          context.children.push([blockId]);
-        } else {
-          context.children.insert(context.insertIndex, [blockId]);
-        }
-        placement = { afterBlockId: blockId };
-      } catch (error) {
-        handleMarkdownOperationFailure(error, {
-          strict,
-          replaceExisting: false,
-          operationIndex,
-        });
-      }
+    try {
+      applyMarkdownOperationsToDoc(skeleton.doc, {
+        workspaceId,
+        docId: "markdown-preflight",
+        operations,
+        strict,
+        placement: { parentId: skeleton.noteId },
+      }, []);
+    } finally {
+      skeleton.doc.destroy();
     }
   }
 
@@ -6452,6 +6449,11 @@ export function registerDocTools(
         fidelityReport: true,
         snapshotBundle: false,
       },
+      // upload_blob `filePath` needs AFFINE_BLOB_UPLOAD_FILE_ROOTS; inline content always works.
+      blobUpload: {
+        filePath: Boolean(process.env.AFFINE_BLOB_UPLOAD_FILE_ROOTS?.trim()),
+        inline: true,
+      },
     });
   };
   server.registerTool(
@@ -7339,7 +7341,7 @@ export function registerDocTools(
       warnings,
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7476,7 +7478,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -7550,7 +7552,7 @@ export function registerDocTools(
       warnings: mergeWarnings(parsedMarkdown.warnings, applyWarnings),
       lossy: MARKDOWN_IMPORT_IS_LOSSY || parsedMarkdown.lossy || applied.skippedCount > 0,
       stats: {
-        parsedBlocks: parsedMarkdown.operations.length,
+        parsedBlocks: parsedMarkdown.stats.blockCount,
         appliedBlocks: applied.appendedCount,
         skippedBlocks: applied.skippedCount,
         removedBlocks: applied.removedCount,
@@ -8715,6 +8717,11 @@ export function registerDocTools(
         if (Number.isNaN(num)) {
           throw new Error(`Column "${col.name}": expected a number, got ${JSON.stringify(value)}`);
         }
+        // Repair number columns created without property data (older server
+        // versions): AFFiNE renders their cells blank until `data` exists.
+        if (col.raw instanceof Y.Map && col.raw.get("data") === undefined) {
+          col.raw.set("data", createDefaultDatabaseColumnData("number"));
+        }
         cellValue.set("value", num);
         break;
       }
@@ -9298,28 +9305,13 @@ export function registerDocTools(
       }
 
       const columnId = generateId();
-      const column = new Y.Map<any>();
-      column.set("id", columnId);
-      column.set("name", parsed.name);
-      column.set("type", parsed.type || "rich-text");
-      column.set("width", parsed.width || 200);
-
-      // For select/multi-select, create options
-      if ((parsed.type === "select" || parsed.type === "multi-select") && parsed.options?.length) {
-        const data = new Y.Map<any>();
-        const opts = new Y.Array<any>();
-        for (let i = 0; i < parsed.options.length; i++) {
-          const optMap = new Y.Map<any>();
-          optMap.set("id", generateId());
-          optMap.set("value", parsed.options[i]);
-          optMap.set("color", SELECT_COLORS[i % SELECT_COLORS.length]);
-          opts.push([optMap]);
-        }
-        data.set("options", opts);
-        column.set("data", data);
-      }
-
-      columns.push([column]);
+      columns.push([createDatabaseColumnDefinition({
+        id: columnId,
+        name: parsed.name,
+        type: parsed.type || "rich-text",
+        width: parsed.width || 200,
+        options: parsed.options,
+      })]);
 
       // Also add the column to all existing views so it's visible
       const views = dbBlock.get("prop:views");
@@ -10163,6 +10155,7 @@ export function registerDocTools(
 
       const prunedConnectors: string[] = [];
       if (params.pruneConnectors) {
+        const deletedIds = new Set([params.elementId, ...deletedNodes]);
         const toDelete: string[] = [];
         for (const [otherId, otherVal] of ctx.value.entries()) {
           if (!(otherVal instanceof Y.Map)) continue;
@@ -10170,10 +10163,10 @@ export function registerDocTools(
           const source = otherVal.get("source");
           const target = otherVal.get("target");
           const srcId =
-            source && typeof source === "object" ? (source as any).id : undefined;
+            source instanceof Y.Map ? source.get("id") : source && typeof source === "object" ? (source as any).id : undefined;
           const tgtId =
-            target && typeof target === "object" ? (target as any).id : undefined;
-          if (srcId === params.elementId || tgtId === params.elementId) {
+            target instanceof Y.Map ? target.get("id") : target && typeof target === "object" ? (target as any).id : undefined;
+          if (deletedIds.has(srcId) || deletedIds.has(tgtId)) {
             toDelete.push(String(otherId));
           }
         }

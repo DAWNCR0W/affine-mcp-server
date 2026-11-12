@@ -278,3 +278,22 @@ Rules:
   over a stored dimension.
 - Only images parented to `affine:surface` are canvas elements. Images inside a
   page note stay in `read_doc` and must not appear in `get_edgeless_canvas`.
+
+## Native mindmap deletion
+
+Native mindmaps own their node shapes through their `children` map, as defined
+by AFFiNE's [native mindmap model](https://github.com/toeverything/AFFiNE/blob/174ad9bc5/blocksuite/affine/model/src/elements/mindmap/mindmap.ts).
+Deleting a valid map removes these shapes too. With `pruneConnectors: true`,
+cleanup covers endpoints bound to every deleted ID and removes those IDs from
+frame ownership. A malformed map is removed without guessing which shapes it owns.
+
+## Markdown lists inside notes
+
+Markdown-seeded notes use native `affine:list` blocks. A nested item belongs in
+its parent list's `sys:children`, while `sys:parent` may remain `null`, as for
+other native blocks in this server. Each sibling sequence keeps its own
+insertion anchor so an item following a subtree remains at its original level.
+This follows AFFiNE v0.27.4's
+[`ListBlockSchema`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/affine/model/src/blocks/list/list-model.ts)
+and
+[`BlockModel`](https://github.com/toeverything/AFFiNE/blob/v0.27.4/blocksuite/framework/store/src/model/block/block-model.ts).

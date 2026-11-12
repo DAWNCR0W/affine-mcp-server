@@ -87,10 +87,14 @@ async function main() {
     await call("add_mindmap_node", { workspaceId, docId: doc.docId, mindmapId: map.mindmapId, parentId: a.nodeId, text: "A1" });
     expectEqual((await call("list_surface_elements", { workspaceId, docId: doc.docId })).count, 4, "mindmap plus three node shapes");
 
-    const removed = await call("delete_surface_element", { workspaceId, docId: doc.docId, elementId: map.mindmapId });
+    const outside = await call("add_surface_element", { workspaceId, docId: doc.docId, type: "shape", text: "Outside" });
+    const fromRoot = await call("add_surface_element", { workspaceId, docId: doc.docId, type: "connector", sourceId: map.rootId, targetId: outside.elementId });
+    const toChild = await call("add_surface_element", { workspaceId, docId: doc.docId, type: "connector", sourceId: outside.elementId, targetId: a.nodeId });
+    const removed = await call("delete_surface_element", { workspaceId, docId: doc.docId, elementId: map.mindmapId, pruneConnectors: true });
     expectEqual(removed.deleted, true, "mindmap deleted");
     expectEqual(removed.deletedNodes.length, 3, "cascade removed every node shape");
-    expectEqual((await call("list_surface_elements", { workspaceId, docId: doc.docId })).count, 0, "no orphaned shapes remain");
+    expectEqual([...removed.prunedConnectors].sort(), [fromRoot.elementId, toChild.elementId].sort(), "external connectors bound to deleted node shapes are pruned");
+    expectEqual((await call("list_surface_elements", { workspaceId, docId: doc.docId })).count, 1, "only the unrelated outside shape remains");
 
     const shape = await call("add_surface_element", { workspaceId, docId: doc.docId, type: "shape", text: "plain" });
     expectEqual((await call("delete_surface_element", { workspaceId, docId: doc.docId, elementId: shape.elementId })).deletedNodes, [], "plain shapes report no cascaded nodes");

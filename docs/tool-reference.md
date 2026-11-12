@@ -96,7 +96,7 @@ Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
 | `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, `linkedDocIds` for inline LinkedPage references, code block `language`/`preview` state (`preview` is `null` when unset), and image `sourceId`, `caption`, and `bounds` |
-| `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
+| `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients. Reports `blobUpload.filePath` so clients can tell whether `upload_blob` disk paths are enabled. |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
 
@@ -147,6 +147,14 @@ Use `create_doc_from_markdown` when the initial content contains headings, lists
 links, quotes, tables, code fences, or math. `create_doc.content` does not parse Markdown;
 when structured Markdown is detected, its receipt warns that the content was
 stored as one plain paragraph.
+
+`create_doc_from_markdown`, `append_markdown`, and `replace_doc_with_markdown`
+preserve nested bullet, numbered, and task lists as native parent/child blocks,
+including supported inline formatting and checked states. Export uses the
+parent's list marker width for indentation, so mixed list hierarchies survive
+re-import. Parsed and applied block counts include nested items. Other import
+losses remain reported; nested list structure alone no longer produces a
+flattening warning.
 
 Markdown import and export map LaTeX math to AFFiNE's native equations: a
 `$$...$$` block becomes an equation block and `$...$` becomes an inline
@@ -285,7 +293,7 @@ AFFiNE's edgeless doc has two layers: top-level edgeless blocks (`note`, `frame`
 | `add_surface_element` | Add a `shape`, `connector`, `text`, or `group` to the surface | Shapes: rect/ellipse/diamond/triangle with fill, stroke, and text. Connectors accept `sourceId`/`targetId` and optional `sourcePosition`/`targetPosition` relative `[x,y]` in `[0,1]`. When both endpoints are bound by id and neither position is supplied, they auto-snap to BlockSuite's four tangent-carrying side-midpoints based on relative bounds. Creates the surface block if the doc doesn't have one. |
 | `list_surface_elements` | List all surface elements (optionally filter by `type` or `elementId`) | Returns raw `xywh` plus parsed `bounds` sorted by fractional `index` ascending; serializes `Y.Text` fields to plain strings. |
 | `update_surface_element` | Partially update an element by id | `x`/`y`/`width`/`height` merge with current `xywh` (move without resizing, or vice versa). `text`/`label`/`title` replace their `Y.Text` wholesale. Fields not applicable to the element's type come back in the response `ignored` list. |
-| `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes any connectors referencing the deleted element. Deleting a native mindmap also deletes its node shapes, listed in `deletedNodes`. |
+| `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes connectors referencing the deleted element or any cascaded node shape, listed in `prunedConnectors`. Deleting a native mindmap also deletes its node shapes, listed in `deletedNodes`. |
 | `update_frame_children` | Replace a frame block's contents wholesale | Every resolved id (surface element or edgeless block) goes into `prop:childElementIds` and comes back in `ownedIds`; unknown ids in `missing`. Default `resizeToFit: true` recomputes xywh to match new contents + `padding` + title band; pass `resizeToFit: false` to preserve the current box. Pass `[]` to clear ownership (resize skipped). |
 | `update_edgeless_block` | Partially update a note/frame/edgeless-text/image block | `x`/`y`/`width`/`height` merge with current `prop:xywh` (image blocks also update `prop:width`/`prop:height` so the rendered size follows, reuse their stored dimensions when a field is omitted (for page images the editor may have resized after `xywh` was written) instead of copying a stale or zero `xywh`, and reject `width`/`height` that are not integers from 1 to 10000); `background` replaces `prop:background` (edgeless-text and image blocks have none and report it under `ignored`). Fields not applicable to the flavour come back under `ignored`. Use for repositioning / resizing / recoloring without re-creating the block. |
 | `delete_block` | Delete a block by id | Returns the deleted root and descendant snapshots so callers can reconstruct content. Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
@@ -362,7 +370,7 @@ an executable workflow example, validation behavior, and deployment links.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE |
+| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE. Optional `children` outline `[{text, children?}]` builds the whole map in one call (max 500 nodes); `compact: true`, also on the other mutating mindmap tools, returns an empty `nodes` list. |
 | `get_mindmap` | Read validated topology, child order, labels, collapsed state and geometry | Discover IDs with `get_edgeless_canvas` |
 | `add_mindmap_node` | Append or insert a child of `parentId` | `beforeId` must be a sibling; returns `nodeId` |
 | `update_mindmap_node` | Replace text or change collapsed state | Keeps IDs and parent links |

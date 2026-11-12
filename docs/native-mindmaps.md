@@ -12,7 +12,7 @@ Existing maps additionally require `mindmapId`.
 
 | Tool | Required operation fields | Optional fields | Result |
 | --- | --- | --- | --- |
-| `create_mindmap` | `text` | `layout`, `style`, `x`, `y` | `mindmapId`, `rootId` |
+| `create_mindmap` | `text` | `layout`, `style`, `x`, `y`, `children` | `mindmapId`, `rootId` |
 | `get_mindmap` | `mindmapId` | — | Ordered hierarchy, text, bounds, current layout/style |
 | `add_mindmap_node` | `mindmapId`, `parentId`, `text` | `beforeId` | `nodeId` |
 | `update_mindmap_node` | `mindmapId`, `nodeId`, at least one of `text`/`collapsed` | — | Updated hierarchy |
@@ -20,6 +20,12 @@ Existing maps additionally require `mindmapId`.
 | `set_mindmap_layout` | `mindmapId`, `layout` | — | Direction plus persisted node coordinates |
 | `set_mindmap_style` | `mindmapId`, `style` (1–4) | — | Native preset plus styled/resized nodes |
 | `set_mindmap_lock` | `mindmapId`, `locked` (boolean) | — | Own and effective native lock state |
+
+`create_mindmap` accepts an optional nested outline, `children: [{ text, children? }]`,
+and builds the whole map in one call (at most 500 nodes in total and depth 64; the
+whole outline is validated before anything is written). Every mutating tool accepts
+`compact: true` to return `nodeCount` and ids with an empty `nodes` list; read the
+hierarchy with `get_mindmap`.
 
 Successful responses include `ok`, `workspaceId`, `docId`, `surfaceBlockId`,
 `mindmapId`, `rootId`, `nodeCount`, `nodes`, `layout`, `layoutType`, `style`, and
@@ -161,3 +167,11 @@ only counts general surface types; count `type === 'mindmap'` entries directly.
 
 For test commands, the pinned deployment overlay, rollback, and exact upstream
 source links, see [Native mindmap deployment](../deploy/mindmap-overlay.md).
+
+## Rendering and fallback
+
+The structure is validated against the AFFiNE revision named above, but native
+mindmaps are drawn by the editor, and a client on a different AFFiNE version may not
+render them. If a map looks empty, rebuild the diagram as shapes and connectors with
+`add_surface_element`, using the returned element ids for each connector's
+`sourceId`/`targetId`.

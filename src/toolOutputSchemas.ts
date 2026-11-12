@@ -95,7 +95,7 @@ const OUTPUT_SPECS = {
   delete_doc: fallible(receipt({ workspaceId: "string", docId: "string", deleted: "boolean" })),
   delete_folder: spec({ success: "boolean", deletedIds: "stringArray" }),
   delete_organize_link: spec({ success: "boolean", nodeId: "string" }),
-  delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", prunedConnectors: "stringArray" }, true, ["deleted", "elementId"]),
+  delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", deletedNodes: "stringArray", prunedConnectors: "stringArray" }, true, ["deleted", "elementId"]),
   delete_tag: spec({ workspaceId: "string", tag: "string", tagId: "string", value: "string", deleted: "boolean", affectedDocs: "number", docMetaSynced: "number", warnings: "stringArray" }),
   delete_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", deleted: "boolean", success: "boolean", message: "string", error: "string" }, true, ["kind", "ok"])),
   export_doc_markdown: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", markdown: "string", warnings: "stringArray", lossy: "boolean", stats: "object" }),

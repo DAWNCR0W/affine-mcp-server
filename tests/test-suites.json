@@ -6,6 +6,7 @@
     "test-blob-upload-contract.mjs": "fast",
     "test-block-editing.mjs": "integration",
     "test-canvas-tool-map-demo.mjs": "integration",
+    "test-capabilities-blob-upload.mjs": "fast",
     "test-capabilities-fidelity.mjs": "integration",
     "test-cli-commands.mjs": "fast",
     "test-cli-live.mjs": "integration",
@@ -52,10 +53,13 @@
     "test-live-test-safety.mjs": "fast",
     "test-markdown-linked-page.mjs": "fast",
     "test-markdown-math.mjs": "fast",
+    "test-markdown-nested-lists.mjs": "fast",
     "test-markdown-output-safety.mjs": "fast",
     "test-markdown-rich-text-import.mjs": "integration",
     "test-markdown-roundtrip.mjs": "fast",
     "test-mcp-result-contract.mjs": "fast",
+    "test-mindmap-delete-contract.mjs": "fast",
+    "test-mindmap-outline.mjs": "fast",
     "test-mindmap-overlay.mjs": "fast",
     "test-native-mindmap.mjs": "fast",
     "test-native-template-instantiation.mjs": "integration",
@@ -93,6 +97,7 @@
     "fast": [
       "test-auth-session.mjs",
       "test-blob-upload-contract.mjs",
+      "test-capabilities-blob-upload.mjs",
       "test-cli-commands.mjs",
       "test-cli-onboarding.mjs",
       "test-cli-tty.mjs",
@@ -116,9 +121,12 @@
       "test-live-test-safety.mjs",
       "test-markdown-linked-page.mjs",
       "test-markdown-math.mjs",
+      "test-markdown-nested-lists.mjs",
       "test-markdown-output-safety.mjs",
       "test-markdown-roundtrip.mjs",
       "test-mcp-result-contract.mjs",
+      "test-mindmap-delete-contract.mjs",
+      "test-mindmap-outline.mjs",
       "test-mindmap-overlay.mjs",
       "test-native-mindmap.mjs",
       "test-notification-contract.mjs",
@@ -157,7 +165,6 @@
       "test-data-view.mjs",
       "test-create-placement.mjs",
       "test-create-doc-folder-placement.mjs",
-      "test-delete-surface-element-cascade.mjs",
       "test-doc-discovery.mjs",
       "test-find-doc-by-title.mjs",
       "test-doc-properties.mjs",
@@ -172,7 +179,8 @@
       "test-edgeless-canvas-cookbook.mjs",
       "test-stack-after-directions.mjs",
       "test-theme-defaults-setup.mjs",
-      "test-supporting-tools.mjs"
+      "test-supporting-tools.mjs",
+      "test-delete-surface-element-cascade.mjs"
     ],
     "comprehensive": [
       "test-blob-live.mjs",
@@ -181,7 +189,6 @@
       "test-block-editing.mjs",
       "test-capabilities-fidelity.mjs",
       "test-create-placement.mjs",
-      "test-delete-surface-element-cascade.mjs",
       "test-doc-discovery.mjs",
       "test-find-doc-by-title.mjs",
       "test-doc-properties.mjs",
@@ -193,7 +200,8 @@
       "test-database-cells.mjs",
       "test-native-template-instantiation.mjs",
       "test-organize-tools.mjs",
-      "test-supporting-tools.mjs"
+      "test-supporting-tools.mjs",
+      "test-delete-surface-element-cascade.mjs"
     ],
     "manual": [
       "test-database-schema.mjs",
