@@ -9514,7 +9514,7 @@ export function registerDocTools(
         viewId,
         name: viewName,
         mode,
-        groupBy: (parsed.groupBy || "").trim() || null,
+        groupBy: mode === "kanban" ? (parsed.groupBy || "").trim() || null : null,
         totalViews: views.length,
       });
     } finally {
@@ -9930,6 +9930,9 @@ export function registerDocTools(
     if (params.type === "connector") {
       assertConnectorEndpointsExist(ctx.value, blocks, params);
     }
+    if (params.type === "group") {
+      assertGroupChildrenExist(ctx.value, blocks, params.children);
+    }
     const index = params.index ?? nextSurfaceElementIndex(ctx.value);
 
     // Mirror updateSurfaceElementHandler: report inapplicable gated fields
@@ -10104,6 +10107,58 @@ export function registerDocTools(
     }
   }
 
+  // AFFiNE v0.27.4 model/src/blocks/* and model/src/utils/helper.ts:
+  // native GfxCompatible blocks, including defineEmbedModel subclasses.
+  const groupChildBlockFlavours = new Set([
+    "affine:note", "affine:frame", "affine:edgeless-text", "affine:image",
+    "affine:attachment", "affine:bookmark", "affine:latex",
+    "affine:embed-figma", "affine:embed-github", "affine:embed-html", "affine:embed-iframe",
+    "affine:embed-linked-doc", "affine:embed-loom", "affine:embed-synced-doc", "affine:embed-youtube",
+  ]);
+
+  function assertGroupChildrenExist(
+    valueMap: Y.Map<any>,
+    blocks: Y.Map<any>,
+    children: string[] | undefined,
+    groupId?: string,
+  ): void {
+    for (const childId of children ?? []) {
+      if (childId === groupId) throw new Error("A group cannot contain itself.");
+      if (valueMap.get(childId) instanceof Y.Map) continue;
+      const block = blocks.get(childId);
+      if (!(block instanceof Y.Map) || !groupChildBlockFlavours.has(block.get("sys:flavour"))) {
+        throw new Error(`Group child '${childId}' was not found or is not an eligible canvas block.`);
+      }
+    }
+    if (groupId !== undefined) {
+      // Mirrors canSafeAddToContainer in framework/std/src/utils/tree.ts:
+      // a group cannot acquire an ancestor as a child. Do not rewrite owners.
+      const pending = [...(children ?? [])];
+      const visited = new Set<string>();
+      while (pending.length > 0) {
+        const id = pending.pop()!;
+        if (id === groupId) throw new Error("Group children would create a cycle.");
+        if (visited.has(id)) continue;
+        visited.add(id);
+        const element = valueMap.get(id);
+        if (element instanceof Y.Map) {
+          const members = element.get("children");
+          if (members instanceof Y.Map) pending.push(...members.keys());
+        } else {
+          const block = blocks.get(id);
+          if (block instanceof Y.Map) {
+            pending.push(...childIdsFrom(block.get("sys:children")));
+            const members = block.get("prop:childElementIds");
+            if (members instanceof Y.Map) pending.push(...members.keys());
+            else if (members && (
+              Object.getPrototypeOf(members) === Object.prototype || Object.getPrototypeOf(members) === null
+            )) pending.push(...Object.keys(members));
+          }
+        }
+      }
+    }
+  }
+
   /** Applies one partial update to an element of the open surface map; shared by the single and batch update tools. */
   function updateSurfaceElementIn(valueMap: Y.Map<any>, blocks: Y.Map<any>, params: SurfaceElementFields & { elementId: string }) {
     const el = valueMap.get(params.elementId);
@@ -10117,6 +10172,9 @@ export function registerDocTools(
     }
     if (elementType === "connector") {
       assertConnectorEndpointsExist(valueMap, blocks, params);
+    }
+    if (elementType === "group") {
+      assertGroupChildrenExist(valueMap, blocks, params.children, params.elementId);
     }
     const changed: string[] = [];
     const ignored: string[] = [];
@@ -11510,7 +11568,7 @@ export function registerDocTools(
       .describe("Rear endpoint style (default Arrow). Connector only."),
     stroke: z.string().optional().describe("Connector stroke color (default '--affine-text-primary-color' — theme-adaptive, near-black in light / near-white in dark). Accepts any CSS color or AFFiNE palette token. Connector only."),
     label: z.string().optional().describe("Connector label (stored as text on the connector). Connector only."),
-    children: z.array(z.string()).optional().describe("Child element ids. Group only."),
+    children: z.array(z.string()).optional().describe("Existing surface element or native GFX block ids. Group only; self/ancestor references are rejected."),
     title: z.string().optional().describe("Group title. Group only."),
     index: z
       .string()

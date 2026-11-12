@@ -153,6 +153,11 @@ try {
   await call(argsFor("board", { name: "By Tags", mode: "kanban", groupBy: "Tags" }));
   assert.deepEqual(board.get("prop:views").get(2).get("groupBy"), { columnId: "tags", name: "multi-select", type: "groupBy" });
 
+  const tableResult = await call(argsFor("board", { name: "Ungrouped table", mode: "table", groupBy: "Status" }));
+  assert.equal(tableResult.groupBy, null, "table responses must not echo kanban-only grouping input");
+  const table = board.get("prop:views").toArray().find(view => view.get("id") === tableResult.viewId);
+  assert.equal(table.get("groupBy"), null, "table response grouping must match native stored state");
+
   // Concurrent requests use the shared workspace lock. Calls with the same
   // name cannot both validate against an old snapshot and persist.
   const racing = await Promise.allSettled([

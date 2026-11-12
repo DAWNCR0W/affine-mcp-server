@@ -45,7 +45,7 @@ export function addBatch<R extends { elementId: string }>(
   });
 }
 
-const COMPACT_FIELDS = ["id", "type", "index", "xywh", "bounds", "text", "source", "target", "children", "title", "style", "layoutType"];
+const COMPACT_FIELDS = ["id", "type", "index", "xywh", "bounds", "labelXYWH", "text", "source", "target", "children", "title", "style", "layoutType"];
 
 /** Keeps only the fields needed to locate and link an element; drops style data. */
 export function compactSurfaceElement(element: Record<string, any>): Record<string, any> {

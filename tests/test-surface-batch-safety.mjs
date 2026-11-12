@@ -36,6 +36,14 @@ surface.set("prop:elements", wrapper);
 seedBlock("note", "affine:note").set("prop:index", "Zz");
 seedBlock("existing-image", "affine:image").set("prop:xywh", "[300,0,100,100]");
 seedBlock("existing-canvas-text", "affine:edgeless-text").set("prop:xywh", "[500,0,120,60]");
+const groupBlockIds = ["note", "existing-image", "existing-canvas-text"];
+for (const type of ["frame", "attachment", "bookmark", "latex", "embed-figma", "embed-github", "embed-html",
+  "embed-iframe", "embed-linked-doc", "embed-loom", "embed-synced-doc", "embed-youtube"]) {
+  const id = `existing-${type}`;
+  seedBlock(id, `affine:${type}`);
+  groupBlockIds.push(id);
+}
+seedBlock("non-canvas-paragraph", "affine:paragraph");
 const docs = new Map([[workspaceId, root], [docId, page]]);
 let pushes = 0, timestamp = 1;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -156,7 +164,49 @@ try {
   ] });
   assert.equal(values.get(connector.elementId).get("source").id, "existing-image");
   assert.equal(values.get(connector.elementId).get("target").id, "existing-canvas-text");
-  console.log("PASS: surface batch revision enforcement, valid layer keys, connector targets and atomic rejection over real Yjs handlers");
+
+  // Groups must resolve actual surface/Gfx models, and failures remain atomic.
+  const children = [shapeA.elementId, ...groupBlockIds];
+  const group = await call("add_surface_element", { type: "group", children });
+  assert.deepEqual([...values.get(group.elementId).get("children").keys()], children);
+  await rejected("add_surface_element", { type: "group", children: ["typo"] }, /Group child.*not found/);
+  await rejected("add_surface_elements", { elements: [{ type: "shape" }, { type: "group", children: ["typo"] }] }, /Group child.*not found/);
+  await rejected("update_surface_element", { elementId: group.elementId, children: ["non-canvas-paragraph"] }, /eligible canvas block/);
+  await rejected("update_surface_elements", { updates: [{ elementId: shapeA.elementId, x: 999 },
+    { elementId: group.elementId, children: ["typo"] }] }, /Group child.*not found/);
+  await rejected("update_surface_element", { elementId: group.elementId, children: [group.elementId] }, /itself/);
+  const parentGroup = await call("add_surface_element", { type: "group", children: [group.elementId] });
+  await rejected("update_surface_elements", { updates: [{ elementId: shapeA.elementId, x: 999 },
+    { elementId: group.elementId, children: [parentGroup.elementId] }] }, /cycle/);
+  const frameChild = await call("add_surface_element", { type: "group", children: [] });
+  blocks.get("existing-frame").set("prop:childElementIds", new Y.Map([[frameChild.elementId, true]]));
+  await rejected("update_surface_element", { elementId: frameChild.elementId, children: ["existing-frame"] }, /cycle/);
+  blocks.get("existing-frame").set("prop:childElementIds", { [frameChild.elementId]: true });
+  await rejected("update_surface_element", { elementId: frameChild.elementId, children: ["existing-frame"] }, /cycle/);
+  await call("update_surface_elements", { updates: [{ elementId: group.elementId, children: [shapeB.elementId, "existing-embed-html"] }] });
+  assert.deepEqual([...values.get(group.elementId).get("children").keys()], [shapeB.elementId, "existing-embed-html"]);
+  await call("update_surface_element", { elementId: group.elementId, children: [] });
+  assert.equal(values.get(group.elementId).get("children").size, 0, "empty group membership remains supported");
+  const ignoredAdd = await call("add_surface_element", { type: "shape", children: ["typo"] });
+  assert.equal(values.get(ignoredAdd.elementId).has("children"), false);
+  await unchanged(async () => {
+    const ignoredUpdate = await call("update_surface_elements", { updates: [{ elementId: shapeA.elementId, children: ["typo"] }] });
+    assert.deepEqual(ignoredUpdate.updates[0].ignored, ["children"]);
+    assert.equal(ignoredUpdate.updated, 0, "children remain ignored on non-group updates");
+  });
+
+  const labeled = await call("add_surface_element", { type: "connector", sourceId: shapeA.elementId,
+    targetId: shapeB.elementId, label: "Manually positioned label" });
+  const labelBounds = [411, 222, 130, 27];
+  values.get(labeled.elementId).set("labelXYWH", labelBounds); // Simulate an editor drag.
+  for (const read of [await call("list_surface_elements", { compact: true }), await call("get_edgeless_canvas", { compact: true })]) {
+    const item = (read.elements ?? read.surfaceElements).find(element => element.id === labeled.elementId);
+    assert.deepEqual(item.labelXYWH, labelBounds, "compact reads preserve native manually positioned label bounds");
+    assert.equal(item.text, "Manually positioned label");
+    assert.equal(Object.hasOwn(item, "labelStyle"), false);
+    assert.equal(Object.hasOwn(item, "stroke"), false, "compact geometry does not reintroduce style payloads");
+  }
+  console.log("PASS: surface batch revisions, valid keys, group/connector membership, compact label geometry and atomic rejection");
 } finally {
   for (const socket of wss.clients) socket.terminate();
   await new Promise(resolve => wss.close(resolve));
