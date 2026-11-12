@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Groups reject missing, non-GFX, self-referencing and cyclic members before saving. Compact canvas reads retain connector `labelXYWH` bounds, and table-view responses report `groupBy: null` to match stored state.
 - Initialize database intent columns and seed rows in one content update. Invalid custom columns or seed cells no longer leave a partially created database in the document.
 - `add_database_rows` accepts the shared document `expectedRevision` precondition and rejects stale batches before changing any rows.
+- Reject duplicate custom table column names, including case/whitespace variants and the implicit Title column, before composition instead of dropping later options or inflating the added-column count.
+- Prevent single and batch groups from sharing individual native mindmap nodes, preserving native read/edit validity. Grouping the whole mindmap remains supported.
+- Attach a validated mindmap outline before styling and laying out its completed tree, avoiding repeated intermediate Yjs writes as the tree grows.
+- Reject creation or explicit replacement of empty connector endpoints before persistence; explicit positions remain valid free endpoints and omitted endpoints in partial updates are preserved.
 
 ### Security
 - Refresh vulnerable runtime dependencies: body-parser to 2.4.0, Zod to 4.6.7, @hono/node-server to 2.1.7, Hono to 4.13.18, fast-uri to 3.1.9, ip-address to 10.7.6, and qs to 6.17.1. Preserve legacy tool schemas through `zod/v3` compatibility imports.

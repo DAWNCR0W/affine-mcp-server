@@ -9191,6 +9191,16 @@ export function registerDocTools(
     }
     const custom = parsed.intent === "table";
     if (custom && !parsed.columns?.length) throw new Error('intent "table" requires a non-empty columns list');
+    if (custom) {
+      // Cell lookup trims and case-folds names; reserve the implicit Title with
+      // that same policy so every requested column has an unambiguous identity.
+      const names = new Set(["title"]);
+      for (const column of parsed.columns!) {
+        const name = column.name.trim().toLowerCase();
+        if (names.has(name)) throw new Error(`Column '${column.name}' already exists in the table schema.`);
+        names.add(name);
+      }
+    }
 
     const preset = buildDatabaseIntentPreset(parsed.intent);
     const title = (parsed.title ?? preset.title).trim() || preset.title;
@@ -10006,6 +10016,14 @@ export function registerDocTools(
       throw new Error("index must be a valid BlockSuite fractional-index key.");
     }
     if (params.type === "connector") {
+      // AFFiNE v0.27.4 connector.ts Connection requires an ID or position;
+      // an empty endpoint is not the native free-endpoint representation.
+      if (!params.sourceId && params.sourcePosition === undefined) {
+        throw new Error("Connector source requires sourceId or sourcePosition.");
+      }
+      if (!params.targetId && params.targetPosition === undefined) {
+        throw new Error("Connector target requires targetId or targetPosition.");
+      }
       assertConnectorEndpointsExist(ctx.value, blocks, params);
     }
     if (params.type === "group") {
@@ -10200,8 +10218,21 @@ export function registerDocTools(
     children: string[] | undefined,
     groupId?: string,
   ): void {
+    const mindmapNodes = new Set<string>();
+    if (children?.length) {
+      for (const value of valueMap.values()) {
+        if (!(value instanceof Y.Map) || value.get("type") !== "mindmap") continue;
+        const nodes = value.get("children");
+        if (nodes instanceof Y.Map) {
+          for (const id of nodes.keys()) mindmapNodes.add(id);
+        }
+      }
+    }
     for (const childId of children ?? []) {
       if (childId === groupId) throw new Error("A group cannot contain itself.");
+      if (mindmapNodes.has(childId)) {
+        throw new Error(`Group child '${childId}' is owned by a mindmap; group the mindmap itself instead.`);
+      }
       if (valueMap.get(childId) instanceof Y.Map) continue;
       const block = blocks.get(childId);
       if (!(block instanceof Y.Map) || !groupChildBlockFlavours.has(block.get("sys:flavour"))) {
@@ -10249,6 +10280,12 @@ export function registerDocTools(
       throw new Error("index must be a valid BlockSuite fractional-index key.");
     }
     if (elementType === "connector") {
+      if (params.sourceId === "" && params.sourcePosition === undefined) {
+        throw new Error("Connector source requires sourceId or sourcePosition.");
+      }
+      if (params.targetId === "" && params.targetPosition === undefined) {
+        throw new Error("Connector target requires targetId or targetPosition.");
+      }
       assertConnectorEndpointsExist(valueMap, blocks, params);
     }
     if (elementType === "group") {

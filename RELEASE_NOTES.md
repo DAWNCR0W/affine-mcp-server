@@ -18,6 +18,8 @@
 - Store BlockSuite default property data for new database columns so number cells and empty select/multi-select columns render correctly (#458, #457).
 - Preserve native parent/child list hierarchy, supported inline formatting, and checked states across Markdown creation, append, replacement, and export. Validate the same recursive insertion path before creation (#459, #456).
 - Add fast and live regressions for stale revisions, atomic rollback, native database readback, group safety, connector cleanup, and Markdown round-trips.
+- Reject duplicate custom column names before composition and prevent groups from taking ownership of individual native mindmap nodes. Build nested mindmap topology before the final style/layout pass to avoid repeated intermediate writes.
+- Require an ID or explicit position when adding connectors or replacing their endpoints, preventing invalid native connections from being saved.
 - Refresh vulnerable runtime dependencies, including body-parser 2.4.0 and Zod 4.6.7. Keep legacy tool schemas on the `zod/v3` compatibility API and require MCP SDK 1.32.2 or newer for input-cost protection.
 - Reject tool arguments above 20,000 nested object members and array elements before tool-input schema validation, across stdio and HTTP transports.
 
@@ -25,6 +27,8 @@
 - The canonical MCP surface increases from 108 to 112 tools. Existing tool names and required inputs remain unchanged; new tools and optional fields are additive.
 - Tool calls now have a 20,000-element structural input ceiling, including unknown fields. Split larger batches into smaller calls; this is separate from the HTTP request-body byte limit.
 - Single and batch canvas writes now reject malformed indexes, missing connector targets, and invalid group membership that older versions could accept. Existing valid elements and indexes are preserved.
+- Custom table column names must be unique after trimming and case folding, including the implicit Title column. Group an entire native mindmap instead of its individual node shapes.
+- New connectors require `sourceId` or `sourcePosition`, and `targetId` or `targetPosition`. An explicitly replaced endpoint must also remain valid; omitted endpoints, explicit free positions and other partial updates remain supported.
 - Optional `expectedRevision` checks apply to the new database and canvas mutations. Coordination requires a shared MCP server; independent servers and native editor writes do not gain cross-client compare-and-swap protection.
 - No data migration is required. Older number columns without property data are repaired on their next numeric cell write; custom number formatting is preserved.
 - Blob-upload capability flags describe configuration, not directory existence or readability. File-path uploads remain opt-in through `AFFINE_BLOB_UPLOAD_FILE_ROOTS` and retain their runtime safety checks.
