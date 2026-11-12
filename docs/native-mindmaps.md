@@ -12,20 +12,20 @@ Existing maps additionally require `mindmapId`.
 
 | Tool | Required operation fields | Optional fields | Result |
 | --- | --- | --- | --- |
-| `create_mindmap` | `text` | `layout`, `style`, `x`, `y`, `children` | `mindmapId`, `rootId` |
+| `create_mindmap` | `text` | `layout`, `style`, `x`, `y`, `children`, `compact` | `mindmapId`, `rootId` |
 | `get_mindmap` | `mindmapId` | — | Ordered hierarchy, text, bounds, current layout/style |
-| `add_mindmap_node` | `mindmapId`, `parentId`, `text` | `beforeId` | `nodeId` |
-| `update_mindmap_node` | `mindmapId`, `nodeId`, at least one of `text`/`collapsed` | — | Updated hierarchy |
-| `reparent_mindmap_node` | `mindmapId`, `nodeId`, `parentId` | `beforeId` | Updated hierarchy; descendants keep their IDs |
-| `set_mindmap_layout` | `mindmapId`, `layout` | — | Direction plus persisted node coordinates |
-| `set_mindmap_style` | `mindmapId`, `style` (1–4) | — | Native preset plus styled/resized nodes |
+| `add_mindmap_node` | `mindmapId`, `parentId`, `text` | `beforeId`, `compact` | `nodeId` |
+| `update_mindmap_node` | `mindmapId`, `nodeId`, at least one of `text`/`collapsed` | `compact` | Updated hierarchy |
+| `reparent_mindmap_node` | `mindmapId`, `nodeId`, `parentId` | `beforeId`, `compact` | Updated hierarchy; descendants keep their IDs |
+| `set_mindmap_layout` | `mindmapId`, `layout` | `compact` | Direction plus persisted node coordinates |
+| `set_mindmap_style` | `mindmapId`, `style` (1–4) | `compact` | Native preset plus styled/resized nodes |
 | `set_mindmap_lock` | `mindmapId`, `locked` (boolean) | — | Own and effective native lock state |
 
 `create_mindmap` accepts an optional nested outline, `children: [{ text, children? }]`,
 and builds the whole map in one call (at most 500 nodes in total and depth 64; the
-whole outline is validated before anything is written). Every mutating tool accepts
-`compact: true` to return `nodeCount` and ids with an empty `nodes` list; read the
-hierarchy with `get_mindmap`.
+whole outline is validated before anything is written). Creation, node edits,
+reparenting, layout and style tools accept `compact: true` to return `nodeCount`
+and ids with an empty `nodes` list; read the hierarchy with `get_mindmap`.
 
 Successful responses include `ok`, `workspaceId`, `docId`, `surfaceBlockId`,
 `mindmapId`, `rootId`, `nodeCount`, `nodes`, `layout`, `layoutType`, `style`, and

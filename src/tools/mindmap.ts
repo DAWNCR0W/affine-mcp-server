@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { generateKeyBetween } from "fractional-indexing";
 import * as Y from "yjs";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { GraphQLClient } from "../graphqlClient.js";
 import { text, toolError } from "../util/mcp.js";
 import { secureRandomInt31, secureRandomString } from "../util/random.js";
@@ -243,11 +243,22 @@ function createWithOutline(values: Values, p: Record<string, any>, helpers: Mind
   if (1 + count > MAX_NODES) fail("Native mindmap exceeds maximum node count 500");
   if (1 + depth > MAX_DEPTH) fail("Native mindmap exceeds maximum depth 64");
   const root = mutateNativeMindmap(values, "create", { ...p, children: undefined }, helpers);
-  const attach = (parentId: string, children: Outline[]) => children.forEach(child => {
-    const added = mutateNativeMindmap(values, "add", { mindmapId: root.mindmapId, parentId, text: child.text }, helpers);
-    attach(added.nodeId!, child.children ?? []);
+  const tree = readTree(values, root.mindmapId);
+  // Every node belongs to this newly created, unlocked map. Attach the validated
+  // outline first so styling/layout do not rewrite the growing tree per child.
+  const attach = (parent: Node, children: Outline[]) => children.forEach(child => {
+    const detail = { index: generateKeyBetween(parent.children.at(-1)?.detail.index ?? null, null), parent: parent.id };
+    const id = addShape(values, helpers, child.text);
+    tree.details.set(id, detail);
+    const node = { id, detail, element: values.get(id), children: [] } as Node;
+    tree.nodes.set(id, node);
+    parent.children.push(node); // Later siblings allocate after this child.
+    attach(node, child.children ?? []);
   });
-  attach(root.rootId, outline);
+  attach(tree.root, outline);
+  const complete = readTree(values, root.mindmapId);
+  styleTree(complete);
+  layoutTree(complete);
   const result = { ...readNativeMindmap(values, root.mindmapId), nodeId: root.nodeId };
   if (result.nodeCount !== 1 + count) fail("Outline node count mismatch");
   return result;

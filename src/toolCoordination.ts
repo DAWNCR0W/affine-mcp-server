@@ -1,4 +1,4 @@
-import { z, type ZodRawShape } from "zod";
+import { z, type ZodRawShape } from "zod/v3";
 import * as Y from "yjs";
 import type { GraphQLClient } from "./graphqlClient.js";
 import { toolAnnotationsFor, type ToolName } from "./toolSurface.js";

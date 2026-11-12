@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { GraphQLClient } from "../graphqlClient.js";
 import { receipt, text, toolError } from "../util/mcp.js";
 import { normalizeCommentContent } from "../util/commentContent.js";

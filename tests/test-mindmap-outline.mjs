@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
-import { z } from 'zod';
+import { z } from 'zod/v3';
+import { captureDocUpdate } from '../dist/util/docUpdate.js';
 import { compactMindmap, mutateNativeMindmap, readNativeMindmap, registerMindmapTools } from '../dist/tools/mindmap.js';
 
 function fixture() {
@@ -43,6 +44,33 @@ test('invalid or oversized outlines are rejected before any element is written',
     assert.throws(() => f.mutate('create', { text: 'Root', children }));
     assert.deepEqual(f.values.toJSON(), before);
   }
+});
+
+test('a maximum-size outline produces a bounded final update with native styles and layout', () => {
+  const f = fixture();
+  const base = Y.encodeStateAsUpdate(f.doc);
+  const pending = captureDocUpdate(f.doc);
+  const map = f.mutate('create', {
+    text: 'Root', x: 200, y: 100,
+    children: Array.from({ length: 499 }, (_, i) => ({ text: `Branch ${i}` })),
+  });
+  const update = pending.finish();
+  assert.equal(map.nodeCount, 500);
+  assert.ok(update.length < 1_000_000, `outline update contains excessive intermediate writes: ${update.length} bytes`);
+  const restored = new Y.Doc();
+  Y.applyUpdate(restored, base);
+  Y.applyUpdate(restored, update);
+  const readback = readNativeMindmap(restored.getMap('elements'), map.mindmapId);
+  assert.equal(readback.nodeCount, 500);
+  assert.deepEqual(readback.nodes.find(n => n.nodeId === map.rootId).children, map.nodes.slice(1).map(n => n.nodeId));
+  for (const node of readback.nodes) {
+    const [x, y, width, height] = JSON.parse(node.xywh);
+    assert.ok([x, y, width, height].every(Number.isFinite));
+    assert.ok(width > 0 && height > 0);
+    assert.ok(restored.getMap('elements').get(node.nodeId).get('fontFamily'), 'every outlined node persists its native style');
+  }
+  restored.destroy();
+  f.doc.destroy();
 });
 
 test('compact responses keep counts and ids but drop the node list', () => {

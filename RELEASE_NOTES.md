@@ -1,5 +1,46 @@
 # Release Notes
 
+## Version 3.13.0 (2026-11-12)
+
+### Highlights
+- Add database views, insert rows in atomic batches, and compose custom tables with columns and seed rows.
+- Build canvas diagrams and nested native mindmaps with fewer calls, with compact readback for large results.
+- Preserve nested Markdown lists and render newly created number columns correctly in AFFiNE.
+
+### What Changed
+- Add `add_database_view` for table and kanban views on existing databases, preserving column widths when present, title bindings, and select/multi-select grouping. Support zero-column table views and accurate view counts (#446).
+- Add `add_database_rows` and extend `compose_database_from_intent` with `intent: "table"`. Stage database columns and seed rows before one content write, and preserve native row creators, rich titles, select options, and linked rows (#454).
+- Add atomic `add_surface_elements` and `update_surface_elements`; later connectors can reference earlier items by local keys. Integrate document revision checks and reject malformed layer indexes, missing targets, and invalid or cyclic native group members before saving (#453).
+- Add compact canvas reads through `list_surface_elements` and `get_edgeless_canvas`, retaining geometry, links, text, and manually positioned connector label bounds (#453).
+- Let `create_mindmap` build a nested `children` outline in one call, up to 500 nodes and depth 64. Creation, node edits, reparenting, layout and style tools support compact responses (#452).
+- Cascade native mindmap deletion to its owned node shapes. With `pruneConnectors: true`, remove external connectors bound to any deleted node and clean frame ownership (#451).
+- Report configured inline and file-path blob-upload modes through `get_capabilities.blobUpload` (#455).
+- Store BlockSuite default property data for new database columns so number cells and empty select/multi-select columns render correctly (#458, #457).
+- Preserve native parent/child list hierarchy, supported inline formatting, and checked states across Markdown creation, append, replacement, and export. Validate the same recursive insertion path before creation (#459, #456).
+- Add fast and live regressions for stale revisions, atomic rollback, native database readback, group safety, connector cleanup, and Markdown round-trips.
+- Reject duplicate custom column names before composition and prevent groups from taking ownership of individual native mindmap nodes. Build nested mindmap topology before the final style/layout pass to avoid repeated intermediate writes.
+- Require an ID or explicit position when adding connectors or replacing their endpoints, preventing invalid native connections from being saved.
+- Refresh vulnerable runtime dependencies, including body-parser 2.4.0 and Zod 4.6.7. Keep legacy tool schemas on the `zod/v3` compatibility API and require MCP SDK 1.32.2 or newer for input-cost protection.
+- Reject tool arguments above 20,000 nested object members and array elements before tool-input schema validation, across stdio and HTTP transports.
+
+### Compatibility
+- The canonical MCP surface increases from 108 to 112 tools. Existing tool names and required inputs remain unchanged; new tools and optional fields are additive.
+- Tool calls now have a 20,000-element structural input ceiling, including unknown fields. Split larger batches into smaller calls; this is separate from the HTTP request-body byte limit.
+- Single and batch canvas writes now reject malformed indexes, missing connector targets, and invalid group membership that older versions could accept. Existing valid elements and indexes are preserved.
+- Custom table column names must be unique after trimming and case folding, including the implicit Title column. Group an entire native mindmap instead of its individual node shapes.
+- New connectors require `sourceId` or `sourcePosition`, and `targetId` or `targetPosition`. An explicitly replaced endpoint must also remain valid; omitted endpoints, explicit free positions and other partial updates remain supported.
+- Optional `expectedRevision` checks apply to the new database and canvas mutations. Coordination requires a shared MCP server; independent servers and native editor writes do not gain cross-client compare-and-swap protection.
+- No data migration is required. Older number columns without property data are repaired on their next numeric cell write; custom number formatting is preserved.
+- Blob-upload capability flags describe configuration, not directory existence or readability. File-path uploads remain opt-in through `AFFINE_BLOB_UPLOAD_FILE_ROOTS` and retain their runtime safety checks.
+- Native mindmap rendering still depends on the AFFiNE client version; see the native mindmap guide for the shapes-and-connectors fallback.
+- Markdown import retains its conservative overall `lossy` flag for other documented limitations; ordinary nested list hierarchy no longer produces a flattening warning.
+- Node.js 20.18.1 or newer remains required; release integration targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.13.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @Muzhen2000 for database views, @ahautelman for database/canvas batches, mindmap improvements and capability reporting, and @NazarkinRoman for the column-data fix and number-column report.
+- Thanks to @someone132s for the detailed nested-list reproduction and to all contributors for their regression coverage and follow-up discussion.
+
 ## Version 3.12.0 (2026-11-09)
 
 ### Highlights

@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { GraphQLClient } from "../graphqlClient.js";
 import * as Y from "yjs";
 import FormData from "form-data";

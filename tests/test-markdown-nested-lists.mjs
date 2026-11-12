@@ -4,7 +4,7 @@ import "./require-destructive-test-safety.mjs";
 import assert from "node:assert/strict";
 import * as Y from "yjs";
 import { WebSocketServer } from "ws";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { parseMarkdownToOperations } from "../dist/markdown/parse.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 

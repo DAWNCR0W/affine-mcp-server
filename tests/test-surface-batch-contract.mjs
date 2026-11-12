@@ -3,7 +3,7 @@ import "./require-destructive-test-safety.mjs";
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { registerDocTools } from '../dist/tools/docs.js';
 import { addBatch, compactSurfaceElement } from '../dist/tools/surfaceBatch.js';
 

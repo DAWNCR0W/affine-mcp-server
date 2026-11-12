@@ -4,7 +4,7 @@ import "./require-destructive-test-safety.mjs";
 import assert from "node:assert/strict";
 import * as Y from "yjs";
 import { WebSocketServer } from "ws";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { coordinateTool } from "../dist/toolCoordination.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 
@@ -152,6 +152,19 @@ try {
   await rejected("update_surface_elements", { updates: [{ elementId: shapeA.elementId, x: 999 },
     { elementId: "missing", x: 1 }] }, /not found/);
 
+  // Each native connector endpoint needs an ID or an explicit free position.
+  // A valid early batch item cannot persist when the final connector is empty.
+  for (const [fields, pattern] of [
+    [{}, /source.*sourceId.*sourcePosition/],
+    [{ sourceId: shapeA.elementId }, /target.*targetId.*targetPosition/],
+    [{ targetId: shapeB.elementId }, /source.*sourceId.*sourcePosition/],
+    [{ sourceId: "", targetPosition: [100, 100] }, /source.*sourceId.*sourcePosition/],
+  ]) {
+    await rejected("add_surface_element", { type: "connector", ...fields }, pattern);
+    await rejected("add_surface_elements", { elements: [{ type: "shape", text: "Discard me" },
+      { type: "connector", ...fields }] }, pattern);
+  }
+
   // Native image and edgeless block endpoints are valid, as are absolute points.
   const blockLinks = await call("add_surface_elements", { elements: [
     { type: "connector", sourceId: shapeA.elementId, targetId: "existing-image" },
@@ -159,11 +172,43 @@ try {
     { type: "connector", sourcePosition: [0, 0], targetPosition: [100, 100] },
   ] });
   assert.equal(blockLinks.added, 3);
+  assert.deepEqual(values.get(blockLinks.elements[2].elementId).get("source"), { position: [0, 0] });
+  assert.deepEqual(values.get(blockLinks.elements[2].elementId).get("target"), { position: [100, 100] });
+  const mixed = await call("add_surface_element", {
+    type: "connector", sourceId: shapeA.elementId, targetPosition: [400, 0],
+  });
+  assert.equal(values.get(mixed.elementId).get("source").id, shapeA.elementId);
+  assert.deepEqual(values.get(mixed.elementId).get("target"), { position: [400, 0] });
   await call("update_surface_elements", { updates: [
     { elementId: connector.elementId, sourceId: "existing-image", targetId: "existing-canvas-text" },
   ] });
   assert.equal(values.get(connector.elementId).get("source").id, "existing-image");
   assert.equal(values.get(connector.elementId).get("target").id, "existing-canvas-text");
+  // Partial updates may omit either endpoint and must retain the stored other end.
+  await call("update_surface_element", { elementId: connector.elementId, sourceId: shapeA.elementId });
+  assert.equal(values.get(connector.elementId).get("target").id, "existing-canvas-text");
+  await call("update_surface_elements", { updates: [{ elementId: connector.elementId, strokeWidth: 3 }] });
+  assert.equal(values.get(connector.elementId).get("source").id, shapeA.elementId);
+  assert.equal(values.get(connector.elementId).get("target").id, "existing-canvas-text");
+  for (const [field, pattern] of [
+    ["sourceId", /source.*sourceId.*sourcePosition/],
+    ["targetId", /target.*targetId.*targetPosition/],
+  ]) {
+    await rejected("update_surface_element", { elementId: connector.elementId, [field]: "" }, pattern);
+    await rejected("update_surface_elements", { updates: [{ elementId: shapeA.elementId, x: 999 },
+      { elementId: connector.elementId, [field]: "" }] }, pattern);
+  }
+  await call("update_surface_element", {
+    elementId: connector.elementId, sourceId: "", sourcePosition: [10, 20],
+  });
+  assert.deepEqual(values.get(connector.elementId).get("source"), { position: [10, 20] },
+    "an explicit free position can disconnect a previously bound endpoint");
+  assert.equal(values.get(connector.elementId).get("target").id, "existing-canvas-text");
+  await call("update_surface_elements", { updates: [{
+    elementId: connector.elementId, targetId: "", targetPosition: [30, 40],
+  }] });
+  assert.deepEqual(values.get(connector.elementId).get("source"), { position: [10, 20] });
+  assert.deepEqual(values.get(connector.elementId).get("target"), { position: [30, 40] });
 
   // Groups must resolve actual surface/Gfx models, and failures remain atomic.
   const children = [shapeA.elementId, ...groupBlockIds];
@@ -187,6 +232,28 @@ try {
   assert.deepEqual([...values.get(group.elementId).get("children").keys()], [shapeB.elementId, "existing-embed-html"]);
   await call("update_surface_element", { elementId: group.elementId, children: [] });
   assert.equal(values.get(group.elementId).get("children").size, 0, "empty group membership remains supported");
+
+  // Mindmap node shapes belong exclusively to their native map. Group the map
+  // itself instead; sharing an individual node would invalidate native edits.
+  const mindmap = await call("create_mindmap", { text: "Group-safe mindmap" });
+  const childNode = await call("add_mindmap_node", { mindmapId: mindmap.mindmapId, parentId: mindmap.rootId, text: "Child" });
+  for (const nodeId of [mindmap.rootId, childNode.nodeId]) {
+    await rejected("add_surface_element", { type: "group", children: [nodeId] }, /mindmap.*owned|owned.*mindmap/);
+    await rejected("add_surface_elements", { elements: [{ type: "shape", text: "Discard me" },
+      { type: "group", children: [nodeId] }] }, /mindmap.*owned|owned.*mindmap/);
+    await rejected("update_surface_element", { elementId: group.elementId, children: [nodeId] }, /mindmap.*owned|owned.*mindmap/);
+    await rejected("update_surface_elements", { updates: [{ elementId: shapeA.elementId, x: 999 },
+      { elementId: group.elementId, children: [nodeId] }] }, /mindmap.*owned|owned.*mindmap/);
+  }
+  const wholeMapGroup = await call("add_surface_element", { type: "group", children: [mindmap.mindmapId] });
+  const groupedRead = await call("get_mindmap", { mindmapId: mindmap.mindmapId });
+  assert.equal(groupedRead.nodeCount, 2, "grouping the entire map preserves native readback");
+  await call("update_mindmap_node", { mindmapId: mindmap.mindmapId, nodeId: childNode.nodeId, text: "Still editable" });
+  await call("update_surface_elements", { updates: [{ elementId: wholeMapGroup.elementId, children: [] }] });
+  await call("update_surface_element", { elementId: group.elementId, children: [mindmap.mindmapId] });
+  assert.equal((await call("get_mindmap", { mindmapId: mindmap.mindmapId })).nodeCount, 2,
+    "single and batch group updates can still own the map itself");
+  await call("update_surface_element", { elementId: group.elementId, children: [] });
   const ignoredAdd = await call("add_surface_element", { type: "shape", children: ["typo"] });
   assert.equal(values.get(ignoredAdd.elementId).has("children"), false);
   await unchanged(async () => {

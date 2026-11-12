@@ -3,7 +3,7 @@ import "./require-destructive-test-safety.mjs";
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { z } from "zod";
+import { z } from "zod/v3";
 import * as Y from "yjs";
 
 import { registerBlobTools } from "../dist/tools/blobStorage.js";

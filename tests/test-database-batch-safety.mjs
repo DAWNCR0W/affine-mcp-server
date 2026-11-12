@@ -128,6 +128,18 @@ try {
   await rejectedWithoutWrite("compose_database_from_intent", {
     intent: "table", columns: [{ name: "Count", type: "number" }, { name: "Count", type: "rich-text" }], seedRows: [],
   }, /Column 'Count' already exists/);
+  for (const columns of [
+    [{ name: "Status", type: "select", options: ["Todo"] }, { name: "Status", type: "select", options: ["Done"] }],
+    [{ name: " Status ", type: "select" }, { name: "status", type: "select" }],
+    [{ name: " title ", type: "rich-text" }],
+    [{ name: "TITLE", type: "select", options: ["Unexpected"] }],
+  ]) {
+    const beforeIdentity = identityQueries;
+    await rejectedWithoutWrite("compose_database_from_intent", {
+      intent: "table", columns, seedRows: [{ title: "must not create a row" }],
+    }, /Column .* already exists/);
+    assert.equal(identityQueries, beforeIdentity, "duplicate names must fail before identity lookup or document mutation");
+  }
   await rejectedWithoutWrite("compose_database_from_intent", {
     intent: "table", columns: customColumns,
     seedRows: [{ title: "discarded", Status: "Discarded option", Count: 1 }, { title: "bad", Count: "not-a-number" }],
@@ -148,6 +160,7 @@ try {
   });
   assert.equal(pushes.filter(id => id === docId).length - beforeCompose, 1, "database, schema and seed rows must share one content update");
   assert.equal(db.stats.seededRowCount, 2);
+  assert.equal(db.stats.addedColumnCount, customColumns.length, "unique custom columns are each added exactly once");
   assert.deepEqual(db.columns.map(column => column.name), ["Title", "Status", "Count"]);
   assert.equal(db.views[0].mode, "table");
   assert.equal(db.views[0].name, "Tasks");
