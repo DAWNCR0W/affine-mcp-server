@@ -64,6 +64,7 @@ const OUTPUT_SPECS = {
   update_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
   add_database_column: spec({ added: "boolean", columnId: "string", name: "string", type: "string" }),
   add_database_row: spec({ added: "boolean", rowBlockId: "string", databaseBlockId: "string", cellCount: "number", linkedDocId: "nullableString" }),
+  add_database_view: spec({ added: "boolean", viewId: "string", name: "string", mode: "string", groupBy: "nullableString", totalViews: "number" }),
   add_doc_to_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   add_organize_link: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string" }),
   add_surface_element: spec({ added: "boolean", elementId: "string", type: "string", surfaceBlockId: "string", ignored: "stringArray" }),

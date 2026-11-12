@@ -271,6 +271,7 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 | `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
 | `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
+| `add_database_view` | Add a view (table or kanban) to an existing database block | Kanban requires `groupBy`: the name of a select/multi-select column; rejects duplicate view names; the new view inherits all current columns. Table views also support an empty stored columns array. `totalViews` includes unnamed views. Accepts optional `expectedRevision` from `read_doc` to reject stale edits before writing. |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |

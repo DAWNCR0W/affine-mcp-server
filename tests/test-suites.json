@@ -28,6 +28,8 @@
     "test-database-row-creators.mjs": "integration",
     "test-database-schema.mjs": "integration",
     "test-database-ui-rows.mjs": "browser",
+    "test-database-view-live.mjs": "integration",
+    "test-database-view.mjs": "fast",
     "test-delete-surface-element-cascade.mjs": "integration",
     "test-destructive-mutation-ack.mjs": "fast",
     "test-discovery-ux.mjs": "fast",
@@ -106,6 +108,7 @@
       "test-collection-rules.mjs",
       "test-comprehensive-result.mjs",
       "test-config-cli-consistency.mjs",
+      "test-database-view.mjs",
       "test-destructive-mutation-ack.mjs",
       "test-discovery-ux.mjs",
       "test-docs-drift.mjs",
@@ -180,7 +183,8 @@
       "test-stack-after-directions.mjs",
       "test-theme-defaults-setup.mjs",
       "test-supporting-tools.mjs",
-      "test-delete-surface-element-cascade.mjs"
+      "test-delete-surface-element-cascade.mjs",
+      "test-database-view-live.mjs"
     ],
     "comprehensive": [
       "test-blob-live.mjs",
@@ -201,7 +205,8 @@
       "test-native-template-instantiation.mjs",
       "test-organize-tools.mjs",
       "test-supporting-tools.mjs",
-      "test-delete-surface-element-cascade.mjs"
+      "test-delete-surface-element-cascade.mjs",
+      "test-database-view-live.mjs"
     ],
     "manual": [
       "test-database-schema.mjs",
