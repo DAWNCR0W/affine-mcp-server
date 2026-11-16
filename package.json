@@ -1,6 +1,6 @@
 {
   "name": "affine-mcp-server",
-  "version": "3.13.0",
+  "version": "3.13.1",
   "private": false,
   "type": "module",
   "description": "Model Context Protocol server for AFFiNE - enables AI assistants to interact with AFFiNE workspaces, documents, and collaboration features.",
@@ -136,7 +136,7 @@
     "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "socket.io-client": "^4.8.1",
-    "undici": "^7.29.0",
+    "undici": "^7.30.2",
     "yjs": "^13.6.27",
     "zod": "^4.6.7"
   },
