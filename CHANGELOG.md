@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.1] - 2026-11-16
+
+### Security
+- Update Undici from 7.30.1 to 7.30.2 and require `^7.30.2`. This includes six upstream security fixes covering redirect/cache isolation, credential stripping, cache replay errors, and integrity metadata parsing (#465).
+
+### Changed
+- Update locked jose from 6.2.15 to 6.2.17, including fixes for invalid general JWS/JWE options and negative `maxTokenAge` values (#466).
+- Update Playwright to 1.65.0 and the pinned Docker login action to 4.8.0 (#467, #464).
+- Keep ARM64 release image builds on the Ubuntu 24.04 runner (#463).
+
 ## [3.13.0] - 2026-11-12
 
 ### Added
@@ -1066,4 +1076,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [3.11.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.11.0
 [3.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.12.0
 [3.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.13.0...HEAD
+[3.13.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.1
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.13.1...HEAD

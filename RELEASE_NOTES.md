@@ -1,5 +1,23 @@
 # Release Notes
 
+## Version 3.13.1 (2026-11-16)
+
+### Highlights
+- Refresh runtime dependencies with Undici security fixes and jose validation fixes.
+- Update browser-test and Docker CI tooling without changing the MCP tool API.
+
+### What Changed
+- Update Undici from 7.30.1 to 7.30.2 and require `^7.30.2` for new installations. The [upstream release](https://github.com/nodejs/undici/releases/tag/v7.30.2) fixes six vulnerabilities involving redirect/cache isolation, credential stripping, cache replay errors, and integrity metadata parsing (#465).
+- Update locked jose from 6.2.15 to 6.2.17. The update exposes invalid caller options in general JWS/JWE operations and rejects negative JWT `maxTokenAge` values (#466).
+- Update Playwright from 1.64.1 to 1.65.0 and the pinned Docker login action from 4.7.0 to 4.8.0 (#467, #464).
+- Keep ARM64 release image builds on the Ubuntu 24.04 runner (#463).
+
+### Compatibility
+- The canonical MCP surface remains at 112 tools. Existing tool names, inputs, and outputs are unchanged.
+- The Undici fixes cover upstream APIs and interceptor configurations; this release does not establish that every affected configuration is used by this server.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release integration targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.13.1`, then restart the MCP server.
+
 ## Version 3.13.0 (2026-11-12)
 
 ### Highlights
