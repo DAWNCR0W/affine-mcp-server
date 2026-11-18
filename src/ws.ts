@@ -3,6 +3,7 @@ import { io, Socket } from "socket.io-client";
 import { setTimeout as delay } from "node:timers/promises";
 import * as Y from "yjs";
 import { ToolFailure } from "./util/mcp.js";
+import { activeDocumentMutation } from "./util/documentMutation.js";
 
 export type WorkspaceSocket = Socket<any, any>;
 const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
@@ -143,7 +144,7 @@ export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string
 
 type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
 
-export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
+async function loadDocRaw(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
   return emitWithAck<LoadDocResult>(
     socket,
     'space:load-doc',
@@ -156,6 +157,31 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
       return ack?.data || {};
     },
   );
+}
+
+export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
+  const mutation = activeDocumentMutation(workspaceId);
+  if (!mutation) return loadDocRaw(socket, workspaceId, docId);
+
+  if (docId === workspaceId) {
+    const snapshot = await loadDocRaw(socket, workspaceId, docId);
+    mutation.observeRegistration(snapshot.missing);
+    if (docId === mutation.docId) mutation.observeSnapshot(snapshot.missing);
+    return snapshot;
+  }
+
+  if (docId !== mutation.docId) return loadDocRaw(socket, workspaceId, docId);
+
+  // Capture registration before the content snapshot used by this mutation.
+  // Always use the same public snapshot contract, but bypass tracking on this
+  // preparatory read to avoid recursively changing the mutation's target state.
+  if (!mutation.hasRegistration) {
+    const workspaceSnapshot = await loadDocRaw(socket, workspaceId, workspaceId);
+    mutation.observeRegistration(workspaceSnapshot.missing);
+  }
+  const snapshot = await loadDocRaw(socket, workspaceId, docId);
+  mutation.observeSnapshot(snapshot.missing);
+  return snapshot;
 }
 
 function findWorkspacePage(doc: Y.Doc, docId: string): Y.Map<any> | undefined {
@@ -316,7 +342,12 @@ async function updateWorkspacePageUpdatedDate(
 
 /** Push an update to any workspace document without side effects on other documents. */
 export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string, docId: string, updateBase64: string): Promise<number> {
-  return pushDocUpdateRaw(socket, workspaceId, docId, updateBase64);
+  const mutation = activeDocumentMutation(workspaceId);
+  const trackedWorkspaceRootWrite = mutation !== undefined && docId === workspaceId;
+  const trackedRootMutation = trackedWorkspaceRootWrite && mutation.docId === docId;
+  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, trackedWorkspaceRootWrite);
+  if (trackedRootMutation) mutation.recordUpdate(updateBase64);
+  return timestamp;
 }
 
 /** Push page content and mirror its acknowledgement timestamp to root page metadata. */
@@ -327,7 +358,11 @@ export async function pushPageDocUpdate(
   updateBase64: string,
   options: { requireAcknowledgement?: boolean } = {},
 ): Promise<number> {
-  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, options.requireAcknowledgement);
+  const mutation = activeDocumentMutation(workspaceId);
+  const trackedPageWrite = mutation !== undefined && mutation.docId === docId && docId !== workspaceId;
+  const requireAcknowledgement = options.requireAcknowledgement === true || trackedPageWrite;
+  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, requireAcknowledgement);
+  if (trackedPageWrite) mutation.recordUpdate(updateBase64);
   if (docId !== workspaceId && updateHasChanges(updateBase64)) {
     await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp);
   }

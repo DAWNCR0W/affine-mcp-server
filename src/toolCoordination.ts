@@ -3,7 +3,8 @@ import * as Y from "yjs";
 import type { GraphQLClient } from "./graphqlClient.js";
 import { toolAnnotationsFor, type ToolName } from "./toolSurface.js";
 import { documentRevision, isDocumentRegistered } from "./util/documentRevision.js";
-import { toolError } from "./util/mcp.js";
+import { DocumentMutation, documentRevisionUnavailable, runDocumentMutation } from "./util/documentMutation.js";
+import { text, toolError } from "./util/mcp.js";
 import { writeCoordinator, WriteCoordinatorError } from "./util/writeCoordinator.js";
 import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from "./ws.js";
 
@@ -67,7 +68,7 @@ export function coordinateTool(
   const schema = supportsRevision ? {
     ...inputSchema,
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional().describe(
-      "Optional revision from read_doc, get_doc_revision, or a prior block mutation. Reject stale content before writing. " +
+      "Optional revision from read_doc, get_doc_revision, or a prior document content mutation. Reject stale content before writing. " +
       "Covers document content, not workspace metadata; requires all writers to share one MCP server.",
     ),
   } : inputSchema;
@@ -84,17 +85,36 @@ export function coordinateTool(
       const scope = JSON.stringify([new URL(context.endpoint).origin, workspaceId ?? null]);
       try {
         return await writeCoordinator.run(scope, async () => {
-          const mutationOwnsRevisionCheck = name === "update_block" || name === "update_blocks";
-          if (supportsRevision && args.expectedRevision !== undefined) {
-            if (!workspaceId) return toolError("workspaceId is required", { code: "invalid_arguments" });
-            if (!mutationOwnsRevisionCheck) {
-              const currentRevision = await currentDocumentRevision(context.gql, workspaceId, args.docId);
-              if (currentRevision !== args.expectedRevision) {
-                return staleDocumentRevision(workspaceId, args.docId, args.expectedRevision, currentRevision);
-              }
-            }
+          if (!workspaceId && supportsRevision && args.expectedRevision !== undefined) {
+            return toolError("workspaceId is required", { code: "invalid_arguments" });
           }
-          return handler(args, extra);
+          if (!supportsRevision || !workspaceId || name === "update_block" || name === "update_blocks") {
+            return handler(args, extra);
+          }
+          const mutation = new DocumentMutation(workspaceId, args.docId, args.expectedRevision);
+          try {
+            const result = await runDocumentMutation(mutation, () => handler(args, extra));
+            if (mutation.conflict) {
+              return staleDocumentRevision(workspaceId, args.docId, args.expectedRevision, mutation.conflict.currentRevision);
+            }
+            const payload = result?.structuredContent;
+            if (!payload || result.isError || payload.ok === false || payload.success === false ||
+              ["partial", "failed", "not_applied"].includes(payload.status)) {
+              return result;
+            }
+            const revision = name === "delete_doc"
+              ? (payload.contentAbsenceVerified === true ? null : undefined)
+              : mutation.revision;
+            if (revision === undefined) throw documentRevisionUnavailable(args.docId);
+            return { ...result, ...text({ ...payload, revision }) };
+          } catch (error) {
+            if (mutation.conflict) {
+              return staleDocumentRevision(workspaceId, args.docId, args.expectedRevision, mutation.conflict.currentRevision);
+            }
+            throw error;
+          } finally {
+            mutation.destroy();
+          }
         }, extra?.signal);
       } catch (error) {
         if (error instanceof WriteCoordinatorError) {

@@ -16,7 +16,6 @@ root.getMap("meta").set("pages", new Y.Array());
 const docs = new Map([[workspaceId, root]]);
 let pushes = 0;
 let timestamp = 1;
-let handlerCalls = 0;
 
 function seedDatabase(docId, columns = [], views = [{ id: "existing-view", mode: "table" }]) {
   const doc = new Y.Doc();
@@ -58,7 +57,7 @@ wss.on("connection", socket => {
       assert.ok(docs.has(payload.docId), "mutations must target an existing fixture");
       pushes++;
       Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
-      ack = { data: { timestamp: ++timestamp } };
+      ack = { data: { accepted: true, timestamp: ++timestamp } };
     } else throw new Error(`Unexpected event ${event}`);
     socket.send(`43${ackId}${JSON.stringify(ack === undefined ? [] : [ack])}`);
   });
@@ -68,10 +67,7 @@ const endpoint = `http://127.0.0.1:${wss.address().port}/graphql`;
 const gql = { async getConnectionAuth() { return { endpoint }; } };
 const tools = new Map();
 registerDocTools({ registerTool(name, definition, handler) {
-  const coordinated = coordinateTool(name, definition.inputSchema, async (args, extra) => {
-    if (name === "add_database_view") handlerCalls++;
-    return handler(args, extra);
-  }, { gql, endpoint, workspaceId });
+  const coordinated = coordinateTool(name, definition.inputSchema, handler, { gql, endpoint, workspaceId });
   tools.set(name, coordinated);
 } }, gql, { workspaceId });
 
@@ -171,16 +167,15 @@ try {
   // Exercise the actual revision reader and registration-aware token over WS.
   const guarded = seedDatabase("guarded");
   const revision = documentRevision(docs.get("guarded"));
-  await call(argsFor("guarded", { name: "Fresh revision", expectedRevision: revision }));
-  const beforeCalls = handlerCalls;
+  const fresh = await call(argsFor("guarded", { name: "Fresh revision", expectedRevision: revision }));
+  assert.equal(fresh.revision, documentRevision(docs.get("guarded")));
   const beforePushes = pushes;
   const stale = await rawCall(argsFor("guarded", { name: "Must not appear", expectedRevision: revision }));
   assert.equal(stale.isError, true);
   assert.equal(payloadOf(stale).code, "STALE_DOCUMENT_REVISION");
-  assert.equal(handlerCalls, beforeCalls, "stale edits must be rejected before the mutation handler");
   assert.equal(pushes, beforePushes);
   assert.equal(guarded.get("prop:views").length, 2);
-  await call(argsFor("guarded", { name: "New revision", expectedRevision: documentRevision(docs.get("guarded")) }));
+  await call(argsFor("guarded", { name: "New revision", expectedRevision: fresh.revision }));
   console.log("PASS: native database views, validation, unnamed counts, serialized writes and stale revision protection");
 } finally {
   for (const socket of wss.clients) socket.terminate();
