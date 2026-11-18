@@ -10,6 +10,13 @@ const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS ||
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
 const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
 
+class SocketAckTimeout extends Error {
+  constructor(event: string, timeoutMs: number) {
+    super(`${event} timeout after ${timeoutMs}ms`);
+    this.name = "Error";
+  }
+}
+
 function ackErrorMessage(ack: any, fallback: string): string | null {
   const message = ack?.error?.message;
   if (typeof message === "string" && message.trim()) return message;
@@ -46,7 +53,7 @@ function emitWithAck<T>(
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new Error(`${event} timeout after ${timeoutMs}ms`));
+      reject(new SocketAckTimeout(event, timeoutMs));
     }, timeoutMs);
 
     socket.emit(event, payload, (ack: any) => {
@@ -175,19 +182,38 @@ async function pushDocUpdateRaw(
   workspaceId: string,
   docId: string,
   updateBase64: string,
+  requireAcknowledgement = false,
 ): Promise<number> {
-  return emitWithAck<number>(
-    socket,
-    'space:push-doc-update',
-    { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64 },
-    (ack) => {
-      const message = ackErrorMessage(ack, "push-doc-update failed");
-      if (message) throw new Error(message);
-      const timestamp = ack?.data?.timestamp;
-      return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
-        ? timestamp
-        : Date.now();
-    },
+  try {
+    return await emitWithAck<number>(
+      socket,
+      'space:push-doc-update',
+      { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64 },
+      (ack) => {
+        const message = ackErrorMessage(ack, "push-doc-update failed");
+        if (message) throw new Error(message);
+        const timestamp = ack?.data?.timestamp;
+        if (requireAcknowledgement && ack?.data?.accepted !== true) {
+          throw uncertainWriteAcknowledgement(docId);
+        }
+        return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
+          ? timestamp
+          : Date.now();
+      },
+    );
+  } catch (error) {
+    if (requireAcknowledgement && error instanceof SocketAckTimeout && error.message.startsWith("space:push-doc-update timeout after ")) {
+      throw uncertainWriteAcknowledgement(docId);
+    }
+    throw error;
+  }
+}
+
+function uncertainWriteAcknowledgement(docId: string): ToolFailure {
+  return new ToolFailure(
+    `AFFiNE may have applied the update to document ${docId}, but did not confirm it. Read the document before retrying.`,
+    "write_ack_uncertain",
+    `Read document ${docId} before retrying; the write may already have been applied.`,
   );
 }
 
@@ -299,8 +325,9 @@ export async function pushPageDocUpdate(
   workspaceId: string,
   docId: string,
   updateBase64: string,
+  options: { requireAcknowledgement?: boolean } = {},
 ): Promise<number> {
-  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64);
+  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, options.requireAcknowledgement);
   if (docId !== workspaceId && updateHasChanges(updateBase64)) {
     await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp);
   }

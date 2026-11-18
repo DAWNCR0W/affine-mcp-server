@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod/v3';
 import * as Y from 'yjs';
-import { coordinateTool } from '../dist/toolCoordination.js';
+import { coordinateTool, staleDocumentRevision } from '../dist/toolCoordination.js';
 import { documentRevision, isDocumentRegistered } from '../dist/util/documentRevision.js';
 import { toolOutputSchemaFor } from '../dist/toolOutputSchemas.js';
 
@@ -46,7 +46,7 @@ test('registration detection follows the workspace page entry through deletion',
 });
 
 test('document writes advertise a validated optional revision; reads preserve their schema', () => {
-  for (const name of ['update_block', 'update_table_cell', 'update_table_column_widths', 'replace_doc_with_markdown', 'move_block', 'reparent_mindmap_node', 'add_surface_elements', 'update_surface_elements']) {
+  for (const name of ['update_block', 'update_blocks', 'update_table_cell', 'update_table_column_widths', 'replace_doc_with_markdown', 'move_block', 'reparent_mindmap_node', 'add_surface_elements', 'update_surface_elements']) {
     const { inputSchema } = coordinateTool(name, shape, async () => ({}), context);
     const schema = z.object(inputSchema);
     assert(schema.safeParse({ docId: 'doc' }).success);
@@ -62,6 +62,25 @@ test('document writes advertise a validated optional revision; reads preserve th
   assert.equal(toolOutputSchemaFor('read_doc').shape.revision.safeParse(null).success, true);
 });
 
+test('block mutations own their local revision check and share its stale error contract', async () => {
+  for (const name of ['update_block', 'update_blocks']) {
+    let invoked = false;
+    const tool = coordinateTool(name, shape, async args => {
+      invoked = true;
+      return args.expectedRevision;
+    }, context);
+    assert.equal(await tool.handler({ docId: 'doc', expectedRevision: 'a'.repeat(64) }), 'a'.repeat(64));
+    assert.equal(invoked, true, `${name} does not load a second pre-write revision snapshot`);
+  }
+  const conflict = staleDocumentRevision('workspace', 'doc', 'a'.repeat(64), 'b'.repeat(64));
+  assert.equal(conflict.isError, true);
+  assert.equal(conflict.structuredContent.code, 'STALE_DOCUMENT_REVISION');
+  assert.equal(conflict.structuredContent.retryable, false);
+  assert.deepEqual(conflict.structuredContent.details, {
+    workspaceId: 'workspace', docId: 'doc', expectedRevision: 'a'.repeat(64), currentRevision: 'b'.repeat(64),
+  });
+});
+
 test('independent registrations share workspace coordination, including default ids and workspace deletion', async () => {
   const started = deferred(), release = deferred();
   const events = [];
@@ -69,16 +88,18 @@ test('independent registrations share workspace coordination, including default 
     events.push('write-start'); started.resolve(); await release.promise; events.push('write-end');
   }, context);
   const read = coordinateTool('read_doc', shape, async () => events.push('read'), context);
+  const revisionRead = coordinateTool('get_doc_revision', shape, async () => events.push('revision'), context);
   const remove = coordinateTool('delete_workspace', { id: z.string() }, async () => events.push('delete'), context);
   const writing = first.handler({ docId: 'doc' });
   await started.promise;
   const reading = read.handler({ workspaceId: context.workspaceId, docId: 'doc' });
+  const revisionReading = revisionRead.handler({ workspaceId: context.workspaceId, docId: 'doc' });
   const deleting = remove.handler({ id: context.workspaceId });
   await Promise.resolve();
   assert.deepEqual(events, ['write-start']);
   release.resolve();
-  await Promise.all([writing, reading, deleting]);
-  assert.deepEqual(events, ['write-start', 'write-end', 'read', 'delete']);
+  await Promise.all([writing, reading, revisionReading, deleting]);
+  assert.deepEqual(events, ['write-start', 'write-end', 'read', 'revision', 'delete']);
 });
 
 test('unrelated workspace operations can finish while another workspace is blocked', async () => {

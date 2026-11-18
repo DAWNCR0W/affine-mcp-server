@@ -287,8 +287,8 @@ that require stdio can each run the existing `affine-mcp-http-proxy` bridge; see
 [client setup](client-setup.md#reuse-a-local-http-listener-from-stdio-clients).
 All sessions in that server share a FIFO queue per AFFiNE workspace. The queue
 covers the entire tool operation, including loading snapshots, validation,
-workspace metadata changes, and persistence. `read_doc` uses the same queue so
-its content and revision follow earlier coordinated writes. Different
+workspace metadata changes, and persistence. `read_doc` and `get_doc_revision`
+use the same queue so their revisions follow earlier coordinated writes. Different
 workspaces can run concurrently.
 
 This boundary is one MCP server process. Separate full stdio servers, multiple
@@ -299,8 +299,8 @@ external updates, but the upstream push API provides no compare-and-swap or
 cross-process isolation. Composite operations are serialized, not database
 transactions: existing partial/uncertain-write responses still apply.
 
-For edits derived from a previous read, pass `read_doc.revision` as
-`expectedRevision` on a document content mutation, such as block, table,
+For edits derived from a previous read, pass the revision from `read_doc` or
+`get_doc_revision` as `expectedRevision` on a document content mutation, such as block, table,
 database, mindmap, title, Markdown, or document deletion tools. Supported tools
 advertise the optional field in `tools/list`:
 
@@ -331,6 +331,15 @@ It is a content precondition within the shared server, not upstream CAS.
 Without `expectedRevision`, explicit replacements apply in queue order and a
 later replacement can intentionally supersede earlier text. A missing document
 has `revision: null` and cannot satisfy a supplied revision.
+
+`update_block` and `update_blocks` check the revision against the snapshot
+they edit. On success, they return the revision of that snapshot with their
+changes applied. If an external edit merges after the snapshot was loaded,
+the returned token can already be stale. When AFFiNE does not confirm the
+content save, the tool returns `write_ack_uncertain` with `retryable: false`.
+If the content was saved but its workspace timestamp could not be confirmed,
+the tool returns `workspace_page_updated_date_failed`. In both cases, inspect
+the affected blocks before continuing.
 
 The queue permits at most 100 waiting calls per workspace and waits at most
 60 seconds before execution starts. Queue overflow or timeout reports a
