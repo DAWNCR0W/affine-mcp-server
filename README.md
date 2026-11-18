@@ -37,7 +37,7 @@ Highlights:
 
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
-- Coordinates concurrent writes per workspace through one shared MCP server. Document-content mutations return revisions that can be passed as `expectedRevision` to reject stale edits.
+- Coordinates concurrent writes per workspace through one shared MCP server. Pass a returned document revision string as `expectedRevision` to reject stale edits. Resaving a title that already matches keeps its revision.
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
 - Exposes 114 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it

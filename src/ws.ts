@@ -176,7 +176,17 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
   // Always use the same public snapshot contract, but bypass tracking on this
   // preparatory read to avoid recursively changing the mutation's target state.
   if (!mutation.hasRegistration) {
-    const workspaceSnapshot = await loadDocRaw(socket, workspaceId, workspaceId);
+    let workspaceSnapshot: LoadDocResult;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        workspaceSnapshot = await loadDocRaw(socket, workspaceId, workspaceId);
+        break;
+      } catch (error) {
+        const retryDelay = WORKSPACE_METADATA_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined || !isTransientWorkspaceMetadataError(error)) throw error;
+        await delay(retryDelay);
+      }
+    }
     mutation.observeRegistration(workspaceSnapshot.missing);
   }
   const snapshot = await loadDocRaw(socket, workspaceId, docId);

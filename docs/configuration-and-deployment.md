@@ -336,10 +336,11 @@ Successful document-content mutations return `revision`, including no-op
 mutations. The token is computed from the input Yjs snapshot plus the deltas
 that AFFiNE acknowledged. An external edit that merges after the snapshot was
 loaded can make the returned token stale immediately. `update_doc_title` can
-return `revision: null` when the page-content snapshot is unavailable; it still
-reports the successful metadata update. `delete_doc` returns `revision: null`
-only after content absence is verified; partial deletion receipts and errors
-omit `revision`.
+return `revision: null` when the page-content snapshot is unavailable and
+the metadata update succeeds. Reuse a string token as `expectedRevision` and
+call `get_doc_revision` once content is available if a metadata-only rename
+returned `null`. `delete_doc` returns `revision: null` after verified content
+absence. Partial deletion receipts and errors omit `revision`.
 
 When AFFiNE does not confirm a content save, the tool returns
 `write_ack_uncertain` with `retryable: false` and no revision. If content was

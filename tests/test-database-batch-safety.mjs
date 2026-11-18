@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { coordinateTool } from "../dist/toolCoordination.js";
 import { toolOutputSchemaFor } from "../dist/toolOutputSchemas.js";
+import { documentMutationRevision } from "../dist/util/documentRevision.js";
 
 // Exercise registered MCP handlers, revision coordination, and the actual Yjs
 // socket protocol against disposable loopback documents, without AFFiNE access.
@@ -44,7 +45,8 @@ const docs = new Map([[workspaceId, root], [docId, page]]);
 const pushes = [];
 let timestamp = 1;
 let beforePagePush;
-let rejectNextPagePush = false;
+let rejectNextPushFor;
+const pageUpdates = [];
 let identityQueries = 0;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 wss.on("connection", socket => {
@@ -66,9 +68,12 @@ wss.on("connection", socket => {
       assert.ok(docs.has(payload.docId), "tests must only mutate their disposable fixtures");
       if (payload.docId === docId) beforePagePush?.();
       pushes.push(payload.docId);
-      if (payload.docId === docId && rejectNextPagePush) {
-        rejectNextPagePush = false;
-        ack = { data: { accepted: false, timestamp: ++timestamp } };
+      if (payload.docId === docId) pageUpdates.push(payload.update);
+      if (payload.docId === rejectNextPushFor) {
+        rejectNextPushFor = undefined;
+        ack = payload.docId === workspaceId
+          ? { error: { message: "fixture timestamp mirror rejection" } }
+          : { data: { accepted: false, timestamp: ++timestamp } };
       } else {
         Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
         ack = { data: { accepted: true, timestamp: ++timestamp } };
@@ -259,9 +264,18 @@ try {
     beforePagePush = undefined;
     blocks.get("tail").set("prop:text", new Y.Text("Concurrent external edit during table update"));
   };
+  const persistedBeforeTableEdit = Buffer.from(Y.encodeStateAsUpdate(page));
+  const pageUpdateIndex = pageUpdates.length;
   const tableWithExternalEdit = await call("update_table_cell", {
     blockId: tableBlock.blockId, row: 1, column: 0, text: "Another cell edit", expectedRevision: tableRevision,
   });
+  const expectedTableResult = new Y.Doc();
+  Y.applyUpdate(expectedTableResult, persistedBeforeTableEdit);
+  assert.equal(pageUpdates.length, pageUpdateIndex + 1, "the table edit must send one primary-document delta");
+  Y.applyUpdate(expectedTableResult, Buffer.from(pageUpdates[pageUpdateIndex], "base64"));
+  assert.equal(tableWithExternalEdit.revision, documentMutationRevision(expectedTableResult, true),
+    "the receipt must equal the original snapshot plus only the acknowledged table delta");
+  expectedTableResult.destroy();
   const afterTableAndExternalEdit = await call("get_doc_revision");
   assert.notEqual(tableWithExternalEdit.revision, afterTableAndExternalEdit.revision,
     "a table revision must exclude an external edit that arrived after loading the mutation snapshot");
@@ -419,17 +433,63 @@ try {
     assertCreators(preset.rowBlockIds, preset.databaseBlockId);
   }
 
-  const previousPageTitle = blocks.get("page").get("prop:title").toString();
+  const sameTitle = "Database fixture";
+  const titlePushCount = pushes.length;
+  const beforeTitle = await call("get_doc_revision");
+  const sameTitleResult = await call("update_doc_title", { title: sameTitle, expectedRevision: beforeTitle.revision });
+  assert.equal(sameTitleResult.revision, beforeTitle.revision);
+  assert.equal(sameTitleResult.updated, false, "a title already stored in both places is a no-op");
+  assert.equal(pushes.length, titlePushCount, "a title no-op must not push either Yjs document");
+  assert.equal(sameTitleResult.revision, (await call("get_doc_revision")).revision);
+
   const metadataPage = root.getMap("meta").get("pages").get(0);
-  rejectNextPagePush = true;
-  const titleFailure = await rawCall("update_doc_title", { title: "Title metadata updated" });
+  metadataPage.set("title", "Divergent sidebar title");
+  const beforeSidebarRepair = pushes.length;
+  const repairedSidebar = await call("update_doc_title", { title: sameTitle, expectedRevision: beforeTitle.revision });
+  assert.equal(repairedSidebar.updated, true);
+  assert.equal(repairedSidebar.revision, beforeTitle.revision);
+  assert.deepEqual(pushes.slice(beforeSidebarRepair), [workspaceId], "only the divergent sidebar title needs a write");
+  assert.equal(metadataPage.get("title"), sameTitle);
+
+  const repairTitle = "Repair internal title";
+  metadataPage.set("title", repairTitle); // Simulate a workspace metadata title that was saved independently.
+  const beforeTitleRepairPushes = pushes.length;
+  const repairedTitle = await call("update_doc_title", { title: repairTitle });
+  assert.equal(repairedTitle.updated, true);
+  assert.equal(repairedTitle.revision, (await call("get_doc_revision")).revision);
+  assert.equal(pushes.length - beforeTitleRepairPushes, 2,
+    "repairing only the page title should push its content and updatedDate, without rewriting the sidebar title");
+  assert.equal(metadataPage.get("title"), repairTitle);
+  assert.equal(blocks.get("page").get("prop:title").toString(), repairTitle);
+
+  const timestampTitle = "Repair after timestamp failure";
+  metadataPage.set("title", timestampTitle);
+  const pagePushesBeforeRepair = pageUpdates.length;
+  rejectNextPushFor = workspaceId;
+  const titleFailure = await rawCall("update_doc_title", { title: timestampTitle });
   assert.equal(titleFailure.isError, true);
   const partialTitle = payloadOf(titleFailure);
   assert.equal(partialTitle.status, "partial");
-  assert.equal(partialTitle.metadataUpdated, true);
+  assert.equal(partialTitle.metadataUpdated, false, "the already-correct workspace title should not be rewritten");
+  assert.equal(partialTitle.contentUpdated, true, "the page title delta was acknowledged before the timestamp mirror failed");
   assert.equal(Object.hasOwn(partialTitle, "revision"), false, "partial title receipts must omit a revision");
-  assert.equal(metadataPage.get("title"), "Title metadata updated", "workspace title metadata was acknowledged");
-  assert.equal(blocks.get("page").get("prop:title").toString(), previousPageTitle, "uncertain page update was not applied in this fixture");
+  assert.equal(partialTitle.code, "workspace_page_updated_date_failed");
+  assert.match(partialTitle.recoveryGuidance, /Do not retry the page mutation; repair its workspace updatedDate separately/);
+  assert.equal(pageUpdates.length, pagePushesBeforeRepair + 1);
+  assert.equal(metadataPage.get("title"), timestampTitle, "the already-correct workspace title remains intact");
+  assert.equal(blocks.get("page").get("prop:title").toString(), timestampTitle, "the acknowledged page title repair was applied");
+
+  rejectNextPushFor = docId;
+  const uncertainTitle = await rawCall("update_doc_title", { title: "Acknowledged sidebar only" });
+  assert.equal(uncertainTitle.isError, true);
+  const uncertainReceipt = payloadOf(uncertainTitle);
+  assert.equal(uncertainReceipt.code, "write_ack_uncertain");
+  assert.equal(uncertainReceipt.status, "partial");
+  assert.equal(uncertainReceipt.metadataUpdated, true);
+  assert.equal(Object.hasOwn(uncertainReceipt, "revision"), false);
+  assert.match(uncertainReceipt.recoveryGuidance, /Inspect the workspace title and document content/);
+  assert.equal(metadataPage.get("title"), "Acknowledged sidebar only");
+  assert.equal(blocks.get("page").get("prop:title").toString(), timestampTitle);
   console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
 } finally {
   await client.close();

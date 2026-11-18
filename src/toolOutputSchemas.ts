@@ -25,7 +25,6 @@ type OutputSpec = {
   optional?: boolean;
   requiredFields?: string[];
   errorEnvelope?: boolean;
-  validate?: (value: Record<string, unknown>) => boolean;
 };
 
 /** Builds a top-level tool output specification. */
@@ -98,12 +97,7 @@ const OUTPUT_SPECS = {
   delete_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
   delete_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", deleted: "boolean" }),
   delete_database_row: spec({ deleted: "boolean", rowBlockId: "string", databaseBlockId: "string", revision: "string" }),
-  delete_doc: {
-    ...fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", docId: "string", deleted: "boolean", revision: "nullableString" }, true, ["kind", "ok", "workspaceId", "docId", "deleted"])),
-    validate: value => value.ok === true
-      ? value.contentAbsenceVerified === true ? value.revision === null : !Object.hasOwn(value, "revision")
-      : !Object.hasOwn(value, "revision"),
-  },
+  delete_doc: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", docId: "string", deleted: "boolean", status: "string", contentAbsenceVerified: "boolean", revision: "nullableString" }, true, ["kind", "ok", "workspaceId", "docId", "deleted"])),
   delete_folder: spec({ success: "boolean", deletedIds: "stringArray" }),
   delete_organize_link: spec({ success: "boolean", nodeId: "string" }),
   delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", deletedNodes: "stringArray", prunedConnectors: "stringArray", revision: "string" }, true, ["deleted", "elementId", "revision"]),
@@ -268,15 +262,33 @@ function createToolOutputSchema(name: string) {
   const error = z.object({
     ...shape, ok: z.literal(false), error: z.string(), code: z.string(), retryable: z.boolean(),
   }).passthrough();
-  const alternatives = z.union([success, error]).refine(
-    outputSpec.validate ?? (() => true),
-    "Tool output fields do not match the operation outcome",
-  );
+  let alternatives;
+  let advertisedBranches;
+  if (name === "delete_doc") {
+    const verifiedDeletion = success.extend({
+      status: z.enum(["deleted", "already_absent"]),
+      contentAbsenceVerified: z.literal(true),
+      revision: z.null(),
+    });
+    const partialDeletion = success.extend({
+      status: z.literal("partial"),
+      contentAbsenceVerified: z.literal(false),
+      revision: z.never().optional(),
+    });
+    const deletionError = error.extend({ revision: z.never().optional() });
+    advertisedBranches = [verifiedDeletion, partialDeletion, deletionError];
+    alternatives = z.union(advertisedBranches);
+  } else {
+    advertisedBranches = [success, error];
+    alternatives = z.union([success, error]);
+  }
   // The SDK requires an object. Zod v4 keeps refinements on that object; metadata
   // advertises the same branches to clients. Root properties already type every field.
-  const anyOf = [success, error].map(branch => {
+  const anyOf = advertisedBranches.map(branch => {
     const json = z.toJSONSchema(branch);
-    return { required: json.required, properties: { ok: json.properties?.ok } };
+    return name === "delete_doc"
+      ? { required: json.required, properties: json.properties }
+      : { required: json.required, properties: { ok: json.properties?.ok } };
   });
   return z.object(shape).passthrough()
     .refine(value => alternatives.safeParse(value).success, "Expected a complete success result or a structured error")
