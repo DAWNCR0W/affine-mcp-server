@@ -10,6 +10,7 @@
     "add_organize_link",
     "add_surface_element",
     "add_surface_elements",
+    "add_table_rows",
     "add_tag_to_doc",
     "analyze_doc_fidelity",
     "append_block",

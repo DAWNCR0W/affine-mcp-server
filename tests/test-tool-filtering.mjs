@@ -332,6 +332,7 @@ async function run() {
       "restore_doc",
       "update_block",
       "update_blocks",
+      "add_table_rows",
       "update_table_cell",
       "update_database_row",
       "add_surface_element",
@@ -360,7 +361,7 @@ async function run() {
       "add_organize_link",
     ];
     const unexpectedlyVisible = trimmed.filter(t => tools7.includes(t));
-    const coreExpected = ["create_doc", "append_block", "move_block", "read_doc", "get_doc_revision", "trash_doc", "restore_doc", "update_block", "update_blocks", "update_table_cell", "update_database_row"];
+    const coreExpected = ["create_doc", "append_block", "move_block", "read_doc", "get_doc_revision", "trash_doc", "restore_doc", "update_block", "update_blocks", "add_table_rows", "update_table_cell", "update_database_row"];
     const coreMissing = coreExpected.filter(t => !tools7.includes(t));
     if (unexpectedlyVisible.length === 0 && coreMissing.length === 0) {
       console.log("✅ Success: Core profile exposes the compact everyday surface.");
@@ -382,7 +383,7 @@ async function run() {
       "update_profile",
     ];
     const visibleRestricted = hiddenAuthoring.filter(t => tools8.includes(t));
-    const expectedAuthoring = ["create_semantic_page", "instantiate_template_native", "add_surface_element", "move_block", "trash_doc", "restore_doc", "update_block", "update_blocks", "update_table_cell", "update_surface_element"];
+    const expectedAuthoring = ["create_semantic_page", "instantiate_template_native", "add_surface_element", "move_block", "trash_doc", "restore_doc", "update_block", "update_blocks", "add_table_rows", "update_table_cell", "update_surface_element"];
     const missingAuthoring = expectedAuthoring.filter(t => !tools8.includes(t));
     if (visibleRestricted.length === 0 && missingAuthoring.length === 0) {
       console.log("✅ Success: Authoring profile keeps editing tools while hiding restricted tools.");
