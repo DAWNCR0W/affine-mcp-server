@@ -45,7 +45,7 @@ try {
   workspaceId = (await call('create_workspace', { name: testResourceName('blob-live') })).receipt.id;
   assert.ok(workspaceId, 'create_workspace returns an isolated workspace id');
   const fixtures = [
-    { name: 'text', bytes: Buffer.from('Blob live roundtrip: 한글 ✓\n'), filename: 'fixture.txt', contentType: 'text/plain', type: 'resource' },
+    { name: 'text', bytes: Buffer.from('Blob live roundtrip: \uD55C\uAE00 ✓\n'), filename: 'fixture.txt', contentType: 'text/plain', type: 'resource' },
     { name: 'image', bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=', 'base64'), filename: 'fixture.png', contentType: 'image/png', type: 'image' },
     { name: 'binary-filePath', bytes: Buffer.from(Array.from({ length: 256 }, (_, index) => index)), filename: 'binary-fixture.bin', contentType: 'application/octet-stream', type: 'resource', file: true },
   ];

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 import { WebSocketServer } from "ws";
 import { z } from "zod/v3";
+import { coordinateTool } from "../dist/toolCoordination.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { toolOutputSchemaFor } from "../dist/toolOutputSchemas.js";
 
@@ -57,19 +58,21 @@ wss.on("connection", socket => {
     } else if (event === "space:push-doc-update") {
       pushes++;
       Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
-      ack = { data: { timestamp: ++timestamp } };
+      ack = { data: { accepted: true, timestamp: ++timestamp } };
     } else throw new Error(`Unexpected event ${event}`);
     socket.send(`43${ackId}${JSON.stringify(ack === undefined ? [] : [ack])}`);
   });
 });
 await new Promise((resolve, reject) => { wss.once("listening", resolve); wss.once("error", reject); });
+const endpoint = `http://127.0.0.1:${wss.address().port}/graphql`;
+const gql = { async getConnectionAuth() { return { endpoint }; } };
 const tools = new Map();
-registerDocTools({ registerTool(name, definition, handler) { tools.set(name, { definition, handler }); } }, {
-  async getConnectionAuth() { return { endpoint: `http://127.0.0.1:${wss.address().port}/graphql` }; },
-}, { workspaceId });
+registerDocTools({ registerTool(name, definition, handler) {
+  tools.set(name, coordinateTool(name, definition.inputSchema, handler, { gql, endpoint, workspaceId }));
+} }, gql, { workspaceId });
 async function call(name, args = {}) {
-  const { definition, handler } = tools.get(name);
-  const result = await handler(z.object(definition.inputSchema).parse({ workspaceId, docId, ...args }));
+  const { inputSchema, handler } = tools.get(name);
+  const result = await handler(z.object(inputSchema).parse({ workspaceId, docId, ...args }));
   assert.ok(!result.isError, `${name}: ${JSON.stringify(result)}`);
   return result.structuredContent ?? JSON.parse(result.content[0].text);
 }
@@ -111,12 +114,14 @@ try {
   assert.deepEqual([...owners.keys()].sort(), keptIds.sort(), "frame ownership removes exactly the deleted IDs");
   const output = toolOutputSchemaFor("delete_surface_element");
   assert.ok(output.safeParse(removed).success);
+  assert.equal(removed.revision, (await call("get_doc_revision")).revision);
   assert.equal(output.safeParse({ ...removed, deletedNodes: [42] }).success, false);
   const beforeMissing = pushes;
   const missing = await call("delete_surface_element", { elementId: map.mindmapId, pruneConnectors: true });
   assert.equal(missing.deleted, false);
   assert.equal(pushes, beforeMissing);
   assert.ok(output.safeParse(missing).success, "non-deletion results need not report deletedNodes");
+  assert.equal(missing.revision, removed.revision, "a missing target leaves the revision unchanged");
 
   const noPrune = await call("create_mindmap", { text: "Keep connectors" });
   const left = await connector(noPrune.rootId, a.elementId);

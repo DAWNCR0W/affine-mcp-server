@@ -3,7 +3,8 @@ import * as Y from "yjs";
 import type { GraphQLClient } from "./graphqlClient.js";
 import { toolAnnotationsFor, type ToolName } from "./toolSurface.js";
 import { documentRevision, isDocumentRegistered } from "./util/documentRevision.js";
-import { toolError } from "./util/mcp.js";
+import { DocumentMutation, documentRevisionUnavailable, runDocumentMutation } from "./util/documentMutation.js";
+import { text, toolError } from "./util/mcp.js";
 import { writeCoordinator, WriteCoordinatorError } from "./util/writeCoordinator.js";
 import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from "./ws.js";
 
@@ -16,12 +17,12 @@ const DOCUMENT_CONTENT_MUTATIONS = new Set<ToolName>([
   "append_block", "append_markdown", "append_semantic_section", "compose_database_from_intent",
   "create_mindmap", "delete_block", "delete_database_row", "delete_doc", "delete_surface_element",
   "move_block", "reparent_mindmap_node", "replace_doc_with_markdown", "set_mindmap_layout",
-  "set_mindmap_lock", "set_mindmap_style", "update_block", "update_database_row", "update_doc_title",
+  "set_mindmap_lock", "set_mindmap_style", "update_block", "update_blocks", "update_database_row", "update_doc_title",
   "update_edgeless_block", "update_frame_children", "update_mindmap_node", "update_surface_element", "update_surface_elements",
   "update_table_cell", "update_table_column_widths",
 ]);
 
-async function currentDocumentRevision(gql: GraphQLClient, workspaceId: string, docId: string) {
+export async function currentDocumentRevision(gql: GraphQLClient, workspaceId: string, docId: string) {
   const { endpoint, cookie, bearer } = await gql.getConnectionAuth();
   const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
   const doc = new Y.Doc();
@@ -41,6 +42,19 @@ async function currentDocumentRevision(gql: GraphQLClient, workspaceId: string, 
   }
 }
 
+export function staleDocumentRevision(
+  workspaceId: string,
+  docId: string,
+  expectedRevision: string,
+  currentRevision: string | null,
+) {
+  return toolError("Document content changed. Read it again and reconcile your edit before retrying.", {
+    code: "STALE_DOCUMENT_REVISION",
+    retryable: false,
+    details: { workspaceId, docId, expectedRevision, currentRevision },
+  });
+}
+
 /** Coordinate whole tool calls across every session served by this process. */
 export function coordinateTool(
   name: string,
@@ -49,12 +63,12 @@ export function coordinateTool(
   context: { gql: GraphQLClient; endpoint: string; workspaceId?: string },
 ) {
   const write = !toolAnnotationsFor(name).readOnlyHint;
-  if (!write && name !== "read_doc") return { inputSchema, handler };
+  if (!write && name !== "read_doc" && name !== "get_doc_revision") return { inputSchema, handler };
   const supportsRevision = DOCUMENT_CONTENT_MUTATIONS.has(name as ToolName) && Object.hasOwn(inputSchema, "docId");
   const schema = supportsRevision ? {
     ...inputSchema,
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional().describe(
-      "Optional read_doc revision of this primary document. Reject stale content before writing. " +
+      "Optional revision from read_doc, get_doc_revision, or a prior document content mutation. Reject stale content before writing. " +
       "Covers document content, not workspace metadata; requires all writers to share one MCP server.",
     ),
   } : inputSchema;
@@ -71,18 +85,36 @@ export function coordinateTool(
       const scope = JSON.stringify([new URL(context.endpoint).origin, workspaceId ?? null]);
       try {
         return await writeCoordinator.run(scope, async () => {
-          if (supportsRevision && args.expectedRevision !== undefined) {
-            if (!workspaceId) return toolError("workspaceId is required", { code: "invalid_arguments" });
-            const currentRevision = await currentDocumentRevision(context.gql, workspaceId, args.docId);
-            if (currentRevision !== args.expectedRevision) {
-              return toolError("Document content changed. Read it again and reconcile your edit before retrying.", {
-                code: "STALE_DOCUMENT_REVISION",
-                retryable: false,
-                details: { workspaceId, docId: args.docId, expectedRevision: args.expectedRevision, currentRevision },
-              });
-            }
+          if (!workspaceId && supportsRevision && args.expectedRevision !== undefined) {
+            return toolError("workspaceId is required", { code: "invalid_arguments" });
           }
-          return handler(args, extra);
+          if (!supportsRevision || !workspaceId || name === "update_block" || name === "update_blocks") {
+            return handler(args, extra);
+          }
+          const mutation = new DocumentMutation(workspaceId, args.docId, args.expectedRevision);
+          try {
+            const result = await runDocumentMutation(mutation, () => handler(args, extra));
+            if (mutation.conflict) {
+              return staleDocumentRevision(workspaceId, args.docId, args.expectedRevision, mutation.conflict.currentRevision);
+            }
+            const payload = result?.structuredContent;
+            if (!payload || result.isError || payload.ok === false || payload.success === false ||
+              ["partial", "failed", "not_applied"].includes(payload.status)) {
+              return result;
+            }
+            const revision = name === "delete_doc"
+              ? (payload.contentAbsenceVerified === true ? null : undefined)
+              : mutation.revision;
+            if (revision === undefined) throw documentRevisionUnavailable(args.docId);
+            return { ...result, ...text({ ...payload, revision }) };
+          } catch (error) {
+            if (mutation.conflict) {
+              return staleDocumentRevision(workspaceId, args.docId, args.expectedRevision, mutation.conflict.currentRevision);
+            }
+            throw error;
+          } finally {
+            mutation.destroy();
+          }
         }, extra?.signal);
       } catch (error) {
         if (error instanceof WriteCoordinatorError) {

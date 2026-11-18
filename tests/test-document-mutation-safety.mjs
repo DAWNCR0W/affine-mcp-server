@@ -67,6 +67,8 @@ function makeUpdateSocket({
   workspaceId,
   root,
   pageTimestamp = 100,
+  pageAck,
+  noPageAck = false,
   rootMode = "success",
   rootReadBarrier = 0,
   rootUnavailable = false,
@@ -116,7 +118,8 @@ function makeUpdateSocket({
           return;
         }
         onPagePush?.(payload);
-        acknowledge({ data: { timestamp: pageTimestamp } });
+        if (noPageAck) return;
+        acknowledge(pageAck ?? { data: { accepted: true, timestamp: pageTimestamp } });
         return;
       }
 
@@ -253,6 +256,59 @@ for (const invalidTimestamp of [0, -1]) {
   assert.ok(returnedTimestamp > 0, `an invalid ${invalidTimestamp} ACK timestamp falls back to local time`);
   assert.equal(pageDates(root).get("page-1"), returnedTimestamp,
     `updatedDate uses the fallback timestamp when the server returns ${invalidTimestamp}`);
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-update-strict-ack";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageTimestamp: 20 });
+  assert.equal(await pushPageDocUpdate(
+    transport.socket, workspaceId, "page-1", changedDocumentUpdate(), { requireAcknowledgement: true },
+  ), 20, "strict mode returns the confirmed server timestamp");
+  root.destroy();
+}
+
+for (const pageAck of [false, {}, { data: {} }]) {
+  const workspaceId = "workspace-update-malformed-ack";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageAck });
+  await assert.rejects(
+    pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate(), { requireAcknowledgement: true }),
+    error => error instanceof ToolFailure && error.code === "write_ack_uncertain"
+      && /Read the document before retrying/.test(error.message),
+  );
+  assert.equal(transport.rootReads, 0, "an uncertain page acknowledgement skips metadata mirroring");
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-update-timeout-ack";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, noPageAck: true });
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = callback => { queueMicrotask(callback); return 0; };
+  try {
+    await assert.rejects(
+      pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate(), { requireAcknowledgement: true }),
+      error => error instanceof ToolFailure && error.code === "write_ack_uncertain",
+      "a push timeout reports an uncertain write instead of a successful fallback timestamp",
+    );
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  root.destroy();
+}
+
+{
+  const workspaceId = "workspace-update-rejected-ack";
+  const root = workspaceRootWithPages([{ id: "page-1", updatedDate: 10 }]);
+  const transport = makeUpdateSocket({ workspaceId, root, pageTimestamp: new Error("page write rejected") });
+  await assert.rejects(
+    pushPageDocUpdate(transport.socket, workspaceId, "page-1", changedDocumentUpdate(), { requireAcknowledgement: true }),
+    /page write rejected/,
+    "strict mode preserves explicit server rejections",
+  );
   root.destroy();
 }
 

@@ -1,5 +1,5 @@
 {
-  "version": "3.13.1",
+  "version": "3.14.0",
   "tools": [
     "add_database_column",
     "add_database_row",
@@ -50,6 +50,7 @@
     "get_collection",
     "get_doc",
     "get_doc_icon",
+    "get_doc_revision",
     "get_edgeless_canvas",
     "get_folder_icon",
     "get_mindmap",
@@ -95,6 +96,7 @@
     "sign_in",
     "trash_doc",
     "update_block",
+    "update_blocks",
     "update_collection",
     "update_collection_rules",
     "update_comment",

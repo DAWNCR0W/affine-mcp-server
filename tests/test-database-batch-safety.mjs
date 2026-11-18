@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { coordinateTool } from "../dist/toolCoordination.js";
 import { toolOutputSchemaFor } from "../dist/toolOutputSchemas.js";
+import { documentMutationRevision } from "../dist/util/documentRevision.js";
 
 // Exercise registered MCP handlers, revision coordination, and the actual Yjs
 // socket protocol against disposable loopback documents, without AFFiNE access.
@@ -43,6 +44,10 @@ seedBlock("tail", "affine:paragraph", [], "Keep this tail");
 const docs = new Map([[workspaceId, root], [docId, page]]);
 const pushes = [];
 let timestamp = 1;
+let beforePagePush;
+let rejectNextPushFor;
+let rejectNextRootPushAfterApply = false;
+const pageUpdates = [];
 let identityQueries = 0;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 wss.on("connection", socket => {
@@ -62,9 +67,20 @@ wss.on("connection", socket => {
       ack = { data: doc ? { missing: Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64") } : {} };
     } else if (event === "space:push-doc-update") {
       assert.ok(docs.has(payload.docId), "tests must only mutate their disposable fixtures");
+      if (payload.docId === docId) beforePagePush?.();
       pushes.push(payload.docId);
-      Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
-      ack = { data: { timestamp: ++timestamp } };
+      if (payload.docId === docId) pageUpdates.push(payload.update);
+      if (payload.docId === rejectNextPushFor) {
+        rejectNextPushFor = undefined;
+        ack = { data: { accepted: false, timestamp: ++timestamp } };
+      } else if (payload.docId === workspaceId && rejectNextRootPushAfterApply) {
+        rejectNextRootPushAfterApply = false;
+        Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
+        ack = { data: { accepted: false, timestamp: ++timestamp } };
+      } else {
+        Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
+        ack = { data: { accepted: true, timestamp: ++timestamp } };
+      }
     } else throw new Error(`Unexpected event ${event}`);
     socket.send(`43${ackId}${JSON.stringify(ack === undefined ? [] : [ack])}`);
   });
@@ -122,6 +138,157 @@ function assertCreators(rowIds, databaseBlockId) {
 }
 const customColumns = [{ name: "Status", type: "select", options: ["Todo"] }, { name: "Count", type: "number" }];
 try {
+  const initial = await call("read_doc");
+  assert.deepEqual(await call("get_doc_revision", { workspaceId: undefined }), { docId, revision: initial.revision });
+  assert.deepEqual(await call("get_doc_revision", { docId: "missing-doc" }), { docId: "missing-doc", revision: null });
+  const selected = await call("read_doc", { blockIds: ["tail", "absent", "anchor"] });
+  assert.equal(selected.revision, initial.revision);
+  assert.equal(selected.blockCount, 2);
+  assert.equal(selected.title, null);
+  assert.equal(selected.plainText, "Before database\nKeep this tail");
+  assert.deepEqual(selected.blocks, initial.blocks.filter(block => ["anchor", "tail"].includes(block.id)));
+  assert.deepEqual(selected.missingBlockIds, ["absent"]);
+  const missing = await call("read_doc", { docId: "missing-doc", blockIds: ["tail"] });
+  assert.equal(missing.revision, null);
+  assert.deepEqual(missing.missingBlockIds, ["tail"]);
+  await rejectedWithoutWrite("read_doc", { blockIds: ["tail"], includeMarkdown: true }, /includeMarkdown cannot/);
+
+  const richText = [
+    { insert: "Keep", attributes: { bold: true } },
+    { insert: " ", attributes: { reference: { type: "LinkedPage", pageId: "linked-document" } } },
+  ];
+  await rejectedWithoutWrite("update_blocks", {
+    expectedRevision: initial.revision,
+    updates: [{ blockId: "tail", text: "Must roll back" }, { blockId: "anchor", checked: true }],
+  }, /todo list block/);
+  await rejectedWithoutWrite("update_blocks", {
+    updates: [{ blockId: "tail", text: "one" }, { blockId: "tail", text: "two" }],
+  }, /Duplicate block id/);
+
+  const beforeBlockBatch = pushes.filter(id => id === docId).length;
+  const batchEdit = await call("update_blocks", {
+    expectedRevision: initial.revision,
+    updates: [{ blockId: "tail", text: richText }, { blockId: "anchor", type: "heading", level: 2 }],
+  });
+  assert.equal(pushes.filter(id => id === docId).length - beforeBlockBatch, 1);
+  assert.equal(batchEdit.updated, 2);
+  assert.deepEqual(batchEdit.results.map(({ blockId, updated }) => [blockId, updated]), [["tail", true], ["anchor", true]]);
+  assert.equal(batchEdit.results[1].block.type, "h2");
+  assert.equal(batchEdit.results[1].block.text, "Before database");
+  assert.deepEqual(batchEdit.results[0].changed, ["text"]);
+  assert.equal(batchEdit.results[0].block.type, null, "a legacy block retains its omitted type property");
+  assert.deepEqual(batchEdit.results[0].block.deltas, richText);
+  assert.equal(batchEdit.results[0].previous.text, "Keep this tail");
+  const verified = await call("read_doc", { blockIds: ["tail"] });
+  assert.equal(verified.revision, batchEdit.revision);
+  assert.deepEqual(verified.blocks[0].linkedDocIds, ["linked-document"]);
+  assert.equal(verified.blocks[0].parentId, "note");
+  await rejectedWithoutWrite("update_blocks", {
+    expectedRevision: initial.revision,
+    updates: [{ blockId: "tail", text: "must not write against stale input" }],
+  }, /STALE_DOCUMENT_REVISION/);
+
+  const noOp = await call("update_block", { blockId: "tail", text: richText, expectedRevision: batchEdit.revision });
+  assert.equal(noOp.updated, false);
+  assert.equal(noOp.revision, batchEdit.revision);
+  assert.equal(pushes.filter(id => id === docId).length - beforeBlockBatch, 1, "no-op must not write");
+
+  const noOpBatch = await call("update_blocks", {
+    expectedRevision: noOp.revision,
+    updates: [{ blockId: "anchor", level: 2 }, { blockId: "tail", text: richText }],
+  });
+  assert.equal(noOpBatch.updated, 0);
+  assert.equal(noOpBatch.revision, noOp.revision);
+  assert.equal(pushes.filter(id => id === docId).length - beforeBlockBatch, 1, "no-op batch must not write");
+
+  const confirmed = await call("update_block", {
+    blockId: "anchor", text: "Confirmed edit", expectedRevision: noOpBatch.revision,
+  });
+  assert.equal(confirmed.updated, true);
+  assert.notEqual(confirmed.revision, noOpBatch.revision);
+  assert.equal((await call("get_doc_revision")).revision, confirmed.revision);
+
+  beforePagePush = () => {
+    beforePagePush = undefined;
+    blocks.get("tail").set("prop:text", new Y.Text("External edit"));
+  };
+  const single = await call("update_block", {
+    blockId: "anchor", text: "Chained from the confirmed edit", expectedRevision: confirmed.revision,
+  });
+  assert.equal(single.updated, true);
+  const afterExternalEdit = await call("read_doc");
+  assert.notEqual(single.revision, afterExternalEdit.revision, "the receipt must exclude an unseen external edit");
+  assert.equal(afterExternalEdit.blocks.find(block => block.id === "anchor").text, "Chained from the confirmed edit");
+  await rejectedWithoutWrite("update_block", {
+    expectedRevision: single.revision,
+    blockId: "tail",
+    text: "must not overwrite the unseen external edit",
+  }, /STALE_DOCUMENT_REVISION/);
+
+  const beforeTable = pushes.filter(id => id === docId).length;
+  const tableBlock = await call("append_block", {
+    type: "table", rows: 2, columns: 2,
+    tableData: [["Header A", "Header B"], ["Cell A", "Cell B"]],
+    expectedRevision: afterExternalEdit.revision,
+  });
+  assert.equal(pushes.filter(id => id === docId).length - beforeTable, 1);
+  let tableRevision = tableBlock.revision;
+  assert.equal((await call("read_doc")).revision, tableRevision, "table append returns the persisted document revision");
+  const cell = await call("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Updated cell", expectedRevision: tableRevision,
+  });
+  assert.equal(cell.updated, true);
+  assert.notEqual(cell.revision, tableRevision);
+  tableRevision = cell.revision;
+  assert.equal((await call("read_doc")).revision, tableRevision, "table cell edit returns the persisted revision");
+  const beforeNoOpCell = pushes.filter(id => id === docId).length;
+  const unchangedCell = await call("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Updated cell", expectedRevision: tableRevision,
+  });
+  assert.equal(unchangedCell.updated, false);
+  assert.equal(unchangedCell.revision, tableRevision);
+  assert.equal(pushes.filter(id => id === docId).length, beforeNoOpCell, "no-op cell edit must not push");
+  assert.equal((await call("read_doc")).revision, tableRevision, "no-op cell revision matches the persisted snapshot");
+  const widths = await call("update_table_column_widths", {
+    blockId: tableBlock.blockId, widths: [120, 140], expectedRevision: tableRevision,
+  });
+  assert.equal(widths.updated, true);
+  assert.notEqual(widths.revision, tableRevision);
+  tableRevision = widths.revision;
+  assert.equal((await call("read_doc")).revision, tableRevision, "column width edit returns the persisted revision");
+  const unchangedWidths = await call("update_table_column_widths", {
+    blockId: tableBlock.blockId, widths: [120, 140], expectedRevision: tableRevision,
+  });
+  assert.equal(unchangedWidths.updated, false);
+  assert.equal(unchangedWidths.revision, tableRevision);
+  assert.equal((await call("read_doc")).revision, tableRevision, "no-op width revision matches the persisted snapshot");
+
+  beforePagePush = () => {
+    beforePagePush = undefined;
+    blocks.get("tail").set("prop:text", new Y.Text("Concurrent external edit during table update"));
+  };
+  const persistedBeforeTableEdit = Buffer.from(Y.encodeStateAsUpdate(page));
+  const pageUpdateIndex = pageUpdates.length;
+  const tableWithExternalEdit = await call("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Another cell edit", expectedRevision: tableRevision,
+  });
+  const expectedTableResult = new Y.Doc();
+  Y.applyUpdate(expectedTableResult, persistedBeforeTableEdit);
+  assert.equal(pageUpdates.length, pageUpdateIndex + 1, "the table edit must send one primary-document delta");
+  Y.applyUpdate(expectedTableResult, Buffer.from(pageUpdates[pageUpdateIndex], "base64"));
+  const updatedTable = expectedTableResult.getMap("blocks").get(tableBlock.blockId);
+  assert.equal(updatedTable.get(`prop:cells.${cell.rowId}:${cell.columnId}.text`).toString(), "Another cell edit");
+  assert.equal(tableWithExternalEdit.revision, documentMutationRevision(expectedTableResult, true),
+    "the receipt must equal the original snapshot plus only the acknowledged table delta");
+  expectedTableResult.destroy();
+  const afterTableAndExternalEdit = await call("get_doc_revision");
+  assert.notEqual(tableWithExternalEdit.revision, afterTableAndExternalEdit.revision,
+    "a table revision must exclude an external edit that arrived after loading the mutation snapshot");
+  await rejectedWithoutWrite("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Must not write against the stale token",
+    expectedRevision: tableWithExternalEdit.revision,
+  }, /STALE_DOCUMENT_REVISION/);
+
   await rejectedWithoutWrite("compose_database_from_intent", {
     intent: "table", columns: [{ name: "Title", type: "rich-text" }], seedRows: [],
   }, /Column 'Title' already exists/);
@@ -164,7 +331,9 @@ try {
   assert.deepEqual(db.columns.map(column => column.name), ["Title", "Status", "Count"]);
   assert.equal(db.views[0].mode, "table");
   assert.equal(db.views[0].name, "Tasks");
-  assert.deepEqual(blocks.get("note").get("sys:children").toArray(), ["anchor", db.databaseBlockId, "tail"]);
+  let databaseRevision = db.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database composition returns the persisted revision");
+  assert.deepEqual(blocks.get("note").get("sys:children").toArray(), ["anchor", db.databaseBlockId, "tail", tableBlock.blockId]);
   assertCreators(db.rowBlockIds, db.databaseBlockId);
   const read = await call("read_database_cells", { databaseBlockId: db.databaseBlockId });
   assert.deepEqual(read.rows.map(row => [row.title, row.cells.Count.value, row.cells.Status.value]), [
@@ -176,6 +345,19 @@ try {
   numberColumn.get("data").set("decimal", 2);
   numberColumn.get("data").set("format", "percent");
 
+  databaseRevision = (await call("read_doc")).revision;
+  const addedColumn = await call("add_database_column", {
+    databaseBlockId: db.databaseBlockId, name: "Priority", type: "rich-text", expectedRevision: databaseRevision,
+  });
+  assert.equal(addedColumn.added, true);
+  assert.notEqual(addedColumn.revision, databaseRevision);
+  const staleDatabaseRevision = databaseRevision;
+  databaseRevision = addedColumn.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database column edit returns the persisted revision");
+  await rejectedWithoutWrite("add_database_column", {
+    databaseBlockId: db.databaseBlockId, name: "Stale", type: "rich-text", expectedRevision: staleDatabaseRevision,
+  }, /STALE_DOCUMENT_REVISION/);
+
   // A valid early row can add options locally; a late error must discard both.
   await rejectedWithoutWrite("add_database_rows", {
     databaseBlockId: db.databaseBlockId,
@@ -185,12 +367,16 @@ try {
   const beforeBatch = pushes.filter(id => id === docId).length;
   const batch = await call("add_database_rows", {
     databaseBlockId: db.databaseBlockId,
+    expectedRevision: databaseRevision,
     rows: [
       { cells: { title: [{ insert: "bold row", attributes: { bold: true } }], Status: "Shared option", Count: 3 } },
       { cells: { Status: "Shared option", Count: 4 }, linkedDocId: "linked-document" },
     ],
   });
   assert.equal(batch.added, 2);
+  assert.notEqual(batch.revision, databaseRevision);
+  databaseRevision = batch.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database row batch returns the persisted revision");
   assert.equal(pushes.filter(id => id === docId).length - beforeBatch, 1);
   assertCreators(batch.rowBlockIds, db.databaseBlockId);
   assert.deepEqual(blocks.get(batch.rowBlockIds[0]).get("prop:text").toDelta(), [{ insert: "bold row", attributes: { bold: true } }]);
@@ -199,6 +385,25 @@ try {
   assert.equal(columns.columns.find(column => column.name === "Status").options.filter(option => option.value === "Shared option").length, 1);
   assert.deepEqual(numberColumn.get("data").toJSON(), { decimal: 2, format: "percent" },
     "batch row writes must preserve existing custom number formatting");
+
+  const rowUpdate = await call("update_database_row", {
+    databaseBlockId: db.databaseBlockId,
+    rowBlockId: batch.rowBlockIds[0],
+    cells: { Count: 6 },
+    expectedRevision: databaseRevision,
+  });
+  assert.equal(rowUpdate.updated, true);
+  assert.notEqual(rowUpdate.revision, databaseRevision);
+  databaseRevision = rowUpdate.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database row edit returns the persisted revision");
+  const unchangedRow = await call("update_database_row", {
+    databaseBlockId: db.databaseBlockId,
+    rowBlockId: batch.rowBlockIds[0],
+    cells: {},
+    expectedRevision: databaseRevision,
+  });
+  assert.equal(unchangedRow.revision, databaseRevision, "empty database row edit leaves revision unchanged");
+  assert.equal((await call("read_doc")).revision, databaseRevision, "no-op row revision matches the persisted snapshot");
 
   // Real MCP schema parsing must retain expectedRevision before the registered
   // batch handler runs. A stale request must not query identity or write rows.
@@ -232,7 +437,74 @@ try {
     assert.equal(preset.columns[0].type, "title");
     assertCreators(preset.rowBlockIds, preset.databaseBlockId);
   }
-  console.log("PASS: atomic database composition and row batches, metadata, rich cells and stale-revision rejection");
+
+  const sameTitle = "Database fixture";
+  const titlePushCount = pushes.length;
+  const beforeTitle = await call("get_doc_revision");
+  const sameTitleResult = await call("update_doc_title", { title: sameTitle, expectedRevision: beforeTitle.revision });
+  assert.equal(sameTitleResult.revision, beforeTitle.revision);
+  assert.equal(sameTitleResult.updated, false, "a title already stored in both places is a no-op");
+  assert.equal(pushes.length, titlePushCount, "a title no-op must not push either Yjs document");
+  assert.equal(sameTitleResult.revision, (await call("get_doc_revision")).revision);
+
+  const metadataPage = root.getMap("meta").get("pages").get(0);
+  metadataPage.set("title", "Divergent sidebar title");
+  const beforeSidebarRepair = pushes.length;
+  const repairedSidebar = await call("update_doc_title", { title: sameTitle, expectedRevision: beforeTitle.revision });
+  assert.equal(repairedSidebar.updated, true);
+  assert.equal(repairedSidebar.revision, beforeTitle.revision);
+  assert.deepEqual(pushes.slice(beforeSidebarRepair), [workspaceId], "only the divergent sidebar title needs a write");
+  assert.equal(metadataPage.get("title"), sameTitle);
+
+  const repairTitle = "Repair internal title";
+  metadataPage.set("title", repairTitle); // Simulate a workspace metadata title that was saved independently.
+  const beforeTitleRepairPushes = pushes.length;
+  const repairedTitle = await call("update_doc_title", { title: repairTitle });
+  assert.equal(repairedTitle.updated, true);
+  assert.equal(repairedTitle.revision, (await call("get_doc_revision")).revision);
+  assert.equal(pushes.length - beforeTitleRepairPushes, 2,
+    "repairing only the page title should push its content and updatedDate, without rewriting the sidebar title");
+  assert.equal(metadataPage.get("title"), repairTitle);
+  assert.equal(blocks.get("page").get("prop:title").toString(), repairTitle);
+
+  const timestampTitle = "Repair after timestamp failure";
+  metadataPage.set("title", timestampTitle);
+  const pagePushesBeforeRepair = pageUpdates.length;
+  rejectNextPushFor = workspaceId;
+  const titleFailure = await rawCall("update_doc_title", { title: timestampTitle });
+  assert.equal(titleFailure.isError, true);
+  const partialTitle = payloadOf(titleFailure);
+  assert.equal(partialTitle.status, "partial");
+  assert.equal(partialTitle.metadataUpdated, false, "the already-correct workspace title should not be rewritten");
+  assert.equal(partialTitle.contentUpdated, true, "the page title delta was acknowledged before the timestamp mirror failed");
+  assert.equal(Object.hasOwn(partialTitle, "revision"), false, "partial title receipts must omit a revision");
+  assert.equal(partialTitle.code, "workspace_page_updated_date_failed");
+  assert.match(partialTitle.recoveryGuidance, /Do not retry the page mutation; repair its workspace updatedDate separately/);
+  assert.equal(pageUpdates.length, pagePushesBeforeRepair + 1);
+  assert.equal(metadataPage.get("title"), timestampTitle, "the already-correct workspace title remains intact");
+  assert.equal(blocks.get("page").get("prop:title").toString(), timestampTitle, "the acknowledged page title repair was applied");
+
+  const timestampRecoveredTitle = "Repair after rejected timestamp acknowledgement";
+  metadataPage.set("title", timestampRecoveredTitle);
+  const expectedPageTimestamp = timestamp + 1;
+  rejectNextRootPushAfterApply = true;
+  const recoveredTimestampTitle = await call("update_doc_title", { title: timestampRecoveredTitle });
+  assert.equal(recoveredTimestampTitle.updated, true, "readback confirms a timestamp mirror applied without accepted acknowledgement");
+  assert.equal(metadataPage.get("updatedDate"), expectedPageTimestamp,
+    "the rejected timestamp ACK is recovered only after workspace metadata readback confirms the update");
+
+  rejectNextPushFor = docId;
+  const uncertainTitle = await rawCall("update_doc_title", { title: "Acknowledged sidebar only" });
+  assert.equal(uncertainTitle.isError, true);
+  const uncertainReceipt = payloadOf(uncertainTitle);
+  assert.equal(uncertainReceipt.code, "write_ack_uncertain");
+  assert.equal(uncertainReceipt.status, "partial");
+  assert.equal(uncertainReceipt.metadataUpdated, true);
+  assert.equal(Object.hasOwn(uncertainReceipt, "revision"), false);
+  assert.match(uncertainReceipt.recoveryGuidance, /Inspect the workspace title and document content/);
+  assert.equal(metadataPage.get("title"), "Acknowledged sidebar only");
+  assert.equal(blocks.get("page").get("prop:title").toString(), timestampRecoveredTitle);
+  console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
 } finally {
   await client.close();
   await server.close();

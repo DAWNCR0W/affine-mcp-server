@@ -3,12 +3,20 @@ import { io, Socket } from "socket.io-client";
 import { setTimeout as delay } from "node:timers/promises";
 import * as Y from "yjs";
 import { ToolFailure } from "./util/mcp.js";
+import { activeDocumentMutation } from "./util/documentMutation.js";
 
 export type WorkspaceSocket = Socket<any, any>;
 const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
 const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS || 10000);
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
 const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+class SocketAckTimeout extends Error {
+  constructor(event: string, timeoutMs: number) {
+    super(`${event} timeout after ${timeoutMs}ms`);
+    this.name = "Error";
+  }
+}
 
 function ackErrorMessage(ack: any, fallback: string): string | null {
   const message = ack?.error?.message;
@@ -46,7 +54,7 @@ function emitWithAck<T>(
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new Error(`${event} timeout after ${timeoutMs}ms`));
+      reject(new SocketAckTimeout(event, timeoutMs));
     }, timeoutMs);
 
     socket.emit(event, payload, (ack: any) => {
@@ -136,7 +144,7 @@ export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string
 
 type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
 
-export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
+async function loadDocRaw(socket: WorkspaceSocket, workspaceId: string, docId: string, timeoutMs?: number): Promise<LoadDocResult> {
   return emitWithAck<LoadDocResult>(
     socket,
     'space:load-doc',
@@ -148,7 +156,50 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
       }
       return ack?.data || {};
     },
+    timeoutMs,
   );
+}
+
+export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
+  const mutation = activeDocumentMutation(workspaceId);
+  if (!mutation) return loadDocRaw(socket, workspaceId, docId);
+
+  if (docId === workspaceId) {
+    const snapshot = await loadDocRaw(socket, workspaceId, docId);
+    mutation.observeRegistration(snapshot.missing);
+    if (docId === mutation.docId) mutation.observeSnapshot(snapshot.missing);
+    return snapshot;
+  }
+
+  if (docId !== mutation.docId) return loadDocRaw(socket, workspaceId, docId);
+
+  // Capture registration before the content snapshot used by this mutation.
+  // Always use the same public snapshot contract, but bypass tracking on this
+  // preparatory read to avoid recursively changing the mutation's target state.
+  if (!mutation.hasRegistration) {
+    let workspaceSnapshot: LoadDocResult;
+    // The write queue stays locked, so all registration attempts share one ACK budget.
+    const deadline = performance.now() + WS_ACK_TIMEOUT_MS;
+    let remaining = WS_ACK_TIMEOUT_MS;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        workspaceSnapshot = await loadDocRaw(socket, workspaceId, workspaceId, remaining);
+        break;
+      } catch (error) {
+        const retryDelay = WORKSPACE_METADATA_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined || performance.now() + retryDelay >= deadline || !isTransientWorkspaceMetadataError(error)) {
+          throw error;
+        }
+        await delay(retryDelay);
+        remaining = Math.ceil(deadline - performance.now());
+        if (remaining <= 0) throw error;
+      }
+    }
+    mutation.observeRegistration(workspaceSnapshot.missing);
+  }
+  const snapshot = await loadDocRaw(socket, workspaceId, docId);
+  mutation.observeSnapshot(snapshot.missing);
+  return snapshot;
 }
 
 function findWorkspacePage(doc: Y.Doc, docId: string): Y.Map<any> | undefined {
@@ -175,19 +226,38 @@ async function pushDocUpdateRaw(
   workspaceId: string,
   docId: string,
   updateBase64: string,
+  requireAcknowledgement = false,
 ): Promise<number> {
-  return emitWithAck<number>(
-    socket,
-    'space:push-doc-update',
-    { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64 },
-    (ack) => {
-      const message = ackErrorMessage(ack, "push-doc-update failed");
-      if (message) throw new Error(message);
-      const timestamp = ack?.data?.timestamp;
-      return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
-        ? timestamp
-        : Date.now();
-    },
+  try {
+    return await emitWithAck<number>(
+      socket,
+      'space:push-doc-update',
+      { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64 },
+      (ack) => {
+        const message = ackErrorMessage(ack, "push-doc-update failed");
+        if (message) throw new Error(message);
+        const timestamp = ack?.data?.timestamp;
+        if (requireAcknowledgement && ack?.data?.accepted !== true) {
+          throw uncertainWriteAcknowledgement(docId);
+        }
+        return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
+          ? timestamp
+          : Date.now();
+      },
+    );
+  } catch (error) {
+    if (requireAcknowledgement && error instanceof SocketAckTimeout && error.message.startsWith("space:push-doc-update timeout after ")) {
+      throw uncertainWriteAcknowledgement(docId);
+    }
+    throw error;
+  }
+}
+
+function uncertainWriteAcknowledgement(docId: string): ToolFailure {
+  return new ToolFailure(
+    `AFFiNE may have applied the update to document ${docId}, but did not confirm it. Read the document before retrying.`,
+    "write_ack_uncertain",
+    `Read document ${docId} before retrying; the write may already have been applied.`,
   );
 }
 
@@ -234,6 +304,7 @@ async function updateWorkspacePageUpdatedDate(
   workspaceId: string,
   docId: string,
   updatedDate: number,
+  requireAcknowledgement = false,
 ): Promise<void> {
   try {
     for (let attempt = 0; ; attempt += 1) {
@@ -256,7 +327,7 @@ async function updateWorkspacePageUpdatedDate(
           page.set("updatedDate", updatedDate);
           const update = Buffer.from(pendingUpdate.finish()).toString("base64");
           try {
-            await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
+            await pushDocUpdateRaw(socket, workspaceId, workspaceId, update, requireAcknowledgement);
             return;
           } catch (error) {
             try {
@@ -290,7 +361,12 @@ async function updateWorkspacePageUpdatedDate(
 
 /** Push an update to any workspace document without side effects on other documents. */
 export async function pushDocUpdate(socket: WorkspaceSocket, workspaceId: string, docId: string, updateBase64: string): Promise<number> {
-  return pushDocUpdateRaw(socket, workspaceId, docId, updateBase64);
+  const mutation = activeDocumentMutation(workspaceId);
+  const trackedWorkspaceRootWrite = mutation !== undefined && docId === workspaceId;
+  const trackedRootMutation = trackedWorkspaceRootWrite && mutation.docId === docId;
+  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, trackedWorkspaceRootWrite);
+  if (trackedRootMutation) mutation.recordUpdate(updateBase64);
+  return timestamp;
 }
 
 /** Push page content and mirror its acknowledgement timestamp to root page metadata. */
@@ -299,10 +375,15 @@ export async function pushPageDocUpdate(
   workspaceId: string,
   docId: string,
   updateBase64: string,
+  options: { requireAcknowledgement?: boolean; requireTimestampAcknowledgement?: boolean } = {},
 ): Promise<number> {
-  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64);
+  const mutation = activeDocumentMutation(workspaceId);
+  const trackedPageWrite = mutation !== undefined && mutation.docId === docId && docId !== workspaceId;
+  const requireAcknowledgement = options.requireAcknowledgement === true || trackedPageWrite;
+  const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, requireAcknowledgement);
+  if (trackedPageWrite) mutation.recordUpdate(updateBase64);
   if (docId !== workspaceId && updateHasChanges(updateBase64)) {
-    await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp);
+    await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp, options.requireTimestampAcknowledgement);
   }
   return timestamp;
 }

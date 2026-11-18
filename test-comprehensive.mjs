@@ -46,6 +46,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['get_capabilities', 'test-capabilities-fidelity.mjs'],
   ['get_collection', 'test-organize-tools.mjs'],
   ['get_doc_icon', 'test-icons.mjs'],
+  ['get_doc_revision', 'test-concurrent-writes.mjs'],
   ['get_folder_icon', 'test-icons.mjs'],
   ['get_orphan_docs', 'test-create-placement.mjs'],
   ['inspect_template_structure', 'test-native-template-instantiation.mjs'],
@@ -66,6 +67,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['set_doc_property', 'test-doc-properties.mjs'],
   ['trash_doc', 'test-doc-discovery.mjs'],
   ['update_block', 'test-block-editing.mjs'],
+  ['update_blocks', 'test-concurrent-writes.mjs'],
   ['update_collection', 'test-organize-tools.mjs'],
   ['update_collection_rules', 'test-organize-tools.mjs'],
   ['update_doc_icon', 'test-icons.mjs'],
@@ -638,7 +640,19 @@ class ComprehensiveRunner {
     await this.callTool('delete_surface_element', { workspaceId, docId, elementId: shapeBId });
     await this.callTool('delete_block', { workspaceId, docId, blockId: noteBlockId });
 
-    await this.callTool('delete_doc', { workspaceId, docId, confirmDocId: docId });
+    const deletionCheck = await this.callTool('delete_doc', { workspaceId, docId, confirmDocId: docId });
+    const deletion = deletionCheck.result;
+    // AFFiNE can acknowledge deletion and retain content, which must be reported as partial.
+    if (
+      deletion?.kind === 'doc.delete' && deletion.status === 'partial' && deletion.ok === true &&
+      deletion.workspaceId === workspaceId && deletion.docId === docId &&
+      deletion.metadataRemoved === true && deletion.deleted === false &&
+      deletion.contentDeleteAcknowledged === true && deletion.contentDeleted === false &&
+      deletion.contentAbsenceVerified === false && deletion.warnings?.length > 0
+    ) {
+      deletionCheck.ok = true;
+      deletionCheck.error = null;
+    }
     await this.callTool('delete_workspace', { id: workspaceId, confirmWorkspaceId: workspaceId });
 
     const uncalledTools = this.serverTools.filter(name => !this.called.has(name));

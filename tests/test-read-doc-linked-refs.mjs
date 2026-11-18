@@ -273,6 +273,29 @@ async function main() {
     expectTruthy(plainBlock, "plain paragraph block");
     expectDeepEqual(plainBlock.linkedDocIds, [], "plain paragraph linkedDocIds");
 
+    const targeted = await call("read_doc", {
+      workspaceId,
+      docId: hostDocId,
+      blockIds: [plainParagraph.blockId, linkedParagraph.blockId, "missing-block-id"],
+    });
+    expectDeepEqual(
+      targeted.blocks.map(block => block.id),
+      [linkedParagraph.blockId, plainParagraph.blockId],
+      "targeted read keeps document order and omits unselected blocks",
+    );
+    expectDeepEqual(targeted.missingBlockIds, ["missing-block-id"], "targeted read reports missing ids");
+    expectDeepEqual(
+      targeted.blocks.find(block => block.id === linkedParagraph.blockId).deltas,
+      linkedBlock.deltas,
+      "targeted read preserves native rich-text deltas",
+    );
+    expectTruthy(targeted.plainText.includes("Plain paragraph"), "targeted plainText includes selected text");
+    expectTruthy(!targeted.plainText.includes("placeholder list"), "targeted plainText excludes unselected text");
+    expectTruthy(!targeted.plainText.includes("host body"), "targeted plainText excludes other document text");
+    expectTruthy(targeted.title === null, "targeted read omits an unselected document title");
+    expectTruthy(!("markdown" in targeted), "targeted read does not return rendered markdown");
+    expectTruthy(targeted.revision === read.revision, "targeted read includes the document revision");
+
     console.log();
     console.log("=== read_doc LinkedPage reference integration test passed ===");
   } finally {

@@ -96,9 +96,18 @@ Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
 | `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, `linkedDocIds` for inline LinkedPage references, code block `language`/`preview` state (`preview` is `null` when unset), and image `sourceId`, `caption`, and `bounds` |
+| `get_doc_revision` | Read the current document revision | Returns only `docId` and `revision`. The revision matches `read_doc`; a missing document has `revision: null`. |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients. Reports `blobUpload.filePath` so clients can tell whether `upload_blob` disk paths are enabled. |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
+
+Pass `blockIds` to `read_doc` to return up to 200 distinct blocks in document
+order. It reports `missingBlockIds` in request order and still returns the
+document-wide revision. `blockCount` and `plainText` cover the returned blocks.
+Parent and child IDs can refer to unselected blocks. The title is included
+when the page block is selected. Targeted reads cannot render Markdown.
+Both targeted reads and revision lookup reduce the MCP response size and
+still load the document snapshot from AFFiNE.
 
 `search_docs` uses zero-based `offset` pagination over the matching metadata
 entries. Its response includes `offset`, `limit`, `totalCount`, `hasMore`,
@@ -141,7 +150,7 @@ check.
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
 | `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
 | `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
-| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`. Metadata removal, request acknowledgement, and verified content absence are reported separately. Servers may retain readable, syncing content; unverified deletion returns `status: partial`, `contentDeleted: false`, and a warning |
+| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`. Metadata removal, request acknowledgement, and verified content absence are reported separately. Servers may retain readable, syncing content; unverified deletion returns `status: partial`, `contentDeleted: false`, and a warning. Returns `revision: null` only after content absence is verified; partial and error results omit `revision`. |
 
 Use `create_doc_from_markdown` when the initial content contains headings, lists,
 links, quotes, tables, code fences, or math. `create_doc.content` does not parse Markdown;
@@ -167,13 +176,14 @@ imported as an inline equation in that block.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `update_doc_title` | Rename a document in workspace metadata and in the page block | |
+| `update_doc_title` | Rename a document in workspace metadata and in the page block | Resaving a title that already matches both locations keeps the existing `revision`. A metadata-only rename can return `revision: null` when the page-content snapshot is unavailable. |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note`/`image` accept `x`/`y`/`width`/`height`; for `image` they set `prop:xywh` plus `prop:width`/`prop:height`, attach the block to the `affine:surface` block (edgeless, not inside a note), and make it a valid connector endpoint. When only a position is supplied, the omitted dimensions default to 100 so bounds and rendered size agree; surface-parented images that omit geometry reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100 (note images keep `[0,0,0,0]`). An explicit `placement` (a note `parentId` or a note sibling) overrides the automatic surface attachment: the image keeps its geometry but stays in the document flow and is not listed by `get_edgeless_canvas`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, code block `language` and `preview` state, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
-| `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. |
-| `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. |
+| `update_blocks` | Edit up to 200 existing blocks in one document | Pass `updates` with the fields accepted by `update_block` and a distinct `blockId` in each entry. A single optional `expectedRevision` covers the batch. An invalid entry prevents every edit from being saved. Returns the number of changed blocks, `results` in input order, and `revision`. |
+| `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. Returns the resulting document `revision`. |
+| `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. Returns the resulting document `revision`. |
 | `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. `affine:image` blocks are moved as images, so an image can be moved onto the surface. A page image keeps its stored `prop:width`/`prop:height` (the editor may have resized it after `prop:xywh` was written), a dimensionless image receives the 100x100 default there, and moving a surface image into the page flow (note, paragraph, or list) copies its canvas size into the stored dimensions. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
@@ -196,6 +206,19 @@ Document content, workspace page registration, and native creator properties are
 If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
 
 For `list_docs`, pagination follows the backend page even when deleted entries are filtered out. An empty visible page can still have `hasNextPage: true`; continue with its `endCursor` instead of treating an empty `edges` array as the end of the workspace.
+
+Successful document-content mutations return a `revision` compatible with
+`expectedRevision`, including no-op mutations. This applies to block, table,
+database-row, mindmap, surface, and other document-content writes. Pass a
+string revision as `expectedRevision` on the next edit. When `update_doc_title`
+returns `revision: null`, verify the page title and call `get_doc_revision`
+once the page is readable. Successful `deleted` and `already_absent` results
+from `delete_doc` return `revision: null`. Partial results and errors omit it,
+including when content absence is verified but metadata removal fails.
+The token reflects the input snapshot plus acknowledged deltas, so an external
+edit can make it stale before it is reused. If a revision check fails, read the
+relevant content and reconcile before retrying. See
+[concurrent writes](configuration-and-deployment.md#concurrent-writes).
 
 #### Formatting-preserving block text
 

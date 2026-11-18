@@ -31,7 +31,8 @@ import {
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
 import { secureAffineId, secureRandomInt31 } from "../util/random.js";
-import { documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
+import { currentDocumentRevision, staleDocumentRevision } from "../toolCoordination.js";
+import { documentMutationRevision, documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
 import { ensureDocumentCreator, fetchCurrentUserId, readDocumentCreator } from "../util/docCreator.js";
 import {
   wsUrlFromGraphQLEndpoint,
@@ -469,6 +470,17 @@ const AppendBlockListStyle = z.enum(APPEND_BLOCK_LIST_STYLE_VALUES);
 const BLOCK_EDIT_TYPE_VALUES = ["paragraph", "heading", "quote", "list", "code"] as const;
 type BlockEditType = typeof BLOCK_EDIT_TYPE_VALUES[number];
 const BlockEditType = z.enum(BLOCK_EDIT_TYPE_VALUES);
+const BlockEditSchema = {
+  blockId: z.string().min(1).describe("Block id to update."),
+  text: RichTextInput.optional().describe('Replacement block text. Delta arrays preserve inline attributes. For LinkedPage references, set insert to one ASCII space and pass the pageId in reference attributes; visible labels are resolved by AFFiNE. Omit to preserve the current text.'),
+  checked: z.boolean().optional().describe("Todo checked state. Only valid for a list whose resulting style is todo."),
+  type: BlockEditType.optional().describe("Resulting logical block type."),
+  style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),
+  level: z.number().int().min(1).max(6).optional().describe("Heading level. Only valid when the resulting type is heading."),
+  language: z.string().optional().describe("Code language. Only valid for code blocks. Omit to preserve the current language."),
+  preview: z.boolean().optional().describe("Code block preview state (for example, show an html code block in Preview). Only valid for code blocks. Omit to preserve the current state."),
+};
+type BlockEditInput = z.infer<z.ZodObject<typeof BlockEditSchema>>;
 const APPEND_BLOCK_BOOKMARK_STYLE_VALUES = [
   "vertical",
   "horizontal",
@@ -6198,7 +6210,11 @@ export function registerDocTools(
   );
 
   /** Read document blocks, plain text and optional markdown. */
-  const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean }) => {
+  const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean; blockIds?: string[] }) => {
+    if (parsed.blockIds !== undefined && parsed.includeMarkdown) {
+      throw new Error("includeMarkdown cannot be used with targeted blockIds.");
+    }
+    const requestedBlockIds = parsed.blockIds === undefined ? undefined : new Set(parsed.blockIds);
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
       throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
@@ -6238,6 +6254,7 @@ export function registerDocTools(
           blockCount: 0,
           blocks: [],
           plainText: "",
+          ...(parsed.blockIds !== undefined ? { missingBlockIds: parsed.blockIds } : {}),
         });
       }
 
@@ -6266,7 +6283,6 @@ export function registerDocTools(
         preview: boolean | null;
         childIds: string[];
       }> = [];
-      const plainTextLines: string[] = [];
       let title = "";
 
       const visit = (blockId: string) => {
@@ -6276,51 +6292,50 @@ export function registerDocTools(
         const raw = blocks.get(blockId);
         if (!(raw instanceof Y.Map)) return;
 
-        const flavour = raw.get("sys:flavour");
-        const parentId = resolveBlockParentId(blocks, blockId);
-        const type = raw.get("prop:type");
-        const propText = raw.get("prop:text");
-        const textValue = asText(propText);
-        const deltas = richTextValueToDeltas(propText) ?? [];
-        const table = flavour === "affine:table" ? extractTableData(raw) : null;
-        const linkedDocIds = extractLinkedPageRefs(propText);
-        const language = raw.get("prop:language");
-        const preview = raw.get("prop:preview");
-        const checked = raw.get("prop:checked");
         const childIds = childIdsFrom(raw.get("sys:children"));
+        if (requestedBlockIds === undefined || requestedBlockIds.delete(blockId)) {
+          const flavour = raw.get("sys:flavour");
+          const parentId = resolveBlockParentId(blocks, blockId);
+          const type = raw.get("prop:type");
+          const propText = raw.get("prop:text");
+          const textValue = asText(propText);
+          const deltas = richTextValueToDeltas(propText) ?? [];
+          const table = flavour === "affine:table" ? extractTableData(raw) : null;
+          const linkedDocIds = extractLinkedPageRefs(propText);
+          const language = raw.get("prop:language");
+          const preview = raw.get("prop:preview");
+          const checked = raw.get("prop:checked");
 
-        if (flavour === "affine:page") {
-          title = asText(raw.get("prop:title")) || title;
-        }
-        if (textValue.length > 0) {
-          plainTextLines.push(textValue);
-        }
+          if (flavour === "affine:page") {
+            title = asText(raw.get("prop:title")) || title;
+          }
 
-        blockRows.push({
-          id: blockId,
-          parentId,
-          flavour: typeof flavour === "string" ? flavour : null,
-          type: typeof type === "string" ? type : null,
-          text: textValue.length > 0 ? textValue : null,
-          deltas,
-          ...(table ? {
-            tableData: table.tableData,
-            tableCellDeltas: table.tableCellDeltas,
-            tableColumnWidths: table.columnWidths,
-          } : {}),
-          linkedDocIds,
-          checked: typeof checked === "boolean" ? checked : null,
-          language: typeof language === "string" ? language : null,
-          preview: typeof preview === "boolean" ? preview : null,
-          childIds,
-          ...(flavour === "affine:image"
-            ? {
-                sourceId: asStringOrNull(raw.get("prop:sourceId")),
-                caption: asStringOrNull(raw.get("prop:caption")),
-                bounds: parseXywhString(raw.get("prop:xywh")),
-              }
-            : {}),
-        });
+          blockRows.push({
+            id: blockId,
+            parentId,
+            flavour: typeof flavour === "string" ? flavour : null,
+            type: typeof type === "string" ? type : null,
+            text: textValue.length > 0 ? textValue : null,
+            deltas,
+            ...(table ? {
+              tableData: table.tableData,
+              tableCellDeltas: table.tableCellDeltas,
+              tableColumnWidths: table.columnWidths,
+            } : {}),
+            linkedDocIds,
+            checked: typeof checked === "boolean" ? checked : null,
+            language: typeof language === "string" ? language : null,
+            preview: typeof preview === "boolean" ? preview : null,
+            childIds,
+            ...(flavour === "affine:image"
+              ? {
+                  sourceId: asStringOrNull(raw.get("prop:sourceId")),
+                  caption: asStringOrNull(raw.get("prop:caption")),
+                  bounds: parseXywhString(raw.get("prop:xywh")),
+                }
+              : {}),
+          });
+        }
 
         for (const childId of childIds) {
           visit(childId);
@@ -6358,7 +6373,8 @@ export function registerDocTools(
         revision,
         blockCount: blockRows.length,
         blocks: blockRows,
-        plainText: plainTextLines.join("\n"),
+        plainText: blockRows.map(block => block.text).filter(Boolean).join("\n"),
+        ...(requestedBlockIds !== undefined ? { missingBlockIds: [...requestedBlockIds] } : {}),
         ...(markdown !== undefined ? { markdown } : {}),
       });
     } finally {
@@ -6373,10 +6389,36 @@ export function registerDocTools(
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
+        blockIds: z.array(z.string().min(1)).min(1).max(200)
+          .refine(ids => new Set(ids).size === ids.length, "blockIds must not contain duplicates.")
+          .optional()
+          .describe("Optional block IDs to return (1-200). Results keep document order; missing IDs are listed explicitly. Targeted responses include only selected blocks and selected plain text, without rendered Markdown."),
         includeMarkdown: z.boolean().optional().describe("If true, includes rendered markdown in the response. Equivalent to also calling export_doc_markdown."),
       },
     },
     readDocHandler as any
+  );
+
+  const getDocRevisionHandler = async (parsed: { workspaceId?: string; docId: string }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
+    }
+
+    const revision = await currentDocumentRevision(gql, workspaceId, parsed.docId);
+    return text({ docId: parsed.docId, revision });
+  };
+  server.registerTool(
+    "get_doc_revision",
+    {
+      title: "Get Document Revision",
+      description: "Read the current document content revision without returning block content. The token matches read_doc.revision and can be passed as expectedRevision to a supported document mutation.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+      },
+    },
+    getDocRevisionHandler as any
   );
 
   const getCapabilitiesHandler = async () => {
@@ -7819,6 +7861,7 @@ export function registerDocTools(
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const pageDoc = new Y.Doc();
     try {
       await joinWorkspace(socket, workspaceId);
       const wsDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
@@ -7826,33 +7869,59 @@ export function registerDocTools(
       if (!page) {
         throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
       }
-      const pendingUpdate = captureDocUpdate(wsDoc);
-      page.set("title", newTitle);
-      const delta = pendingUpdate.finish();
-      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
-      const snap = await loadDoc(socket, workspaceId, parsed.docId);
-      if (snap.missing) {
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-        const pendingUpdate = captureDocUpdate(doc);
-        const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const pageSnapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      let pageUpdate: DocUpdateCapture | undefined;
+      if (pageSnapshot.missing) {
+        Y.applyUpdate(pageDoc, Buffer.from(pageSnapshot.missing, "base64"));
+        const blocks = pageDoc.getMap("blocks") as Y.Map<any>;
         for (const [, raw] of blocks) {
           if (!(raw instanceof Y.Map)) continue;
           if (raw.get("sys:flavour") === "affine:page") {
-            const titleText = new Y.Text(); titleText.insert(0, newTitle);
-            raw.set("prop:title", titleText); break;
+            const currentTitle = asText(raw.get("prop:title"));
+            if (currentTitle !== newTitle) {
+              pageUpdate = captureDocUpdate(pageDoc);
+              raw.set("prop:title", makeText(newTitle));
+            }
+            break;
           }
         }
+      }
+
+      const metadataTitleUpdated = page.get("title") !== newTitle;
+      if (metadataTitleUpdated) {
+        const pendingUpdate = captureDocUpdate(wsDoc);
+        page.set("title", newTitle);
         const delta = pendingUpdate.finish();
-        await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+      }
+      if (pageUpdate) {
+        try {
+          await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(pageUpdate.finish()).toString("base64"), {
+            requireTimestampAcknowledgement: true,
+          });
+        } catch (error) {
+          const timestampFailure = error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed"
+            ? error
+            : undefined;
+          return toolError(error, {
+            code: error instanceof ToolFailure ? error.code : "doc_title_content_update_failed",
+            data: {
+              kind: "doc.update_title", status: metadataTitleUpdated || timestampFailure ? "partial" : "failed",
+              workspaceId, docId: parsed.docId, metadataUpdated: metadataTitleUpdated,
+              ...(timestampFailure ? { contentUpdated: true } : {}),
+            },
+            recoveryGuidance: timestampFailure?.recoveryGuidance
+              ?? `Inspect the workspace title and document content for ${parsed.docId} before retrying; the content update may already have been applied.`,
+          });
+        }
       }
       return receipt("doc.update_title", {
         workspaceId,
-        updated: true,
+        updated: metadataTitleUpdated || pageUpdate !== undefined,
         docId: parsed.docId,
         title: newTitle,
       });
-    } finally { socket.disconnect(); }
+    } finally { pageDoc.destroy(); socket.disconnect(); }
   };
   server.registerTool("update_doc_title", {
     title: "Update Document Title",
@@ -8782,45 +8851,47 @@ export function registerDocTools(
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    await joinWorkspace(socket, workspaceId);
-
     const doc = new Y.Doc();
-    const snapshot = await loadDoc(socket, workspaceId, docId);
-    if (!snapshot.missing) {
-      socket.disconnect();
-      throw new Error("Document not found");
-    }
-    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+    try {
+      await joinWorkspace(socket, workspaceId);
 
-    const pendingUpdate = captureDocUpdate(doc);
-    const blocks = doc.getMap("blocks") as Y.Map<any>;
-    const dbBlock = findBlockById(blocks, databaseBlockId);
-    if (!dbBlock) {
-      socket.disconnect();
-      throw new Error(`Database block '${databaseBlockId}' not found`);
-    }
-    const dbFlavour = dbBlock.get("sys:flavour");
-    if (dbFlavour !== "affine:database") {
-      socket.disconnect();
-      throw new Error(`Block '${databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
-    }
+      const snapshot = await loadDoc(socket, workspaceId, docId);
+      if (!snapshot.missing) {
+        throw new Error("Document not found");
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
-    const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
-    if (!(cellsMap instanceof Y.Map)) {
-      socket.disconnect();
-      throw new Error("Database block has no cells map");
-    }
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const dbBlock = findBlockById(blocks, databaseBlockId);
+      if (!dbBlock) {
+        throw new Error(`Database block '${databaseBlockId}' not found`);
+      }
+      const dbFlavour = dbBlock.get("sys:flavour");
+      if (dbFlavour !== "affine:database") {
+        throw new Error(`Block '${databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
+      }
 
-    const lookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
-    return {
-      socket,
-      doc,
-      pendingUpdate,
-      blocks,
-      dbBlock,
-      cellsMap,
-      ...lookup,
-    };
+      const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
+      if (!(cellsMap instanceof Y.Map)) {
+        throw new Error("Database block has no cells map");
+      }
+
+      const lookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+      return {
+        socket,
+        doc,
+        pendingUpdate,
+        blocks,
+        dbBlock,
+        cellsMap,
+        ...lookup,
+      };
+    } catch (error) {
+      doc.destroy();
+      socket.disconnect();
+      throw error;
+    }
   }
 
   // ADD DATABASE ROW
@@ -10810,24 +10881,7 @@ export function registerDocTools(
     }
   };
 
-  const updateBlockHandler = async (params: {
-    workspaceId?: string;
-    docId: string;
-    blockId: string;
-    text?: string | TextDelta[];
-    checked?: boolean;
-    type?: BlockEditType;
-    style?: AppendBlockListStyle;
-    level?: number;
-    language?: string;
-    preview?: boolean;
-  }) => {
-    const workspaceId = params.workspaceId || defaults.workspaceId;
-    if (!workspaceId) {
-      throw new Error(
-        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
-      );
-    }
+  function normalizeBlockEdit(params: BlockEditInput): BlockEditInput {
     if (
       params.text === undefined &&
       params.checked === undefined &&
@@ -10845,138 +10899,182 @@ export function registerDocTools(
     if (language !== undefined && language.length > 64) {
       throw new Error("Code language is too long (max 64 chars).");
     }
+    return { ...params, language };
+  }
+
+  function applyBlockEdit(blocks: Y.Map<any>, params: BlockEditInput) {
+    const { language } = params;
+    const block = findBlockById(blocks, params.blockId);
+    if (!block) {
+      throw new Error(`Block '${params.blockId}' not found.`);
+    }
+
+    const currentType = editableBlockType(block);
+    if (!currentType) {
+      throw new Error(
+        `Block '${params.blockId}' has flavour '${String(block.get("sys:flavour"))}' — update_block supports paragraph, heading, quote, list, and code blocks.`
+      );
+    }
+    const requestedType = params.type ?? currentType;
+    const paragraphTypes = new Set<BlockEditType>(["paragraph", "heading", "quote"]);
+    const sameFlavour =
+      (paragraphTypes.has(currentType) && paragraphTypes.has(requestedType)) ||
+      currentType === requestedType;
+    if (!sameFlavour) {
+      throw new Error(
+        `Cannot change block '${params.blockId}' from '${currentType}' to '${requestedType}' while preserving its id. Only paragraph/heading/quote conversions share one AFFiNE block flavour.`
+      );
+    }
+
+    if (params.style !== undefined && requestedType !== "list") {
+      throw new Error("The 'style' field can only be used with type='list'.");
+    }
+    if (params.level !== undefined && requestedType !== "heading") {
+      throw new Error("The 'level' field can only be used with type='heading'.");
+    }
+    if (params.checked !== undefined && requestedType !== "list") {
+      throw new Error("The 'checked' field can only be used with a todo list block.");
+    }
+    if (language !== undefined && requestedType !== "code") {
+      throw new Error("The 'language' field can only be used with a code block.");
+    }
+    if (params.preview !== undefined && requestedType !== "code") {
+      throw new Error("The 'preview' field can only be used with a code block.");
+    }
+
+    const previous = blockSnapshot(blocks, params.blockId);
+    const changed: string[] = [];
+    const markChanged = (field: string) => {
+      if (!changed.includes(field)) changed.push(field);
+    };
+
+    if (paragraphTypes.has(requestedType) && (params.type !== undefined || params.level !== undefined)) {
+      const rawType = block.get("prop:type");
+      const currentHeadingLevel =
+        typeof rawType === "string" && /^h([1-6])$/.test(rawType)
+          ? Number(rawType.slice(1))
+          : 1;
+      const nextRawType = requestedType === "heading"
+        ? `h${params.level ?? currentHeadingLevel}`
+        : requestedType === "quote"
+          ? "quote"
+          : "text";
+      if (rawType !== nextRawType) {
+        block.set("prop:type", nextRawType);
+        markChanged(params.level !== undefined && requestedType === currentType ? "level" : "type");
+      }
+    } else if (requestedType === "list") {
+      const rawStyle = block.get("prop:type");
+      const currentStyle = (APPEND_BLOCK_LIST_STYLE_VALUES as readonly string[]).includes(rawStyle)
+        ? rawStyle as AppendBlockListStyle
+        : "bulleted";
+      const nextStyle = params.style ?? currentStyle;
+      if (params.style !== undefined && rawStyle !== nextStyle) {
+        block.set("prop:type", nextStyle);
+        markChanged("style");
+      }
+      if (params.checked !== undefined) {
+        if (nextStyle !== "todo") {
+          throw new Error("The 'checked' field can only be used when list style is 'todo'.");
+        }
+        if (block.get("prop:checked") !== params.checked) {
+          block.set("prop:checked", params.checked);
+          markChanged("checked");
+        }
+      }
+    } else if (requestedType === "code") {
+      if (language !== undefined && block.get("prop:language") !== language) {
+        block.set("prop:language", language);
+        markChanged("language");
+      }
+      if (params.preview !== undefined && block.get("prop:preview") !== params.preview) {
+        block.set("prop:preview", params.preview);
+        markChanged("preview");
+      }
+    }
+
+    if (params.text !== undefined) {
+      const rawText = block.get("prop:text");
+      const textMatches = typeof params.text === "string"
+        ? asText(rawText) === params.text
+        : isDeepStrictEqual(richTextValueToDeltas(rawText) ?? [], canonicalTextDeltas(params.text));
+      if (!textMatches) {
+        block.set("prop:text", makeText(params.text));
+        markChanged("text");
+      }
+    }
+
+    return {
+      updated: changed.length > 0,
+      blockId: params.blockId,
+      changed,
+      previous,
+      block: blockSnapshot(blocks, params.blockId),
+    };
+  }
+
+  const updateBlocksHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    expectedRevision?: string;
+  } & (BlockEditInput | { updates: BlockEditInput[] })) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+    const edits = ("updates" in params ? params.updates : [params]).map(normalizeBlockEdit);
+    const blockIds = new Set<string>();
+    for (const edit of edits) {
+      if (blockIds.has(edit.blockId)) throw new Error(`Duplicate block id '${edit.blockId}'.`);
+      blockIds.add(edit.blockId);
+    }
 
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    const doc = new Y.Doc();
+    const workspaceDoc = new Y.Doc();
     try {
       await joinWorkspace(socket, workspaceId);
-      const doc = new Y.Doc();
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (workspaceSnapshot.missing) {
+        Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      }
+      const registered = isDocumentRegistered(workspaceDoc, params.docId);
       const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (snapshot.missing) Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      if (params.expectedRevision !== undefined) {
+        const currentRevision = snapshot.missing ? documentRevision(doc, registered) : null;
+        if (currentRevision !== params.expectedRevision) {
+          return staleDocumentRevision(workspaceId, params.docId, params.expectedRevision, currentRevision);
+        }
+      }
       if (!snapshot.missing) {
         throw new Error(`Document '${params.docId}' not found or has no content.`);
       }
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+
       const pendingUpdate = captureDocUpdate(doc);
       const blocks = doc.getMap("blocks") as Y.Map<any>;
-      const block = findBlockById(blocks, params.blockId);
-      if (!block) {
-        throw new Error(`Block '${params.blockId}' not found.`);
-      }
-
-      const currentType = editableBlockType(block);
-      if (!currentType) {
-        throw new Error(
-          `Block '${params.blockId}' has flavour '${String(block.get("sys:flavour"))}' — update_block supports paragraph, heading, quote, list, and code blocks.`
-        );
-      }
-      const requestedType = params.type ?? currentType;
-      const paragraphTypes = new Set<BlockEditType>(["paragraph", "heading", "quote"]);
-      const sameFlavour =
-        (paragraphTypes.has(currentType) && paragraphTypes.has(requestedType)) ||
-        currentType === requestedType;
-      if (!sameFlavour) {
-        throw new Error(
-          `Cannot change block '${params.blockId}' from '${currentType}' to '${requestedType}' while preserving its id. Only paragraph/heading/quote conversions share one AFFiNE block flavour.`
-        );
-      }
-
-      if (params.style !== undefined && requestedType !== "list") {
-        throw new Error("The 'style' field can only be used with type='list'.");
-      }
-      if (params.level !== undefined && requestedType !== "heading") {
-        throw new Error("The 'level' field can only be used with type='heading'.");
-      }
-      if (params.checked !== undefined && requestedType !== "list") {
-        throw new Error("The 'checked' field can only be used with a todo list block.");
-      }
-      if (language !== undefined && requestedType !== "code") {
-        throw new Error("The 'language' field can only be used with a code block.");
-      }
-      if (params.preview !== undefined && requestedType !== "code") {
-        throw new Error("The 'preview' field can only be used with a code block.");
-      }
-
-      const previous = blockSnapshot(blocks, params.blockId);
-      const changed: string[] = [];
-      const markChanged = (field: string) => {
-        if (!changed.includes(field)) changed.push(field);
-      };
-
-      if (paragraphTypes.has(requestedType)) {
-        const rawType = block.get("prop:type");
-        const currentHeadingLevel =
-          typeof rawType === "string" && /^h([1-6])$/.test(rawType)
-            ? Number(rawType.slice(1))
-            : 1;
-        const nextRawType = requestedType === "heading"
-          ? `h${params.level ?? currentHeadingLevel}`
-          : requestedType === "quote"
-            ? "quote"
-            : "text";
-        if (rawType !== nextRawType) {
-          block.set("prop:type", nextRawType);
-          markChanged(params.level !== undefined && requestedType === currentType ? "level" : "type");
-        }
-      } else if (requestedType === "list") {
-        const rawStyle = block.get("prop:type");
-        const currentStyle = (APPEND_BLOCK_LIST_STYLE_VALUES as readonly string[]).includes(rawStyle)
-          ? rawStyle as AppendBlockListStyle
-          : "bulleted";
-        const nextStyle = params.style ?? currentStyle;
-        if (rawStyle !== nextStyle) {
-          block.set("prop:type", nextStyle);
-          markChanged("style");
-        }
-        if (params.checked !== undefined) {
-          if (nextStyle !== "todo") {
-            throw new Error("The 'checked' field can only be used when list style is 'todo'.");
-          }
-          if (block.get("prop:checked") !== params.checked) {
-            block.set("prop:checked", params.checked);
-            markChanged("checked");
-          }
-        }
-      } else if (requestedType === "code") {
-        if (language !== undefined && block.get("prop:language") !== language) {
-          block.set("prop:language", language);
-          markChanged("language");
-        }
-        if (params.preview !== undefined && block.get("prop:preview") !== params.preview) {
-          block.set("prop:preview", params.preview);
-          markChanged("preview");
-        }
-      }
-
-      if (params.text !== undefined) {
-        const rawText = block.get("prop:text");
-        const textMatches = typeof params.text === "string"
-          ? asText(rawText) === params.text
-          : isDeepStrictEqual(richTextValueToDeltas(rawText) ?? [], canonicalTextDeltas(params.text));
-        if (!textMatches) {
-          block.set("prop:text", makeText(params.text));
-          markChanged("text");
-        }
-      }
-
-      if (changed.length > 0) {
+      const results = doc.transact(() => edits.map(edit => applyBlockEdit(blocks, edit)));
+      const updated = results.filter(result => result.updated).length;
+      // Hash the state used for this edit so a later external edit cannot be folded into the token.
+      const revision = updated > 0
+        ? documentMutationRevision(doc, registered)
+        : documentRevision(doc, registered);
+      if (updated > 0) {
         const delta = pendingUpdate.finish();
-        await pushPageDocUpdate(
-          socket,
-          workspaceId,
-          params.docId,
-          Buffer.from(delta).toString("base64")
-        );
+        await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(delta).toString("base64"), {
+          requireAcknowledgement: true,
+        });
       }
 
-      return text({
-        updated: changed.length > 0,
-        blockId: params.blockId,
-        changed,
-        previous,
-        block: blockSnapshot(blocks, params.blockId),
-      });
+      return "updates" in params
+        ? text({ updated, results, revision })
+        : text({ ...results[0]!, revision });
     } finally {
+      doc.destroy();
+      workspaceDoc.destroy();
       socket.disconnect();
     }
   };
@@ -11860,21 +11958,30 @@ export function registerDocTools(
     {
       title: "Update Block",
       description:
-        "Partially update one paragraph, heading, quote, list, or code block while preserving its block id. Omitted fields remain unchanged. Paragraph/heading/quote conversions preserve ids; cross-flavour conversions are rejected.",
+        "Partially update one paragraph, heading, quote, list, or code block while preserving its block id. Omitted fields remain unchanged. Paragraph/heading/quote conversions preserve ids; cross-flavour conversions are rejected. Returns the resulting document revision for the next expectedRevision check.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
-        blockId: z.string().min(1).describe("Block id to update."),
-        text: RichTextInput.optional().describe('Replacement block text. Delta arrays preserve inline attributes. For LinkedPage references, set insert to one ASCII space and pass the pageId in reference attributes; visible labels are resolved by AFFiNE. Omit to preserve the current text.'),
-        checked: z.boolean().optional().describe("Todo checked state. Only valid for a list whose resulting style is todo."),
-        type: BlockEditType.optional().describe("Resulting logical block type."),
-        style: AppendBlockListStyle.optional().describe("Resulting list style. Only valid for list blocks."),
-        level: z.number().int().min(1).max(6).optional().describe("Heading level. Only valid when the resulting type is heading."),
-        language: z.string().optional().describe("Code language. Only valid for code blocks. Omit to preserve the current language."),
-        preview: z.boolean().optional().describe("Code block preview state (for example, show an html code block in Preview). Only valid for code blocks. Omit to preserve the current state."),
+        ...BlockEditSchema,
       },
     },
-    updateBlockHandler as any
+    updateBlocksHandler as any
+  );
+
+  server.registerTool(
+    "update_blocks",
+    {
+      title: "Update Blocks",
+      description: "Apply several update_block edits within one document using one content update. Each block id must be unique. If any edit is invalid, no content update is sent. Returns per-block results in input order and the resulting document revision.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        updates: z.array(z.object(BlockEditSchema).strict()).min(1).max(200).describe(
+          "One to 200 edits with the same fields as update_block, using a distinct block id for each edit."
+        ),
+      },
+    },
+    updateBlocksHandler as any
   );
 
   server.registerTool(

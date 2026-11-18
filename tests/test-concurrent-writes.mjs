@@ -415,6 +415,69 @@ async function main() {
     const repeatedInitial = await call(connections[3], "read_doc", { workspaceId, docId });
     assert.equal(repeatedInitial.revision, initial.revision, "read_doc revision is stable across repeated reads");
     const page = pageBlock(initial);
+    const lightweightRevision = await call(connections[2], "get_doc_revision", { workspaceId, docId });
+    assert.deepEqual(Object.keys(lightweightRevision).sort(), ["docId", "revision"]);
+    assert.equal(lightweightRevision.revision, initial.revision, "the lightweight lookup matches read_doc");
+    const editableBlock = initial.blocks.find(block => block.flavour === "affine:paragraph");
+    assert.ok(editableBlock?.id, "the created document has an editable paragraph");
+    const firstEdit = await call(connections[0], "update_block", {
+      workspaceId, docId, blockId: editableBlock.id, text: "Revision chain first edit", expectedRevision: initial.revision,
+    });
+    assert.match(firstEdit.revision, /^[a-f0-9]{64}$/);
+    const secondEdit = await call(connections[3], "update_block", {
+      workspaceId, docId, blockId: editableBlock.id, text: "Revision chain second edit", expectedRevision: firstEdit.revision,
+    });
+    assert.match(secondEdit.revision, /^[a-f0-9]{64}$/);
+    assert.equal((await call(connections[1], "get_doc_revision", { workspaceId, docId })).revision, secondEdit.revision,
+      "a returned mutation revision is directly reusable for the next mutation and matches the current document");
+
+    const secondParagraph = await call(connections[0], "append_block", {
+      workspaceId, docId, type: "paragraph", text: "Batch update second target",
+    });
+    assert.ok(secondParagraph.blockId, "the live batch fixture has a second paragraph");
+    const batchBase = await call(connections[2], "get_doc_revision", { workspaceId, docId });
+    const batchEdit = await call(connections[1], "update_blocks", {
+      workspaceId,
+      docId,
+      expectedRevision: batchBase.revision,
+      updates: [
+        { blockId: editableBlock.id, text: "Live batch first target" },
+        { blockId: secondParagraph.blockId, text: "Live batch second target" },
+      ],
+    });
+    assert.equal(batchEdit.updated, 2);
+    assert.deepEqual(batchEdit.results.map(result => result.blockId), [editableBlock.id, secondParagraph.blockId]);
+    const batchReadback = await call(connections[3], "read_doc", {
+      workspaceId, docId, blockIds: [editableBlock.id, secondParagraph.blockId],
+    });
+    assert.equal(batchReadback.revision, batchEdit.revision, "one batch revision matches the persisted readback");
+    assert.deepEqual(batchReadback.blocks.map(block => block.text), ["Live batch first target", "Live batch second target"]);
+
+    const invalidBatch = await rawCall(connections[0], "update_blocks", {
+      workspaceId,
+      docId,
+      expectedRevision: batchEdit.revision,
+      updates: [
+        { blockId: editableBlock.id, text: "Must remain unchanged" },
+        { blockId: "missing-later-batch-target", text: "Invalid later update" },
+      ],
+    });
+    assert.equal(invalidBatch.result?.isError, true, "an invalid later batch item rejects the live batch");
+    const afterInvalidBatch = await call(connections[2], "read_doc", {
+      workspaceId, docId, blockIds: [editableBlock.id, secondParagraph.blockId],
+    });
+    assert.equal(afterInvalidBatch.revision, batchEdit.revision, "invalid batch leaves the persisted revision unchanged");
+    assert.deepEqual(afterInvalidBatch.blocks.map(block => block.text), ["Live batch first target", "Live batch second target"]);
+
+    const staleBatch = await rawCall(connections[0], "update_blocks", {
+      workspaceId,
+      docId,
+      expectedRevision: batchBase.revision,
+      updates: [{ blockId: editableBlock.id, text: "Must remain unchanged" }],
+    });
+    assertStaleConflict(staleBatch, batchBase.revision, workspaceId, docId, "stale live batch update");
+    assert.equal((await call(connections[1], "get_doc_revision", { workspaceId, docId })).revision, batchEdit.revision,
+      "stale batch leaves the current revision unchanged");
 
     const deletedFixture = await call(connections[1], "create_doc", {
       workspaceId,
@@ -571,6 +634,14 @@ async function main() {
       "the final table cell is exactly the successful CAS value");
     assert.equal(tableCasConflicts[0].payload.details.currentRevision, tableCasReadBack.revision,
       "same-cell conflict reports the committed current revision");
+    const tableRevision = tableCasSuccesses[0].payload.revision;
+    assert.equal(tableRevision, tableCasReadBack.revision, "the table write returns the persisted revision");
+    const tableNoOp = await call(connections[1], "update_table_cell", {
+      workspaceId, docId, blockId: table.blockId, row: 0, column: 0,
+      text: tableWinningText, expectedRevision: tableRevision,
+    });
+    assert.equal(tableNoOp.updated, false);
+    assert.equal(tableNoOp.revision, tableRevision, "a table no-op preserves the reusable revision");
 
     const casBase = await call(connections[2], "read_doc", { workspaceId, docId });
     const casTexts = ["CAS winner candidate A", "CAS winner candidate B"];
@@ -709,6 +780,16 @@ async function main() {
     ]);
     const metadataRead = await call(connections[0], "read_doc", { workspaceId, docId });
     assert.equal(metadataRead.title, finalTitle, "parallel title write is visible from another connection");
+    const beforeTitleNoOp = await readWorkspacePageState(workspaceId, docId);
+    const titleNoOp = await call(connections[1], "update_doc_title", {
+      workspaceId, docId, title: finalTitle, expectedRevision: metadataRead.revision,
+    });
+    assert.equal(titleNoOp.updated, false, "resaving the same title does not update the document");
+    assert.equal(titleNoOp.revision, metadataRead.revision, "resaving the same title returns the same revision");
+    const afterTitleNoOp = await readWorkspacePageState(workspaceId, docId);
+    assert.deepEqual(afterTitleNoOp, beforeTitleNoOp, "a title no-op does not advance the page or workspace timestamp");
+    const titleLookup = await call(connections[3], "get_doc_revision", { workspaceId, docId });
+    assert.equal(titleLookup.revision, titleNoOp.revision, "a fresh lookup returns the same title revision");
     assert.ok(metadataRead.tags.includes(tagB), "parallel tag attachment is visible from another connection");
     const tagsRead = await call(connections[2], "list_tags", { workspaceId });
     const tagNames = new Set((tagsRead.tags || []).map(tag => tag?.name ?? tag?.value ?? tag?.tag));
