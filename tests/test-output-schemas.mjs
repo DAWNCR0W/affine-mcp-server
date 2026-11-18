@@ -6,6 +6,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 import { ALL_TOOLS, toolAnnotationsFor } from "../src/toolSurface.ts";
 import { registerBlobTools } from "../src/tools/blobStorage.ts";
@@ -100,12 +101,29 @@ const verifiedDelete = { kind: "doc.delete", ok: true, workspaceId: "w1", docId:
 assert.equal(deleteDocSchema.safeParse(verifiedDelete).success, true);
 assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, revision: "rev-1" }).success, false);
 assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, revision: undefined }).success, false);
+const alreadyAbsentDelete = { ...verifiedDelete, deleted: false, status: "already_absent" };
+assert.equal(deleteDocSchema.safeParse(alreadyAbsentDelete).success, true);
+assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, contentAbsenceVerified: false }).success, false);
+const missingRevisionDelete = { ...verifiedDelete };
+delete missingRevisionDelete.revision;
+assert.equal(deleteDocSchema.safeParse(missingRevisionDelete).success, false);
 const partialDelete = { ...verifiedDelete, deleted: false, status: "partial", contentAbsenceVerified: false, warnings: ["Content may remain readable."] };
 delete partialDelete.revision;
 assert.equal(deleteDocSchema.safeParse(partialDelete).success, true);
 assert.equal(deleteDocSchema.safeParse({ ...partialDelete, revision: null }).success, false);
+assert.equal(deleteDocSchema.safeParse({ ...partialDelete, contentAbsenceVerified: true }).success, false);
+const partialWithoutVerification = { ...partialDelete };
+delete partialWithoutVerification.contentAbsenceVerified;
+assert.equal(deleteDocSchema.safeParse(partialWithoutVerification).success, false);
+assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, status: "failed" }).success, false);
 assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false }).success, true);
 assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false, revision: null }).success, false);
+assert.equal(deleteDocSchema.safeParse({
+  kind: "doc.delete", ok: false, status: "failed", workspaceId: "w1", docId: "d1", deleted: false,
+  metadataExisted: true, metadataRemoved: false, contentExisted: true, contentDeleted: false,
+  contentDeleteAcknowledged: false, contentAbsenceVerified: false,
+  error: "Metadata removal failed", code: "doc_metadata_delete_failed", retryable: false,
+}).success, true);
 
 const representativeError = {
   ok: false,
@@ -273,6 +291,14 @@ server.registerTool(
   },
   async () => text([{ id: "collection-1", name: "Example" }]),
 );
+server.registerTool(
+  "delete_doc",
+  {
+    inputSchema: {},
+    outputSchema: deleteDocSchema,
+  },
+  async () => text(verifiedDelete),
+);
 
 const backendResults = {
   deleteBlob: true,
@@ -309,6 +335,28 @@ assert.equal(listedByName.add_database_column.outputSchema.anyOf.length, 2);
 assert.deepEqual(listedByName.add_database_column.outputSchema.anyOf[0].required,
   ["added", "columnId", "name", "type", "revision"]);
 assert.equal(toolOutputSchemaFor("delete_doc").shape.revision.safeParse(null).success, true);
+const advertisedDeleteDocSchema = listedByName.delete_doc.outputSchema;
+assert.equal(advertisedDeleteDocSchema.anyOf.length, 3);
+const advertisedPartialBranch = advertisedDeleteDocSchema.anyOf.find(branch => branch.properties.status?.const === "partial");
+assert.ok(advertisedPartialBranch.required.includes("contentAbsenceVerified"));
+assert.deepEqual(advertisedPartialBranch.properties.revision, { not: {} });
+const validateAdvertisedDeleteDoc = new AjvJsonSchemaValidator().getValidator(advertisedDeleteDocSchema);
+const deleteDocContractCases = [
+  [verifiedDelete, true],
+  [alreadyAbsentDelete, true],
+  [partialDelete, true],
+  [partialWithoutVerification, false],
+  [{ ...partialDelete, revision: null }, false],
+  [missingRevisionDelete, false],
+  [{ ...verifiedDelete, contentAbsenceVerified: false }, false],
+  [{ ...verifiedDelete, status: "failed" }, false],
+  [{ ...representativeError }, true],
+  [{ ...representativeError, revision: null }, false],
+];
+for (const [payload, expected] of deleteDocContractCases) {
+  assert.equal(deleteDocSchema.safeParse(payload).success, expected, "delete_doc runtime schema mismatch");
+  assert.equal(validateAdvertisedDeleteDoc(payload).valid, expected, "delete_doc advertised anyOf mismatch");
+}
 assert.equal(listedByName.upload_blob.outputSchema.properties.encoding.type, "string");
 for (const field of ["kind", "status", "ok", "deleted", "success"]) {
   assert.ok(

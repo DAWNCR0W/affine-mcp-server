@@ -5,7 +5,7 @@ import { z } from 'zod/v3';
 import * as Y from 'yjs';
 import { coordinateTool, staleDocumentRevision } from '../dist/toolCoordination.js';
 import { documentRevision, isDocumentRegistered } from '../dist/util/documentRevision.js';
-import { captureDocUpdate } from '../dist/util/docUpdate.js';
+import { withToolErrors } from '../dist/util/mcp.js';
 import { loadDoc, pushPageDocUpdate } from '../dist/ws.js';
 import { toolOutputSchemaFor } from '../dist/toolOutputSchemas.js';
 
@@ -33,7 +33,7 @@ function revisionSnapshots(docId = 'doc') {
   };
 }
 
-function revisionSocket(snapshots) {
+function revisionSocket(snapshots, { accepted = true } = {}) {
   const pushes = [];
   return {
     pushes,
@@ -44,6 +44,42 @@ function revisionSocket(snapshots) {
       }
       if (event === 'space:push-doc-update') {
         pushes.push(payload);
+        ack({ data: { accepted, timestamp: 1 } });
+        return;
+      }
+      throw new Error(`Unexpected socket event ${event}`);
+    },
+  };
+}
+
+function trackedRevisionSocket(snapshots, rootErrors = []) {
+  const events = [];
+  let rootLoads = 0;
+  let targetLoads = 0;
+  let pushes = 0;
+  return {
+    events,
+    get rootLoads() { return rootLoads; },
+    get targetLoads() { return targetLoads; },
+    get pushes() { return pushes; },
+    emit(event, payload, ack) {
+      if (event === 'space:load-doc' && payload.docId === context.workspaceId) {
+        rootLoads += 1;
+        events.push(`root-${rootLoads}`);
+        const error = rootErrors[rootLoads - 1];
+        if (error) ack({ error });
+        else ack({ data: { missing: snapshots.workspaceSnapshot } });
+        return;
+      }
+      if (event === 'space:load-doc') {
+        targetLoads += 1;
+        events.push('target');
+        ack({ data: { missing: snapshots.documentSnapshot } });
+        return;
+      }
+      if (event === 'space:push-doc-update') {
+        pushes += 1;
+        events.push('push');
         ack({ data: { accepted: true, timestamp: 1 } });
         return;
       }
@@ -135,6 +171,70 @@ test('coordinated writes return the captured revision for no-op updates', async 
     assert.equal(socket.pushes.length, 1, 'a scoped no-op still requires an explicit ACK');
     assert.equal(result.structuredContent.changed, false);
     assert.equal(result.structuredContent.revision, originalRevision);
+  } finally { snapshots.dispose(); }
+});
+
+test('tracked workspace registration reads retry transient failures before the target read', async () => {
+  const snapshots = revisionSnapshots();
+  const socket = trackedRevisionSocket(snapshots, [
+    { name: 'Error', code: 'ECONNRESET', message: 'Transient workspace snapshot failure' },
+  ]);
+  const empty = new Y.Doc();
+  const noOpUpdate = Buffer.from(Y.encodeStateAsUpdate(empty)).toString('base64');
+  empty.destroy();
+  try {
+    const tool = coordinateTool('append_block', shape, async ({ docId }) => {
+      await loadDoc(socket, context.workspaceId, docId);
+      await pushPageDocUpdate(socket, context.workspaceId, docId, noOpUpdate);
+      return { content: [], structuredContent: { ok: true } };
+    }, context);
+    const result = await tool.handler({ docId: 'doc' });
+    assert.equal(result.structuredContent.revision, documentRevision(snapshots.document));
+    assert.equal(socket.rootLoads, 2);
+    assert.equal(socket.targetLoads, 1);
+    assert.equal(socket.pushes, 1);
+    assert.deepEqual(socket.events, ['root-1', 'root-2', 'target', 'push']);
+  } finally { snapshots.dispose(); }
+});
+
+test('permanent registration read errors fail before the target read or mutation', async () => {
+  const snapshots = revisionSnapshots();
+  const socket = trackedRevisionSocket(snapshots, [
+    { name: 'Error', code: 'FORBIDDEN', message: 'Workspace access denied' },
+  ]);
+  try {
+    const tool = coordinateTool('append_block', shape, async ({ docId }) => {
+      await loadDoc(socket, context.workspaceId, docId);
+      await pushPageDocUpdate(socket, context.workspaceId, docId, 'AAA=');
+      return { content: [], structuredContent: { ok: true } };
+    }, context);
+    await assert.rejects(tool.handler({ docId: 'doc' }), /Workspace access denied/);
+    assert.equal(socket.rootLoads, 1);
+    assert.equal(socket.targetLoads, 0);
+    assert.equal(socket.pushes, 0);
+    assert.deepEqual(socket.events, ['root-1']);
+  } finally { snapshots.dispose(); }
+});
+
+test('empty updates still require an accepted acknowledgement and return no revision when uncertain', async () => {
+  const snapshots = revisionSnapshots();
+  const socket = revisionSocket(snapshots, { accepted: false });
+  const empty = new Y.Doc();
+  const noOpUpdate = Buffer.from(Y.encodeStateAsUpdate(empty)).toString('base64');
+  empty.destroy();
+  try {
+    const tool = coordinateTool('append_block', shape, async ({ docId }) => {
+      await loadDoc(socket, context.workspaceId, docId);
+      await pushPageDocUpdate(socket, context.workspaceId, docId, noOpUpdate);
+      return { content: [], structuredContent: { ok: true, changed: false } };
+    }, context);
+    const result = await withToolErrors(tool.handler, {
+      toolName: 'append_block', authMode: 'bearer', readOnly: false,
+    })({ docId: 'doc' });
+    assert.equal(socket.pushes.length, 1, 'the server receives the empty update but does not accept it');
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.code, 'write_ack_uncertain');
+    assert.equal(Object.hasOwn(result.structuredContent, 'revision'), false);
   } finally { snapshots.dispose(); }
 });
 

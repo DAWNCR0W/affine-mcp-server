@@ -7870,41 +7870,52 @@ export function registerDocTools(
         throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
       }
       const pageSnapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      let pageUpdate: DocUpdateCapture | undefined;
       if (pageSnapshot.missing) {
         Y.applyUpdate(pageDoc, Buffer.from(pageSnapshot.missing, "base64"));
-      }
-      const pageUpdate = pageSnapshot.missing ? captureDocUpdate(pageDoc) : undefined;
-      let pageTitleUpdated = false;
-      if (pageSnapshot.missing) {
         const blocks = pageDoc.getMap("blocks") as Y.Map<any>;
         for (const [, raw] of blocks) {
           if (!(raw instanceof Y.Map)) continue;
           if (raw.get("sys:flavour") === "affine:page") {
-            raw.set("prop:title", makeText(newTitle));
-            pageTitleUpdated = true;
+            const currentTitle = asText(raw.get("prop:title"));
+            if (currentTitle !== newTitle) {
+              pageUpdate = captureDocUpdate(pageDoc);
+              raw.set("prop:title", makeText(newTitle));
+            }
             break;
           }
         }
       }
 
-      const pendingUpdate = captureDocUpdate(wsDoc);
-      page.set("title", newTitle);
-      const delta = pendingUpdate.finish();
-      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
-      if (pageUpdate && pageTitleUpdated) {
+      const metadataTitleUpdated = page.get("title") !== newTitle;
+      if (metadataTitleUpdated) {
+        const pendingUpdate = captureDocUpdate(wsDoc);
+        page.set("title", newTitle);
+        const delta = pendingUpdate.finish();
+        await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+      }
+      if (pageUpdate) {
         try {
           await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(pageUpdate.finish()).toString("base64"));
         } catch (error) {
+          const timestampFailure = error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed"
+            ? error
+            : undefined;
           return toolError(error, {
             code: error instanceof ToolFailure ? error.code : "doc_title_content_update_failed",
-            data: { kind: "doc.update_title", status: "partial", workspaceId, docId: parsed.docId, metadataUpdated: true },
-            recoveryGuidance: "The workspace title was saved. Inspect the workspace title and the document content before retrying.",
+            data: {
+              kind: "doc.update_title", status: metadataTitleUpdated || timestampFailure ? "partial" : "failed",
+              workspaceId, docId: parsed.docId, metadataUpdated: metadataTitleUpdated,
+              ...(timestampFailure ? { contentUpdated: true } : {}),
+            },
+            recoveryGuidance: timestampFailure?.recoveryGuidance
+              ?? `Inspect the workspace title and document content for ${parsed.docId} before retrying; the content update may already have been applied.`,
           });
         }
       }
       return receipt("doc.update_title", {
         workspaceId,
-        updated: true,
+        updated: metadataTitleUpdated || pageUpdate !== undefined,
         docId: parsed.docId,
         title: newTitle,
       });

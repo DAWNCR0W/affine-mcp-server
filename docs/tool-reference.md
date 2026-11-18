@@ -176,7 +176,7 @@ imported as an inline equation in that block.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `update_doc_title` | Rename a document in workspace metadata and in the page block | Returns the resulting document `revision`; it can be `null` if the page-content snapshot is unavailable. |
+| `update_doc_title` | Rename a document in workspace metadata and in the page block | Resaving a title that already matches both locations keeps the existing `revision`. A metadata-only rename can return `revision: null` when the page-content snapshot is unavailable. |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note`/`image` accept `x`/`y`/`width`/`height`; for `image` they set `prop:xywh` plus `prop:width`/`prop:height`, attach the block to the `affine:surface` block (edgeless, not inside a note), and make it a valid connector endpoint. When only a position is supplied, the omitted dimensions default to 100 so bounds and rendered size agree; surface-parented images that omit geometry reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100 (note images keep `[0,0,0,0]`). An explicit `placement` (a note `parentId` or a note sibling) overrides the automatic surface attachment: the image keeps its geometry but stays in the document flow and is not listed by `get_edgeless_canvas`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
@@ -209,11 +209,12 @@ For `list_docs`, pagination follows the backend page even when deleted entries a
 
 Successful document-content mutations return a `revision` compatible with
 `expectedRevision`, including no-op mutations. This applies to block, table,
-database-row, mindmap, surface, and other document-content writes. To continue
-a series of edits, pass the returned revision to the next call. `update_doc_title`
-can return `revision: null` when its metadata update succeeds but the page
-snapshot is unavailable. `delete_doc` returns `revision: null` only after
-content absence is verified; partial deletion receipts and errors omit it.
+database-row, mindmap, surface, and other document-content writes. Pass a
+string revision as `expectedRevision` on the next edit. If `update_doc_title`
+returns `null` after a metadata-only update, call `get_doc_revision` to obtain
+a string token once the page snapshot is available. `delete_doc` returns
+`revision: null` after verified content absence. Partial deletion receipts
+and errors omit it.
 The token reflects the input snapshot plus acknowledged deltas, so an external
 edit can make it stale before it is reused. If a revision check fails, read the
 relevant content and reconcile before retrying. See

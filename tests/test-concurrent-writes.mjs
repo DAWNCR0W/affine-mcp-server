@@ -780,6 +780,16 @@ async function main() {
     ]);
     const metadataRead = await call(connections[0], "read_doc", { workspaceId, docId });
     assert.equal(metadataRead.title, finalTitle, "parallel title write is visible from another connection");
+    const beforeTitleNoOp = await readWorkspacePageState(workspaceId, docId);
+    const titleNoOp = await call(connections[1], "update_doc_title", {
+      workspaceId, docId, title: finalTitle, expectedRevision: metadataRead.revision,
+    });
+    assert.equal(titleNoOp.updated, false, "resaving the same title does not update the document");
+    assert.equal(titleNoOp.revision, metadataRead.revision, "resaving the same title returns the same revision");
+    const afterTitleNoOp = await readWorkspacePageState(workspaceId, docId);
+    assert.deepEqual(afterTitleNoOp, beforeTitleNoOp, "a title no-op does not advance the page or workspace timestamp");
+    const titleLookup = await call(connections[3], "get_doc_revision", { workspaceId, docId });
+    assert.equal(titleLookup.revision, titleNoOp.revision, "a fresh lookup returns the same title revision");
     assert.ok(metadataRead.tags.includes(tagB), "parallel tag attachment is visible from another connection");
     const tagsRead = await call(connections[2], "list_tags", { workspaceId });
     const tagNames = new Set((tagsRead.tags || []).map(tag => tag?.name ?? tag?.value ?? tag?.tag));

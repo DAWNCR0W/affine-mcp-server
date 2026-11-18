@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Successful document-content mutations return their resulting revision, including no-ops. `delete_doc` returns `revision: null` only after verified absence; partial and error outcomes omit it (#470).
 - `read_doc` can return selected blocks with their native formatting and links, and reports missing block IDs. `update_blocks` validates and saves multiple existing block edits in one document update (#471).
 
+### Fixed
+- Keep the document revision when both stored titles already match. Verify `delete_doc` revision fields against the deletion outcome and retry transient workspace registration reads before an edit.
+
 ## [3.13.1] - 2026-11-16
 
 ### Security
