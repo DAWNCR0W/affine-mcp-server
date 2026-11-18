@@ -5,7 +5,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import * as Y from "yjs";
 import { z } from "zod/v3";
 import type { GraphQLClient } from "../graphqlClient.js";
-import { text, toolError } from "../util/mcp.js";
+import { text, toolError, ToolFailure } from "../util/mcp.js";
 import { secureRandomInt31, secureRandomString } from "../util/random.js";
 import { connectWorkspaceSocket, joinWorkspace, loadDoc, pushPageDocUpdate, wsUrlFromGraphQLEndpoint } from "../ws.js";
 
@@ -385,7 +385,7 @@ export function registerMindmapTools(server: McpServer, gql: GraphQLClient, defa
       }
       return text({ ok: true, workspaceId, docId: p.docId, surfaceBlockId: ctx.surfaceId, ...(p.compact ? compactMindmap(result) : result) }) as CallToolResult;
     } catch (error) {
-      return toolError(error, { code: "mindmap_operation_failed" }) as CallToolResult;
+      return toolError(error, { code: error instanceof ToolFailure ? error.code : "mindmap_operation_failed" }) as CallToolResult;
     } finally { socket?.disconnect(); doc.destroy(); }
   };
   server.registerTool("create_mindmap", {

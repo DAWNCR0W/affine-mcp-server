@@ -332,14 +332,21 @@ Without `expectedRevision`, explicit replacements apply in queue order and a
 later replacement can intentionally supersede earlier text. A missing document
 has `revision: null` and cannot satisfy a supplied revision.
 
-`update_block` and `update_blocks` check the revision against the snapshot
-they edit. On success, they return the revision of that snapshot with their
-changes applied. If an external edit merges after the snapshot was loaded,
-the returned token can already be stale. When AFFiNE does not confirm the
-content save, the tool returns `write_ack_uncertain` with `retryable: false`.
-If the content was saved but its workspace timestamp could not be confirmed,
-the tool returns `workspace_page_updated_date_failed`. In both cases, inspect
-the affected blocks before continuing.
+Successful document-content mutations return `revision`, including no-op
+mutations. The token is computed from the input Yjs snapshot plus the deltas
+that AFFiNE acknowledged. An external edit that merges after the snapshot was
+loaded can make the returned token stale immediately. `update_doc_title` can
+return `revision: null` when the page-content snapshot is unavailable; it still
+reports the successful metadata update. `delete_doc` returns `revision: null`
+only after content absence is verified; partial deletion receipts and errors
+omit `revision`.
+
+When AFFiNE does not confirm a content save, the tool returns
+`write_ack_uncertain` with `retryable: false` and no revision. If content was
+saved but its workspace timestamp could not be confirmed, the tool returns
+`workspace_page_updated_date_failed` and no revision. In either case, inspect
+the affected document before continuing; do not treat the missing token as a
+successful revision.
 
 The queue permits at most 100 waiting calls per workspace and waits at most
 60 seconds before execution starts. Queue overflow or timeout reports a

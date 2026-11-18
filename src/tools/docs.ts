@@ -32,7 +32,7 @@ import {
 } from "../util/inputSchemas.js";
 import { secureAffineId, secureRandomInt31 } from "../util/random.js";
 import { currentDocumentRevision, staleDocumentRevision } from "../toolCoordination.js";
-import { documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
+import { documentMutationRevision, documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
 import { ensureDocumentCreator, fetchCurrentUserId, readDocumentCreator } from "../util/docCreator.js";
 import {
   wsUrlFromGraphQLEndpoint,
@@ -7861,6 +7861,7 @@ export function registerDocTools(
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    const pageDoc = new Y.Doc();
     try {
       await joinWorkspace(socket, workspaceId);
       const wsDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
@@ -7868,25 +7869,38 @@ export function registerDocTools(
       if (!page) {
         throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
       }
+      const pageSnapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (pageSnapshot.missing) {
+        Y.applyUpdate(pageDoc, Buffer.from(pageSnapshot.missing, "base64"));
+      }
+      const pageUpdate = pageSnapshot.missing ? captureDocUpdate(pageDoc) : undefined;
+      let pageTitleUpdated = false;
+      if (pageSnapshot.missing) {
+        const blocks = pageDoc.getMap("blocks") as Y.Map<any>;
+        for (const [, raw] of blocks) {
+          if (!(raw instanceof Y.Map)) continue;
+          if (raw.get("sys:flavour") === "affine:page") {
+            raw.set("prop:title", makeText(newTitle));
+            pageTitleUpdated = true;
+            break;
+          }
+        }
+      }
+
       const pendingUpdate = captureDocUpdate(wsDoc);
       page.set("title", newTitle);
       const delta = pendingUpdate.finish();
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
-      const snap = await loadDoc(socket, workspaceId, parsed.docId);
-      if (snap.missing) {
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, Buffer.from(snap.missing, "base64"));
-        const pendingUpdate = captureDocUpdate(doc);
-        const blocks = doc.getMap("blocks") as Y.Map<any>;
-        for (const [, raw] of blocks) {
-          if (!(raw instanceof Y.Map)) continue;
-          if (raw.get("sys:flavour") === "affine:page") {
-            const titleText = new Y.Text(); titleText.insert(0, newTitle);
-            raw.set("prop:title", titleText); break;
-          }
+      if (pageUpdate && pageTitleUpdated) {
+        try {
+          await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(pageUpdate.finish()).toString("base64"));
+        } catch (error) {
+          return toolError(error, {
+            code: error instanceof ToolFailure ? error.code : "doc_title_content_update_failed",
+            data: { kind: "doc.update_title", status: "partial", workspaceId, docId: parsed.docId, metadataUpdated: true },
+            recoveryGuidance: "The workspace title was saved. Inspect the workspace title and the document content before retrying.",
+          });
         }
-        const delta = pendingUpdate.finish();
-        await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
       }
       return receipt("doc.update_title", {
         workspaceId,
@@ -7894,7 +7908,7 @@ export function registerDocTools(
         docId: parsed.docId,
         title: newTitle,
       });
-    } finally { socket.disconnect(); }
+    } finally { pageDoc.destroy(); socket.disconnect(); }
   };
   server.registerTool("update_doc_title", {
     title: "Update Document Title",
@@ -8824,45 +8838,47 @@ export function registerDocTools(
     const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
     const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
     const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    await joinWorkspace(socket, workspaceId);
-
     const doc = new Y.Doc();
-    const snapshot = await loadDoc(socket, workspaceId, docId);
-    if (!snapshot.missing) {
-      socket.disconnect();
-      throw new Error("Document not found");
-    }
-    Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+    try {
+      await joinWorkspace(socket, workspaceId);
 
-    const pendingUpdate = captureDocUpdate(doc);
-    const blocks = doc.getMap("blocks") as Y.Map<any>;
-    const dbBlock = findBlockById(blocks, databaseBlockId);
-    if (!dbBlock) {
-      socket.disconnect();
-      throw new Error(`Database block '${databaseBlockId}' not found`);
-    }
-    const dbFlavour = dbBlock.get("sys:flavour");
-    if (dbFlavour !== "affine:database") {
-      socket.disconnect();
-      throw new Error(`Block '${databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
-    }
+      const snapshot = await loadDoc(socket, workspaceId, docId);
+      if (!snapshot.missing) {
+        throw new Error("Document not found");
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
 
-    const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
-    if (!(cellsMap instanceof Y.Map)) {
-      socket.disconnect();
-      throw new Error("Database block has no cells map");
-    }
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const dbBlock = findBlockById(blocks, databaseBlockId);
+      if (!dbBlock) {
+        throw new Error(`Database block '${databaseBlockId}' not found`);
+      }
+      const dbFlavour = dbBlock.get("sys:flavour");
+      if (dbFlavour !== "affine:database") {
+        throw new Error(`Block '${databaseBlockId}' is not a database (flavour: ${dbFlavour})`);
+      }
 
-    const lookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
-    return {
-      socket,
-      doc,
-      pendingUpdate,
-      blocks,
-      dbBlock,
-      cellsMap,
-      ...lookup,
-    };
+      const cellsMap = dbBlock.get("prop:cells") as Y.Map<any>;
+      if (!(cellsMap instanceof Y.Map)) {
+        throw new Error("Database block has no cells map");
+      }
+
+      const lookup = buildDatabaseColumnLookup(readColumnDefs(dbBlock));
+      return {
+        socket,
+        doc,
+        pendingUpdate,
+        blocks,
+        dbBlock,
+        cellsMap,
+        ...lookup,
+      };
+    } catch (error) {
+      doc.destroy();
+      socket.disconnect();
+      throw error;
+    }
   }
 
   // ADD DATABASE ROW
@@ -11030,7 +11046,9 @@ export function registerDocTools(
       const results = doc.transact(() => edits.map(edit => applyBlockEdit(blocks, edit)));
       const updated = results.filter(result => result.updated).length;
       // Hash the state used for this edit so a later external edit cannot be folded into the token.
-      const revision = documentRevision(doc, registered);
+      const revision = updated > 0
+        ? documentMutationRevision(doc, registered)
+        : documentRevision(doc, registered);
       if (updated > 0) {
         const delta = pendingUpdate.finish();
         await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(delta).toString("base64"), {

@@ -75,6 +75,38 @@ const updateBlocksSchema = toolOutputSchemaFor("update_blocks");
 assert.equal(updateBlocksSchema.safeParse({ updated: 1, revision: "rev-1", results: [{ blockId: "b1", updated: true, changed: ["text"], previous: {}, block: {} }] }).success, true);
 assert.equal(updateBlocksSchema.safeParse({ updated: 1, revision: "rev-1", results: [{ blockId: "b1", updated: true, changed: "text", previous: {}, block: {} }] }).success, false);
 
+const revisionMutationTools = [
+  "add_database_column", "add_database_row", "add_database_rows", "add_database_view",
+  "add_mindmap_node", "add_surface_element", "add_surface_elements", "append_block",
+  "append_markdown", "append_semantic_section", "compose_database_from_intent", "create_mindmap",
+  "delete_block", "delete_database_row", "delete_doc", "delete_surface_element", "move_block",
+  "reparent_mindmap_node", "replace_doc_with_markdown", "set_mindmap_layout", "set_mindmap_lock",
+  "set_mindmap_style", "update_block", "update_blocks", "update_database_row", "update_doc_title",
+  "update_edgeless_block", "update_frame_children", "update_mindmap_node", "update_surface_element",
+  "update_surface_elements", "update_table_cell", "update_table_column_widths",
+];
+for (const name of revisionMutationTools.filter(name => name !== "delete_doc")) {
+  assert.ok(
+    toolOutputSchemaFor(name).meta().anyOf[0].required.includes("revision"),
+    `${name} must require a revision on successful output`,
+  );
+}
+const titleOutputSchema = toolOutputSchemaFor("update_doc_title");
+assert.equal(titleOutputSchema.safeParse({ kind: "doc.title.update", ok: true, workspaceId: "w1", docId: "d1", updated: true, title: "Title", revision: null }).success, true);
+assert.equal(titleOutputSchema.safeParse({ kind: "doc.title.update", ok: true, workspaceId: "w1", docId: "d1", updated: true, title: "Title" }).success, false);
+
+const deleteDocSchema = toolOutputSchemaFor("delete_doc");
+const verifiedDelete = { kind: "doc.delete", ok: true, workspaceId: "w1", docId: "d1", deleted: true, status: "deleted", contentAbsenceVerified: true, revision: null };
+assert.equal(deleteDocSchema.safeParse(verifiedDelete).success, true);
+assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, revision: "rev-1" }).success, false);
+assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, revision: undefined }).success, false);
+const partialDelete = { ...verifiedDelete, deleted: false, status: "partial", contentAbsenceVerified: false, warnings: ["Content may remain readable."] };
+delete partialDelete.revision;
+assert.equal(deleteDocSchema.safeParse(partialDelete).success, true);
+assert.equal(deleteDocSchema.safeParse({ ...partialDelete, revision: null }).success, false);
+assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false }).success, true);
+assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false, revision: null }).success, false);
+
 const representativeError = {
   ok: false,
   error: "Operation failed",
@@ -106,7 +138,7 @@ assert.equal(
   "discovery tools must accept workspace-root recovery guidance",
 );
 
-const columnOutput = { added: true, columnId: "col-1", name: "Status", type: "select" };
+const columnOutput = { added: true, columnId: "col-1", name: "Status", type: "select", revision: "rev-1" };
 const columnSchema = toolOutputSchemaFor("add_database_column");
 const invalidColumnOutputs = [
   {},
@@ -213,6 +245,7 @@ const frameChildrenOutput = {
   missing: [],
   resized: true,
   xywh: { x: 10, y: 20, width: 300, height: 200 },
+  revision: "rev-1",
 };
 assert.equal(toolOutputSchemaFor("update_frame_children").safeParse(frameChildrenOutput).success, true);
 assert.equal(
@@ -274,7 +307,8 @@ for (const tool of listed.tools) {
 const listedByName = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
 assert.equal(listedByName.add_database_column.outputSchema.anyOf.length, 2);
 assert.deepEqual(listedByName.add_database_column.outputSchema.anyOf[0].required,
-  ["added", "columnId", "name", "type"]);
+  ["added", "columnId", "name", "type", "revision"]);
+assert.equal(toolOutputSchemaFor("delete_doc").shape.revision.safeParse(null).success, true);
 assert.equal(listedByName.upload_blob.outputSchema.properties.encoding.type, "string");
 for (const field of ["kind", "status", "ok", "deleted", "success"]) {
   assert.ok(
@@ -292,13 +326,14 @@ for (const field of ["kind", "status", "ok", "blobsReleased", "success"]) {
 const columnResult = await client.callTool({ name: "add_database_column", arguments: {} });
 assert.deepEqual(columnResult.content, [{
   type: "text",
-  text: '{"added":true,"columnId":"col-1","name":"Status","type":"select"}',
+  text: '{"added":true,"columnId":"col-1","name":"Status","type":"select","revision":"rev-1"}',
 }]);
 assert.deepEqual(columnResult.structuredContent, {
   added: true,
   columnId: "col-1",
   name: "Status",
   type: "select",
+  revision: "rev-1",
 });
 
 for (const payload of [{}, { ...columnOutput, columnId: undefined }]) {

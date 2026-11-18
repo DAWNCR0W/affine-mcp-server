@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `get_doc_revision` returns a document revision without its block content. `update_block` returns a revision that subsequent edits can use as `expectedRevision` (#470).
+- Successful document-content mutations return their resulting revision, including no-ops. `delete_doc` returns `revision: null` only after verified absence; partial and error outcomes omit it (#470).
 - `read_doc` can return selected blocks with their native formatting and links, and reports missing block IDs. `update_blocks` validates and saves multiple existing block edits in one document update (#471).
 
 ## [3.13.1] - 2026-11-16

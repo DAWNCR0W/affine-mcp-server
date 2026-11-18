@@ -8,6 +8,17 @@ export function documentRevision(doc: Y.Doc, registered = true): string {
     .update(Y.encodeStateAsUpdate(doc)).digest("hex");
 }
 
+/** Match a fresh read, which coalesces adjacent Yjs garbage-collection structs. */
+export function documentMutationRevision(doc: Y.Doc, registered = true): string {
+  const snapshot = new Y.Doc();
+  try {
+    Y.applyUpdate(snapshot, Y.encodeStateAsUpdate(doc));
+    return documentRevision(snapshot, registered);
+  } finally {
+    snapshot.destroy();
+  }
+}
+
 export function isDocumentRegistered(workspaceDoc: Y.Doc, docId: string): boolean {
   const pages = workspaceDoc.getMap("meta").get("pages");
   return pages instanceof Y.Array && pages.toArray().some(

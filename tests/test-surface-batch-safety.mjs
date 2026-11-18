@@ -64,7 +64,7 @@ wss.on("connection", socket => {
     } else if (event === "space:push-doc-update") {
       pushes++;
       Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
-      ack = { data: { timestamp: ++timestamp } };
+      ack = { data: { accepted: true, timestamp: ++timestamp } };
     } else throw new Error(`Unexpected event ${event}`);
     socket.send(`43${ackId}${JSON.stringify(ack === undefined ? [] : [ack])}`);
   });

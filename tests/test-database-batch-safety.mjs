@@ -44,6 +44,7 @@ const docs = new Map([[workspaceId, root], [docId, page]]);
 const pushes = [];
 let timestamp = 1;
 let beforePagePush;
+let rejectNextPagePush = false;
 let identityQueries = 0;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 wss.on("connection", socket => {
@@ -65,8 +66,13 @@ wss.on("connection", socket => {
       assert.ok(docs.has(payload.docId), "tests must only mutate their disposable fixtures");
       if (payload.docId === docId) beforePagePush?.();
       pushes.push(payload.docId);
-      Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
-      ack = { data: { accepted: true, timestamp: ++timestamp } };
+      if (payload.docId === docId && rejectNextPagePush) {
+        rejectNextPagePush = false;
+        ack = { data: { accepted: false, timestamp: ++timestamp } };
+      } else {
+        Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
+        ack = { data: { accepted: true, timestamp: ++timestamp } };
+      }
     } else throw new Error(`Unexpected event ${event}`);
     socket.send(`43${ackId}${JSON.stringify(ack === undefined ? [] : [ack])}`);
   });
@@ -210,6 +216,60 @@ try {
     blockId: "tail",
     text: "must not overwrite the unseen external edit",
   }, /STALE_DOCUMENT_REVISION/);
+
+  const beforeTable = pushes.filter(id => id === docId).length;
+  const tableBlock = await call("append_block", {
+    type: "table", rows: 2, columns: 2,
+    tableData: [["Header A", "Header B"], ["Cell A", "Cell B"]],
+    expectedRevision: afterExternalEdit.revision,
+  });
+  assert.equal(pushes.filter(id => id === docId).length - beforeTable, 1);
+  let tableRevision = tableBlock.revision;
+  assert.equal((await call("read_doc")).revision, tableRevision, "table append returns the persisted document revision");
+  const cell = await call("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Updated cell", expectedRevision: tableRevision,
+  });
+  assert.equal(cell.updated, true);
+  assert.notEqual(cell.revision, tableRevision);
+  tableRevision = cell.revision;
+  assert.equal((await call("read_doc")).revision, tableRevision, "table cell edit returns the persisted revision");
+  const beforeNoOpCell = pushes.filter(id => id === docId).length;
+  const unchangedCell = await call("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Updated cell", expectedRevision: tableRevision,
+  });
+  assert.equal(unchangedCell.updated, false);
+  assert.equal(unchangedCell.revision, tableRevision);
+  assert.equal(pushes.filter(id => id === docId).length, beforeNoOpCell, "no-op cell edit must not push");
+  assert.equal((await call("read_doc")).revision, tableRevision, "no-op cell revision matches the persisted snapshot");
+  const widths = await call("update_table_column_widths", {
+    blockId: tableBlock.blockId, widths: [120, 140], expectedRevision: tableRevision,
+  });
+  assert.equal(widths.updated, true);
+  assert.notEqual(widths.revision, tableRevision);
+  tableRevision = widths.revision;
+  assert.equal((await call("read_doc")).revision, tableRevision, "column width edit returns the persisted revision");
+  const unchangedWidths = await call("update_table_column_widths", {
+    blockId: tableBlock.blockId, widths: [120, 140], expectedRevision: tableRevision,
+  });
+  assert.equal(unchangedWidths.updated, false);
+  assert.equal(unchangedWidths.revision, tableRevision);
+  assert.equal((await call("read_doc")).revision, tableRevision, "no-op width revision matches the persisted snapshot");
+
+  beforePagePush = () => {
+    beforePagePush = undefined;
+    blocks.get("tail").set("prop:text", new Y.Text("Concurrent external edit during table update"));
+  };
+  const tableWithExternalEdit = await call("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Another cell edit", expectedRevision: tableRevision,
+  });
+  const afterTableAndExternalEdit = await call("get_doc_revision");
+  assert.notEqual(tableWithExternalEdit.revision, afterTableAndExternalEdit.revision,
+    "a table revision must exclude an external edit that arrived after loading the mutation snapshot");
+  await rejectedWithoutWrite("update_table_cell", {
+    blockId: tableBlock.blockId, row: 1, column: 0, text: "Must not write against the stale token",
+    expectedRevision: tableWithExternalEdit.revision,
+  }, /STALE_DOCUMENT_REVISION/);
+
   await rejectedWithoutWrite("compose_database_from_intent", {
     intent: "table", columns: [{ name: "Title", type: "rich-text" }], seedRows: [],
   }, /Column 'Title' already exists/);
@@ -252,7 +312,9 @@ try {
   assert.deepEqual(db.columns.map(column => column.name), ["Title", "Status", "Count"]);
   assert.equal(db.views[0].mode, "table");
   assert.equal(db.views[0].name, "Tasks");
-  assert.deepEqual(blocks.get("note").get("sys:children").toArray(), ["anchor", db.databaseBlockId, "tail"]);
+  let databaseRevision = db.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database composition returns the persisted revision");
+  assert.deepEqual(blocks.get("note").get("sys:children").toArray(), ["anchor", db.databaseBlockId, "tail", tableBlock.blockId]);
   assertCreators(db.rowBlockIds, db.databaseBlockId);
   const read = await call("read_database_cells", { databaseBlockId: db.databaseBlockId });
   assert.deepEqual(read.rows.map(row => [row.title, row.cells.Count.value, row.cells.Status.value]), [
@@ -264,6 +326,19 @@ try {
   numberColumn.get("data").set("decimal", 2);
   numberColumn.get("data").set("format", "percent");
 
+  databaseRevision = (await call("read_doc")).revision;
+  const addedColumn = await call("add_database_column", {
+    databaseBlockId: db.databaseBlockId, name: "Priority", type: "rich-text", expectedRevision: databaseRevision,
+  });
+  assert.equal(addedColumn.added, true);
+  assert.notEqual(addedColumn.revision, databaseRevision);
+  const staleDatabaseRevision = databaseRevision;
+  databaseRevision = addedColumn.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database column edit returns the persisted revision");
+  await rejectedWithoutWrite("add_database_column", {
+    databaseBlockId: db.databaseBlockId, name: "Stale", type: "rich-text", expectedRevision: staleDatabaseRevision,
+  }, /STALE_DOCUMENT_REVISION/);
+
   // A valid early row can add options locally; a late error must discard both.
   await rejectedWithoutWrite("add_database_rows", {
     databaseBlockId: db.databaseBlockId,
@@ -273,12 +348,16 @@ try {
   const beforeBatch = pushes.filter(id => id === docId).length;
   const batch = await call("add_database_rows", {
     databaseBlockId: db.databaseBlockId,
+    expectedRevision: databaseRevision,
     rows: [
       { cells: { title: [{ insert: "bold row", attributes: { bold: true } }], Status: "Shared option", Count: 3 } },
       { cells: { Status: "Shared option", Count: 4 }, linkedDocId: "linked-document" },
     ],
   });
   assert.equal(batch.added, 2);
+  assert.notEqual(batch.revision, databaseRevision);
+  databaseRevision = batch.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database row batch returns the persisted revision");
   assert.equal(pushes.filter(id => id === docId).length - beforeBatch, 1);
   assertCreators(batch.rowBlockIds, db.databaseBlockId);
   assert.deepEqual(blocks.get(batch.rowBlockIds[0]).get("prop:text").toDelta(), [{ insert: "bold row", attributes: { bold: true } }]);
@@ -287,6 +366,25 @@ try {
   assert.equal(columns.columns.find(column => column.name === "Status").options.filter(option => option.value === "Shared option").length, 1);
   assert.deepEqual(numberColumn.get("data").toJSON(), { decimal: 2, format: "percent" },
     "batch row writes must preserve existing custom number formatting");
+
+  const rowUpdate = await call("update_database_row", {
+    databaseBlockId: db.databaseBlockId,
+    rowBlockId: batch.rowBlockIds[0],
+    cells: { Count: 6 },
+    expectedRevision: databaseRevision,
+  });
+  assert.equal(rowUpdate.updated, true);
+  assert.notEqual(rowUpdate.revision, databaseRevision);
+  databaseRevision = rowUpdate.revision;
+  assert.equal((await call("read_doc")).revision, databaseRevision, "database row edit returns the persisted revision");
+  const unchangedRow = await call("update_database_row", {
+    databaseBlockId: db.databaseBlockId,
+    rowBlockId: batch.rowBlockIds[0],
+    cells: {},
+    expectedRevision: databaseRevision,
+  });
+  assert.equal(unchangedRow.revision, databaseRevision, "empty database row edit leaves revision unchanged");
+  assert.equal((await call("read_doc")).revision, databaseRevision, "no-op row revision matches the persisted snapshot");
 
   // Real MCP schema parsing must retain expectedRevision before the registered
   // batch handler runs. A stale request must not query identity or write rows.
@@ -320,6 +418,18 @@ try {
     assert.equal(preset.columns[0].type, "title");
     assertCreators(preset.rowBlockIds, preset.databaseBlockId);
   }
+
+  const previousPageTitle = blocks.get("page").get("prop:title").toString();
+  const metadataPage = root.getMap("meta").get("pages").get(0);
+  rejectNextPagePush = true;
+  const titleFailure = await rawCall("update_doc_title", { title: "Title metadata updated" });
+  assert.equal(titleFailure.isError, true);
+  const partialTitle = payloadOf(titleFailure);
+  assert.equal(partialTitle.status, "partial");
+  assert.equal(partialTitle.metadataUpdated, true);
+  assert.equal(Object.hasOwn(partialTitle, "revision"), false, "partial title receipts must omit a revision");
+  assert.equal(metadataPage.get("title"), "Title metadata updated", "workspace title metadata was acknowledged");
+  assert.equal(blocks.get("page").get("prop:title").toString(), previousPageTitle, "uncertain page update was not applied in this fixture");
   console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
 } finally {
   await client.close();

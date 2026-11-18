@@ -5,6 +5,8 @@ import { z } from 'zod/v3';
 import * as Y from 'yjs';
 import { coordinateTool, staleDocumentRevision } from '../dist/toolCoordination.js';
 import { documentRevision, isDocumentRegistered } from '../dist/util/documentRevision.js';
+import { captureDocUpdate } from '../dist/util/docUpdate.js';
+import { loadDoc, pushPageDocUpdate } from '../dist/ws.js';
 import { toolOutputSchemaFor } from '../dist/toolOutputSchemas.js';
 
 const context = { endpoint: 'http://localhost:3010/graphql', workspaceId: 'default-workspace', gql: {} };
@@ -14,6 +16,41 @@ const deferred = () => {
   const promise = new Promise(r => { resolve = r; });
   return { promise, resolve };
 };
+
+function revisionSnapshots(docId = 'doc') {
+  const workspace = new Y.Doc();
+  const pages = new Y.Array();
+  workspace.getMap('meta').set('pages', pages);
+  pages.push([new Y.Map([['id', docId]])]);
+  const document = new Y.Doc();
+  document.getText('content').insert(0, 'initial');
+  return {
+    workspace,
+    document,
+    workspaceSnapshot: Buffer.from(Y.encodeStateAsUpdate(workspace)).toString('base64'),
+    documentSnapshot: Buffer.from(Y.encodeStateAsUpdate(document)).toString('base64'),
+    dispose() { workspace.destroy(); document.destroy(); },
+  };
+}
+
+function revisionSocket(snapshots) {
+  const pushes = [];
+  return {
+    pushes,
+    emit(event, payload, ack) {
+      if (event === 'space:load-doc') {
+        ack({ data: { missing: payload.docId === context.workspaceId ? snapshots.workspaceSnapshot : snapshots.documentSnapshot } });
+        return;
+      }
+      if (event === 'space:push-doc-update') {
+        pushes.push(payload);
+        ack({ data: { accepted: true, timestamp: 1 } });
+        return;
+      }
+      throw new Error(`Unexpected socket event ${event}`);
+    },
+  };
+}
 
 test('revision is stable across snapshot reloads and detects deletion-only changes', () => {
   const doc = new Y.Doc();
@@ -79,6 +116,67 @@ test('block mutations own their local revision check and share its stale error c
   assert.deepEqual(conflict.structuredContent.details, {
     workspaceId: 'workspace', docId: 'doc', expectedRevision: 'a'.repeat(64), currentRevision: 'b'.repeat(64),
   });
+});
+
+test('coordinated writes return the captured revision for no-op updates', async () => {
+  const snapshots = revisionSnapshots();
+  const socket = revisionSocket(snapshots);
+  const originalRevision = documentRevision(snapshots.document);
+  const empty = new Y.Doc();
+  const noOpUpdate = Buffer.from(Y.encodeStateAsUpdate(empty)).toString('base64');
+  empty.destroy();
+  try {
+    const tool = coordinateTool('append_block', shape, async ({ docId }) => {
+      await loadDoc(socket, context.workspaceId, docId);
+      await pushPageDocUpdate(socket, context.workspaceId, docId, noOpUpdate);
+      return { content: [], structuredContent: { ok: true, changed: false } };
+    }, context);
+    const result = await tool.handler({ docId: 'doc' });
+    assert.equal(socket.pushes.length, 1, 'a scoped no-op still requires an explicit ACK');
+    assert.equal(result.structuredContent.changed, false);
+    assert.equal(result.structuredContent.revision, originalRevision);
+  } finally { snapshots.dispose(); }
+});
+
+test('delete_doc returns null only after verified content absence', async () => {
+  const snapshots = revisionSnapshots();
+  const socket = revisionSocket(snapshots);
+  try {
+    for (const [status, contentAbsenceVerified, expectedRevision] of [
+      ['partial', false, undefined],
+      ['deleted', true, null],
+    ]) {
+      const tool = coordinateTool('delete_doc', shape, async ({ docId }) => {
+        await loadDoc(socket, context.workspaceId, docId);
+        return {
+          content: [],
+          structuredContent: { kind: 'doc.delete', ok: true, status, contentAbsenceVerified },
+        };
+      }, context);
+      const result = await tool.handler({ docId: 'doc' });
+      assert.equal(result.structuredContent.status, status);
+      assert.equal(Object.hasOwn(result.structuredContent, 'revision'), expectedRevision !== undefined);
+      if (expectedRevision !== undefined) assert.equal(result.structuredContent.revision, expectedRevision);
+    }
+  } finally { snapshots.dispose(); }
+});
+
+test('coordinated stale snapshots return the structured conflict without invoking the write', async () => {
+  const snapshots = revisionSnapshots();
+  const socket = revisionSocket(snapshots);
+  let pushed = false;
+  try {
+    const tool = coordinateTool('append_block', shape, async ({ docId }) => {
+      await loadDoc(socket, context.workspaceId, docId);
+      pushed = true;
+      return { content: [], structuredContent: { ok: true } };
+    }, context);
+    const result = await tool.handler({ docId: 'doc', expectedRevision: 'a'.repeat(64) });
+    assert.equal(pushed, false);
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.code, 'STALE_DOCUMENT_REVISION');
+    assert.equal(result.structuredContent.details.currentRevision, documentRevision(snapshots.document));
+  } finally { snapshots.dispose(); }
 });
 
 test('independent registrations share workspace coordination, including default ids and workspace deletion', async () => {

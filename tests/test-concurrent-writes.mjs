@@ -634,6 +634,14 @@ async function main() {
       "the final table cell is exactly the successful CAS value");
     assert.equal(tableCasConflicts[0].payload.details.currentRevision, tableCasReadBack.revision,
       "same-cell conflict reports the committed current revision");
+    const tableRevision = tableCasSuccesses[0].payload.revision;
+    assert.equal(tableRevision, tableCasReadBack.revision, "the table write returns the persisted revision");
+    const tableNoOp = await call(connections[1], "update_table_cell", {
+      workspaceId, docId, blockId: table.blockId, row: 0, column: 0,
+      text: tableWinningText, expectedRevision: tableRevision,
+    });
+    assert.equal(tableNoOp.updated, false);
+    assert.equal(tableNoOp.revision, tableRevision, "a table no-op preserves the reusable revision");
 
     const casBase = await call(connections[2], "read_doc", { workspaceId, docId });
     const casTexts = ["CAS winner candidate A", "CAS winner candidate B"];

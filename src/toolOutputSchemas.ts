@@ -25,6 +25,7 @@ type OutputSpec = {
   optional?: boolean;
   requiredFields?: string[];
   errorEnvelope?: boolean;
+  validate?: (value: Record<string, unknown>) => boolean;
 };
 
 /** Builds a top-level tool output specification. */
@@ -55,31 +56,31 @@ const documentCreationFailureFields: OutputSpec["fields"] = {
  * fields remain backward compatible until they are promoted into this map.
  */
 const OUTPUT_SPECS = {
-  add_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  create_mindmap: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
+  add_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
+  create_mindmap: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
   get_mindmap: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  reparent_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  set_mindmap_layout: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  set_mindmap_lock: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  set_mindmap_style: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  update_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray" })),
-  add_database_column: spec({ added: "boolean", columnId: "string", name: "string", type: "string" }),
-  add_database_row: spec({ added: "boolean", rowBlockId: "string", databaseBlockId: "string", cellCount: "number", linkedDocId: "nullableString" }),
-  add_database_rows: spec({ added: "number", rowBlockIds: "stringArray", databaseBlockId: "string" }),
-  add_database_view: spec({ added: "boolean", viewId: "string", name: "string", mode: "string", groupBy: "nullableString", totalViews: "number" }),
+  reparent_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
+  set_mindmap_layout: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
+  set_mindmap_lock: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
+  set_mindmap_style: fallible(spec({ ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
+  update_mindmap_node: fallible(spec({ nodeId: "string", ok: "boolean", workspaceId: "string", docId: "string", surfaceBlockId: "string", mindmapId: "string", rootId: "string", layout: "string", layoutType: "number", style: "number", locked: "boolean", lockedBySelf: "boolean", lockedByAncestor: "boolean", nodeCount: "number", nodes: "unknownArray", supportedLayouts: "stringArray", revision: "string" })),
+  add_database_column: spec({ added: "boolean", columnId: "string", name: "string", type: "string", revision: "string" }),
+  add_database_row: spec({ added: "boolean", rowBlockId: "string", databaseBlockId: "string", cellCount: "number", linkedDocId: "nullableString", revision: "string" }),
+  add_database_rows: spec({ added: "number", rowBlockIds: "stringArray", databaseBlockId: "string", revision: "string" }),
+  add_database_view: spec({ added: "boolean", viewId: "string", name: "string", mode: "string", groupBy: "nullableString", totalViews: "number", revision: "string" }),
   add_doc_to_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   add_organize_link: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string" }),
-  add_surface_element: spec({ added: "boolean", elementId: "string", type: "string", surfaceBlockId: "string", ignored: "stringArray" }),
-  update_surface_elements: spec({ updated: "number", updates: "unknownArray", surfaceBlockId: "string" }),
-  add_surface_elements: spec({ added: "number", elements: "unknownArray", surfaceBlockId: "string" }),
+  add_surface_element: spec({ added: "boolean", elementId: "string", type: "string", surfaceBlockId: "string", ignored: "stringArray", revision: "string" }),
+  update_surface_elements: spec({ updated: "number", updates: "unknownArray", surfaceBlockId: "string", revision: "string" }),
+  add_surface_elements: spec({ added: "number", elements: "unknownArray", surfaceBlockId: "string", revision: "string" }),
   add_tag_to_doc: spec({ workspaceId: "string", docId: "string", tag: "string", added: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   analyze_doc_fidelity: spec({ docId: "string", exists: "boolean", unsupportedBlocks: "unknownArray", conditionallyRiskyBlocks: "unknownArray" }),
-  append_block: receipt({ workspaceId: "nullableString", docId: "string", appended: "boolean", blockId: "string", flavour: "string", type: "nullableString", blockType: "nullableString", normalizedType: "string", legacyType: "nullableString" }),
-  append_markdown: receipt({ workspaceId: "string", docId: "string", appended: "boolean", appendedCount: "number", blockIds: "stringArray", warnings: "stringArray", lossy: "boolean", stats: "object" }),
-  append_semantic_section: spec({ workspaceId: "string", docId: "string", noteId: "string", sectionTitle: "string", sectionHeadingId: "string", afterSectionTitle: "nullableString", blockIds: "stringArray", appendedCount: "number" }),
+  append_block: receipt({ workspaceId: "nullableString", docId: "string", appended: "boolean", blockId: "string", flavour: "string", type: "nullableString", blockType: "nullableString", normalizedType: "string", legacyType: "nullableString", revision: "string" }),
+  append_markdown: receipt({ workspaceId: "string", docId: "string", appended: "boolean", appendedCount: "number", blockIds: "stringArray", warnings: "stringArray", lossy: "boolean", stats: "object", revision: "string" }),
+  append_semantic_section: spec({ workspaceId: "string", docId: "string", noteId: "string", sectionTitle: "string", sectionHeadingId: "string", afterSectionTitle: "nullableString", blockIds: "stringArray", appendedCount: "number", revision: "string" }),
   cleanup_blobs: fallible(receipt({ status: "string", success: "boolean", workspaceId: "string", blobsReleased: "boolean" }, true)),
   clear_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", cleared: "boolean" }),
-  compose_database_from_intent: spec({ workspaceId: "string", docId: "string", intent: "string", title: "string", databaseBlockId: "string", primaryViewId: "nullableString", viewIds: "stringArray", columnIds: "stringArray", rowBlockIds: "stringArray", columns: "unknownArray", views: "unknownArray", warnings: "stringArray", lossy: "boolean", stats: "object" }),
+  compose_database_from_intent: spec({ workspaceId: "string", docId: "string", intent: "string", title: "string", databaseBlockId: "string", primaryViewId: "nullableString", viewIds: "stringArray", columnIds: "stringArray", rowBlockIds: "stringArray", columns: "unknownArray", views: "unknownArray", warnings: "stringArray", lossy: "boolean", stats: "object", revision: "string" }),
   create_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   create_comment: receipt({ workspaceId: "string", docId: "string", commentId: "string", id: "string", comment: "object" }),
   create_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", type: "string", index: "string", created: "boolean" }),
@@ -92,15 +93,20 @@ const OUTPUT_SPECS = {
   create_workspace_blueprint: spec({ workspaceId: "string", rootFolderId: "string", rootFolderName: "string", childFolders: "unknownArray", childFolderCount: "number", storageDocId: "string" }),
   current_user: spec({ id: "string", name: "string", email: "string", emailVerified: "boolean", avatarUrl: "nullableString", disabled: "boolean" }),
   delete_blob: fallible(receipt({ status: "string", success: "boolean", key: "string", workspaceId: "string", permanently: "boolean", deleted: "boolean" }, true)),
-  delete_block: spec({ deleted: "boolean", blockId: "string", reason: "string", deletedIds: "stringArray", deletedBlock: "nullableObject", deletedBlocks: "unknownArray", prunedConnectors: "stringArray" }, true, ["deleted", "blockId"]),
+  delete_block: spec({ deleted: "boolean", blockId: "string", reason: "string", deletedIds: "stringArray", deletedBlock: "nullableObject", deletedBlocks: "unknownArray", prunedConnectors: "stringArray", revision: "string" }, true, ["deleted", "blockId", "revision"]),
   delete_collection: spec({ success: "boolean", collectionId: "string" }),
   delete_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
   delete_custom_property: spec({ workspaceId: "string", propertyId: "string", name: "string", deleted: "boolean" }),
-  delete_database_row: spec({ deleted: "boolean", rowBlockId: "string", databaseBlockId: "string" }),
-  delete_doc: fallible(receipt({ workspaceId: "string", docId: "string", deleted: "boolean" })),
+  delete_database_row: spec({ deleted: "boolean", rowBlockId: "string", databaseBlockId: "string", revision: "string" }),
+  delete_doc: {
+    ...fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", docId: "string", deleted: "boolean", revision: "nullableString" }, true, ["kind", "ok", "workspaceId", "docId", "deleted"])),
+    validate: value => value.ok === true
+      ? value.contentAbsenceVerified === true ? value.revision === null : !Object.hasOwn(value, "revision")
+      : !Object.hasOwn(value, "revision"),
+  },
   delete_folder: spec({ success: "boolean", deletedIds: "stringArray" }),
   delete_organize_link: spec({ success: "boolean", nodeId: "string" }),
-  delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", deletedNodes: "stringArray", prunedConnectors: "stringArray" }, true, ["deleted", "elementId"]),
+  delete_surface_element: spec({ deleted: "boolean", elementId: "string", reason: "string", deletedNodes: "stringArray", prunedConnectors: "stringArray", revision: "string" }, true, ["deleted", "elementId", "revision"]),
   delete_tag: spec({ workspaceId: "string", tag: "string", tagId: "string", value: "string", deleted: "boolean", affectedDocs: "number", docMetaSynced: "number", warnings: "stringArray" }),
   delete_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", deleted: "boolean", success: "boolean", message: "string", error: "string" }, true, ["kind", "ok"])),
   export_doc_markdown: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", markdown: "string", warnings: "stringArray", lossy: "boolean", stats: "object" }),
@@ -129,7 +135,7 @@ const OUTPUT_SPECS = {
   list_tags: spec({ workspaceId: "string", totalTags: "number", tags: "unknownArray" }),
   list_workspace_tree: spec({ workspaceId: "string", totalDocs: "number", rootCount: "number", tree: "unknownArray" }, true),
   list_workspaces: fallible(spec({ items: "workspaceArray", error: "string" }, true, ["items"])),
-  move_block: spec({ moved: "boolean", blockId: "string", fromParentId: "nullableString", toParentId: "string", fromIndex: "number", toIndex: "number", block: "object" }),
+  move_block: spec({ moved: "boolean", blockId: "string", fromParentId: "nullableString", toParentId: "string", fromIndex: "number", toIndex: "number", block: "object", revision: "string" }),
   move_doc: fallible(receipt({ workspaceId: "string", moved: "boolean", docId: "string", toParentDocId: "string", removedFromParent: "boolean" })),
   move_organize_node: spec({ id: "string", parentId: "nullableString", index: "string" }),
   publish_doc: receipt({ workspaceId: "string", docId: "string" }),
@@ -141,7 +147,7 @@ const OUTPUT_SPECS = {
   remove_doc_from_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   remove_tag_from_doc: spec({ workspaceId: "string", docId: "string", tag: "string", removed: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   rename_folder: spec({ id: "string", name: "string" }),
-  replace_doc_with_markdown: receipt({ workspaceId: "string", docId: "string", replaced: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object" }),
+  replace_doc_with_markdown: receipt({ workspaceId: "string", docId: "string", replaced: "boolean", warnings: "stringArray", lossy: "boolean", stats: "object", revision: "string" }),
   resolve_comment: fallible(receipt({ commentId: "string", id: "string", resolved: "boolean", success: "boolean" })),
   restore_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
   revoke_doc: receipt({ workspaceId: "string", docId: "string" }),
@@ -155,17 +161,17 @@ const OUTPUT_SPECS = {
   update_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   update_collection_rules: spec({ workspaceId: "string", collectionId: "string", rules: "object", allowList: "stringArray", matchedDocIds: "stringArray", matchedCount: "number" }),
   update_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
-  update_database_row: spec({ updated: "boolean", rowBlockId: "string", cellCount: "number" }),
+  update_database_row: spec({ updated: "boolean", rowBlockId: "string", cellCount: "number", revision: "string" }),
   update_doc_icon: receipt({ workspaceId: "string", docId: "string", icon: "icon", cleared: "boolean" }),
-  update_doc_title: receipt({ workspaceId: "string", updated: "boolean", docId: "string", title: "string" }),
-  update_edgeless_block: spec({ updated: "boolean", blockId: "string", flavour: "string", changed: "stringArray", ignored: "stringArray" }),
+  update_doc_title: receipt({ workspaceId: "string", updated: "boolean", docId: "string", title: "string", revision: "nullableString" }),
+  update_edgeless_block: spec({ updated: "boolean", blockId: "string", flavour: "string", changed: "stringArray", ignored: "stringArray", revision: "string" }),
   update_folder_icon: receipt({ workspaceId: "string", folderId: "string", icon: "icon", cleared: "boolean" }),
-  update_frame_children: spec({ updated: "boolean", blockId: "string", flavour: "string", ownedIds: "stringArray", missing: "stringArray", resized: "boolean", xywh: "object" }, true, ["updated", "blockId"]),
+  update_frame_children: spec({ updated: "boolean", blockId: "string", flavour: "string", ownedIds: "stringArray", missing: "stringArray", resized: "boolean", xywh: "object", revision: "string" }, true, ["updated", "blockId", "revision"]),
   update_profile: fallible(spec({ id: "string", name: "string", avatarUrl: "nullableString", error: "string" }, true, ["id"])),
   update_settings: fallible(spec({ success: "boolean", error: "string" }, true, ["success"])),
-  update_surface_element: spec({ updated: "boolean", elementId: "string", type: "nullableString", changed: "stringArray", ignored: "stringArray" }),
-  update_table_cell: spec({ updated: "boolean", blockId: "string", row: "number", column: "number", rowId: "string", columnId: "string", previous: "object", cell: "object" }),
-  update_table_column_widths: spec({ updated: "boolean", blockId: "string", rowCount: "number", columnCount: "number", columnIds: "stringArray", changedColumns: "unknownArray", previous: "object", table: "object" }),
+  update_surface_element: spec({ updated: "boolean", elementId: "string", type: "nullableString", changed: "stringArray", ignored: "stringArray", revision: "string" }),
+  update_table_cell: spec({ updated: "boolean", blockId: "string", row: "number", column: "number", rowId: "string", columnId: "string", previous: "object", cell: "object", revision: "string" }),
+  update_table_column_widths: spec({ updated: "boolean", blockId: "string", rowCount: "number", columnCount: "number", columnIds: "stringArray", changedColumns: "unknownArray", previous: "object", table: "object", revision: "string" }),
   update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true, ["kind", "ok"])),
   get_blob: fallible(spec({ workspaceId: "string", key: "string", contentType: "string", size: "number", sha256: "string", error: "string" }, true, ["key"])),
   upload_blob: fallible(spec({ id: "string", key: "string", workspaceId: "string", filename: "string", contentType: "string", source: "string", encoding: "string", size: "number", uploadedAt: "string", error: "string" }, true, ["id", "key"])),
@@ -262,7 +268,10 @@ function createToolOutputSchema(name: string) {
   const error = z.object({
     ...shape, ok: z.literal(false), error: z.string(), code: z.string(), retryable: z.boolean(),
   }).passthrough();
-  const alternatives = z.union([success, error]);
+  const alternatives = z.union([success, error]).refine(
+    outputSpec.validate ?? (() => true),
+    "Tool output fields do not match the operation outcome",
+  );
   // The SDK requires an object. Zod v4 keeps refinements on that object; metadata
   // advertises the same branches to clients. Root properties already type every field.
   const anyOf = [success, error].map(branch => {
