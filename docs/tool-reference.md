@@ -210,11 +210,11 @@ For `list_docs`, pagination follows the backend page even when deleted entries a
 Successful document-content mutations return a `revision` compatible with
 `expectedRevision`, including no-op mutations. This applies to block, table,
 database-row, mindmap, surface, and other document-content writes. Pass a
-string revision as `expectedRevision` on the next edit. If `update_doc_title`
-returns `null` after a metadata-only update, call `get_doc_revision` to obtain
-a string token once the page snapshot is available. `delete_doc` returns
-`revision: null` after verified content absence. Partial deletion receipts
-and errors omit it.
+string revision as `expectedRevision` on the next edit. When `update_doc_title`
+returns `revision: null`, verify the page title and call `get_doc_revision`
+once the page is readable. Successful `deleted` and `already_absent` results
+from `delete_doc` return `revision: null`. Partial results and errors omit it,
+including when content absence is verified but metadata removal fails.
 The token reflects the input snapshot plus acknowledged deltas, so an external
 edit can make it stale before it is reused. If a revision check fails, read the
 relevant content and reconcile before retrying. See

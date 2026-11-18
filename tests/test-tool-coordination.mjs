@@ -1,6 +1,7 @@
 import './require-destructive-test-safety.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate as flush } from 'node:timers/promises';
 import { z } from 'zod/v3';
 import * as Y from 'yjs';
 import { coordinateTool, staleDocumentRevision } from '../dist/toolCoordination.js';
@@ -197,10 +198,59 @@ test('tracked workspace registration reads retry transient failures before the t
   } finally { snapshots.dispose(); }
 });
 
+test('a stalled registration retry releases the workspace queue within one acknowledgement budget', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
+  const advance = ms => {
+    now += ms;
+    t.mock.timers.tick(ms);
+  };
+  const firstLookup = deferred();
+  const retryLookup = deferred();
+  let registrationLoads = 0;
+  const stalledSocket = {
+    emit(event, payload, ack) {
+      assert.equal(event, 'space:load-doc');
+      assert.equal(payload.docId, context.workspaceId);
+      registrationLoads += 1;
+      if (registrationLoads === 1) firstLookup.resolve(ack);
+      else retryLookup.resolve();
+    },
+  };
+  const snapshots = revisionSnapshots('other-doc');
+  t.after(() => snapshots.dispose());
+  const healthySocket = revisionSocket(snapshots);
+  const append = socket => coordinateTool('append_block', shape, async ({ docId }) => {
+    await loadDoc(socket, context.workspaceId, docId);
+    await pushPageDocUpdate(socket, context.workspaceId, docId, 'AAA=');
+    return { content: [], structuredContent: { ok: true } };
+  }, context);
+
+  const stalled = assert.rejects(append(stalledSocket).handler({ docId: 'doc' }), /space:load-doc timeout/);
+  const reply = await firstLookup.promise;
+  const queued = append(healthySocket).handler({ docId: 'other-doc' });
+  advance(1_000);
+  reply({ error: { code: 'ECONNRESET', message: 'Transient workspace snapshot failure' } });
+  await flush();
+  advance(500);
+  await retryLookup.promise;
+
+  advance(8_499);
+  await flush();
+  assert.equal(healthySocket.pushes.length, 0, 'the workspace write queue remains serialized');
+  advance(1);
+  await flush();
+  assert.equal(healthySocket.pushes.length, 1, 'the next write reaches AFFiNE at the original ACK deadline');
+  assert.equal((await queued).structuredContent.revision, documentRevision(snapshots.document));
+  await stalled;
+  assert.equal(registrationLoads, 2);
+});
+
 test('permanent registration read errors fail before the target read or mutation', async () => {
   const snapshots = revisionSnapshots();
   const socket = trackedRevisionSocket(snapshots, [
-    { name: 'Error', code: 'FORBIDDEN', message: 'Workspace access denied' },
+    { name: 'Error', code: 'FORBIDDEN', message: 'Too many concurrent writings' },
   ]);
   try {
     const tool = coordinateTool('append_block', shape, async ({ docId }) => {
@@ -208,7 +258,7 @@ test('permanent registration read errors fail before the target read or mutation
       await pushPageDocUpdate(socket, context.workspaceId, docId, 'AAA=');
       return { content: [], structuredContent: { ok: true } };
     }, context);
-    await assert.rejects(tool.handler({ docId: 'doc' }), /Workspace access denied/);
+    await assert.rejects(tool.handler({ docId: 'doc' }), { code: 'FORBIDDEN', message: 'Too many concurrent writings' });
     assert.equal(socket.rootLoads, 1);
     assert.equal(socket.targetLoads, 0);
     assert.equal(socket.pushes, 0);

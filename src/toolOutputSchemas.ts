@@ -273,9 +273,9 @@ function createToolOutputSchema(name: string) {
     const partialDeletion = success.extend({
       status: z.literal("partial"),
       contentAbsenceVerified: z.literal(false),
-      revision: z.never().optional(),
+      revision: z.never().exactOptional(),
     });
-    const deletionError = error.extend({ revision: z.never().optional() });
+    const deletionError = error.extend({ revision: z.never().exactOptional() });
     advertisedBranches = [verifiedDeletion, partialDeletion, deletionError];
     alternatives = z.union(advertisedBranches);
   } else {

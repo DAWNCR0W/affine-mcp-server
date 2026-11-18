@@ -46,6 +46,7 @@ const pushes = [];
 let timestamp = 1;
 let beforePagePush;
 let rejectNextPushFor;
+let rejectNextRootPushAfterApply = false;
 const pageUpdates = [];
 let identityQueries = 0;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -71,9 +72,11 @@ wss.on("connection", socket => {
       if (payload.docId === docId) pageUpdates.push(payload.update);
       if (payload.docId === rejectNextPushFor) {
         rejectNextPushFor = undefined;
-        ack = payload.docId === workspaceId
-          ? { error: { message: "fixture timestamp mirror rejection" } }
-          : { data: { accepted: false, timestamp: ++timestamp } };
+        ack = { data: { accepted: false, timestamp: ++timestamp } };
+      } else if (payload.docId === workspaceId && rejectNextRootPushAfterApply) {
+        rejectNextRootPushAfterApply = false;
+        Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
+        ack = { data: { accepted: false, timestamp: ++timestamp } };
       } else {
         Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
         ack = { data: { accepted: true, timestamp: ++timestamp } };
@@ -273,6 +276,8 @@ try {
   Y.applyUpdate(expectedTableResult, persistedBeforeTableEdit);
   assert.equal(pageUpdates.length, pageUpdateIndex + 1, "the table edit must send one primary-document delta");
   Y.applyUpdate(expectedTableResult, Buffer.from(pageUpdates[pageUpdateIndex], "base64"));
+  const updatedTable = expectedTableResult.getMap("blocks").get(tableBlock.blockId);
+  assert.equal(updatedTable.get(`prop:cells.${cell.rowId}:${cell.columnId}.text`).toString(), "Another cell edit");
   assert.equal(tableWithExternalEdit.revision, documentMutationRevision(expectedTableResult, true),
     "the receipt must equal the original snapshot plus only the acknowledged table delta");
   expectedTableResult.destroy();
@@ -479,6 +484,15 @@ try {
   assert.equal(metadataPage.get("title"), timestampTitle, "the already-correct workspace title remains intact");
   assert.equal(blocks.get("page").get("prop:title").toString(), timestampTitle, "the acknowledged page title repair was applied");
 
+  const timestampRecoveredTitle = "Repair after rejected timestamp acknowledgement";
+  metadataPage.set("title", timestampRecoveredTitle);
+  const expectedPageTimestamp = timestamp + 1;
+  rejectNextRootPushAfterApply = true;
+  const recoveredTimestampTitle = await call("update_doc_title", { title: timestampRecoveredTitle });
+  assert.equal(recoveredTimestampTitle.updated, true, "readback confirms a timestamp mirror applied without accepted acknowledgement");
+  assert.equal(metadataPage.get("updatedDate"), expectedPageTimestamp,
+    "the rejected timestamp ACK is recovered only after workspace metadata readback confirms the update");
+
   rejectNextPushFor = docId;
   const uncertainTitle = await rawCall("update_doc_title", { title: "Acknowledged sidebar only" });
   assert.equal(uncertainTitle.isError, true);
@@ -489,7 +503,7 @@ try {
   assert.equal(Object.hasOwn(uncertainReceipt, "revision"), false);
   assert.match(uncertainReceipt.recoveryGuidance, /Inspect the workspace title and document content/);
   assert.equal(metadataPage.get("title"), "Acknowledged sidebar only");
-  assert.equal(blocks.get("page").get("prop:title").toString(), timestampTitle);
+  assert.equal(blocks.get("page").get("prop:title").toString(), timestampRecoveredTitle);
   console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
 } finally {
   await client.close();
