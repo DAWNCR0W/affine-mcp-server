@@ -144,6 +144,28 @@ expectSchemaRejects(updateTableCellSchema, [
   { docId: "doc-1", blockId: "table-1", row: 0, column: 1.5, text: "x" },
 ]);
 
+const addTableRowsSchema = toolSchema("add_table_rows");
+assert.equal(addTableRowsSchema.safeParse({
+  docId: "doc-1",
+  blockId: "table-1",
+  rows: [["plain", [{ insert: "rich", attributes: { italic: true } }]], ["", []]],
+}).success, true);
+assert.equal(addTableRowsSchema.safeParse({
+  workspaceId: "workspace-1", docId: "doc-1", blockId: "table-1", rows: [["x"]], index: 1,
+}).success, true);
+expectSchemaRejects(addTableRowsSchema, [
+  { docId: "doc-1", blockId: "table-1" },
+  { docId: "doc-1", blockId: "table-1", rows: [] },
+  { docId: "doc-1", blockId: "table-1", rows: ["x"] },
+  { docId: "doc-1", blockId: "table-1", rows: [[42]] },
+  { docId: "doc-1", blockId: "table-1", rows: [[[{ insert: 42 }]]] },
+  { docId: "doc-1", blockId: "table-1", rows: [["x"]], index: 0 },
+  { docId: "doc-1", blockId: "table-1", rows: [["x"]], index: -1 },
+  { docId: "doc-1", blockId: "table-1", rows: [["x"]], index: 1.5 },
+  { docId: "", blockId: "table-1", rows: [["x"]] },
+  { docId: "doc-1", blockId: "", rows: [["x"]] },
+]);
+
 const updateTableColumnWidthsSchema = toolSchema("update_table_column_widths");
 assert.equal(updateTableColumnWidthsSchema.safeParse({
   docId: "doc-1",

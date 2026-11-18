@@ -369,6 +369,7 @@ async function main() {
     const revisionTools = [
       "append_block",
       "update_block",
+      "add_table_rows",
       "update_table_cell",
       "update_table_column_widths",
       "replace_doc_with_markdown",

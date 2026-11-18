@@ -8,6 +8,7 @@ export const ALL_TOOLS = [
   "add_organize_link",
   "add_surface_element",
   "add_surface_elements",
+  "add_table_rows",
   "add_tag_to_doc",
   "analyze_doc_fidelity",
   "append_block",
@@ -234,6 +235,7 @@ const TOOL_GROUPS: Record<ToolName, readonly string[]> = {
   update_profile: ["users", "users.write", "admin", "write"],
   update_settings: ["users", "users.write", "admin", "write"],
   update_surface_element: ["docs", "docs.edgeless", "docs.surface", "docs.write", "write"],
+  add_table_rows: ["docs", "docs.write", "write"],
   update_table_cell: ["docs", "docs.write", "write"],
   update_table_column_widths: ["docs", "docs.write", "write"],
   update_workspace: ["workspaces", "workspaces.write", "admin", "write"],
@@ -314,6 +316,7 @@ const CORE_TOOLS = new Set<ToolName>([
   "update_database_row",
   "update_doc_icon",
   "update_doc_title",
+  "add_table_rows",
   "update_table_cell",
   "update_table_column_widths",
 ]);
