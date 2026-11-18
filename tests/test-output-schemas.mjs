@@ -63,6 +63,18 @@ assert.equal(propertySchema.safeParse(propertyListing).success, true);
 assert.equal(propertySchema.safeParse({ ...propertyListing, legacy: { definitions: [], properties: [], orphanValues: [] } }).success, true);
 assert.equal(propertySchema.safeParse({ ...propertyListing, legacy: [] }).success, false);
 
+const readDocSchema = toolOutputSchemaFor("read_doc");
+const readDocOutput = { docId: "doc-1", exists: true, revision: "rev-1" };
+assert.equal(readDocSchema.safeParse(readDocOutput).success, true);
+assert.equal(readDocSchema.safeParse({ ...readDocOutput, missingBlockIds: ["block-1"] }).success, true);
+assert.equal(readDocSchema.safeParse({ ...readDocOutput, missingBlockIds: "block-1" }).success, false);
+assert.equal(toolOutputSchemaFor("get_doc_revision").safeParse({ docId: "doc-1", revision: null }).success, true);
+assert.equal(toolOutputSchemaFor("get_doc_revision").safeParse({ docId: "doc-1", revision: "rev-1" }).success, true);
+assert.equal(toolOutputSchemaFor("update_block").safeParse({ updated: true, blockId: "b1", changed: [], previous: {}, block: {}, revision: "rev-1" }).success, true);
+const updateBlocksSchema = toolOutputSchemaFor("update_blocks");
+assert.equal(updateBlocksSchema.safeParse({ updated: 1, revision: "rev-1", results: [{ blockId: "b1", updated: true, changed: ["text"], previous: {}, block: {} }] }).success, true);
+assert.equal(updateBlocksSchema.safeParse({ updated: 1, revision: "rev-1", results: [{ blockId: "b1", updated: true, changed: "text", previous: {}, block: {} }] }).success, false);
+
 const representativeError = {
   ok: false,
   error: "Operation failed",

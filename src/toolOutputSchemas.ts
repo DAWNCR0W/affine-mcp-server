@@ -11,6 +11,7 @@ type FieldKind =
   | "nullableBoolean"
   | "stringArray"
   | "unknownArray"
+  | "blockUpdateResultArray"
   | "workspaceArray"
   | "object"
   | "nullableObject"
@@ -135,7 +136,8 @@ const OUTPUT_SPECS = {
   read_all_notifications: fallible(spec({ kind: "string", success: "boolean", message: "string", error: "string" }, true, ["kind"])),
   read_database_cells: spec({ rows: "unknownArray" }),
   read_database_columns: spec({ databaseBlockId: "string", title: "nullableString", rowCount: "number", columnCount: "number", titleColumnId: "nullableString", columns: "unknownArray", views: "unknownArray" }),
-  read_doc: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", revision: "nullableString", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true, ["docId", "exists", "revision"]),
+  get_doc_revision: spec({ docId: "string", revision: "nullableString" }, false, ["docId", "revision"]),
+  read_doc: { ...spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", revision: "nullableString", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true, ["docId", "exists", "revision"]), optionalFields: { missingBlockIds: "stringArray" } },
   remove_doc_from_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   remove_tag_from_doc: spec({ workspaceId: "string", docId: "string", tag: "string", removed: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   rename_folder: spec({ id: "string", name: "string" }),
@@ -148,7 +150,8 @@ const OUTPUT_SPECS = {
   set_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", name: "string", type: "string", value: "unknown", stored: "unknown", updated: "boolean" }),
   sign_in: spec({ signedIn: "boolean" }),
   trash_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
-  update_block: spec({ updated: "boolean", blockId: "string", changed: "stringArray", previous: "object", block: "object" }),
+  update_block: spec({ updated: "boolean", blockId: "string", changed: "stringArray", previous: "object", block: "object", revision: "string" }),
+  update_blocks: spec({ updated: "number", results: "blockUpdateResultArray", revision: "string" }),
   update_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   update_collection_rules: spec({ workspaceId: "string", collectionId: "string", rules: "object", allowList: "stringArray", matchedDocIds: "stringArray", matchedCount: "number" }),
   update_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
@@ -184,6 +187,13 @@ function fieldSchema(kind: FieldKind): ZodType {
     case "nullableBoolean": return z.boolean().nullable();
     case "stringArray": return z.array(z.string());
     case "unknownArray": return z.array(z.unknown());
+    case "blockUpdateResultArray": return z.array(z.object({
+      blockId: z.string(),
+      updated: z.boolean(),
+      changed: z.array(z.string()),
+      previous: z.record(z.string(), z.unknown()),
+      block: z.record(z.string(), z.unknown()),
+    }).passthrough());
     case "workspaceArray": return z.array(z.object({
       id: z.string(),
       name: z.string().nullable(),

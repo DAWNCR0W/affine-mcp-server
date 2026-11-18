@@ -43,6 +43,7 @@ seedBlock("tail", "affine:paragraph", [], "Keep this tail");
 const docs = new Map([[workspaceId, root], [docId, page]]);
 const pushes = [];
 let timestamp = 1;
+let beforePagePush;
 let identityQueries = 0;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 wss.on("connection", socket => {
@@ -62,9 +63,10 @@ wss.on("connection", socket => {
       ack = { data: doc ? { missing: Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64") } : {} };
     } else if (event === "space:push-doc-update") {
       assert.ok(docs.has(payload.docId), "tests must only mutate their disposable fixtures");
+      if (payload.docId === docId) beforePagePush?.();
       pushes.push(payload.docId);
       Y.applyUpdate(docs.get(payload.docId), Buffer.from(payload.update, "base64"));
-      ack = { data: { timestamp: ++timestamp } };
+      ack = { data: { accepted: true, timestamp: ++timestamp } };
     } else throw new Error(`Unexpected event ${event}`);
     socket.send(`43${ackId}${JSON.stringify(ack === undefined ? [] : [ack])}`);
   });
@@ -122,6 +124,92 @@ function assertCreators(rowIds, databaseBlockId) {
 }
 const customColumns = [{ name: "Status", type: "select", options: ["Todo"] }, { name: "Count", type: "number" }];
 try {
+  const initial = await call("read_doc");
+  assert.deepEqual(await call("get_doc_revision", { workspaceId: undefined }), { docId, revision: initial.revision });
+  assert.deepEqual(await call("get_doc_revision", { docId: "missing-doc" }), { docId: "missing-doc", revision: null });
+  const selected = await call("read_doc", { blockIds: ["tail", "absent", "anchor"] });
+  assert.equal(selected.revision, initial.revision);
+  assert.equal(selected.blockCount, 2);
+  assert.equal(selected.title, null);
+  assert.equal(selected.plainText, "Before database\nKeep this tail");
+  assert.deepEqual(selected.blocks, initial.blocks.filter(block => ["anchor", "tail"].includes(block.id)));
+  assert.deepEqual(selected.missingBlockIds, ["absent"]);
+  const missing = await call("read_doc", { docId: "missing-doc", blockIds: ["tail"] });
+  assert.equal(missing.revision, null);
+  assert.deepEqual(missing.missingBlockIds, ["tail"]);
+  await rejectedWithoutWrite("read_doc", { blockIds: ["tail"], includeMarkdown: true }, /includeMarkdown cannot/);
+
+  const richText = [
+    { insert: "Keep", attributes: { bold: true } },
+    { insert: " ", attributes: { reference: { type: "LinkedPage", pageId: "linked-document" } } },
+  ];
+  await rejectedWithoutWrite("update_blocks", {
+    expectedRevision: initial.revision,
+    updates: [{ blockId: "tail", text: "Must roll back" }, { blockId: "anchor", checked: true }],
+  }, /todo list block/);
+  await rejectedWithoutWrite("update_blocks", {
+    updates: [{ blockId: "tail", text: "one" }, { blockId: "tail", text: "two" }],
+  }, /Duplicate block id/);
+
+  const beforeBlockBatch = pushes.filter(id => id === docId).length;
+  const batchEdit = await call("update_blocks", {
+    expectedRevision: initial.revision,
+    updates: [{ blockId: "tail", text: richText }, { blockId: "anchor", type: "heading", level: 2 }],
+  });
+  assert.equal(pushes.filter(id => id === docId).length - beforeBlockBatch, 1);
+  assert.equal(batchEdit.updated, 2);
+  assert.deepEqual(batchEdit.results.map(({ blockId, updated }) => [blockId, updated]), [["tail", true], ["anchor", true]]);
+  assert.equal(batchEdit.results[1].block.type, "h2");
+  assert.equal(batchEdit.results[1].block.text, "Before database");
+  assert.deepEqual(batchEdit.results[0].changed, ["text"]);
+  assert.equal(batchEdit.results[0].block.type, null, "a legacy block retains its omitted type property");
+  assert.deepEqual(batchEdit.results[0].block.deltas, richText);
+  assert.equal(batchEdit.results[0].previous.text, "Keep this tail");
+  const verified = await call("read_doc", { blockIds: ["tail"] });
+  assert.equal(verified.revision, batchEdit.revision);
+  assert.deepEqual(verified.blocks[0].linkedDocIds, ["linked-document"]);
+  assert.equal(verified.blocks[0].parentId, "note");
+  await rejectedWithoutWrite("update_blocks", {
+    expectedRevision: initial.revision,
+    updates: [{ blockId: "tail", text: "must not write against stale input" }],
+  }, /STALE_DOCUMENT_REVISION/);
+
+  const noOp = await call("update_block", { blockId: "tail", text: richText, expectedRevision: batchEdit.revision });
+  assert.equal(noOp.updated, false);
+  assert.equal(noOp.revision, batchEdit.revision);
+  assert.equal(pushes.filter(id => id === docId).length - beforeBlockBatch, 1, "no-op must not write");
+
+  const noOpBatch = await call("update_blocks", {
+    expectedRevision: noOp.revision,
+    updates: [{ blockId: "anchor", level: 2 }, { blockId: "tail", text: richText }],
+  });
+  assert.equal(noOpBatch.updated, 0);
+  assert.equal(noOpBatch.revision, noOp.revision);
+  assert.equal(pushes.filter(id => id === docId).length - beforeBlockBatch, 1, "no-op batch must not write");
+
+  const confirmed = await call("update_block", {
+    blockId: "anchor", text: "Confirmed edit", expectedRevision: noOpBatch.revision,
+  });
+  assert.equal(confirmed.updated, true);
+  assert.notEqual(confirmed.revision, noOpBatch.revision);
+  assert.equal((await call("get_doc_revision")).revision, confirmed.revision);
+
+  beforePagePush = () => {
+    beforePagePush = undefined;
+    blocks.get("tail").set("prop:text", new Y.Text("External edit"));
+  };
+  const single = await call("update_block", {
+    blockId: "anchor", text: "Chained from the confirmed edit", expectedRevision: confirmed.revision,
+  });
+  assert.equal(single.updated, true);
+  const afterExternalEdit = await call("read_doc");
+  assert.notEqual(single.revision, afterExternalEdit.revision, "the receipt must exclude an unseen external edit");
+  assert.equal(afterExternalEdit.blocks.find(block => block.id === "anchor").text, "Chained from the confirmed edit");
+  await rejectedWithoutWrite("update_block", {
+    expectedRevision: single.revision,
+    blockId: "tail",
+    text: "must not overwrite the unseen external edit",
+  }, /STALE_DOCUMENT_REVISION/);
   await rejectedWithoutWrite("compose_database_from_intent", {
     intent: "table", columns: [{ name: "Title", type: "rich-text" }], seedRows: [],
   }, /Column 'Title' already exists/);
@@ -232,7 +320,7 @@ try {
     assert.equal(preset.columns[0].type, "title");
     assertCreators(preset.rowBlockIds, preset.databaseBlockId);
   }
-  console.log("PASS: atomic database composition and row batches, metadata, rich cells and stale-revision rejection");
+  console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
 } finally {
   await client.close();
   await server.close();
