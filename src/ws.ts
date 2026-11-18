@@ -144,7 +144,7 @@ export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string
 
 type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
 
-async function loadDocRaw(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<LoadDocResult> {
+async function loadDocRaw(socket: WorkspaceSocket, workspaceId: string, docId: string, timeoutMs?: number): Promise<LoadDocResult> {
   return emitWithAck<LoadDocResult>(
     socket,
     'space:load-doc',
@@ -156,6 +156,7 @@ async function loadDocRaw(socket: WorkspaceSocket, workspaceId: string, docId: s
       }
       return ack?.data || {};
     },
+    timeoutMs,
   );
 }
 
@@ -177,14 +178,21 @@ export async function loadDoc(socket: WorkspaceSocket, workspaceId: string, docI
   // preparatory read to avoid recursively changing the mutation's target state.
   if (!mutation.hasRegistration) {
     let workspaceSnapshot: LoadDocResult;
+    // The write queue stays locked, so all registration attempts share one ACK budget.
+    const deadline = performance.now() + WS_ACK_TIMEOUT_MS;
+    let remaining = WS_ACK_TIMEOUT_MS;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        workspaceSnapshot = await loadDocRaw(socket, workspaceId, workspaceId);
+        workspaceSnapshot = await loadDocRaw(socket, workspaceId, workspaceId, remaining);
         break;
       } catch (error) {
         const retryDelay = WORKSPACE_METADATA_RETRY_DELAYS_MS[attempt];
-        if (retryDelay === undefined || !isTransientWorkspaceMetadataError(error)) throw error;
+        if (retryDelay === undefined || performance.now() + retryDelay >= deadline || !isTransientWorkspaceMetadataError(error)) {
+          throw error;
+        }
         await delay(retryDelay);
+        remaining = Math.ceil(deadline - performance.now());
+        if (remaining <= 0) throw error;
       }
     }
     mutation.observeRegistration(workspaceSnapshot.missing);
@@ -296,6 +304,7 @@ async function updateWorkspacePageUpdatedDate(
   workspaceId: string,
   docId: string,
   updatedDate: number,
+  requireAcknowledgement = false,
 ): Promise<void> {
   try {
     for (let attempt = 0; ; attempt += 1) {
@@ -318,7 +327,7 @@ async function updateWorkspacePageUpdatedDate(
           page.set("updatedDate", updatedDate);
           const update = Buffer.from(pendingUpdate.finish()).toString("base64");
           try {
-            await pushDocUpdateRaw(socket, workspaceId, workspaceId, update);
+            await pushDocUpdateRaw(socket, workspaceId, workspaceId, update, requireAcknowledgement);
             return;
           } catch (error) {
             try {
@@ -366,7 +375,7 @@ export async function pushPageDocUpdate(
   workspaceId: string,
   docId: string,
   updateBase64: string,
-  options: { requireAcknowledgement?: boolean } = {},
+  options: { requireAcknowledgement?: boolean; requireTimestampAcknowledgement?: boolean } = {},
 ): Promise<number> {
   const mutation = activeDocumentMutation(workspaceId);
   const trackedPageWrite = mutation !== undefined && mutation.docId === docId && docId !== workspaceId;
@@ -374,7 +383,7 @@ export async function pushPageDocUpdate(
   const timestamp = await pushDocUpdateRaw(socket, workspaceId, docId, updateBase64, requireAcknowledgement);
   if (trackedPageWrite) mutation.recordUpdate(updateBase64);
   if (docId !== workspaceId && updateHasChanges(updateBase64)) {
-    await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp);
+    await updateWorkspacePageUpdatedDate(socket, workspaceId, docId, timestamp, options.requireTimestampAcknowledgement);
   }
   return timestamp;
 }

@@ -187,7 +187,7 @@ These controls are environment-only and are not read from the saved config file.
 | --- | --- | --- | --- |
 | `AFFINE_WS_CLIENT_VERSION` | No | `AFFINE_CLIENT_VERSION` (else `0.26.0`) | Environment-only AFFiNE client version sent during workspace socket connection; falls back to `AFFINE_CLIENT_VERSION` when unset |
 | `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
-| `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement |
+| `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement. Automatic registration reads share this budget across all attempts and delays. |
 
 ## Auth strategy matrix
 
@@ -335,12 +335,13 @@ has `revision: null` and cannot satisfy a supplied revision.
 Successful document-content mutations return `revision`, including no-op
 mutations. The token is computed from the input Yjs snapshot plus the deltas
 that AFFiNE acknowledged. An external edit that merges after the snapshot was
-loaded can make the returned token stale immediately. `update_doc_title` can
-return `revision: null` when the page-content snapshot is unavailable and
-the metadata update succeeds. Reuse a string token as `expectedRevision` and
-call `get_doc_revision` once content is available if a metadata-only rename
-returned `null`. `delete_doc` returns `revision: null` after verified content
-absence. Partial deletion receipts and errors omit `revision`.
+loaded can make the returned token stale immediately. Reuse a string token as
+`expectedRevision`. `update_doc_title` can return `revision: null` when the
+page-content snapshot is unavailable. Verify the page title and call
+`get_doc_revision` once the page is readable. Successful `deleted` and
+`already_absent` results from `delete_doc` return `revision: null`. Partial
+results and errors omit `revision`, including when content absence is verified
+but metadata removal fails.
 
 When AFFiNE does not confirm a content save, the tool returns
 `write_ack_uncertain` with `retryable: false` and no revision. If content was

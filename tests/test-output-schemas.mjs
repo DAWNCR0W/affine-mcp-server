@@ -111,6 +111,7 @@ const partialDelete = { ...verifiedDelete, deleted: false, status: "partial", co
 delete partialDelete.revision;
 assert.equal(deleteDocSchema.safeParse(partialDelete).success, true);
 assert.equal(deleteDocSchema.safeParse({ ...partialDelete, revision: null }).success, false);
+assert.equal(deleteDocSchema.safeParse({ ...partialDelete, revision: undefined }).success, false);
 assert.equal(deleteDocSchema.safeParse({ ...partialDelete, contentAbsenceVerified: true }).success, false);
 const partialWithoutVerification = { ...partialDelete };
 delete partialWithoutVerification.contentAbsenceVerified;
@@ -118,6 +119,7 @@ assert.equal(deleteDocSchema.safeParse(partialWithoutVerification).success, fals
 assert.equal(deleteDocSchema.safeParse({ ...verifiedDelete, status: "failed" }).success, false);
 assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false }).success, true);
 assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false, revision: null }).success, false);
+assert.equal(deleteDocSchema.safeParse({ ok: false, error: "Delete failed", code: "doc_content_delete_failed", retryable: false, revision: undefined }).success, false);
 assert.equal(deleteDocSchema.safeParse({
   kind: "doc.delete", ok: false, status: "failed", workspaceId: "w1", docId: "d1", deleted: false,
   metadataExisted: true, metadataRemoved: false, contentExisted: true, contentDeleted: false,
@@ -341,6 +343,28 @@ const advertisedPartialBranch = advertisedDeleteDocSchema.anyOf.find(branch => b
 assert.ok(advertisedPartialBranch.required.includes("contentAbsenceVerified"));
 assert.deepEqual(advertisedPartialBranch.properties.revision, { not: {} });
 const validateAdvertisedDeleteDoc = new AjvJsonSchemaValidator().getValidator(advertisedDeleteDocSchema);
+const metadataRemovalError = {
+  kind: "doc.delete", ok: false, status: "failed", workspaceId: "w1", docId: "d1", deleted: false,
+  metadataExisted: true, metadataRemoved: false, contentDeleted: false, contentDeleteAcknowledged: false,
+  error: "Metadata removal failed", code: "doc_metadata_delete_failed", retryable: false,
+};
+for (const contentAbsenceVerified of [false, true]) {
+  const payload = { ...metadataRemovalError, contentAbsenceVerified };
+  assert.equal(deleteDocSchema.safeParse(payload).success, true);
+  assert.equal(validateAdvertisedDeleteDoc(payload).valid, true);
+  assert.equal(deleteDocSchema.safeParse({ ...payload, revision: null }).success, false);
+  assert.equal(validateAdvertisedDeleteDoc({ ...payload, revision: null }).valid, false);
+  assert.equal(deleteDocSchema.safeParse({ ...payload, revision: undefined }).success, false);
+}
+const failedContentDeletion = {
+  kind: "doc.delete", ok: false, status: "partial", workspaceId: "w1", docId: "d1", deleted: false,
+  metadataExisted: true, metadataRemoved: true, contentExisted: true, contentDeleted: false,
+  contentDeleteAcknowledged: false, contentAbsenceVerified: false,
+  error: "Content deletion failed", code: "doc_content_delete_failed", retryable: false,
+};
+assert.equal(deleteDocSchema.safeParse(failedContentDeletion).success, true);
+assert.equal(validateAdvertisedDeleteDoc(failedContentDeletion).valid, true);
+assert.equal(deleteDocSchema.safeParse({ ...failedContentDeletion, revision: undefined }).success, false);
 const deleteDocContractCases = [
   [verifiedDelete, true],
   [alreadyAbsentDelete, true],

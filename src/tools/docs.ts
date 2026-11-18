@@ -7896,7 +7896,9 @@ export function registerDocTools(
       }
       if (pageUpdate) {
         try {
-          await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(pageUpdate.finish()).toString("base64"));
+          await pushPageDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(pageUpdate.finish()).toString("base64"), {
+            requireTimestampAcknowledgement: true,
+          });
         } catch (error) {
           const timestampFailure = error instanceof ToolFailure && error.code === "workspace_page_updated_date_failed"
             ? error
