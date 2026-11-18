@@ -1,5 +1,26 @@
 # Release Notes
 
+## Version 3.14.0 (2026-11-18)
+
+### Highlights
+- Continue editing with a document revision from the previous write, or use a lightweight lookup that returns the revision without block content.
+- Read selected blocks and update up to 200 existing blocks in one call.
+
+### What Changed
+- Add `get_doc_revision` and return reusable revisions from successful content mutations, including no-ops and edits to tables, databases, Markdown, canvas elements, and mindmaps. Successful verified `delete_doc` results return `revision: null`. Partial and failed writes omit the token (#470, #472, #473).
+- Add optional `read_doc.blockIds` for up to 200 selected blocks. Results preserve native formatting and references and report missing block IDs (#471, #472).
+- Add `update_blocks` with a single optional `expectedRevision` for the batch. The tool validates every entry before saving, sends one content update, and returns results in request order (#471, #472).
+- Preserve the revision when the title already matches in the sidebar and page. Confirm the workspace timestamp when repairing a page title and bound automatic registration retries to one acknowledgement budget, 10 seconds by default (#474, #475).
+
+### Compatibility
+- The canonical MCP surface increases from 112 to 114 tools. Existing tool names and required inputs remain unchanged. Targeted `read_doc` results omit rendered Markdown.
+- Pass a string revision as `expectedRevision` to reject stale content edits through one shared MCP server. Edits in the AFFiNE client or through another server can make the token stale.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required. Release integration targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.14.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @CloudelMat for requesting document revisions, targeted reads, and batch editing in #470 and #471.
+
 ## Version 3.13.1 (2026-11-16)
 
 ### Highlights
