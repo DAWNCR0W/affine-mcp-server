@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-11-18
+
 ### Added
 - `get_doc_revision` returns a document revision without its block content. `update_block` returns a revision that subsequent edits can use as `expectedRevision` (#470).
 - Successful document-content mutations return their resulting revision, including no-ops. `delete_doc` returns `revision: null` only after verified absence; partial and error outcomes omit it (#470).
@@ -1086,4 +1088,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [3.12.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.12.0
 [3.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.0
 [3.13.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.1
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.13.1...HEAD
+[3.14.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.14.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.14.0...HEAD
