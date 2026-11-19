@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added revision-checked insertion and deletion of native table rows and columns, and raised table creation limits.
+
 ## [3.14.0] - 2026-11-18
 
 ### Added

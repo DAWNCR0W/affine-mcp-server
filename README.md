@@ -39,13 +39,14 @@ Highlights:
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server. Pass a returned document revision string as `expectedRevision` to reject stale edits. Resaving a title that already matches keeps its revision.
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 114 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Exposes canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Places, resizes, and connects images on edgeless canvases, with blob identifiers and geometry in readback
 - Appends canvas frames in creation-order presentation sequence while preserving their native background layering
 - Sets and clears native AFFiNE Journal dates with `set_doc_journal`
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
+- Inserts and deletes native table rows and columns in place, preserving cell formatting and widths
 - Includes Docker images, health probes, and end-to-end test coverage
 
 Scope boundaries:
