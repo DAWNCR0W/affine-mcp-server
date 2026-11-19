@@ -20,6 +20,7 @@ const DOCUMENT_CONTENT_MUTATIONS = new Set<ToolName>([
   "set_mindmap_lock", "set_mindmap_style", "update_block", "update_blocks", "update_database_row", "update_doc_title",
   "update_edgeless_block", "update_frame_children", "update_mindmap_node", "update_surface_element", "update_surface_elements",
   "update_table_cell", "update_table_column_widths",
+  "delete_table_column", "delete_table_row", "insert_table_column", "insert_table_row",
 ]);
 
 export async function currentDocumentRevision(gql: GraphQLClient, workspaceId: string, docId: string) {
