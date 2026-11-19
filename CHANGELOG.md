@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added revision-checked database column and option maintenance and in-place view column visibility and ordering.
+
 ## [3.14.0] - 2026-11-18
 
 ### Added

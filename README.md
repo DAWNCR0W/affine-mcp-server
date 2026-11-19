@@ -39,7 +39,8 @@ Highlights:
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server. Pass a returned document revision string as `expectedRevision` to reject stale edits. Resaving a title that already matches keeps its revision.
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 114 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Exposes canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Updates database columns, select options, and view column order or visibility in place
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Places, resizes, and connects images on edgeless canvases, with blob identifiers and geometry in readback
