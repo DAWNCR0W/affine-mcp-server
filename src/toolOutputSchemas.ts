@@ -1,6 +1,7 @@
 import { z, type ZodType } from "zod/v4";
 
 import { type ToolName } from "./toolSurface.js";
+import { WRITE_RESPONSE_TOOLS } from "./util/responseViews.js";
 
 type FieldKind =
   | "string"
@@ -245,6 +246,8 @@ function createToolOutputSchema(name: string) {
   for (const [field, kind] of Object.entries(outputSpec.optionalFields || {})) {
     successShape[field] = fieldSchema(kind).optional();
   }
+  if (name === "read_doc") successShape.totalBlockCount = z.number().int().nonnegative();
+  if (name === "export_doc_markdown") successShape.truncated = z.boolean().optional();
   const shape: Record<string, ZodType> = Object.fromEntries(
     Object.entries(successShape).map(([field, schema]) => [field, schema.optional()]),
   );
@@ -255,6 +258,7 @@ function createToolOutputSchema(name: string) {
   shape.retryable = z.boolean().optional();
   shape.recoveryGuidance = z.string().optional();
   shape.details = z.record(z.string(), z.unknown()).optional();
+  if (name === "update_database_row") shape.blockId = z.string().optional();
   const success = z.object({
     ...successShape,
     ok: successShape.ok && !successShape.ok.isOptional() ? z.literal(true) : z.literal(true).optional(),
@@ -278,6 +282,22 @@ function createToolOutputSchema(name: string) {
     const deletionError = error.extend({ revision: z.never().exactOptional() });
     advertisedBranches = [verifiedDeletion, partialDeletion, deletionError];
     alternatives = z.union(advertisedBranches);
+  } else if (WRITE_RESPONSE_TOOLS.includes(name as typeof WRITE_RESPONSE_TOOLS[number])) {
+    const idField = name === "delete_block" ? "deletedIds" : name === "append_markdown" ? "blockIds" : "blockId";
+    const minimal = z.object({
+      ok: z.literal(true),
+      [idField]: idField === "blockId" ? z.string() : z.array(z.string()),
+      revision: z.string(),
+    }).strict();
+    const afterShape: Record<string, ZodType> = { ...successShape, ok: success.shape.ok };
+    if (name === "update_block") delete afterShape.previous;
+    if (name === "move_block") {
+      delete afterShape.fromParentId;
+      delete afterShape.fromIndex;
+    }
+    const after = z.object(afterShape).passthrough();
+    advertisedBranches = [success, after, minimal, error];
+    alternatives = z.union(advertisedBranches);
   } else {
     advertisedBranches = [success, error];
     alternatives = z.union([success, error]);
@@ -286,8 +306,8 @@ function createToolOutputSchema(name: string) {
   // advertises the same branches to clients. Root properties already type every field.
   const anyOf = advertisedBranches.map(branch => {
     const json = z.toJSONSchema(branch);
-    return name === "delete_doc"
-      ? { required: json.required, properties: json.properties }
+    return name === "delete_doc" || WRITE_RESPONSE_TOOLS.includes(name as typeof WRITE_RESPONSE_TOOLS[number])
+      ? { required: json.required, properties: json.properties, additionalProperties: json.additionalProperties }
       : { required: json.required, properties: { ok: json.properties?.ok } };
   });
   return z.object(shape).passthrough()

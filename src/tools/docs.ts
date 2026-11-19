@@ -1,3 +1,8 @@
+import {
+  WRITE_RESPONSE_TOOLS, writeResponse, validateReadSelection, selectReadBlocks, readBlockView,
+  selectMarkdown, displayCell, hasReferences, matchesDatabaseFilter, compareValue,
+  type ReadOptions, type MarkdownReadOptions, type DatabaseWhere, type DatabaseSort,
+} from "../util/responseViews.js";
 import { captureDocUpdate, type DocUpdateCapture } from "../util/docUpdate.js";
 import { isDeepStrictEqual } from "node:util";
 
@@ -6209,11 +6214,16 @@ export function registerDocTools(
     getDocHandler as any
   );
 
+  const ReturnMode = z.enum(["full", "after", "minimal"]).optional().describe(
+    "Response detail (default full, unchanged). after omits previous/deleted snapshots and move origin; other fields stay unchanged. minimal returns only ok, blockId (row ID for update_database_row) or blockIds, and revision; delete_block uses deletedIds. Errors retain recovery details."
+  );
+  const withWriteResponse = (name: string, handler: (args: any) => Promise<any>) => async (args: any) =>
+    writeResponse(name, args.return, await handler(args));
+
   /** Read document blocks, plain text and optional markdown. */
-  const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean; blockIds?: string[] }) => {
-    if (parsed.blockIds !== undefined && parsed.includeMarkdown) {
-      throw new Error("includeMarkdown cannot be used with targeted blockIds.");
-    }
+  const readDocHandler = async (parsed: { workspaceId?: string; docId: string; includeMarkdown?: boolean; blockIds?: string[] } & ReadOptions) => {
+    validateReadSelection(parsed);
+    const includePlainText = parsed.includePlainText ?? (parsed.view === undefined || parsed.view === "full");
     const requestedBlockIds = parsed.blockIds === undefined ? undefined : new Set(parsed.blockIds);
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -6253,7 +6263,8 @@ export function registerDocTools(
           revision: null,
           blockCount: 0,
           blocks: [],
-          plainText: "",
+          ...(includePlainText ? { plainText: "" } : {}),
+          totalBlockCount: 0,
           ...(parsed.blockIds !== undefined ? { missingBlockIds: parsed.blockIds } : {}),
         });
       }
@@ -6284,6 +6295,7 @@ export function registerDocTools(
         childIds: string[];
       }> = [];
       let title = "";
+      let totalBlockCount = 0;
 
       const visit = (blockId: string) => {
         if (visited.has(blockId)) return;
@@ -6292,6 +6304,7 @@ export function registerDocTools(
         const raw = blocks.get(blockId);
         if (!(raw instanceof Y.Map)) return;
 
+        totalBlockCount++;
         const childIds = childIdsFrom(raw.get("sys:children"));
         if (requestedBlockIds === undefined || requestedBlockIds.delete(blockId)) {
           const flavour = raw.get("sys:flavour");
@@ -6365,15 +6378,17 @@ export function registerDocTools(
         markdown = rendered.markdown;
       }
 
+      const selectedBlocks = selectReadBlocks(blockRows, parsed);
       return text({
         docId: parsed.docId,
         title: title || null,
         tags,
         exists: true,
         revision,
-        blockCount: blockRows.length,
-        blocks: blockRows,
-        plainText: blockRows.map(block => block.text).filter(Boolean).join("\n"),
+        blockCount: selectedBlocks.length,
+        blocks: selectedBlocks.map(block => readBlockView(block, parsed.view)),
+        ...(includePlainText ? { plainText: selectedBlocks.map(block => block.text).filter(Boolean).join("\n") } : {}),
+        totalBlockCount,
         ...(requestedBlockIds !== undefined ? { missingBlockIds: [...requestedBlockIds] } : {}),
         ...(markdown !== undefined ? { markdown } : {}),
       });
@@ -6385,7 +6400,7 @@ export function registerDocTools(
     "read_doc",
     {
       title: "Read Document Content",
-      description: "Read document block content and its revision via WebSocket snapshot. Pass revision as expectedRevision on a document write to reject stale edits through a shared MCP server. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
+      description: "Read document blocks and revision. Optional compact/outline views and block selection reduce response size; all reads include totalBlockCount. Other default fields are unchanged. Pass revision as expectedRevision on a document write to reject stale edits through a shared MCP server. Each block includes plain text and formatting-preserving deltas. Set includeMarkdown: true to also get rendered markdown, which can be lossy for unsupported inline attributes.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -6393,6 +6408,12 @@ export function registerDocTools(
           .refine(ids => new Set(ids).size === ids.length, "blockIds must not contain duplicates.")
           .optional()
           .describe("Optional block IDs to return (1-200). Results keep document order; missing IDs are listed explicitly. Targeted responses include only selected blocks and selected plain text, without rendered Markdown."),
+        view: z.enum(["full", "compact", "outline"]).optional().describe("Default full. compact returns id/flavour/type/parentId/text/checked and complete deltas only when attributed; outline keeps headings and previews other text (80 Unicode characters), without deltas. Use a full read before editing rich text."),
+        includePlainText: z.boolean().optional().describe("Include aggregated selected plainText. Defaults to true for full and false for compact/outline."),
+        section: z.string().min(1).optional().describe("Heading block ID through the next heading of the same or higher level (exclusive). Mutually exclusive with other selectors."),
+        tail: z.number().int().min(1).max(10000).optional().describe("Last N top-level content blocks (children of notes or orphan roots), including descendants. Excludes page/note/surface wrappers."),
+        afterBlockId: z.string().min(1).optional().describe("Return content blocks after this ID in document traversal order. Unknown anchors are errors."),
+        limit: z.number().int().min(1).max(10000).optional().describe("Maximum content blocks, alone or with afterBlockId. Cannot combine with blockIds, section or tail."),
         includeMarkdown: z.boolean().optional().describe("If true, includes rendered markdown in the response. Equivalent to also calling export_doc_markdown."),
       },
     },
@@ -6437,6 +6458,8 @@ export function registerDocTools(
           staleWritePrecondition: "read_doc.revision -> expectedRevision",
         },
       },
+      responses: { minimal: true, modes: ["full", "after", "minimal"], tools: [...WRITE_RESPONSE_TOOLS] },
+      readDoc: { views: ["full", "compact", "outline"], selection: ["blockIds", "section", "tail", "afterBlockId", "limit"], includePlainText: true, totalBlockCount: true },
       docs: {
         canonicalBlockTypes: [...APPEND_BLOCK_CANONICAL_TYPE_VALUES],
         legacyBlockAliases: Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
@@ -6466,6 +6489,10 @@ export function registerDocTools(
         },
       },
       database: {
+        filter: true,
+        compactRead: true,
+        sort: true,
+        limit: true,
         supported: true,
         columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
         initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
@@ -6487,6 +6514,9 @@ export function registerDocTools(
         sharePolicyManagement: false,
       },
       export: {
+        tailSections: true,
+        fromHeading: true,
+        maxChars: true,
         markdown: true,
         html: false,
         fidelityReport: true,
@@ -7020,8 +7050,9 @@ export function registerDocTools(
     "append_block",
     {
       title: "Append Block",
-      description: "Append document blocks with canonical types and legacy aliases (supports placement + strict validation).",
+      description: "Append document blocks with canonical types and legacy aliases (supports placement + strict validation). Set return to after or minimal to reduce response detail; omitted return keeps the full response.",
       inputSchema: {
+        return: ReturnMode,
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         type: z.string().min(1).describe("Block type. Canonical: paragraph|heading|quote|list|code|divider|callout|latex|table|bookmark|image|attachment|embed_youtube|embed_github|embed_figma|embed_loom|embed_html|embed_linked_doc|embed_synced_doc|embed_iframe|database|data_view|surface_ref|frame|edgeless_text|note. Legacy aliases remain supported."),
@@ -7085,14 +7116,14 @@ export function registerDocTools(
           .describe("Optional insertion target/position"),
       },
     },
-    appendBlockHandler as any
+    withWriteResponse("append_block", appendBlockHandler) as any
   );
 
   const exportDocMarkdownHandler = async (parsed: {
     workspaceId?: string;
     docId: string;
     includeFrontmatter?: boolean;
-  }) => {
+  } & MarkdownReadOptions) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
       throw new Error("workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment.");
@@ -7125,7 +7156,7 @@ export function registerDocTools(
           title: null,
           tags: [],
           exists: false,
-          markdown: "",
+          ...selectMarkdown("", { maxChars: parsed.maxChars }),
           warnings: [`Document ${parsed.docId} was not found in workspace ${workspaceId}.`],
           lossy: false,
           stats: {
@@ -7144,7 +7175,7 @@ export function registerDocTools(
         blocksById: collected.blocksById,
       });
 
-      let markdown = rendered.markdown;
+      let markdown = selectMarkdown(rendered.markdown, { tailSections: parsed.tailSections, fromHeading: parsed.fromHeading }).markdown;
       if (parsed.includeFrontmatter) {
         const frontmatter = buildMarkdownFrontmatter({
           docId: parsed.docId,
@@ -7160,7 +7191,7 @@ export function registerDocTools(
         title: collected.title || null,
         tags: collected.tags,
         exists: true,
-        markdown,
+        ...selectMarkdown(markdown, { maxChars: parsed.maxChars }),
         warnings: rendered.warnings,
         lossy: rendered.lossy,
         stats: rendered.stats,
@@ -7173,11 +7204,14 @@ export function registerDocTools(
     "export_doc_markdown",
     {
       title: "Export Document Markdown",
-      description: "Export AFFiNE document content to markdown.",
+      description: "Export AFFiNE document content to markdown. Optionally select recent sections or start at a heading and bound output characters. Defaults are unchanged.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         includeFrontmatter: z.boolean().optional(),
+        tailSections: z.number().int().min(1).max(10000).optional().describe("Last N sections at the shallowest heading level present. Includes nested headings; fenced code is ignored. No headings returns the whole content. Cannot combine with fromHeading."),
+        fromHeading: z.string().min(1).optional().describe("Start at the first heading with this exact visible text. Unknown headings are errors. Cannot combine with tailSections."),
+        maxChars: z.number().int().min(1).max(10000000).optional().describe("Limit final Markdown to N Unicode characters including frontmatter and an explicit truncation marker (ellipsis for tiny budgets). Returns truncated true/false when supplied."),
       },
     },
     exportDocMarkdownHandler as any
@@ -7533,8 +7567,9 @@ export function registerDocTools(
     "append_markdown",
     {
       title: "Append Markdown",
-      description: "Append markdown content to an existing AFFiNE document. $$...$$ and $...$ become native equations.",
+      description: "Append markdown content to an existing AFFiNE document. $$...$$ and $...$ become native equations. Set return to after or minimal to reduce response detail; omitted return keeps the full response.",
       inputSchema: {
+        return: ReturnMode,
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         markdown: MarkdownContent.describe("Markdown content to append"),
@@ -7550,7 +7585,7 @@ export function registerDocTools(
           .describe("Optional insertion target/position"),
       },
     },
-    appendMarkdownHandler as any
+    withWriteResponse("append_markdown", appendMarkdownHandler) as any
   );
 
   const replaceDocWithMarkdownHandler = async (parsed: {
@@ -9052,6 +9087,10 @@ export function registerDocTools(
     databaseBlockId: string;
     rowBlockIds?: string[];
     columns?: string[];
+    compact?: boolean;
+    where?: DatabaseWhere[];
+    sort?: DatabaseSort[];
+    limit?: number;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
@@ -9071,8 +9110,24 @@ export function registerDocTools(
           })
         : ctx.columnDefs;
       const requestedColumnIds = new Set(requestedColumns.map(col => col.id));
+      const queryColumn = (key: string) => {
+        const col = findDatabaseColumn(key, ctx);
+        if (!col) throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
+        return col;
+      };
+      const filters = (parsed.where ?? []).map(filter => ({ filter, col: queryColumn(filter.column) }));
+      const sorting = (parsed.sort ?? []).map(sort => ({ ...sort, col: queryColumn(sort.column) }));
+      const neededColumnIds = new Set([...requestedColumnIds, ...filters.map(item => item.col.id), ...sorting.map(item => item.col.id)]);
+      // Validate date operands even for an empty database or a missing cell.
+      for (const { filter, col } of filters) {
+        if ((col.type === "date" || col.type === "created-time") && !["empty", "contains"].includes(filter.op)) {
+          for (const operand of filter.op === "in" ? filter.value as unknown[] : [filter.value]) {
+            compareValue("2000-01-01T00:00:00.000Z", operand, true);
+          }
+        }
+      }
 
-      const rows = requestedRows.map(rowBlockId => {
+      let rows = requestedRows.map(rowBlockId => {
         const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, rowBlockId);
         const titleValue = rowBlock.get("prop:text");
         const title = richTextValueToString(titleValue) || null;
@@ -9083,7 +9138,7 @@ export function registerDocTools(
           if (ctx.titleCol && col.id === ctx.titleCol.id) {
             continue;
           }
-          if (!requestedColumnIds.has(col.id)) {
+          if (!neededColumnIds.has(col.id)) {
             continue;
           }
           // Native computed columns read row metadata, even when stored cells are
@@ -9114,6 +9169,54 @@ export function registerDocTools(
         };
       });
 
+      const rowValue = (row: typeof rows[number], col: DatabaseColumnDef) => {
+        if (col.id === ctx.titleCol?.id) return row.title;
+        if (col.type === "created-time" || col.type === "created-by") {
+          return displayCell(row.cells[col.name || col.id]);
+        }
+        const rawCells = ctx.cellsMap.get(row.rowBlockId);
+        const entry = databaseRecordValue(rawCells, col.id);
+        const rawValue = databaseRecordValue(entry, "value");
+        return displayCell(row.cells[col.name || col.id], rawValue);
+      };
+      if (filters.length) rows = rows.filter(row => filters.every(({ filter, col }) =>
+        matchesDatabaseFilter(rowValue(row, col), filter, col.type === "date" || col.type === "created-time")));
+      if (sorting.length) rows.sort((left, right) => {
+        for (const { col, dir } of sorting) {
+          const a = rowValue(left, col), b = rowValue(right, col);
+          // Missing values sort last in both directions. Equal keys keep native row order.
+          if (a === b) continue;
+          if (a === null) return 1;
+          if (b === null) return -1;
+          const order = typeof a === "number" && typeof b === "number" ? a - b
+            : String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+          if (order) return dir === "desc" ? -order : order;
+        }
+        return 0;
+      });
+      if (parsed.limit !== undefined) rows = rows.slice(0, parsed.limit);
+      if (parsed.compact) {
+        return text({ rows: rows.map(row => {
+          const cells = Object.fromEntries(requestedColumns
+            .filter(col => col.id !== ctx.titleCol?.id && Object.hasOwn(row.cells, col.name || col.id))
+            .map(col => {
+              const cell = row.cells[col.name || col.id];
+              const value = rowValue(row, col);
+              return [col.name || col.id, hasReferences(cell.deltas) ? { value, deltas: cell.deltas } : value];
+            }));
+          return {
+            rowBlockId: row.rowBlockId, title: row.title,
+            ...(row.linkedDocId ? { linkedDocId: row.linkedDocId } : {}),
+            ...(hasReferences(row.titleDeltas) ? { titleDeltas: row.titleDeltas } : {}),
+            cells,
+          };
+        }) });
+      }
+      // Query-only columns never leak into the selected output.
+      if (filters.length || sorting.length) rows = rows.map(row => ({
+        ...row, cells: Object.fromEntries(Object.entries(row.cells).filter(([key]) =>
+          requestedColumns.some(col => (col.name || col.id) === key))),
+      }));
       return text({ rows });
     } finally {
       ctx.socket.disconnect();
@@ -9123,13 +9226,27 @@ export function registerDocTools(
     "read_database_cells",
     {
       title: "Read Database Cells",
-      description: "Read row titles and database cell values from an AFFiNE database block. Rich-text titles and cells include both plain values and formatting-preserving deltas.",
+      description: "Read database rows with optional compact display values, ANDed filters, sorting and a limit. Defaults are unchanged. Rich-text titles and cells include both plain values and formatting-preserving deltas.",
       inputSchema: {
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
         rowBlockIds: z.array(z.string().min(1)).optional().describe("Optional row block ID filter. Omit to return all rows."),
-        columns: z.array(z.string().min(1)).optional().describe("Optional column name or ID filter."),
+        columns: z.array(z.string().min(1)).optional().describe("Optional column name or ID filter. Filtering and sorting may use unselected columns."),
+        compact: z.boolean().optional().describe("Return rowBlockId, title, optional linkedDocId and cells keyed by column name with display values (select labels, UTC ISO dates, numbers, text). Only reference-bearing titles keep titleDeltas; reference cells use {value, deltas}."),
+        where: z.array(z.object({
+          column: z.string().min(1),
+          op: z.enum(["eq", "ne", "in", "lt", "lte", "gt", "gte", "contains", "empty"]),
+          value: z.union([z.string(), z.number().finite(), z.boolean(), z.null(), z.array(z.union([z.string(), z.number().finite(), z.boolean(), z.null()]))]).optional(),
+        }).strict().superRefine((filter, ctx) => {
+          if (filter.op === "empty") {
+            if (filter.value !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "empty does not accept value" });
+          } else if (filter.value === undefined || (filter.op === "in" ? !Array.isArray(filter.value) : Array.isArray(filter.value))) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "in requires an array value; other operators require a scalar value" });
+          }
+        })).max(100).optional().describe("ANDed display-value filters by column name or ID. Text is case-sensitive; in tests scalar membership (or any multi-select label); contains tests substring or multi-select label. empty takes no value. ISO YYYY-MM-DD date comparisons use UTC days; timestamps compare instants. Missing values match empty and eq null."),
+        sort: z.array(z.object({ column: z.string().min(1), dir: z.enum(["asc", "desc"]) }).strict()).max(100).optional().describe("Sort by display values in order; stable ties and missing values last in both directions."),
+        limit: z.number().int().min(1).max(10000).optional().describe("Maximum rows after filtering and sorting."),
       },
     },
     readDatabaseCellsHandler as any
@@ -9233,8 +9350,9 @@ export function registerDocTools(
     "update_database_row",
     {
       title: "Update Database Row",
-      description: "Batch update multiple cells on an existing AFFiNE database row. Include `title` in the cells map to update the Kanban row title.",
+      description: "Batch update multiple cells on an existing AFFiNE database row. Include `title` in the cells map to update the Kanban row title. Set return to after or minimal to reduce response detail; omitted return keeps the full response.",
       inputSchema: {
+        return: ReturnMode,
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID containing the database"),
         databaseBlockId: z.string().min(1).describe("Block ID of the affine:database block"),
@@ -9244,7 +9362,7 @@ export function registerDocTools(
         linkedDocId: z.string().optional().describe("Link this row to an existing doc by ID. The row will open the linked doc in center peek when clicked."),
       },
     },
-    updateDatabaseRowHandler as any
+    withWriteResponse("update_database_row", updateDatabaseRowHandler) as any
   );
 
   const composeDatabaseFromIntentCore = async (parsed: {
@@ -11958,14 +12076,15 @@ export function registerDocTools(
     {
       title: "Update Block",
       description:
-        "Partially update one paragraph, heading, quote, list, or code block while preserving its block id. Omitted fields remain unchanged. Paragraph/heading/quote conversions preserve ids; cross-flavour conversions are rejected. Returns the resulting document revision for the next expectedRevision check.",
+        "Partially update one paragraph, heading, quote, list, or code block while preserving its block id. Omitted fields remain unchanged. Paragraph/heading/quote conversions preserve ids; cross-flavour conversions are rejected. Returns the resulting document revision for the next expectedRevision check. Set return to after or minimal to reduce response detail; omitted return keeps the full response.",
       inputSchema: {
+        return: ReturnMode,
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         ...BlockEditSchema,
       },
     },
-    updateBlocksHandler as any
+    withWriteResponse("update_block", updateBlocksHandler) as any
   );
 
   server.registerTool(
@@ -12030,8 +12149,9 @@ export function registerDocTools(
     {
       title: "Move Block",
       description:
-        "Move an existing block without changing its id. Reuses append_block placement semantics and rejects document-root moves and cycles.",
+        "Move an existing block without changing its id. Reuses append_block placement semantics and rejects document-root moves and cycles. Set return to after or minimal to reduce response detail; omitted return keeps the full response.",
       inputSchema: {
+        return: ReturnMode,
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
         blockId: z.string().min(1).describe("Block id to move."),
@@ -12043,7 +12163,7 @@ export function registerDocTools(
         }).describe("Destination parent or position, using append_block placement semantics."),
       },
     },
-    moveBlockHandler as any
+    withWriteResponse("move_block", moveBlockHandler) as any
   );
 
   server.registerTool(
@@ -12051,8 +12171,9 @@ export function registerDocTools(
     {
       title: "Delete Block",
       description:
-        "Delete a block by id and return snapshots of the removed content. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs.",
+        "Delete a block by id and return snapshots of the removed content. Removes descendants and unlinks from the parent's sys:children by default; set deleteChildren=false to keep descendants orphaned (for re-parenting), or pruneConnectors=true to also drop surface connectors referencing any deleted id. Refuses affine:page — use delete_doc for whole docs. Set return to after or minimal to reduce response detail; omitted return keeps the full response.",
       inputSchema: {
+        return: ReturnMode,
         workspaceId: z.string().optional().describe("Workspace ID (optional if default set)"),
         docId: DocId.describe("Document ID"),
         blockId: z.string().min(1).describe("Block id to delete."),
@@ -12060,7 +12181,7 @@ export function registerDocTools(
         pruneConnectors: z.boolean().optional().describe("Also delete connectors bound to any deleted id (default false)."),
       },
     },
-    deleteBlockHandler as any
+    withWriteResponse("delete_block", deleteBlockHandler) as any
   );
 
   server.registerTool(
