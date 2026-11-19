@@ -141,8 +141,11 @@ export function selectMarkdown(markdown: string, options: MarkdownReadOptions) {
 export type DatabaseWhere = { column: string; op: "eq" | "ne" | "in" | "lt" | "lte" | "gt" | "gte" | "contains" | "empty"; value?: unknown };
 export type DatabaseSort = { column: string; dir: "asc" | "desc" };
 
-export function displayCell(cell: Record<string, unknown> | undefined): unknown {
+export function displayCell(cell: Record<string, unknown> | undefined, rawValue?: unknown): unknown {
   if (!cell) return null;
+  // The legacy decoder coerces null numeric/date cells to zero. Preserve its
+  // full response bytes, but use the actual empty value for opt-in queries.
+  if (rawValue === null || ((cell.type === "date" || cell.type === "number") && rawValue === "")) return null;
   if (cell.type === "date" || cell.type === "created-time") {
     const date = typeof cell.value === "number" ? new Date(cell.value) : null;
     return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;

@@ -186,6 +186,16 @@ try {
   assert.equal((await query('Due', 'empty')).length, 1);
   assert.equal((await query('Due', 'eq', null)).length, 1);
   assert.equal((await query('Due', 'in', [])).length, 0);
+  cells.get('row01').get('due').set('value', null);
+  cells.get('row01').get('estimate').set('value', null);
+  cells.get('row02').get('due').set('value', '');
+  assert.equal((await query('Due', 'empty')).length, 3);
+  const emptyDisplay = (await fixture.call('read_database_cells', { ...db, compact: true })).rows[1];
+  assert.equal(emptyDisplay.cells.Due, null);
+  assert.equal(emptyDisplay.cells.Estimate, null);
+  assert.equal((await query('Estimate', 'empty')).length, 1);
+  assert.equal((await fixture.call('read_database_cells', db)).rows[1].cells.Due.value, 0,
+    'legacy null-to-zero coercion is unchanged in full output');
   for (const bad of [
     { where: [{ column: 'missing', op: 'eq', value: 'open' }] },
     { where: [{ column: 'Due', op: 'lte', value: '2026-02-30' }] },

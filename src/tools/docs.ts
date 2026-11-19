@@ -9169,8 +9169,13 @@ export function registerDocTools(
         };
       });
 
-      const rowValue = (row: typeof rows[number], col: DatabaseColumnDef) =>
-        col.id === ctx.titleCol?.id ? row.title : displayCell(row.cells[col.name || col.id]);
+      const rowValue = (row: typeof rows[number], col: DatabaseColumnDef) => {
+        if (col.id === ctx.titleCol?.id) return row.title;
+        const rawCells = ctx.cellsMap.get(row.rowBlockId);
+        const entry = databaseRecordValue(rawCells, col.id);
+        const rawValue = databaseRecordValue(entry, "value");
+        return displayCell(row.cells[col.name || col.id], rawValue);
+      };
       if (filters.length) rows = rows.filter(row => filters.every(({ filter, col }) =>
         matchesDatabaseFilter(rowValue(row, col), filter, col.type === "date" || col.type === "created-time")));
       if (sorting.length) rows.sort((left, right) => {
@@ -9193,7 +9198,7 @@ export function registerDocTools(
             .filter(col => col.id !== ctx.titleCol?.id && Object.hasOwn(row.cells, col.name || col.id))
             .map(col => {
               const cell = row.cells[col.name || col.id];
-              const value = displayCell(cell);
+              const value = rowValue(row, col);
               return [col.name || col.id, hasReferences(cell.deltas) ? { value, deltas: cell.deltas } : value];
             }));
           return {
