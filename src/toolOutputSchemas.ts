@@ -11,6 +11,7 @@ type FieldKind =
   | "nullableBoolean"
   | "stringArray"
   | "unknownArray"
+  | "blockMatchArray"
   | "blockUpdateResultArray"
   | "workspaceArray"
   | "object"
@@ -150,12 +151,15 @@ const OUTPUT_SPECS = {
   set_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", name: "string", type: "string", value: "unknown", stored: "unknown", updated: "boolean" }),
   sign_in: spec({ signedIn: "boolean" }),
   trash_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
+  edit_block_text: spec({ updated: "boolean", blockId: "string", revision: "string" }),
+  find_blocks: spec({ blocks: "blockMatchArray", revision: "nullableString" }),
   update_block: spec({ updated: "boolean", blockId: "string", changed: "stringArray", previous: "object", block: "object", revision: "string" }),
   update_blocks: spec({ updated: "number", results: "blockUpdateResultArray", revision: "string" }),
   update_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   update_collection_rules: spec({ workspaceId: "string", collectionId: "string", rules: "object", allowList: "stringArray", matchedDocIds: "stringArray", matchedCount: "number" }),
   update_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
   update_database_row: spec({ updated: "boolean", rowBlockId: "string", cellCount: "number", revision: "string" }),
+  update_database_rows: spec({ updated: "number", rowBlockIds: "stringArray", revision: "string" }),
   update_doc_icon: receipt({ workspaceId: "string", docId: "string", icon: "icon", cleared: "boolean" }),
   update_doc_title: receipt({ workspaceId: "string", updated: "boolean", docId: "string", title: "string", revision: "nullableString" }),
   update_edgeless_block: spec({ updated: "boolean", blockId: "string", flavour: "string", changed: "stringArray", ignored: "stringArray", revision: "string" }),
@@ -187,6 +191,13 @@ function fieldSchema(kind: FieldKind): ZodType {
     case "nullableBoolean": return z.boolean().nullable();
     case "stringArray": return z.array(z.string());
     case "unknownArray": return z.array(z.unknown());
+    case "blockMatchArray": return z.array(z.object({
+      id: z.string(),
+      flavour: z.string().nullable(),
+      type: z.string().nullable(),
+      parentId: z.string().nullable(),
+      snippet: z.string().max(160),
+    }).strict());
     case "blockUpdateResultArray": return z.array(z.object({
       blockId: z.string(),
       updated: z.boolean(),
