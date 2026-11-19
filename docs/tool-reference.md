@@ -153,6 +153,8 @@ Minimal delete responses include only the deleted block IDs alongside `ok` and
 is an idempotent success with `deletedIds: []`. No-op updates still return a
 revision. Errors, partial writes and uncertain acknowledgements retain their
 existing recovery details rather than becoming a minimal success receipt.
+Frames with nonempty `missing` ownership IDs also retain their full receipt,
+including `missing` and `ownedIds`, so partial placement remains visible.
 
 `export_doc_markdown` accepts `tailSections` or `fromHeading` (mutually
 exclusive). `tailSections: N` returns the last N sections at the shallowest
@@ -170,6 +172,8 @@ formatting construct or frontmatter in the middle.
 `{rowBlockId, title, linkedDocId?, cells: {columnName: value}}`. Values are select
 labels, multi-select label arrays, UTC ISO date strings, numbers, booleans, or
 plain text. Absent cells remain omitted; missing values compare as null.
+Computed `created-time` and `created-by` values always come from row metadata,
+even if stale stored cell entries exist for those columns.
 Reference-bearing cells use `{value, deltas}` with complete runs, and
 reference-bearing titles additionally retain `titleDeltas`. Other formatting
 does not add deltas to compact database output.

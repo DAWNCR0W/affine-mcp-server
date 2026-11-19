@@ -1,6 +1,7 @@
 import './require-destructive-test-safety.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import * as Y from 'yjs';
 import { z as outputZ } from 'zod/v4';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import { selectMarkdown, TRUNCATION_MARKER, writeResponse } from '../dist/util/responseViews.js';
@@ -139,6 +140,16 @@ try {
   assert.equal(writeResponse('update_block', 'minimal', error), error);
   const partial = text({ ok: true, status: 'partial', warning: 'inspect saved content' });
   assert.equal(writeResponse('append_block', 'minimal', partial), partial);
+  fixture.reset();
+  const partialFrame = await fixture.call('append_block', {
+    type: 'frame', childElementIds: ['note', 'synthetic-missing-member'], return: 'minimal',
+  });
+  assert.deepEqual(partialFrame.missing, ['synthetic-missing-member']);
+  assert.deepEqual(partialFrame.ownedIds, ['note']);
+  assert.equal(partialFrame.normalizedType, 'frame');
+  fixture.reset();
+  const resolvedFrame = await fixture.call('append_block', { type: 'frame', childElementIds: ['note'], return: 'minimal' });
+  assert.deepEqual(Object.keys(resolvedFrame).sort(), ['blockId', 'ok', 'revision']);
   fixture.reset(); fixture.accepted = false;
   await assert.rejects(fixture.call('append_block', { type: 'paragraph', text: 'uncertain', return: 'minimal' }), { code: 'write_ack_uncertain' });
   console.log('PASS: all 6 write tools, all modes, runtime/advertised schemas, stale edits and uncertain acknowledgements');
@@ -196,6 +207,28 @@ try {
   assert.equal((await query('Estimate', 'empty')).length, 1);
   assert.equal((await fixture.call('read_database_cells', db)).rows[1].cells.Due.value, 0,
     'legacy null-to-zero coercion is unchanged in full output');
+  // Computed columns are authoritative row metadata, even if stale stored
+  // cell entries exist from a previous column type.
+  const dbBlocks = fixture.docs.get(databaseDocId).getMap('blocks');
+  dbBlocks.get(databaseBlockId).get('prop:columns').push([
+    { id: 'created-time', name: 'Created', type: 'created-time' },
+    { id: 'created-by', name: 'Creator', type: 'created-by' },
+  ]);
+  for (const [index, timestamp, creator] of [[0, Date.UTC(2026, 10, 19), 'synthetic-author'], [1, Date.UTC(2026, 10, 20), 'synthetic-other']]) {
+    const rowId = `row0${index}`;
+    dbBlocks.get(rowId).set('prop:meta:createdAt', timestamp);
+    dbBlocks.get(rowId).set('prop:meta:createdBy', creator);
+    cells.get(rowId).set('created-time', new Y.Map([['value', index === 0 ? null : 0]]));
+    cells.get(rowId).set('created-by', new Y.Map([['value', index === 0 ? null : 'stale-author']]));
+  }
+  const computed = await fixture.call('read_database_cells', { ...db, compact: true });
+  assert.equal(computed.rows[0].cells.Created, '2026-11-19T00:00:00.000Z');
+  assert.equal(computed.rows[0].cells.Creator, 'synthetic-author');
+  assert.equal(computed.rows[1].cells.Created, '2026-11-20T00:00:00.000Z');
+  assert.equal(computed.rows[1].cells.Creator, 'synthetic-other');
+  assert.equal((await query('Created', 'eq', '2026-11-19'))[0].rowBlockId, 'row00');
+  assert.equal((await query('Creator', 'eq', 'synthetic-author'))[0].rowBlockId, 'row00');
+  assert.deepEqual((await fixture.call('read_database_cells', { ...db, compact: true, sort: [{ column: 'Created', dir: 'desc' }], limit: 2 })).rows.map(row => row.rowBlockId), ['row01', 'row00']);
   for (const bad of [
     { where: [{ column: 'missing', op: 'eq', value: 'open' }] },
     { where: [{ column: 'Due', op: 'lte', value: '2026-02-30' }] },

@@ -9171,6 +9171,9 @@ export function registerDocTools(
 
       const rowValue = (row: typeof rows[number], col: DatabaseColumnDef) => {
         if (col.id === ctx.titleCol?.id) return row.title;
+        if (col.type === "created-time" || col.type === "created-by") {
+          return displayCell(row.cells[col.name || col.id]);
+        }
         const rawCells = ctx.cellsMap.get(row.rowBlockId);
         const entry = databaseRecordValue(rawCells, col.id);
         const rawValue = databaseRecordValue(entry, "value");

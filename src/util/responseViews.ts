@@ -12,6 +12,7 @@ export function writeResponse(name: string, mode: WriteResponseMode | undefined,
   if (mode === undefined || mode === "full" || result?.isError) return result;
   const payload = result?.structuredContent;
   if (!payload || payload.ok === false || payload.success === false ||
+    (Array.isArray(payload.missing) && payload.missing.length > 0) ||
     ["partial", "failed", "not_applied"].includes(payload.status)) return result;
   if (mode === "minimal") {
     const ids = name === "delete_block" ? { deletedIds: payload.deletedIds }

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Optional `return: "after" | "minimal"` on `update_block`, `delete_block`, `append_block`, `append_markdown`, `move_block` and `update_database_row` reduces write response size while retaining revision checks and error recovery details. Omitted `return` keeps the full response.
+- Optional `return: "after" | "minimal"` on `update_block`, `delete_block`, `append_block`, `append_markdown`, `move_block` and `update_database_row` reduces write response size while retaining revision checks, error recovery details, and partial frame-ownership receipts. Omitted `return` keeps the full response.
 - `read_doc` supports compact/outline views, optional plain text, heading sections, tail blocks, and cursor-style block pagination. Compact reads preserve complete delta arrays for attributed blocks.
 - `export_doc_markdown` supports recent heading sections, heading-text lookup, and a Unicode character budget with explicit truncation.
 - `read_database_cells` supports compact display values, ANDed display-value filters, stable sorting, and a row limit. Capabilities and tool schemas advertise these controls.
