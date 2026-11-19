@@ -97,7 +97,7 @@ try {
   const option = (id, value) => ({ id, value, color: "var(--affine-tag-blue)" });
   const columns = Y.Array.from([
     yMap({ id: "title", name: "Title", type: "title" }),
-    yMap({ id: "status", name: "Status", type: "select", data: yMap({
+    yMap({ id: "status", name: " Current Status ", type: "select", data: yMap({
       options: Y.Array.from([yMap(option("deferred", "Deferred")), option("active", "Active")]),
     }) }),
     { id: "tags", name: "Tags", type: "multi-select", data: {
@@ -156,6 +156,12 @@ try {
   };
   const oldRevision = await revision();
   await rejects("update_database_column", { databaseBlockId, columnId: "notes", name: "Title" }, /reserved for the row title/);
+  await rejects("update_database_column", { databaseBlockId, columnId: "notes", name: "status" }, /matches another column's ID/);
+  await rejects("update_database_column", { databaseBlockId, columnId: "notes", name: "current status" }, /already exists/);
+  for (const key of ["status", "CURRENT STATUS"]) {
+    const { rows } = await call("read_database_cells", { databaseBlockId, columns: [key] });
+    assert.deepEqual(Object.values(rows[0].cells).map(cell => cell.columnId), ["status"]);
+  }
   await mutate("update_database_column", { columnId: "status", name: "Stage",
     optionChanges: [{ action: "rename", optionId: "deferred", name: "On hold" }] });
   assert.deepEqual((await read()).columns[1].options[0], option("deferred", "On hold"));

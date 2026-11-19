@@ -112,14 +112,22 @@ function updateColumn(block: Y.Map<unknown>, args: {
   let updated: unknown = column;
   const replaceColumn = (next: JsonRecord) => { updated = next; };
   const name = args.name;
-  if (name?.toLowerCase() === "title" && field(column, "type") !== "title") {
-    throw new Error("The name 'Title' is reserved for the row title.");
+  if (name !== undefined) {
+    const nameKey = name.toLowerCase();
+    if (nameKey === "title" && field(column, "type") !== "title") {
+      throw new Error("The name 'Title' is reserved for the row title.");
+    }
+    const otherColumns = columns.toArray().filter((_, i) => i !== index);
+    // Cell tools try an exact display name before an ID, then a normalized name.
+    if (otherColumns.some(other => field(other, "id") === name)) {
+      throw new Error(`Column name '${name}' matches another column's ID.`);
+    }
+    if (otherColumns.some(other => String(field(other, "name") ?? "").trim().toLowerCase() === nameKey)) {
+      throw new Error(`Column '${name}' already exists.`);
+    }
+  } else if (!args.optionChanges) {
+    throw new Error("Provide name or optionChanges.");
   }
-  if (name !== undefined && columns.toArray().some((other, i) =>
-    i !== index && String(field(other, "name") ?? "").toLowerCase() === name.toLowerCase())) {
-    throw new Error(`Column '${name}' already exists.`);
-  }
-  if (name === undefined && !args.optionChanges) throw new Error("Provide name or optionChanges.");
 
   if (args.optionChanges) {
     const type = field(column, "type");
