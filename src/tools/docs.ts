@@ -4789,6 +4789,16 @@ export function registerDocTools(
     return entry;
   }
 
+  function appendWorkspacePageEntry(workspaceDoc: Y.Doc, docId: string, title: string): void {
+    const wsMeta = workspaceDoc.getMap("meta");
+    let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
+    if (!pages) {
+      pages = new Y.Array();
+      wsMeta.set("pages", pages);
+    }
+    pages.push([makeWorkspacePageEntry(docId, title)]);
+  }
+
   function defaultSemanticSections(pageType: SemanticPageType): SemanticSectionInput[] {
     switch (pageType) {
       case "meeting_notes":
@@ -5035,12 +5045,7 @@ export function registerDocTools(
     }
 
     const pendingUpdate = captureDocUpdate(workspaceDoc);
-    let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
-    if (!pages) {
-      pages = new Y.Array();
-      wsMeta.set("pages", pages);
-    }
-    pages.push([makeWorkspacePageEntry(docId, title)]);
+    appendWorkspacePageEntry(workspaceDoc, docId, title);
     const wsDelta = pendingUpdate.finish();
     return Buffer.from(wsDelta).toString("base64");
   }
@@ -7866,17 +7871,16 @@ export function registerDocTools(
       await joinWorkspace(socket, workspaceId);
       const wsDoc = await loadWorkspaceMetadataDoc(socket, workspaceId);
       const page = workspacePageById(wsDoc, parsed.docId);
-      if (!page) {
-        throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
-      }
       const pageSnapshot = await loadDoc(socket, workspaceId, parsed.docId);
       let pageUpdate: DocUpdateCapture | undefined;
+      let hasPageBlock = false;
       if (pageSnapshot.missing) {
         Y.applyUpdate(pageDoc, Buffer.from(pageSnapshot.missing, "base64"));
         const blocks = pageDoc.getMap("blocks") as Y.Map<any>;
         for (const [, raw] of blocks) {
           if (!(raw instanceof Y.Map)) continue;
           if (raw.get("sys:flavour") === "affine:page") {
+            hasPageBlock = true;
             const currentTitle = asText(raw.get("prop:title"));
             if (currentTitle !== newTitle) {
               pageUpdate = captureDocUpdate(pageDoc);
@@ -7886,11 +7890,16 @@ export function registerDocTools(
           }
         }
       }
+      // A saved page whose creation never registered metadata is repaired only by this explicit rename.
+      if (!page && !hasPageBlock) {
+        throw new Error(`Document ${parsed.docId} is not present in workspace ${workspaceId}.`);
+      }
 
-      const metadataTitleUpdated = page.get("title") !== newTitle;
+      const metadataTitleUpdated = page?.get("title") !== newTitle;
       if (metadataTitleUpdated) {
         const pendingUpdate = captureDocUpdate(wsDoc);
-        page.set("title", newTitle);
+        if (page) page.set("title", newTitle);
+        else appendWorkspacePageEntry(wsDoc, parsed.docId, newTitle);
         const delta = pendingUpdate.finish();
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
       }

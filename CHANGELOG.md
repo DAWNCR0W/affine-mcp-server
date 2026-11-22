@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `update_doc_title` now registers a saved page that is missing from workspace page metadata (for example after `create_doc_from_markdown` timed out before metadata was written), so the page appears in the sidebar and later writes stop failing with `workspace_page_updated_date_failed`. Other writes still never register such pages silently.
+
 ## [3.14.0] - 2026-11-18
 
 ### Added

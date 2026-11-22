@@ -504,6 +504,18 @@ try {
   assert.match(uncertainReceipt.recoveryGuidance, /Inspect the workspace title and document content/);
   assert.equal(metadataPage.get("title"), "Acknowledged sidebar only");
   assert.equal(blocks.get("page").get("prop:title").toString(), timestampRecoveredTitle);
+
+  const pagesMeta = root.getMap("meta").get("pages");
+  pagesMeta.delete(0, 1); // Simulate a creation that saved content but never registered metadata.
+  const orphanTitle = "Registered by rename";
+  const registered = await call("update_doc_title", { title: orphanTitle });
+  assert.equal(registered.updated, true, "an explicit rename registers a saved page missing from metadata");
+  const registeredPages = pagesMeta.toArray().filter(page => page.get("id") === docId);
+  assert.equal(registeredPages.length, 1);
+  assert.equal(registeredPages[0].get("title"), orphanTitle);
+  assert.equal(blocks.get("page").get("prop:title").toString(), orphanTitle);
+  await call("update_doc_title", { title: orphanTitle });
+  assert.equal(pagesMeta.toArray().filter(page => page.get("id") === docId).length, 1, "repeating the rename does not duplicate the entry");
   console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
 } finally {
   await client.close();
