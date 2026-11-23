@@ -74,6 +74,7 @@ const FOCUSED_TOOL_COVERAGE = new Map([
   ['update_doc_title', 'test-create-placement.mjs'],
   ['update_folder_icon', 'test-icons.mjs'],
   ['update_surface_elements', 'test-surface-batch.mjs'],
+  ['add_table_rows', 'test-block-editing.mjs'],
   ['update_table_cell', 'test-block-editing.mjs'],
 ]);
 

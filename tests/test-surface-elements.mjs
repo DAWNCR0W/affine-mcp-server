@@ -408,9 +408,10 @@ async function main() {
 
     // 11. Markdown round-trip into a note — BlockSuite-native block-first model:
     // A strict child failure must not leave the new note committed on its own.
+    const oversizedColumnCount = 101; // One past the native table creation limit.
     const wideTable = [
-      `| ${Array.from({ length: 21 }, (_, i) => `column ${i}`).join(' | ')} |`,
-      `| ${Array.from({ length: 21 }, () => '---').join(' | ')} |`,
+      `| ${Array.from({ length: oversizedColumnCount }, (_, i) => `column ${i}`).join(' | ')} |`,
+      `| ${Array.from({ length: oversizedColumnCount }, () => '---').join(' | ')} |`,
     ].join('\n');
     const rejectedNote = await client.callTool({ name: "append_block", arguments: {
       workspaceId: workspace.id, docId, type: "note", x: 1800, y: 50,

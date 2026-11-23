@@ -297,13 +297,28 @@ imported as an inline equation in that block.
 | `edit_block_text` | Replace unique text spans in a paragraph, heading, quote, list, or code block | Applies 1–200 ordered edits and returns `{ updated: true, blockId, revision }`. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, code block `language` and `preview` state, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
 | `update_blocks` | Edit up to 200 existing blocks in one document | Pass `updates` with the fields accepted by `update_block` and a distinct `blockId` in each entry. A single optional `expectedRevision` covers the batch. An invalid entry prevents every edit from being saved. Returns the number of changed blocks, `results` in input order, and `revision`. |
+| `add_table_rows` | Add rows to an existing native AFFiNE table | Supply a nonempty `rows` array of rich-text cells matching the column count, or omit `rows` to add one empty row. Omit `index` to append, or insert at a zero-based position from 1 through the current row count. Preserves the header, existing cells, and column widths. Returns the resulting document `revision`. |
 | `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. Returns the resulting document `revision`. |
 | `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. Returns the resulting document `revision`. |
+| `delete_table_row` | Delete a row in place | Uses a zero-based `index`. The remaining header can stand alone. |
+| `insert_table_column` | Insert or append a column in place | Use a zero-based `index` or omit it to append. Accepts optional rich-text `header` and pixel `width` (60–4096). |
+| `delete_table_column` | Delete a column in place | Uses a zero-based `index`. Preserves other widths and cell formatting. |
 | `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. `affine:image` blocks are moved as images, so an image can be moved onto the surface. A page image keeps its stored `prop:width`/`prop:height` (the editor may have resized it after `prop:xywh` was written), a dimensionless image receives the 100x100 default there, and moving a surface image into the page flow (note, paragraph, or list) copies its canvas size into the stored dimensions. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+
+For native tables, `append_block` accepts up to 1,000 rows, 100 columns,
+and 5,000 cells per creation request. The cell count bounds the generated
+Yjs update. Grow the existing block through `add_table_rows` and
+`insert_table_column`. The row and column deletion tools and
+`insert_table_column` return `ok`, `blockId`, `revision`, `index`, and the
+affected row or column ID. `add_table_rows` returns the inserted `rowIds`
+and the resulting dimensions. All four accept `expectedRevision` and
+preserve other cell deltas and widths. The final remaining row and column
+are protected.
+Feature and creation limit discovery is available through `docs.tableMutation`.
 
 Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. Transient metadata failures, including `Too many concurrent writings` and transport timeouts, receive up to three retries after 500, 1000, and 2000 ms. Each retry reloads the workspace root and skips the write if its timestamp is already current; saved page content is never replayed. If the timestamp still cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 

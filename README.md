@@ -48,6 +48,7 @@ Highlights:
 - Appends canvas frames in creation-order presentation sequence while preserving their native background layering
 - Sets and clears native AFFiNE Journal dates with `set_doc_journal`
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
+- Inserts and deletes native table rows and columns in place, preserving cell formatting and widths
 - Includes Docker images, health probes, and end-to-end test coverage
 
 Scope boundaries:

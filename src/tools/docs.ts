@@ -63,6 +63,7 @@ import {
   richTextValueToString,
 } from "../markdown/richText.js";
 import { buildMarkdownFrontmatter } from "../markdown/safety.js";
+import { registerTableMutationTools, MAX_TABLE_ROWS, MAX_TABLE_COLUMNS, MAX_TABLE_CELLS } from "./tableMutation.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
 import { ALL_TOOLS } from "../toolSurface.js";
@@ -2268,11 +2269,14 @@ export function registerDocTools(
     }
 
     if (normalized.type === "table") {
-      if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > 20) {
-        throw new Error("table rows must be an integer between 1 and 20.");
+      if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > MAX_TABLE_ROWS) {
+        throw new Error(`table rows must be an integer between 1 and ${MAX_TABLE_ROWS}.`);
       }
-      if (!Number.isInteger(normalized.columns) || normalized.columns < 1 || normalized.columns > 20) {
-        throw new Error("table columns must be an integer between 1 and 20.");
+      if (!Number.isInteger(normalized.columns) || normalized.columns < 1 || normalized.columns > MAX_TABLE_COLUMNS) {
+        throw new Error(`table columns must be an integer between 1 and ${MAX_TABLE_COLUMNS}.`);
+      }
+      if (normalized.rows * normalized.columns > MAX_TABLE_CELLS) {
+        throw new Error(`Table creation supports at most ${MAX_TABLE_CELLS} cells.`);
       }
       if (normalized.tableData) {
         if (!Array.isArray(normalized.tableData) || normalized.tableData.length !== normalized.rows) {
@@ -6602,6 +6606,7 @@ export function registerDocTools(
       responses: { minimal: true, modes: ["full", "after", "minimal"], tools: [...WRITE_RESPONSE_TOOLS] },
       readDoc: { views: ["full", "compact", "outline"], selection: ["blockIds", "section", "tail", "afterBlockId", "limit"], includePlainText: true, totalBlockCount: true },
       docs: {
+        tableMutation: { rows: true, columns: true, maxRowsOnCreate: MAX_TABLE_ROWS },
         canonicalBlockTypes: [...APPEND_BLOCK_CANONICAL_TYPE_VALUES],
         legacyBlockAliases: Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
         markdownImport: {
@@ -7234,8 +7239,8 @@ export function registerDocTools(
         mimeType: z.string().optional().describe("Attachment mime type"),
         size: z.number().optional().describe("Attachment/image file size in bytes"),
         embed: z.boolean().optional().describe("Attachment embed mode"),
-        rows: z.number().int().min(1).max(20).optional().describe("Table row count"),
-        columns: z.number().int().min(1).max(20).optional().describe("Table column count"),
+        rows: z.number().int().min(1).max(MAX_TABLE_ROWS).optional().describe(`Table row count (1-${MAX_TABLE_ROWS}); table creation is limited to ${MAX_TABLE_CELLS} cells.`),
+        columns: z.number().int().min(1).max(MAX_TABLE_COLUMNS).optional().describe(`Table column count (1-${MAX_TABLE_COLUMNS}); table creation is limited to ${MAX_TABLE_CELLS} cells.`),
         tableData: z.array(z.array(z.string())).optional().describe("Plain-text cell contents for type='table', as rows of columns. Row count must equal `rows` and every row length must equal `columns`. Omit to create an empty table."),
         tableCellDeltas: z.array(z.array(z.array(TextDeltaInput))).optional().describe('Rich-text deltas per cell for type="table", parallel to `tableData` as [row][column][delta]. A cell with deltas here overrides plain text at the same position. LinkedPage references require insert: " " and a pageId in reference attributes.'),
         latex: z.string().optional().describe("Latex expression"),
@@ -11425,6 +11430,40 @@ export function registerDocTools(
       socket.disconnect();
     }
   };
+
+  // Native table structure tools.
+  registerTableMutationTools(server, {
+    docId: DocId,
+    delta: TextDeltaInput,
+    width: z.number().finite().min(TABLE_COLUMN_MIN_WIDTH).max(TABLE_COLUMN_MAX_WIDTH),
+    generateId,
+    makeCellText: makeTableCellText,
+    async mutate(params, edit) {
+      const workspaceId = params.workspaceId || defaults.workspaceId;
+      if (!workspaceId) throw new Error("workspaceId is required.");
+      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+      const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+      const doc = new Y.Doc();
+      try {
+        await joinWorkspace(socket, workspaceId);
+        const snapshot = await loadDoc(socket, workspaceId, params.docId);
+        if (!snapshot.missing) throw new Error(`Document '${params.docId}' not found.`);
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+        const block = findBlockById(doc.getMap("blocks"), params.blockId);
+        if (!block || block.get("sys:flavour") !== "affine:table") {
+          throw new Error(`Block '${params.blockId}' must be an existing affine:table block.`);
+        }
+        const pending = captureDocUpdate(doc);
+        const result = doc.transact(() => edit(block));
+        await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(pending.finish()).toString("base64"));
+        const payload = { blockId: params.blockId, ...result };
+        return { ...text(payload), structuredContent: payload };
+      } finally {
+        doc.destroy();
+        socket.disconnect();
+      }
+    },
+  });
 
   const editBlockTextHandler = async (params: {
     workspaceId?: string;
