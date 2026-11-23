@@ -65,7 +65,7 @@ assert.equal(propertySchema.safeParse({ ...propertyListing, legacy: { definition
 assert.equal(propertySchema.safeParse({ ...propertyListing, legacy: [] }).success, false);
 
 const readDocSchema = toolOutputSchemaFor("read_doc");
-const readDocOutput = { docId: "doc-1", exists: true, revision: "rev-1" };
+const readDocOutput = { docId: "doc-1", exists: true, revision: "rev-1", totalBlockCount: 0 };
 assert.equal(readDocSchema.safeParse(readDocOutput).success, true);
 assert.equal(readDocSchema.safeParse({ ...readDocOutput, missingBlockIds: ["block-1"] }).success, true);
 assert.equal(readDocSchema.safeParse({ ...readDocOutput, missingBlockIds: "block-1" }).success, false);

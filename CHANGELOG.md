@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-11-23
+
+### Added
+- Added revision-checked insertion and deletion of native table rows and columns, and raised table creation limits.
+- `add_table_rows` appends or inserts rows into an existing native AFFiNE table, including tables with more than 20 rows, while preserving its header, existing cells, and column widths. Returns the resulting document `revision`.
+- Optional `return: "after" | "minimal"` on `update_block`, `delete_block`, `append_block`, `append_markdown`, `move_block` and `update_database_row` reduces write response size while retaining revision checks, error recovery details, and partial frame-ownership receipts. Omitted `return` keeps the full response.
+- `read_doc` supports compact/outline views, optional plain text, heading sections, tail blocks, and cursor-style block pagination. Compact reads preserve complete delta arrays for attributed blocks.
+- `export_doc_markdown` supports recent heading sections, heading-text lookup, and a Unicode character budget with explicit truncation.
+- `read_database_cells` supports compact display values, ANDed display-value filters, stable sorting, and a row limit. Capabilities and tool schemas advertise these controls.
+- `edit_block_text` makes targeted rich-text replacements without resending the full block.
+- `find_blocks` returns compact matches for text, heading sections, and page references.
+- `update_database_rows` applies a batch of existing-row edits in one document content write.
+- Added revision-checked database column and option maintenance and in-place view column visibility and ordering.
+
+### Changed
+- Every `read_doc` result includes document-wide `totalBlockCount`, including missing documents (zero). This additive field is the sole intentional default content-response change; all other existing content-response fields remain unchanged.
+- Update the locked Playwright test dependency from 1.65.0 to 1.65.1 (#488).
+
+### Fixed
+- `update_doc_title` registers a saved page missing from workspace metadata after an interrupted creation and returns the registered document revision for subsequent writes. Other content writes still leave registration to the explicit repair.
+
 ## [3.14.0] - 2026-11-18
 
 ### Added
@@ -1089,4 +1110,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [3.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.0
 [3.13.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.1
 [3.14.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.14.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.14.0...HEAD
+[3.15.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.15.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.15.0...HEAD

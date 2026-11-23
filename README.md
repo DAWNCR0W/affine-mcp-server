@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.14.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.15.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -38,14 +38,17 @@ Highlights:
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server. Pass a returned document revision string as `expectedRevision` to reject stale edits. Resaving a title that already matches keeps its revision.
+- Offers optional compact/outline document reads, section/tail selection, bounded Markdown exports, compact database queries, and minimal write receipts. See [response size controls](docs/tool-reference.md#response-size-controls).
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 114 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Exposes canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Updates database columns, select options, and view column order or visibility in place
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Places, resizes, and connects images on edgeless canvases, with blob identifiers and geometry in readback
 - Appends canvas frames in creation-order presentation sequence while preserving their native background layering
 - Sets and clears native AFFiNE Journal dates with `set_doc_journal`
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
+- Inserts and deletes native table rows and columns in place, preserving cell formatting and widths
 - Includes Docker images, health probes, and end-to-end test coverage
 
 Scope boundaries:
@@ -57,7 +60,7 @@ Scope boundaries:
 - AFFiNE Cloud requires browser-session authentication for this external GraphQL integration; programmatic email/password sign-in is blocked by Cloudflare
 - `delete_doc` removes workspace page metadata and requests content deletion. Some AFFiNE servers retain content despite acknowledging the request; the tool returns a partial result with a warning unless content absence is verified. Use `trash_doc` for recoverable cleanup.
 
-> v3.14.0 adds lightweight document revision lookups, targeted block reads, and batch edits. Successful content writes return revisions that clients can reuse to check subsequent edits.
+> v3.15.0 adds in-place table and database schema edits, compact reads and write responses, targeted rich-text edits, and repair for pages missing from workspace metadata.
 
 ## Choose Your Path
 | Goal | Start here |
@@ -97,7 +100,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.14.0
+  ghcr.io/dawncr0w/affine-mcp-server:3.15.0
 ```
 
 Then point your client at:
@@ -286,6 +289,20 @@ moving existing rows preserves their creation metadata; older rows are not backf
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
 Full-note replacement with `replace_doc_with_markdown` is destructive and requires `full` without disabling the `destructive` group. `core` and `authoring` retain incremental editing through `append_markdown`, `update_block`, and `update_blocks`.
+
+For smaller tool calls, use these JSON arguments:
+
+| Tool | Example arguments |
+| --- | --- |
+| `find_blocks` | `{"docId":"inventory","query":"Villa 23","type":"list"}` |
+| `edit_block_text` | `{"docId":"inventory","blockId":"item-23","edits":[{"old_str":"Срочная","new_str":"Обычная"}]}` |
+| `update_database_rows` | `{"docId":"inventory","databaseBlockId":"tasks","rows":[{"rowBlockId":"r1","cells":{"Status":"Done"}},{"rowBlockId":"r2","cells":{"Status":"Done"}}]}` |
+
+`find_blocks` returns IDs, snippets of up to 160 characters, and a document
+revision. Pass that revision as `expectedRevision` to either write tool.
+`edit_block_text` replaces unique matches in order and preserves surrounding
+inline formatting. `update_database_rows` applies all row changes in one
+document content write after validating every row.
 
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 

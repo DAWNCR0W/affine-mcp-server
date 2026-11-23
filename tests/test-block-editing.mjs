@@ -670,6 +670,63 @@ async function main() {
       'table plain-text no-op preserves header bold',
     );
 
+    const growingTable = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 2,
+      columns: 2,
+      tableData: [['Header A', 'Header B'], ['Original A', 'Original B']],
+    });
+    const growingTableParams = {
+      workspaceId: state.workspaceId, docId: state.docId, blockId: growingTable.blockId,
+    };
+    await call('update_table_column_widths', { ...growingTableParams, widths: [240, null] });
+    const beforeGrowth = await call('read_doc', { workspaceId: state.workspaceId, docId: state.docId });
+    const originalTable = beforeGrowth.blocks.find(block => block.id === growingTable.blockId);
+    const appendedRows = Array.from({ length: 23 }, (_, index) => [`Added ${index}`, `Value ${index}`]);
+    const appended = await call('add_table_rows', { ...growingTableParams, rows: appendedRows });
+    expectEqual(appended.added, 23, 'add_table_rows appends all rows');
+    expectEqual(appended.blockId, growingTable.blockId, 'add_table_rows returns the table id');
+    expectEqual(appended.index, 2, 'add_table_rows defaults to the end');
+    expectEqual(appended.rowCount, 25, 'add_table_rows grows past 20 rows');
+    expectEqual(appended.columnCount, 2, 'add_table_rows keeps the column count');
+    expectEqual(appended.rowIds.length, 23, 'add_table_rows returns all new ids');
+    expectEqual(new Set(appended.rowIds).size, 23, 'add_table_rows returns unique ids');
+    expectEqual(typeof appended.revision, 'string', 'add_table_rows returns the document revision');
+
+    const middleCellDeltas = [{ insert: 'Middle rich', attributes: { italic: true, color: '#123456' } }];
+    const inserted = await call('add_table_rows', {
+      ...growingTableParams,
+      index: 12,
+      rows: [[middleCellDeltas, 'Middle value'], ['', []]],
+    });
+    expectEqual(inserted.index, 12, 'add_table_rows returns the insertion index');
+    expectEqual(inserted.added, 2, 'add_table_rows inserts both rows');
+    expectEqual(inserted.rowCount, 27, 'add_table_rows returns the final count');
+    expectEqual(inserted.columnCount, 2, 'add_table_rows insertion keeps columns');
+    expectEqual(inserted.rowIds.length, 2, 'add_table_rows returns inserted ids');
+    expectEqual(new Set([...appended.rowIds, ...inserted.rowIds]).size, 25, 'inserted ids are new');
+
+    const expectedRows = [...originalTable.tableData, ...appendedRows];
+    expectedRows.splice(12, 0, ['Middle rich', 'Middle value'], ['', '']);
+    const afterGrowth = await call('read_doc', { workspaceId: state.workspaceId, docId: state.docId });
+    const grownTable = afterGrowth.blocks.find(block => block.id === growingTable.blockId);
+    assert.deepEqual(grownTable.tableData, expectedRows, 'add_table_rows preserves row order and existing cells');
+    assert.deepEqual(grownTable.tableCellDeltas.slice(0, 2), originalTable.tableCellDeltas, 'add_table_rows preserves the header and existing deltas');
+    assert.deepEqual(grownTable.tableCellDeltas[12][0], middleCellDeltas, 'add_table_rows preserves rich-text attributes without header bold');
+    assert.deepEqual(grownTable.tableColumnWidths, originalTable.tableColumnWidths, 'add_table_rows preserves column widths');
+
+    await expectCallError('add_table_rows', { ...growingTableParams, rows: [['valid', 'row'], ['wrong']] }, /row 1.*expected 2 columns/);
+    await expectCallError('add_table_rows', { ...growingTableParams, rows: [['A', 'B']], index: 0 }, /greater than or equal to 1|out of range/);
+    await expectCallError('add_table_rows', { ...growingTableParams, rows: [['A', 'B']], index: 28 }, /out of range/);
+    await expectCallError('add_table_rows', { ...growingTableParams, blockId: state.taskBlockId, rows: [['A', 'B']] }, /only mutates affine:table/);
+    const afterRejectedGrowth = await call('read_doc', { workspaceId: state.workspaceId, docId: state.docId });
+    const unchangedGrowingTable = afterRejectedGrowth.blocks.find(block => block.id === growingTable.blockId);
+    assert.deepEqual(unchangedGrowingTable.tableData, grownTable.tableData, 'rejected add_table_rows calls preserve all rows');
+    assert.deepEqual(unchangedGrowingTable.tableCellDeltas, grownTable.tableCellDeltas, 'rejected add_table_rows calls preserve all cell deltas');
+    assert.deepEqual(unchangedGrowingTable.tableColumnWidths, grownTable.tableColumnWidths, 'rejected add_table_rows calls preserve widths');
+
     // The warning on an empty table points at update_table_cell, so prove the
     // route it names actually works on a table created with no cell content.
     const filledEmptyTableCell = await call('update_table_cell', {
