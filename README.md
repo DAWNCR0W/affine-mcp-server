@@ -38,8 +38,10 @@ Highlights:
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server. Pass a returned document revision string as `expectedRevision` to reject stale edits. Resaving a title that already matches keeps its revision.
+- Offers optional compact/outline document reads, section/tail selection, bounded Markdown exports, compact database queries, and minimal write receipts. See [response size controls](docs/tool-reference.md#response-size-controls).
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 114 canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Exposes canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
+- Updates database columns, select options, and view column order or visibility in place
 - Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
 - Creates and updates code blocks with optional native preview state, with language and preview readback
 - Places, resizes, and connects images on edgeless canvases, with blob identifiers and geometry in readback
@@ -286,6 +288,20 @@ moving existing rows preserves their creation metadata; older rows are not backf
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
 Full-note replacement with `replace_doc_with_markdown` is destructive and requires `full` without disabling the `destructive` group. `core` and `authoring` retain incremental editing through `append_markdown`, `update_block`, and `update_blocks`.
+
+For smaller tool calls, use these JSON arguments:
+
+| Tool | Example arguments |
+| --- | --- |
+| `find_blocks` | `{"docId":"inventory","query":"Villa 23","type":"list"}` |
+| `edit_block_text` | `{"docId":"inventory","blockId":"item-23","edits":[{"old_str":"Срочная","new_str":"Обычная"}]}` |
+| `update_database_rows` | `{"docId":"inventory","databaseBlockId":"tasks","rows":[{"rowBlockId":"r1","cells":{"Status":"Done"}},{"rowBlockId":"r2","cells":{"Status":"Done"}}]}` |
+
+`find_blocks` returns IDs, snippets of up to 160 characters, and a document
+revision. Pass that revision as `expectedRevision` to either write tool.
+`edit_block_text` replaces unique matches in order and preserves surrounding
+inline formatting. `update_database_rows` applies all row changes in one
+document content write after validating every row.
 
 For the grouped catalog, notes, and operational caveats, see [docs/tool-reference.md](docs/tool-reference.md).
 

@@ -1,6 +1,7 @@
 import { z, type ZodType } from "zod/v4";
 
 import { type ToolName } from "./toolSurface.js";
+import { WRITE_RESPONSE_TOOLS } from "./util/responseViews.js";
 
 type FieldKind =
   | "string"
@@ -11,6 +12,7 @@ type FieldKind =
   | "nullableBoolean"
   | "stringArray"
   | "unknownArray"
+  | "blockMatchArray"
   | "blockUpdateResultArray"
   | "workspaceArray"
   | "object"
@@ -66,6 +68,9 @@ const OUTPUT_SPECS = {
   add_database_column: spec({ added: "boolean", columnId: "string", name: "string", type: "string", revision: "string" }),
   add_database_row: spec({ added: "boolean", rowBlockId: "string", databaseBlockId: "string", cellCount: "number", linkedDocId: "nullableString", revision: "string" }),
   add_database_rows: spec({ added: "number", rowBlockIds: "stringArray", databaseBlockId: "string", revision: "string" }),
+  delete_database_column: fallible(spec({ ok: "boolean", blockId: "string", columnId: "string", revision: "string" })),
+  update_database_column: fallible(spec({ ok: "boolean", blockId: "string", columnId: "string", revision: "string" })),
+  update_database_view: fallible(spec({ ok: "boolean", blockId: "string", viewId: "string", revision: "string" })),
   add_database_view: spec({ added: "boolean", viewId: "string", name: "string", mode: "string", groupBy: "nullableString", totalViews: "number", revision: "string" }),
   add_doc_to_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   add_organize_link: spec({ id: "string", parentId: "nullableString", type: "string", data: "string", index: "string" }),
@@ -150,12 +155,15 @@ const OUTPUT_SPECS = {
   set_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", name: "string", type: "string", value: "unknown", stored: "unknown", updated: "boolean" }),
   sign_in: spec({ signedIn: "boolean" }),
   trash_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),
+  edit_block_text: spec({ updated: "boolean", blockId: "string", revision: "string" }),
+  find_blocks: spec({ blocks: "blockMatchArray", revision: "nullableString" }),
   update_block: spec({ updated: "boolean", blockId: "string", changed: "stringArray", previous: "object", block: "object", revision: "string" }),
   update_blocks: spec({ updated: "number", results: "blockUpdateResultArray", revision: "string" }),
   update_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   update_collection_rules: spec({ workspaceId: "string", collectionId: "string", rules: "object", allowList: "stringArray", matchedDocIds: "stringArray", matchedCount: "number" }),
   update_comment: fallible(receipt({ commentId: "string", id: "string", success: "boolean" })),
   update_database_row: spec({ updated: "boolean", rowBlockId: "string", cellCount: "number", revision: "string" }),
+  update_database_rows: spec({ updated: "number", rowBlockIds: "stringArray", revision: "string" }),
   update_doc_icon: receipt({ workspaceId: "string", docId: "string", icon: "icon", cleared: "boolean" }),
   update_doc_title: receipt({ workspaceId: "string", updated: "boolean", docId: "string", title: "string", revision: "nullableString" }),
   update_edgeless_block: spec({ updated: "boolean", blockId: "string", flavour: "string", changed: "stringArray", ignored: "stringArray", revision: "string" }),
@@ -187,6 +195,13 @@ function fieldSchema(kind: FieldKind): ZodType {
     case "nullableBoolean": return z.boolean().nullable();
     case "stringArray": return z.array(z.string());
     case "unknownArray": return z.array(z.unknown());
+    case "blockMatchArray": return z.array(z.object({
+      id: z.string(),
+      flavour: z.string().nullable(),
+      type: z.string().nullable(),
+      parentId: z.string().nullable(),
+      snippet: z.string().max(160),
+    }).strict());
     case "blockUpdateResultArray": return z.array(z.object({
       blockId: z.string(),
       updated: z.boolean(),
@@ -245,6 +260,8 @@ function createToolOutputSchema(name: string) {
   for (const [field, kind] of Object.entries(outputSpec.optionalFields || {})) {
     successShape[field] = fieldSchema(kind).optional();
   }
+  if (name === "read_doc") successShape.totalBlockCount = z.number().int().nonnegative();
+  if (name === "export_doc_markdown") successShape.truncated = z.boolean().optional();
   const shape: Record<string, ZodType> = Object.fromEntries(
     Object.entries(successShape).map(([field, schema]) => [field, schema.optional()]),
   );
@@ -255,6 +272,7 @@ function createToolOutputSchema(name: string) {
   shape.retryable = z.boolean().optional();
   shape.recoveryGuidance = z.string().optional();
   shape.details = z.record(z.string(), z.unknown()).optional();
+  if (name === "update_database_row") shape.blockId = z.string().optional();
   const success = z.object({
     ...successShape,
     ok: successShape.ok && !successShape.ok.isOptional() ? z.literal(true) : z.literal(true).optional(),
@@ -278,6 +296,22 @@ function createToolOutputSchema(name: string) {
     const deletionError = error.extend({ revision: z.never().exactOptional() });
     advertisedBranches = [verifiedDeletion, partialDeletion, deletionError];
     alternatives = z.union(advertisedBranches);
+  } else if (WRITE_RESPONSE_TOOLS.includes(name as typeof WRITE_RESPONSE_TOOLS[number])) {
+    const idField = name === "delete_block" ? "deletedIds" : name === "append_markdown" ? "blockIds" : "blockId";
+    const minimal = z.object({
+      ok: z.literal(true),
+      [idField]: idField === "blockId" ? z.string() : z.array(z.string()),
+      revision: z.string(),
+    }).strict();
+    const afterShape: Record<string, ZodType> = { ...successShape, ok: success.shape.ok };
+    if (name === "update_block") delete afterShape.previous;
+    if (name === "move_block") {
+      delete afterShape.fromParentId;
+      delete afterShape.fromIndex;
+    }
+    const after = z.object(afterShape).passthrough();
+    advertisedBranches = [success, after, minimal, error];
+    alternatives = z.union(advertisedBranches);
   } else {
     advertisedBranches = [success, error];
     alternatives = z.union([success, error]);
@@ -286,8 +320,8 @@ function createToolOutputSchema(name: string) {
   // advertises the same branches to clients. Root properties already type every field.
   const anyOf = advertisedBranches.map(branch => {
     const json = z.toJSONSchema(branch);
-    return name === "delete_doc"
-      ? { required: json.required, properties: json.properties }
+    return name === "delete_doc" || WRITE_RESPONSE_TOOLS.includes(name as typeof WRITE_RESPONSE_TOOLS[number])
+      ? { required: json.required, properties: json.properties, additionalProperties: json.additionalProperties }
       : { required: json.required, properties: { ok: json.properties?.ok } };
   });
   return z.object(shape).passthrough()

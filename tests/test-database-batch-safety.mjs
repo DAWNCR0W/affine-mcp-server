@@ -405,6 +405,48 @@ try {
   assert.equal(unchangedRow.revision, databaseRevision, "empty database row edit leaves revision unchanged");
   assert.equal((await call("read_doc")).revision, databaseRevision, "no-op row revision matches the persisted snapshot");
 
+  const fortyRows = await call("add_database_rows", {
+    databaseBlockId: db.databaseBlockId,
+    rows: Array.from({ length: 40 }, (_, index) => ({ cells: { title: `Fixture row ${index}`, Count: index } })),
+  });
+  const edits = fortyRows.rowBlockIds.map((rowBlockId, index) => ({
+    rowBlockId,
+    cells: { Count: index + 100, Status: "Batch option" },
+    ...(index === 0 ? { linkedDocId: "linked-document" } : {}),
+  }));
+  const beforeRows = pageUpdates.length;
+  const updatedBatch = await call("update_database_rows", {
+    databaseBlockId: db.databaseBlockId, rows: edits, expectedRevision: fortyRows.revision,
+  });
+  assert.deepEqual(updatedBatch, {
+    updated: 40, rowBlockIds: fortyRows.rowBlockIds, revision: (await call("get_doc_revision")).revision,
+  });
+  assert.notEqual(updatedBatch.revision, fortyRows.revision);
+  assert.equal(pageUpdates.length - beforeRows, 1, "40 row edits share one page content write");
+  const updatedRows = await call("read_database_cells", {
+    databaseBlockId: db.databaseBlockId, rowBlockIds: fortyRows.rowBlockIds,
+  });
+  assert.deepEqual(updatedRows.rows.map(row => row.cells.Count.value), edits.map(row => row.cells.Count));
+  assert.ok(updatedRows.rows.every(row => row.cells.Status.value === "Batch option"));
+  assert.equal(blocks.get(fortyRows.rowBlockIds[0]).get("prop:text").toDelta()[0].attributes.reference.pageId, "linked-document");
+  const rowBatchColumns = await call("read_database_columns", { databaseBlockId: db.databaseBlockId });
+  assert.equal(rowBatchColumns.columns.find(col => col.name === "Status").options.filter(option => option.value === "Batch option").length, 1);
+
+  await rejectedWithoutWrite("update_database_rows", {
+    databaseBlockId: db.databaseBlockId, rows: edits, expectedRevision: fortyRows.revision,
+  }, /STALE_DOCUMENT_REVISION/);
+  await rejectedWithoutWrite("update_database_rows", {
+    databaseBlockId: db.databaseBlockId,
+    rows: [
+      { rowBlockId: fortyRows.rowBlockIds[0], cells: { Status: "Must not persist", Count: 0 } },
+      { rowBlockId: fortyRows.rowBlockIds[1], cells: { Count: "invalid" } },
+    ],
+  }, /expected a number/);
+  await rejectedWithoutWrite("update_database_rows", {
+    databaseBlockId: db.databaseBlockId,
+    rows: [edits[0], { rowBlockId: "tail", cells: { Count: 0 } }],
+  }, /does not belong/);
+
   // Real MCP schema parsing must retain expectedRevision before the registered
   // batch handler runs. A stale request must not query identity or write rows.
   const tool = (await client.listTools()).tools.find(entry => entry.name === "add_database_rows");
@@ -504,7 +546,6 @@ try {
   assert.match(uncertainReceipt.recoveryGuidance, /Inspect the workspace title and document content/);
   assert.equal(metadataPage.get("title"), "Acknowledged sidebar only");
   assert.equal(blocks.get("page").get("prop:title").toString(), timestampRecoveredTitle);
-
   const pagesMeta = root.getMap("meta").get("pages");
   pagesMeta.delete(0, 1); // Simulate a creation that saved content but never registered metadata.
   const orphanTitle = "Registered by rename";
@@ -537,7 +578,135 @@ try {
   contentWithoutPage.getMap("blocks").set("paragraph-only", new Y.Map([["sys:flavour", "affine:paragraph"]]));
   docs.set("not-a-page", contentWithoutPage);
   await rejectedWithoutWrite("update_doc_title", { docId: "not-a-page", title: "Do not register invalid content" }, /not present in workspace/);
-  console.log("PASS: atomic database and block batches, targeted reads, rich cells and revision chaining");
+
+  const searchDocId = "synthetic-search-document";
+  const searchDoc = new Y.Doc();
+  docs.set(searchDocId, searchDoc);
+  root.getMap("meta").get("pages").push([
+    new Y.Map([["id", searchDocId], ["title", "Synthetic inventory"], ["createDate", 1], ["updatedDate", 1]]),
+  ]);
+  const searchBlocks = searchDoc.getMap("blocks");
+  function addSearchBlock(id, flavour, type, children, deltas = []) {
+    const block = new Y.Map([
+      ["sys:id", id], ["sys:flavour", flavour], ["sys:version", 1],
+      ["sys:parent", null], ["sys:children", arrayOf(children)],
+    ]);
+    if (type) block.set("prop:type", type);
+    const body = new Y.Text();
+    block.set("prop:text", body);
+    searchBlocks.set(id, block);
+    body.applyDelta(deltas);
+    return body;
+  }
+  const ref = pageId => ({ insert: " ", attributes: { reference: { type: "LinkedPage", pageId } } });
+  const sample = index => [
+    { insert: "Synthetic inventory summary for a fictional property. ".repeat(3) },
+    { insert: `Villa-${index} [A] Срочная запись`, attributes: { bold: true } },
+    { insert: " See" }, ref("synthetic-guide"),
+    { insert: " and" }, ref(`synthetic-index-${index}`),
+    { insert: " for the sample schedule and notes about availability." },
+  ];
+  const itemIds = Array.from({ length: 50 }, (_, index) => `item-${index}`);
+  addSearchBlock("search-page", "affine:page", null, ["search-note"]);
+  addSearchBlock("search-note", "affine:note", null, itemIds);
+  itemIds.forEach((id, index) => addSearchBlock(id, "affine:list", "bulleted", [], sample(index)));
+
+  const targetId = "item-23";
+  const benchmarkRead = await rawCall("read_doc", { docId: searchDocId });
+  const benchmarkFind = await rawCall("find_blocks", { docId: searchDocId, query: "vILLA-23 [a]", type: "list" });
+  assert.equal(benchmarkFind.isError, undefined);
+  const baseline = payloadOf(benchmarkRead);
+  const found = payloadOf(benchmarkFind);
+  assert.equal(found.revision, baseline.revision);
+  assert.deepEqual(Object.keys(found).sort(), ["blocks", "revision"]);
+  assert.equal(found.blocks.length, 1);
+  assert.equal(found.blocks[0].id, targetId);
+  assert.equal(found.blocks[0].parentId, "search-note");
+  assert.match(found.blocks[0].snippet, /Villa-23 \[A\]/);
+  assert.ok(found.blocks[0].snippet.length <= 160);
+  assert.equal((await call("find_blocks", { docId: searchDocId, flavour: "affine:list" })).blocks.length, 20);
+  assert.deepEqual((await call("find_blocks", {
+    docId: searchDocId, linkedPageId: "synthetic-index-23", flavour: "affine:list",
+  })).blocks.map(block => block.id), [targetId]);
+
+  const updateArgs = {
+    workspaceId, docId: searchDocId, blockId: targetId, expectedRevision: baseline.revision,
+    text: sample(23).map(run => ({ ...run, insert: run.insert.replace("Срочная", "Обычная") })),
+  };
+  const editArgs = {
+    workspaceId, docId: searchDocId, blockId: targetId, expectedRevision: baseline.revision,
+    edits: [{ old_str: "Срочная", new_str: "Обычная" }],
+  };
+  const compactJsonLength = value => JSON.stringify(value).length;
+  const escapedJsonLength = value => JSON.stringify(value).replace(/[^\x00-\x7f]/g, "\\u0000").length;
+  console.log("Synthetic payload characters:", JSON.stringify({
+    update_block: compactJsonLength(updateArgs), edit_block_text: compactJsonLength(editArgs),
+    update_blockAscii: escapedJsonLength(updateArgs), edit_block_textAscii: escapedJsonLength(editArgs),
+    read_doc: compactJsonLength(benchmarkRead), find_blocks: compactJsonLength(benchmarkFind),
+  }));
+  const edit = await call("edit_block_text", editArgs);
+  assert.deepEqual(Object.keys(edit).sort(), ["blockId", "revision", "updated"]);
+  assert.equal(edit.updated, true);
+  assert.equal(edit.blockId, targetId);
+  assert.notEqual(edit.revision, baseline.revision);
+  const afterEdit = await call("read_doc", { docId: searchDocId, blockIds: [targetId] });
+  assert.deepEqual(afterEdit.blocks[0].deltas, updateArgs.text, "bold and linked pages survive a Cyrillic edit");
+  assert.equal(afterEdit.revision, edit.revision);
+  await rejectedWithoutWrite("edit_block_text", editArgs, /STALE_DOCUMENT_REVISION/);
+
+  const externalLink = { link: "https://example.test" };
+  const mixed = addSearchBlock("mixed", "affine:paragraph", "text", [], [
+    { insert: "plain bridge" }, { insert: "link tail", attributes: externalLink },
+  ]);
+  await call("edit_block_text", {
+    docId: searchDocId, blockId: "mixed",
+    edits: [
+      { old_str: "bridgelink", new_str: "crossing" },
+      { old_str: "crossing", new_str: [{ insert: "updated", attributes: { italic: true } }] },
+    ],
+  });
+  assert.deepEqual(mixed.toDelta(), [
+    { insert: "plain " }, { insert: "updated", attributes: { italic: true } },
+    { insert: " tail", attributes: externalLink },
+  ]);
+  const guarded = addSearchBlock("guarded", "affine:paragraph", "text", [], [
+    { insert: "left" }, { ...ref("synthetic-same"), insert: "  " }, { insert: "right" },
+  ]);
+  assert.equal(guarded.toDelta()[1].insert, "  ", "Yjs merges adjacent references with identical attributes");
+  await rejectedWithoutWrite("edit_block_text", {
+    docId: searchDocId, blockId: "guarded", edits: [{ old_str: "left ", new_str: "new " }],
+  }, /cuts through a LinkedPage reference/);
+  await rejectedWithoutWrite("edit_block_text", {
+    docId: searchDocId, blockId: "guarded",
+    edits: [{ old_str: "left", new_str: "earlier" }, { old_str: "missing", new_str: "" }],
+  }, /must match exactly once/);
+  await rejectedWithoutWrite("edit_block_text", {
+    docId: searchDocId, blockId: "guarded", edits: [{ old_str: " ", new_str: "" }],
+  }, /must match exactly once/);
+
+  addSearchBlock("section", "affine:paragraph", "h2", [], [{ insert: "Sample section" }]);
+  addSearchBlock("subsection", "affine:paragraph", "h3", [], [{ insert: "Sample subsection" }]);
+  addSearchBlock("outside", "affine:paragraph", "h1", [], [{ insert: "Next section" }]);
+  const children = searchBlocks.get("search-note").get("sys:children");
+  children.insert(22, ["section", "mixed", "subsection"]);
+  children.insert(27, ["outside"]);
+  const section = await call("find_blocks", { docId: searchDocId, headingText: "SAMPLE SECTION" });
+  assert.deepEqual(section.blocks.map(block => block.id), ["section", "mixed", "subsection", "item-22", "item-23"]);
+  assert.deepEqual((await call("find_blocks", {
+    docId: searchDocId, headingText: "Sample section", type: "list", query: "обычная", limit: 1,
+  })).blocks.map(block => block.id), [targetId]);
+  assert.deepEqual(await call("find_blocks", { docId: "missing-doc", query: "sample" }), { blocks: [], revision: null });
+
+  const caps = await call("get_capabilities");
+  const tools = (await client.listTools()).tools;
+  for (const name of ["edit_block_text", "find_blocks", "update_database_rows"]) {
+    assert.ok(caps.server.supportedTools.includes(name));
+    assert.ok(caps.server.effective.enabledTools.includes(name));
+    const tool = tools.find(item => item.name === name);
+    assert.ok(tool.outputSchema);
+    if (name !== "find_blocks") assert.ok(tool.inputSchema.properties.expectedRevision);
+  }
+  console.log("PASS: atomic batches, targeted reads, compact edits and search, rich cells, orphan repair, and revision chaining");
 } finally {
   await client.close();
   await server.close();

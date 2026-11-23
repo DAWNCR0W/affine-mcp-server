@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Added
+- Optional `return: "after" | "minimal"` on `update_block`, `delete_block`, `append_block`, `append_markdown`, `move_block` and `update_database_row` reduces write response size while retaining revision checks, error recovery details, and partial frame-ownership receipts. Omitted `return` keeps the full response.
+- `read_doc` supports compact/outline views, optional plain text, heading sections, tail blocks, and cursor-style block pagination. Compact reads preserve complete delta arrays for attributed blocks.
+- `export_doc_markdown` supports recent heading sections, heading-text lookup, and a Unicode character budget with explicit truncation.
+- `read_database_cells` supports compact display values, ANDed display-value filters, stable sorting, and a row limit. Capabilities and tool schemas advertise these controls.
 
-- `update_doc_title` now registers a saved page that is missing from workspace page metadata (for example after `create_doc_from_markdown` timed out before metadata was written), so the page appears in the sidebar and later writes stop failing with `workspace_page_updated_date_failed`. Other writes still never register such pages silently.
+- `edit_block_text` makes targeted rich-text replacements without resending the full block.
+- `find_blocks` returns compact matches for text, heading sections, and page references.
+- `update_database_rows` applies a batch of existing-row edits in one document content write.
+- Added revision-checked database column and option maintenance and in-place view column visibility and ordering.
+
+### Changed
+- Every `read_doc` result includes document-wide `totalBlockCount`, including missing documents (zero). This additive field is the sole intentional default content-response change; all other existing content-response fields remain unchanged.
+
+### Fixed
+- `update_doc_title` registers a saved page missing from workspace metadata after an interrupted creation and returns the registered document revision for subsequent writes. Other content writes still leave registration to the explicit repair.
 
 ## [3.14.0] - 2026-11-18
 
