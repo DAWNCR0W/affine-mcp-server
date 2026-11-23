@@ -120,7 +120,7 @@ test('registration detection follows the workspace page entry through deletion',
 });
 
 test('document writes advertise a validated optional revision; reads preserve their schema', () => {
-  for (const name of ['update_block', 'update_blocks', 'update_table_cell', 'update_table_column_widths', 'replace_doc_with_markdown', 'move_block', 'reparent_mindmap_node', 'add_surface_elements', 'update_surface_elements']) {
+  for (const name of ['update_block', 'update_blocks', 'add_table_rows', 'update_table_cell', 'update_table_column_widths', 'replace_doc_with_markdown', 'move_block', 'reparent_mindmap_node', 'add_surface_elements', 'update_surface_elements']) {
     const { inputSchema } = coordinateTool(name, shape, async () => ({}), context);
     const schema = z.object(inputSchema);
     assert(schema.safeParse({ docId: 'doc' }).success);

@@ -630,6 +630,14 @@ type AppendBlockInput = {
   padding?: number;
 };
 
+type AddTableRowsInput = {
+  workspaceId?: string;
+  docId: string;
+  blockId: string;
+  rows: Array<Array<string | TextDelta[]>>;
+  index?: number;
+};
+
 type UpdateTableCellInput = {
   workspaceId?: string;
   docId: string;
@@ -11415,6 +11423,119 @@ export function registerDocTools(
     }
   };
 
+  const addTableRowsHandler = async (params: AddTableRowsInput) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
+      );
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const doc = new Y.Doc();
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) {
+        throw new Error(`Document '${params.docId}' not found or has no content.`);
+      }
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const pendingUpdate = captureDocUpdate(doc);
+      const blocks = doc.getMap("blocks") as Y.Map<any>;
+      const block = findBlockById(blocks, params.blockId);
+      if (!block) {
+        throw new Error(`Block '${params.blockId}' not found.`);
+      }
+      const flavour = block.get("sys:flavour");
+      if (flavour !== "affine:table") {
+        throw new Error(
+          `Block '${params.blockId}' has flavour '${String(flavour)}' — add_table_rows only mutates affine:table blocks.`
+        );
+      }
+
+      const table = extractTableData(block);
+      if (!table) {
+        throw new Error(`Table block '${params.blockId}' has no readable row/column layout.`);
+      }
+      const index = params.index ?? table.rowIds.length;
+      if (!Number.isInteger(index) || index < 1 || index > table.rowIds.length) {
+        throw new Error(
+          `Table row index ${index} is out of range (must be 1..${table.rowIds.length}; row 0 is the header).`
+        );
+      }
+      params.rows.forEach((row, rowIndex) => {
+        if (row.length !== table.columnIds.length) {
+          throw new Error(
+            `Table row ${rowIndex} has ${row.length} cells; expected ${table.columnIds.length} columns.`
+          );
+        }
+      });
+
+      const currentRows = block.get("prop:rows");
+      const nested = currentRows instanceof Y.Map
+        || block.get("prop:columns") instanceof Y.Map
+        || block.get("prop:cells") instanceof Y.Map;
+      const readOrder = (rowId: string): string => {
+        const row = currentRows instanceof Y.Map ? currentRows.get(rowId) : undefined;
+        const order = nested
+          ? (row instanceof Y.Map ? row.get("order") : row?.order)
+          : block.get(`prop:rows.${rowId}.order`);
+        if (typeof order !== "string") {
+          throw new Error("Missing row order.");
+        }
+        return order;
+      };
+      let orders: string[];
+      try {
+        orders = generateNKeysBetween(
+          readOrder(table.rowIds[index - 1]),
+          index < table.rowIds.length ? readOrder(table.rowIds[index]) : null,
+          params.rows.length
+        );
+      } catch {
+        throw new Error(`Table block '${params.blockId}' has invalid neighboring row order keys; cannot add rows.`);
+      }
+
+      const rowIds = params.rows.map(() => generateId());
+      const rows = nested ? ensureYMap(block, "prop:rows") : null;
+      params.rows.forEach((cells, rowIndex) => {
+        const rowId = rowIds[rowIndex];
+        if (rows) {
+          const row = new Y.Map<any>();
+          row.set("rowId", rowId);
+          row.set("order", orders[rowIndex]);
+          rows.set(rowId, row);
+        } else {
+          block.set(`prop:rows.${rowId}.rowId`, rowId);
+          block.set(`prop:rows.${rowId}.order`, orders[rowIndex]);
+        }
+        cells.forEach((content, columnIndex) => {
+          writeTableCellText(block, rowId, table.columnIds[columnIndex], makeTableCellText(content, false));
+        });
+      });
+      const delta = pendingUpdate.finish();
+      await pushPageDocUpdate(
+        socket,
+        workspaceId,
+        params.docId,
+        Buffer.from(delta).toString("base64")
+      );
+
+      return text({
+        added: rowIds.length,
+        blockId: params.blockId,
+        index,
+        rowIds,
+        rowCount: table.rowIds.length + rowIds.length,
+        columnCount: table.columnIds.length,
+      });
+    } finally {
+      socket.disconnect();
+    }
+  };
+
   const editBlockTextHandler = async (params: {
     workspaceId?: string;
     docId: string;
@@ -12377,6 +12498,23 @@ export function registerDocTools(
       },
     },
     updateBlocksHandler as any
+  );
+
+  server.registerTool(
+    "add_table_rows",
+    {
+      title: "Add Table Rows",
+      description:
+        "Add rows to an existing AFFiNE table, preserving its header, cells, and column widths. Append by default or insert at a zero-based index after the header.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1).describe("Table block id (flavour affine:table)."),
+        rows: z.array(z.array(RichTextInput)).min(1).describe("Rows to add. Each row must contain exactly one rich-text cell per existing column."),
+        index: z.number().int().min(1).optional().describe("Zero-based position of the first new row, from 1 through the current row count. Omit to append. Row 0 is the header."),
+      },
+    },
+    addTableRowsHandler as any
   );
 
   server.registerTool(
