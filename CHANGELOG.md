@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `edit_block_text` makes targeted rich-text replacements without resending the full block.
+- `find_blocks` returns compact matches for text, heading sections, and page references.
+- `update_database_rows` applies a batch of existing-row edits in one document content write.
 - Added revision-checked database column and option maintenance and in-place view column visibility and ordering.
 
 ## [3.14.0] - 2026-11-18
