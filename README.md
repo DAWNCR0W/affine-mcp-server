@@ -38,6 +38,7 @@ Highlights:
 - Supports AFFiNE Cloud and self-hosted AFFiNE instances
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server. Pass a returned document revision string as `expectedRevision` to reject stale edits. Resaving a title that already matches keeps its revision.
+- Offers optional compact/outline document reads, section/tail selection, bounded Markdown exports, compact database queries, and minimal write receipts. See [response size controls](docs/tool-reference.md#response-size-controls).
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
 - Exposes canonical MCP tools backed by AFFiNE GraphQL, WebSocket, and REST APIs
 - Updates database columns, select options, and view column order or visibility in place

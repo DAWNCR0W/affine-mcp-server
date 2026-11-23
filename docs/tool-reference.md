@@ -119,6 +119,110 @@ rank. `linkedPageId` matches inline LinkedPage references and linked or synced
 document blocks. The default limit is 20 (range 1–200). A missing document
 returns an empty list and `revision: null`.
 
+### Response size controls
+
+These controls are optional. Omitted options preserve full responses, except
+that **every `read_doc` response now includes `totalBlockCount`**. This additive
+field counts all stored blocks, including page/note/surface wrappers and orphan
+blocks; a missing document returns zero and `revision: null`. `blockCount`
+counts returned blocks and `revision` always describes the whole document.
+Capability discovery also advertises the added features. No tool is added or
+renamed, and `server.capabilityVersion` remains 1.
+
+`read_doc` accepts:
+
+| Parameter | Behavior |
+| --- | --- |
+| `view: "full"` | Existing block shape, including deltas and native fields (default). |
+| `view: "compact"` | Each block is `{id, flavour, type, parentId, text, checked?}`. Only blocks with delta attributes also include `deltas`; these are the **complete** runs, preserving positions and references. |
+| `view: "outline"` | Same basic fields, full heading text, and the first 80 Unicode characters of other block text. No deltas. |
+| `includePlainText` | Include aggregated text for selected blocks. Defaults to true for full and false for compact/outline. |
+| `blockIds` | Existing selection of up to 200 distinct block IDs; missing IDs remain explicit. Works with all views. |
+| `section` | Heading block ID; includes that heading and subsequent content until the next heading of the same or higher level. Unknown/non-heading IDs are errors. |
+| `tail` | Last N top-level content blocks, plus their descendants. Top-level content belongs directly to a note, or is an orphan root. Page/note/surface wrappers are excluded. |
+| `afterBlockId`, `limit` | Content blocks after an existing anchor in document traversal order, optionally capped by limit. `limit` alone reads from the start. Unknown anchors are errors. |
+
+Use only one selector (`blockIds`, `section`, `tail`, `afterBlockId`). `limit`
+can accompany `afterBlockId` or stand alone. Selected reads cannot combine with
+`includeMarkdown`. Compact and outline are reading views; fetch full deltas
+before editing rich text or native content such as tables. A compact read does
+not mutate content; edits using deltas from a full read preserve references and
+formatting, with the same `expectedRevision` checks as any other edit.
+
+`update_block`, `delete_block`, `append_block`, `append_markdown`, `move_block`
+and `update_database_row` accept `return: "full" | "after" | "minimal"`:
+
+| Mode | Result |
+| --- | --- |
+| `full` (default) | Existing response, unchanged. |
+| `after` | Full response without `previous`, `deletedBlock`, `deletedBlocks` or the move's `fromParentId`/`fromIndex`. Append and database-update responses have no before snapshot and stay the same. |
+| `minimal` | `{ok: true, blockId, revision}`; `append_markdown` uses `blockIds` and `delete_block` uses `deletedIds` instead. For `update_database_row`, `blockId` is the row block ID. |
+
+Minimal delete responses include only the deleted block IDs alongside `ok` and
+`revision`; they omit content snapshots and connector details. A missing block
+is an idempotent success with `deletedIds: []`. No-op updates still return a
+revision. Errors, partial writes and uncertain acknowledgements retain their
+existing recovery details rather than becoming a minimal success receipt.
+Frames with nonempty `missing` ownership IDs also retain their full receipt,
+including `missing` and `ownedIds`, so partial placement remains visible.
+
+`export_doc_markdown` accepts `tailSections` or `fromHeading` (mutually
+exclusive). `tailSections: N` returns the last N sections at the shallowest
+heading level present, including their nested headings. A document without
+headings is returned whole. `fromHeading` starts at the first heading with
+exactly that visible text and errors when absent. Fenced code does not create
+sections; ATX and Setext headings both work. Frontmatter is added after section
+selection if requested. Optional `maxChars` caps the final Markdown in Unicode
+characters, including frontmatter and a `\n\n[... truncated ...]` marker (or `…`
+for a tiny budget). Supplying `maxChars` adds `truncated: true | false`; omitting
+it preserves the legacy shape. Truncated Markdown is a preview and may cut a
+formatting construct or frontmatter in the middle.
+
+`read_database_cells` accepts `compact: true` to return rows as
+`{rowBlockId, title, linkedDocId?, cells: {columnName: value}}`. Values are select
+labels, multi-select label arrays, UTC ISO date strings, numbers, booleans, or
+plain text. Absent cells remain omitted; missing values compare as null.
+Computed `created-time` and `created-by` values always come from row metadata,
+even if stale stored cell entries exist for those columns.
+Reference-bearing cells use `{value, deltas}` with complete runs, and
+reference-bearing titles additionally retain `titleDeltas`. Other formatting
+does not add deltas to compact database output.
+
+Optional `where: [{column, op, value}]` filters are ANDed, then
+`sort: [{column, dir: "asc" | "desc"}]` is applied, then `limit`. Column lookup
+uses the existing name/ID rules; filters and sorting can use columns omitted
+from `columns`. Unknown columns are errors. Filtering works with either full
+or compact output. Text comparisons are case-sensitive. `eq`/`ne` compare
+display values (or test one multi-select label); `in` requires an array and
+matches any listed value/label; `contains` tests a text substring or a
+multi-select label. `lt`/`lte`/`gt`/`gte` compare numbers or strings of matching
+types. `empty` takes no value and matches null, missing, empty string, or an
+empty array. `eq null` also matches missing cells. Dates require valid ISO
+values: `YYYY-MM-DD` compares UTC days, while timestamps compare instants.
+Sorting is stable for equal keys, with missing values last in either direction.
+
+For example, a compact daily query can use:
+
+```json
+{
+  "docId": "synthetic-tasks",
+  "databaseBlockId": "synthetic-database",
+  "compact": true,
+  "where": [
+    {"column": "Status", "op": "eq", "value": "open"},
+    {"column": "Due", "op": "lte", "value": "2026-11-20"}
+  ],
+  "sort": [{"column": "Due", "dir": "asc"}],
+  "limit": 10
+}
+```
+
+Discover support via `get_capabilities.responses`, `readDoc`, `database` and
+`export`. These controls reduce MCP output, not the AFFiNE snapshot downloaded
+by the server. Reproduce synthetic payload measurements with
+`npm run build && npm run measure:responses`; the script uses only loopback
+fixtures (60 content blocks, 10 dated headings, references, and 40 database rows).
+
 `search_docs` uses zero-based `offset` pagination over the matching metadata
 entries. Its response includes `offset`, `limit`, `totalCount`, `hasMore`,
 `truncated`, and `nextOffset` alongside `results`:
