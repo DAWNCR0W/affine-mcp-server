@@ -197,6 +197,11 @@ try {
   const objectSnapshot = (await call("read_doc", { blockIds: [objectId] })).blocks[0];
   assert.deepEqual(objectSnapshot.tableData, [["Heading"], ["First"], ["Second"]]);
   assert.deepEqual(objectSnapshot.tableColumnWidths, [240]);
+  const blank = await call("add_table_rows", { blockId: objectId, index: 1 });
+  assert.equal(blank.added, 1);
+  assert.equal(blank.index, 1);
+  assert.deepEqual((await call("read_doc", { blockIds: [objectId] })).blocks[0].tableData,
+    [["Heading"], [""], ["First"], ["Second"]]);
   console.log("PASS: native table mutations, rich text, widths, revisions, larger tables and header-only tables");
 } finally {
   for (const socket of wss.clients) socket.terminate();

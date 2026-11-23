@@ -200,13 +200,14 @@ export function registerTableMutationTools(server: McpServer, deps: {
     inputSchema: {
       ...target,
       index: z.number().int().min(1).optional().describe("Zero-based position of the first new row, from 1 through the current row count. Omit to append. Row 0 is the header."),
-      rows: z.array(z.array(richText)).min(1).describe("Rows to add. Each row must contain exactly one rich-text cell per existing column."),
+      rows: z.array(z.array(richText)).min(1).optional().describe("Rows to add. Each supplied row must contain exactly one rich-text cell per existing column. Omit to add one empty row."),
     },
   }, args => deps.mutate(args, block => {
     const table = tableLayout(block);
     const index = args.index ?? table.row.entries.length;
     checkIndex("row", index, table.row.entries.length);
-    const texts = args.rows.map((cells, rowIndex) => {
+    const rows = args.rows ?? [table.column.entries.map(() => "")];
+    const texts = rows.map((cells, rowIndex) => {
       if (cells.length !== table.column.entries.length) {
         throw new Error(`Table row ${rowIndex} has ${cells.length} cells; expected ${table.column.entries.length} columns.`);
       }

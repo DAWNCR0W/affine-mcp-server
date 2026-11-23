@@ -145,6 +145,7 @@ expectSchemaRejects(updateTableCellSchema, [
 ]);
 
 const addTableRowsSchema = toolSchema("add_table_rows");
+assert.equal(addTableRowsSchema.safeParse({ docId: "doc-1", blockId: "table-1" }).success, true);
 assert.equal(addTableRowsSchema.safeParse({
   docId: "doc-1",
   blockId: "table-1",
@@ -154,7 +155,6 @@ assert.equal(addTableRowsSchema.safeParse({
   workspaceId: "workspace-1", docId: "doc-1", blockId: "table-1", rows: [["x"]], index: 1,
 }).success, true);
 expectSchemaRejects(addTableRowsSchema, [
-  { docId: "doc-1", blockId: "table-1" },
   { docId: "doc-1", blockId: "table-1", rows: [] },
   { docId: "doc-1", blockId: "table-1", rows: ["x"] },
   { docId: "doc-1", blockId: "table-1", rows: [[42]] },
