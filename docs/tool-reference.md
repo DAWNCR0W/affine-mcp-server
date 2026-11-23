@@ -315,11 +315,24 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
 | `add_database_rows` | Add many rows to a database block in one write | Atomic; each row is `{cells, linkedDocId?}` with the same cell rules as `add_database_row`. Optional `expectedRevision` rejects stale content before adding rows. |
 | `add_database_view` | Add a view (table or kanban) to an existing database block | Kanban requires `groupBy`: the name of a select/multi-select column; rejects duplicate view names; the new view inherits all current columns. Table views also support an empty stored columns array and return `groupBy: null` even when grouping input was supplied. `totalViews` includes unnamed views. Accepts optional `expectedRevision` from `read_doc` to reject stale edits before writing. |
+| `update_database_column` | Rename a column or edit select options | Use stable column and option IDs from `read_database_columns`. `optionChanges` accepts `{ action: "rename", optionId, name }` and `{ action: "delete", optionId }`. |
+| `delete_database_column` | Delete a non-title column and its cells | Also removes the column from view column lists. An active filter, sort, grouping or header dependency prevents deletion. |
+| `update_database_view` | Reorder or hide/show columns in an existing table or kanban view | `columnOrder` is a full list of IDs. `hiddenColumnIds` sets the entire hidden set. Use `[]` to show all or omit it to keep current visibility. |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
 | `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
 | `update_database_rows` | Update up to 200 distinct rows in one database | Each entry accepts `rowBlockId`, `cells` and optional `linkedDocId`. Uses the same cell rules as `update_database_row`, with shared `createOption` and `expectedRevision`. Validates the entire batch before one content write. Returns `{ updated, rowBlockIds, revision }` with row IDs in input order. |
+
+Database maintenance tools accept `expectedRevision` and return a compact
+result with `ok`, `blockId`, `revision`, and the affected column or view ID.
+Deleting an option selected by a row requires `force: true`. Forced
+removal clears matching single-select values and removes matching IDs from
+multi-select values. Options used by a view must be removed from that view
+first. The database title column is protected. For view order, include both
+stored view column IDs and any implicit columns listed by
+`read_database_columns`. Capability flags are `database.columnMutation`
+and `database.viewColumnMutation`.
 
 New rows created by `add_database_row`, `add_database_rows` and `compose_database_from_intent` record the
 authenticated AFFiNE account and creation time in native block metadata. Paragraphs

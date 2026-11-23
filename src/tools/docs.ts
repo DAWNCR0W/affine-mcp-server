@@ -47,6 +47,7 @@ import {
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
+import { registerDatabaseMutationTools } from "./databaseMutation.js";
 import { addBatch, compactSurfaceElement, isValidSurfaceIndex, type BatchItem } from "./surfaceBatch.js";
 import { applyBlockTextEdit, type BlockTextEdit } from "./editBlockText.js";
 import {
@@ -6604,6 +6605,8 @@ export function registerDocTools(
         columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
         initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
         advancedViewMutation: false,
+        columnMutation: true,
+        viewColumnMutation: true,
         intentDrivenComposition: true,
         linkedDocRows: true,
       },
@@ -9613,6 +9616,26 @@ export function registerDocTools(
       placement?: AppendPlacement;
     }) => text(await composeDatabaseFromIntentCore(parsed)) as any
   );
+
+  // Existing database column, option and view column mutations.
+  registerDatabaseMutationTools(server, {
+    docId: DocId,
+    async mutate(params, edit) {
+      const workspaceId = params.workspaceId || defaults.workspaceId;
+      if (!workspaceId) throw new Error("workspaceId is required.");
+      const ctx = await loadDatabaseDocContext(workspaceId, params.docId, params.databaseBlockId);
+      try {
+        const result = ctx.doc.transact(() => edit(ctx.dbBlock));
+        const delta = ctx.pendingUpdate.finish();
+        await pushPageDocUpdate(ctx.socket, workspaceId, params.docId, Buffer.from(delta).toString("base64"));
+        const payload = { ok: true, blockId: params.databaseBlockId, ...result };
+        return { ...text(payload), structuredContent: payload };
+      } finally {
+        ctx.doc.destroy();
+        ctx.socket.disconnect();
+      }
+    },
+  });
 
   // ADD DATABASE COLUMN
   const addDatabaseColumnHandler = async (parsed: {
