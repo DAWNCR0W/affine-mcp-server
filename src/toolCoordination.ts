@@ -15,9 +15,10 @@ type Handler = (args: Record<string, any>, extra: any) => Promise<any>;
 const DOCUMENT_CONTENT_MUTATIONS = new Set<ToolName>([
   "add_database_column", "add_database_row", "add_database_rows", "add_database_view", "add_mindmap_node", "add_surface_element", "add_surface_elements",
   "append_block", "append_markdown", "append_semantic_section", "compose_database_from_intent",
-  "create_mindmap", "delete_block", "delete_database_row", "delete_doc", "delete_surface_element",
+  "create_mindmap", "delete_block", "delete_database_row", "delete_doc", "delete_surface_element", "edit_block_text",
+  "delete_database_column", "update_database_column", "update_database_view",
   "move_block", "reparent_mindmap_node", "replace_doc_with_markdown", "set_mindmap_layout",
-  "set_mindmap_lock", "set_mindmap_style", "update_block", "update_blocks", "update_database_row", "update_doc_title",
+  "set_mindmap_lock", "set_mindmap_style", "update_block", "update_blocks", "update_database_row", "update_database_rows", "update_doc_title",
   "update_edgeless_block", "update_frame_children", "update_mindmap_node", "update_surface_element", "update_surface_elements",
   "add_table_rows", "update_table_cell", "update_table_column_widths",
   "delete_table_column", "delete_table_row", "insert_table_column",
@@ -64,12 +65,12 @@ export function coordinateTool(
   context: { gql: GraphQLClient; endpoint: string; workspaceId?: string },
 ) {
   const write = !toolAnnotationsFor(name).readOnlyHint;
-  if (!write && name !== "read_doc" && name !== "get_doc_revision") return { inputSchema, handler };
+  if (!write && name !== "read_doc" && name !== "get_doc_revision" && name !== "find_blocks") return { inputSchema, handler };
   const supportsRevision = DOCUMENT_CONTENT_MUTATIONS.has(name as ToolName) && Object.hasOwn(inputSchema, "docId");
   const schema = supportsRevision ? {
     ...inputSchema,
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional().describe(
-      "Optional revision from read_doc, get_doc_revision, or a prior document content mutation. Reject stale content before writing. " +
+      "Optional revision from read_doc, find_blocks, get_doc_revision, or a prior document content mutation. Reject stale content before writing. " +
       "Covers document content, not workspace metadata; requires all writers to share one MCP server.",
     ),
   } : inputSchema;
