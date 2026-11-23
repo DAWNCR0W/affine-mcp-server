@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Every `read_doc` result includes document-wide `totalBlockCount`, including missing documents (zero). This additive field is the sole intentional default content-response change; all other existing content-response fields remain unchanged.
 
+### Fixed
+- `update_doc_title` registers a saved page missing from workspace metadata after an interrupted creation and returns the registered document revision for subsequent writes. Other content writes still leave registration to the explicit repair.
+
 ## [3.14.0] - 2026-11-18
 
 ### Added

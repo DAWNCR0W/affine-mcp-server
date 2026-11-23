@@ -546,6 +546,39 @@ try {
   assert.match(uncertainReceipt.recoveryGuidance, /Inspect the workspace title and document content/);
   assert.equal(metadataPage.get("title"), "Acknowledged sidebar only");
   assert.equal(blocks.get("page").get("prop:title").toString(), timestampRecoveredTitle);
+  const pagesMeta = root.getMap("meta").get("pages");
+  pagesMeta.delete(0, 1); // Simulate a creation that saved content but never registered metadata.
+  const orphanTitle = "Registered by rename";
+  const registered = await call("update_doc_title", { title: orphanTitle });
+  assert.equal(registered.updated, true, "an explicit rename registers a saved page missing from metadata");
+  const registeredPages = pagesMeta.toArray().filter(page => page.get("id") === docId);
+  assert.equal(registeredPages.length, 1);
+  assert.equal(registeredPages[0].get("title"), orphanTitle);
+  assert.equal(blocks.get("page").get("prop:title").toString(), orphanTitle);
+  assert.equal(registered.revision, (await call("get_doc_revision")).revision,
+    "repair receipts include the acknowledged registration in the revision");
+  await call("update_block", { blockId: "anchor", text: "Writable after repair", expectedRevision: registered.revision });
+  await call("update_doc_title", { title: orphanTitle });
+  assert.equal(pagesMeta.toArray().filter(page => page.get("id") === docId).length, 1, "repeating the rename does not duplicate the entry");
+
+  const beforeUnregister = await call("get_doc_revision");
+  pagesMeta.delete(0, 1);
+  const sameTitleOrphan = await call("get_doc_revision");
+  await rejectedWithoutWrite("update_doc_title", {
+    title: orphanTitle, expectedRevision: beforeUnregister.revision,
+  }, /STALE_DOCUMENT_REVISION/);
+  const beforeMetadataOnlyRepair = pushes.length;
+  const metadataOnlyRepair = await call("update_doc_title", { title: orphanTitle, expectedRevision: sameTitleOrphan.revision });
+  assert.deepEqual(pushes.slice(beforeMetadataOnlyRepair), [workspaceId], "matching page titles only need metadata registration");
+  assert.equal(metadataOnlyRepair.revision, (await call("get_doc_revision")).revision);
+  assert.notEqual(metadataOnlyRepair.revision, sameTitleOrphan.revision, "registration changes the revision without a content edit");
+  await rejectedWithoutWrite("update_doc_title", { docId: "missing-doc", title: "Do not create a missing page" }, /not present in workspace/);
+
+  const contentWithoutPage = new Y.Doc();
+  contentWithoutPage.getMap("blocks").set("paragraph-only", new Y.Map([["sys:flavour", "affine:paragraph"]]));
+  docs.set("not-a-page", contentWithoutPage);
+  await rejectedWithoutWrite("update_doc_title", { docId: "not-a-page", title: "Do not register invalid content" }, /not present in workspace/);
+
   const searchDocId = "synthetic-search-document";
   const searchDoc = new Y.Doc();
   docs.set(searchDocId, searchDoc);
@@ -673,7 +706,7 @@ try {
     assert.ok(tool.outputSchema);
     if (name !== "find_blocks") assert.ok(tool.inputSchema.properties.expectedRevision);
   }
-  console.log("PASS: atomic database and block batches, targeted reads, compact edits and search, rich cells and revision chaining");
+  console.log("PASS: atomic batches, targeted reads, compact edits and search, rich cells, orphan repair, and revision chaining");
 } finally {
   await client.close();
   await server.close();
