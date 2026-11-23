@@ -62,6 +62,7 @@ import {
   richTextValueToString,
 } from "../markdown/richText.js";
 import { buildMarkdownFrontmatter } from "../markdown/safety.js";
+import { registerTableMutationTools, MAX_TABLE_ROWS, MAX_TABLE_COLUMNS, MAX_TABLE_CELLS } from "./tableMutation.js";
 import type { MarkdownOperation, MarkdownRenderableBlock, TextDelta } from "../markdown/types.js";
 import { addOrganizeLinkToFolder } from "./organize.js";
 import { ALL_TOOLS } from "../toolSurface.js";
@@ -628,14 +629,6 @@ type AppendBlockInput = {
     gap?: number;
   };
   padding?: number;
-};
-
-type AddTableRowsInput = {
-  workspaceId?: string;
-  docId: string;
-  blockId: string;
-  rows: Array<Array<string | TextDelta[]>>;
-  index?: number;
 };
 
 type UpdateTableCellInput = {
@@ -2275,11 +2268,14 @@ export function registerDocTools(
     }
 
     if (normalized.type === "table") {
-      if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > 20) {
-        throw new Error("table rows must be an integer between 1 and 20.");
+      if (!Number.isInteger(normalized.rows) || normalized.rows < 1 || normalized.rows > MAX_TABLE_ROWS) {
+        throw new Error(`table rows must be an integer between 1 and ${MAX_TABLE_ROWS}.`);
       }
-      if (!Number.isInteger(normalized.columns) || normalized.columns < 1 || normalized.columns > 20) {
-        throw new Error("table columns must be an integer between 1 and 20.");
+      if (!Number.isInteger(normalized.columns) || normalized.columns < 1 || normalized.columns > MAX_TABLE_COLUMNS) {
+        throw new Error(`table columns must be an integer between 1 and ${MAX_TABLE_COLUMNS}.`);
+      }
+      if (normalized.rows * normalized.columns > MAX_TABLE_CELLS) {
+        throw new Error(`Table creation supports at most ${MAX_TABLE_CELLS} cells.`);
       }
       if (normalized.tableData) {
         if (!Array.isArray(normalized.tableData) || normalized.tableData.length !== normalized.rows) {
@@ -6604,6 +6600,7 @@ export function registerDocTools(
       responses: { minimal: true, modes: ["full", "after", "minimal"], tools: [...WRITE_RESPONSE_TOOLS] },
       readDoc: { views: ["full", "compact", "outline"], selection: ["blockIds", "section", "tail", "afterBlockId", "limit"], includePlainText: true, totalBlockCount: true },
       docs: {
+        tableMutation: { rows: true, columns: true, maxRowsOnCreate: MAX_TABLE_ROWS },
         canonicalBlockTypes: [...APPEND_BLOCK_CANONICAL_TYPE_VALUES],
         legacyBlockAliases: Object.keys(APPEND_BLOCK_LEGACY_ALIAS_MAP),
         markdownImport: {
@@ -7236,8 +7233,8 @@ export function registerDocTools(
         mimeType: z.string().optional().describe("Attachment mime type"),
         size: z.number().optional().describe("Attachment/image file size in bytes"),
         embed: z.boolean().optional().describe("Attachment embed mode"),
-        rows: z.number().int().min(1).max(20).optional().describe("Table row count"),
-        columns: z.number().int().min(1).max(20).optional().describe("Table column count"),
+        rows: z.number().int().min(1).max(MAX_TABLE_ROWS).optional().describe(`Table row count (1-${MAX_TABLE_ROWS}); table creation is limited to ${MAX_TABLE_CELLS} cells.`),
+        columns: z.number().int().min(1).max(MAX_TABLE_COLUMNS).optional().describe(`Table column count (1-${MAX_TABLE_COLUMNS}); table creation is limited to ${MAX_TABLE_CELLS} cells.`),
         tableData: z.array(z.array(z.string())).optional().describe("Plain-text cell contents for type='table', as rows of columns. Row count must equal `rows` and every row length must equal `columns`. Omit to create an empty table."),
         tableCellDeltas: z.array(z.array(z.array(TextDeltaInput))).optional().describe('Rich-text deltas per cell for type="table", parallel to `tableData` as [row][column][delta]. A cell with deltas here overrides plain text at the same position. LinkedPage references require insert: " " and a pageId in reference attributes.'),
         latex: z.string().optional().describe("Latex expression"),
@@ -11423,118 +11420,41 @@ export function registerDocTools(
     }
   };
 
-  const addTableRowsHandler = async (params: AddTableRowsInput) => {
-    const workspaceId = params.workspaceId || defaults.workspaceId;
-    if (!workspaceId) {
-      throw new Error(
-        "workspaceId is required. Provide it as a parameter or set AFFINE_WORKSPACE_ID in environment."
-      );
-    }
-
-    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
-    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
-    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
-    try {
-      await joinWorkspace(socket, workspaceId);
+  // Native table structure tools.
+  registerTableMutationTools(server, {
+    docId: DocId,
+    delta: TextDeltaInput,
+    width: z.number().finite().min(TABLE_COLUMN_MIN_WIDTH).max(TABLE_COLUMN_MAX_WIDTH),
+    generateId,
+    makeCellText: makeTableCellText,
+    async mutate(params, edit) {
+      const workspaceId = params.workspaceId || defaults.workspaceId;
+      if (!workspaceId) throw new Error("workspaceId is required.");
+      const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+      const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
       const doc = new Y.Doc();
-      const snapshot = await loadDoc(socket, workspaceId, params.docId);
-      if (!snapshot.missing) {
-        throw new Error(`Document '${params.docId}' not found or has no content.`);
-      }
-      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
-      const pendingUpdate = captureDocUpdate(doc);
-      const blocks = doc.getMap("blocks") as Y.Map<any>;
-      const block = findBlockById(blocks, params.blockId);
-      if (!block) {
-        throw new Error(`Block '${params.blockId}' not found.`);
-      }
-      const flavour = block.get("sys:flavour");
-      if (flavour !== "affine:table") {
-        throw new Error(
-          `Block '${params.blockId}' has flavour '${String(flavour)}' — add_table_rows only mutates affine:table blocks.`
-        );
-      }
-
-      const table = extractTableData(block);
-      if (!table) {
-        throw new Error(`Table block '${params.blockId}' has no readable row/column layout.`);
-      }
-      const index = params.index ?? table.rowIds.length;
-      if (!Number.isInteger(index) || index < 1 || index > table.rowIds.length) {
-        throw new Error(
-          `Table row index ${index} is out of range (must be 1..${table.rowIds.length}; row 0 is the header).`
-        );
-      }
-      params.rows.forEach((row, rowIndex) => {
-        if (row.length !== table.columnIds.length) {
-          throw new Error(
-            `Table row ${rowIndex} has ${row.length} cells; expected ${table.columnIds.length} columns.`
-          );
-        }
-      });
-
-      const currentRows = block.get("prop:rows");
-      const nested = currentRows instanceof Y.Map
-        || block.get("prop:columns") instanceof Y.Map
-        || block.get("prop:cells") instanceof Y.Map;
-      const readOrder = (rowId: string): string => {
-        const row = currentRows instanceof Y.Map ? currentRows.get(rowId) : undefined;
-        const order = nested
-          ? (row instanceof Y.Map ? row.get("order") : row?.order)
-          : block.get(`prop:rows.${rowId}.order`);
-        if (typeof order !== "string") {
-          throw new Error("Missing row order.");
-        }
-        return order;
-      };
-      let orders: string[];
       try {
-        orders = generateNKeysBetween(
-          readOrder(table.rowIds[index - 1]),
-          index < table.rowIds.length ? readOrder(table.rowIds[index]) : null,
-          params.rows.length
-        );
-      } catch {
-        throw new Error(`Table block '${params.blockId}' has invalid neighboring row order keys; cannot add rows.`);
-      }
-
-      const rowIds = params.rows.map(() => generateId());
-      const rows = nested ? ensureYMap(block, "prop:rows") : null;
-      params.rows.forEach((cells, rowIndex) => {
-        const rowId = rowIds[rowIndex];
-        if (rows) {
-          const row = new Y.Map<any>();
-          row.set("rowId", rowId);
-          row.set("order", orders[rowIndex]);
-          rows.set(rowId, row);
-        } else {
-          block.set(`prop:rows.${rowId}.rowId`, rowId);
-          block.set(`prop:rows.${rowId}.order`, orders[rowIndex]);
+        await joinWorkspace(socket, workspaceId);
+        const snapshot = await loadDoc(socket, workspaceId, params.docId);
+        if (!snapshot.missing) throw new Error(`Document '${params.docId}' not found.`);
+        Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+        const block = findBlockById(doc.getMap("blocks"), params.blockId);
+        if (!block) throw new Error(`Block '${params.blockId}' not found.`);
+        const flavour = block.get("sys:flavour");
+        if (flavour !== "affine:table") {
+          throw new Error(`Block '${params.blockId}' has flavour '${String(flavour)}' — this tool only mutates affine:table blocks.`);
         }
-        cells.forEach((content, columnIndex) => {
-          writeTableCellText(block, rowId, table.columnIds[columnIndex], makeTableCellText(content, false));
-        });
-      });
-      const delta = pendingUpdate.finish();
-      await pushPageDocUpdate(
-        socket,
-        workspaceId,
-        params.docId,
-        Buffer.from(delta).toString("base64")
-      );
-
-      return text({
-        added: rowIds.length,
-        blockId: params.blockId,
-        index,
-        rowIds,
-        rowCount: table.rowIds.length + rowIds.length,
-        columnCount: table.columnIds.length,
-      });
-    } finally {
-      socket.disconnect();
-    }
-  };
+        const pending = captureDocUpdate(doc);
+        const result = doc.transact(() => edit(block));
+        await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(pending.finish()).toString("base64"));
+        const payload = { blockId: params.blockId, ...result };
+        return { ...text(payload), structuredContent: payload };
+      } finally {
+        doc.destroy();
+        socket.disconnect();
+      }
+    },
+  });
 
   const editBlockTextHandler = async (params: {
     workspaceId?: string;
@@ -12498,23 +12418,6 @@ export function registerDocTools(
       },
     },
     updateBlocksHandler as any
-  );
-
-  server.registerTool(
-    "add_table_rows",
-    {
-      title: "Add Table Rows",
-      description:
-        "Add rows to an existing AFFiNE table, preserving its header, cells, and column widths. Append by default or insert at a zero-based index after the header.",
-      inputSchema: {
-        workspaceId: WorkspaceId.optional(),
-        docId: DocId,
-        blockId: z.string().min(1).describe("Table block id (flavour affine:table)."),
-        rows: z.array(z.array(RichTextInput)).min(1).describe("Rows to add. Each row must contain exactly one rich-text cell per existing column."),
-        index: z.number().int().min(1).optional().describe("Zero-based position of the first new row, from 1 through the current row count. Omit to append. Row 0 is the header."),
-      },
-    },
-    addTableRowsHandler as any
   );
 
   server.registerTool(
