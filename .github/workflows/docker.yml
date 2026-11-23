@@ -14,6 +14,11 @@ on:
         description: Existing vX.Y.Z release tag to rebuild
         required: true
         type: string
+      update_latest:
+        description: Also update the latest image tag during this rebuild
+        required: false
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -89,23 +94,26 @@ jobs:
           docker inspect "$CONTAINER_ID"
           exit 1
 
-  build-and-push-release:
+  prepare-release:
     if: github.event_name != 'pull_request'
-    name: Build & Push Release
+    name: Verify Release
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
-      packages: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+      image: ${{ steps.release.outputs.image }}
+      labels: ${{ steps.meta.outputs.labels }}
+      metadata: ${{ steps.meta.outputs.json }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_ref) || github.ref }}
 
       - name: Verify release tag and metadata
         id: release
@@ -117,6 +125,55 @@ jobs:
           node scripts/verify-release.mjs --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --main-ref origin/main
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
+          RELEASE_IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          echo "image=${RELEASE_IMAGE,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ steps.release.outputs.image }}
+          flavor: latest=false
+          tags: |
+            # semver tags: v1.2.3 to 1.2.3, 1.2, 1, latest
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.tag }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.update_latest) }}
+          labels: |
+            org.opencontainers.image.title=affine-mcp-server
+            org.opencontainers.image.description=MCP server for AFFiNE with full read/write support
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.commit }}
+
+  build-and-push-release:
+    needs: prepare-release
+    name: Build & Push Release (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout verified release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare-release.outputs.commit }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -125,30 +182,87 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            # semver tags: v1.2.3 to 1.2.3, 1.2, 1, latest
-            type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
-            type=semver,pattern={{major}},value=${{ steps.release.outputs.tag }}
-            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
-          labels: |
-            org.opencontainers.image.title=affine-mcp-server
-            org.opencontainers.image.description=MCP server for AFFiNE with full read/write support
-            org.opencontainers.image.vendor=${{ github.repository_owner }}
-            org.opencontainers.image.revision=${{ steps.release.outputs.commit }}
-
-      - name: Build and push
+      - name: Build and push native image by digest
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          tags: ${{ needs.prepare-release.outputs.image }}
+          labels: ${{ needs.prepare-release.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+
+      - name: Export image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${IMAGE_DIGEST#sha256:}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  publish-release-manifest:
+    needs:
+      - prepare-release
+      - build-and-push-release
+    name: Publish Multi-Architecture Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: image-digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-architecture manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          RELEASE_IMAGE: ${{ needs.prepare-release.outputs.image }}
+          RELEASE_METADATA: ${{ needs.prepare-release.outputs.metadata }}
+        run: |
+          shopt -s nullglob
+          digests=(*)
+          test "${#digests[@]}" -eq 2
+          sources=()
+          for digest in "${digests[@]}"; do
+            [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+            sources+=("$RELEASE_IMAGE@sha256:$digest")
+          done
+          mapfile -t tags < <(jq -r '.tags[]' <<< "$RELEASE_METADATA")
+          test "${#tags[@]}" -gt 0
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=(--tag "$tag")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
+
+      - name: Inspect release manifest
+        env:
+          RELEASE_IMAGE: ${{ needs.prepare-release.outputs.image }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: docker buildx imagetools inspect "$RELEASE_IMAGE:${RELEASE_TAG#v}"
