@@ -1,5 +1,29 @@
 # Release Notes
 
+## Version 3.15.0 (2026-11-23)
+
+### Highlights
+- Edit native table rows and columns and maintain database columns, select options, and views in place.
+- Find blocks, edit rich text, and update database rows in batches. Request compact results and limit document, Markdown, and database reads.
+- Recover a saved page missing from workspace metadata and continue editing with the returned revision.
+
+### What Changed
+- Add `add_table_rows`, `delete_table_row`, `insert_table_column`, and `delete_table_column`. Keep the table ID, existing cell formatting, and widths. Omit `rows` to insert one blank row. A table can keep just its header, and its final row and column are protected. New tables support up to 1,000 rows, 100 columns, and 5,000 cells per request (#479, #480, #484).
+- Add `update_database_column`, `delete_database_column`, and `update_database_view` for column and select-option maintenance and view column visibility and order. Preserve IDs on rename and protect view dependencies during removal (#481, #485).
+- Add `find_blocks`, `edit_block_text`, and `update_database_rows`. Search for blocks by text, type, section, or linked page, replace unique literal spans while preserving surrounding formatting, and validate up to 200 row updates before a single content write (#482, #483).
+- Add opt-in compact and outline document views, bounded Markdown exports, filtered and sorted database reads, and smaller write receipts (#486, #487).
+- Repair a saved page missing from workspace metadata through `update_doc_title`. The tool registers the page and returns a revision that subsequent writes can use (#489, #490).
+- Update the locked Playwright test dependency to 1.65.1 (#488).
+
+### Compatibility
+- The canonical MCP surface increases from 114 to 124 tools. Existing tool names and required inputs carry forward. Full responses remain the default, and `read_doc` now includes the document-wide `totalBlockCount`.
+- Pass `expectedRevision` to reject stale document and table edits through a shared MCP server. Existing configuration and stored data work as-is.
+- Node.js 20.18.1 or newer remains required. Release integration targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.15.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @Clauber, @NazarkinRoman, and @nurtaiuly-b for the contributions, proposals, and reports.
+
 ## Version 3.14.0 (2026-11-18)
 
 ### Highlights
