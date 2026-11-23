@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.14.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![Version](https://img.shields.io/badge/version-3.15.0-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.2-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -60,7 +60,7 @@ Scope boundaries:
 - AFFiNE Cloud requires browser-session authentication for this external GraphQL integration; programmatic email/password sign-in is blocked by Cloudflare
 - `delete_doc` removes workspace page metadata and requests content deletion. Some AFFiNE servers retain content despite acknowledging the request; the tool returns a partial result with a warning unless content absence is verified. Use `trash_doc` for recoverable cleanup.
 
-> v3.14.0 adds lightweight document revision lookups, targeted block reads, and batch edits. Successful content writes return revisions that clients can reuse to check subsequent edits.
+> v3.15.0 adds in-place table and database schema edits, compact reads and write responses, targeted rich-text edits, and repair for pages missing from workspace metadata.
 
 ## Choose Your Path
 | Goal | Start here |
@@ -100,7 +100,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.14.0
+  ghcr.io/dawncr0w/affine-mcp-server:3.15.0
 ```
 
 Then point your client at:

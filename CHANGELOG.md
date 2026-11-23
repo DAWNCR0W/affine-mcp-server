@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-11-23
+
 ### Added
 - Added revision-checked insertion and deletion of native table rows and columns, and raised table creation limits.
 - `add_table_rows` appends or inserts rows into an existing native AFFiNE table, including tables with more than 20 rows, while preserving its header, existing cells, and column widths. Returns the resulting document `revision`.
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Every `read_doc` result includes document-wide `totalBlockCount`, including missing documents (zero). This additive field is the sole intentional default content-response change; all other existing content-response fields remain unchanged.
+- Update the locked Playwright test dependency from 1.65.0 to 1.65.1 (#488).
 
 ### Fixed
 - `update_doc_title` registers a saved page missing from workspace metadata after an interrupted creation and returns the registered document revision for subsequent writes. Other content writes still leave registration to the explicit repair.
@@ -1107,4 +1110,5 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [3.13.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.0
 [3.13.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.13.1
 [3.14.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.14.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.14.0...HEAD
+[3.15.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.15.0
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.15.0...HEAD
