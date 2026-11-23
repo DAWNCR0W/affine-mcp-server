@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added revision-checked insertion and deletion of native table rows and columns, and raised table creation limits.
+- `add_table_rows` appends or inserts rows into an existing native AFFiNE table, including tables with more than 20 rows, while preserving its header, existing cells, and column widths. Returns the resulting document `revision`.
 
 ## [3.14.0] - 2026-11-18
 

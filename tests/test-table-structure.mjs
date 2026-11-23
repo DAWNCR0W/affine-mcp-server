@@ -111,7 +111,7 @@ try {
     const { revision } = await read();
     const before = blockPushes.filter(id => id === docId).length;
     const result = await call(name, { blockId, expectedRevision: revision, ...args });
-    assert.equal(result.ok, true);
+    if (name !== "add_table_rows") assert.equal(result.ok, true);
     assert.equal(result.blockId, blockId);
     assert.equal(result.revision, (await read()).revision);
     assert.equal(blockPushes.filter(id => id === docId).length, before + 1);
@@ -120,11 +120,11 @@ try {
   const widths = await call("update_table_column_widths", { blockId, widths: [180, 260, 380] });
   const before = (await read()).blocks[0];
   const storedCells = [...table.entries()].filter(([key]) => key.startsWith("prop:cells."));
-  const appended = await mutate("insert_table_row", { cells: ["Tail", "", ""] });
+  const appended = await mutate("add_table_rows", { rows: [["Tail", "", ""]] });
   assert.equal(appended.index, 3);
-  assert.deepEqual(Object.keys(appended).sort(), ["blockId", "index", "ok", "revision", "rowId"]);
-  await stale("insert_table_row", { blockId, expectedRevision: widths.revision });
-  const inserted = await mutate("insert_table_row", { index: 1, cellDeltas: [text("New"), [], []] });
+  assert.deepEqual(Object.keys(appended).sort(), ["added", "blockId", "columnCount", "index", "revision", "rowCount", "rowIds"]);
+  await stale("add_table_rows", { blockId, rows: [["Stale", "", ""]], expectedRevision: widths.revision });
+  const inserted = await mutate("add_table_rows", { index: 1, rows: [[text("New"), [], []]] });
   assert.equal(inserted.index, 1);
   let snapshot = (await read()).blocks[0];
   assert.equal(JSON.stringify(snapshot.tableCellDeltas[2]), JSON.stringify(before.tableCellDeltas[1]));
@@ -149,14 +149,15 @@ try {
 
   await rejects("delete_table_row", { blockId, index: 4 }, /row index 4 is out of range/);
   await rejects("insert_table_column", { blockId, index: 9 }, /column index 9 is out of range/);
-  await rejects("insert_table_row", { blockId, cells: ["short"] }, /exactly 3 cells/);
-  await rejects("insert_table_row", { blockId, cells: ["a", "b", "c"], cellDeltas: [[], [], []] }, /or cellDeltas/);
-  await rejects("insert_table_row", { blockId, cellDeltas: [[], [], [
+  await rejects("add_table_rows", { blockId, rows: [["short"]] }, /expected 3 columns/);
+  await rejects("add_table_rows", { blockId, rows: [["valid", "", ""], ["short"]] }, /expected 3 columns/);
+  await rejects("add_table_rows", { blockId, index: 0, rows: [["Header", "", ""]] }, /greater than or equal to 1/);
+  await rejects("add_table_rows", { blockId, rows: [[[], [], [
     { insert: "invalid", attributes: { reference: { type: "LinkedPage", pageId: "fixture" } } },
-  ]] }, /native reference sentinel/);
+  ]]] }, /native reference sentinel/);
 
   for (let length = snapshot.tableData.length; length <= 20; length++) {
-    await call("insert_table_row", { blockId });
+    await call("add_table_rows", { blockId, rows: [["", "", ""]] });
   }
   assert.equal((await read()).blocks[0].tableData.length, 21);
 
@@ -175,7 +176,7 @@ try {
     ["header:column", new Y.Map([["text", new Y.Text("Heading")]])],
     ["data:column", new Y.Map([["text", new Y.Text("Original")]])],
   ]));
-  await call("insert_table_row", { blockId: nestedId, index: 1, cells: ["Inserted"] });
+  await call("add_table_rows", { blockId: nestedId, index: 1, rows: [["Inserted"]] });
   const readNested = async () => (await call("read_doc", { blockIds: [nestedId] })).blocks[0];
   assert.deepEqual((await readNested()).tableData, [["Heading"], ["Inserted"], ["Original"]]);
   await call("delete_table_row", { blockId: nestedId, index: 2 });
@@ -185,6 +186,17 @@ try {
   assert.deepEqual([...nested.get("prop:cells").keys()], ["header:column"]);
   await rejects("delete_table_row", { blockId: nestedId, index: 0 }, /final table row/);
   await rejects("delete_table_column", { blockId: nestedId, index: 0 }, /final table column/);
+
+  const objectId = "object-table";
+  const objectTable = seedBlock(objectId, "affine:table");
+  objectTable.set("prop:rows", { header: { rowId: "header", order: "r0000" } });
+  objectTable.set("prop:columns", { column: { columnId: "column", order: "c0000", width: 240 } });
+  objectTable.set("prop:cells", { "header:column": { text: "Heading" } });
+  const batch = await call("add_table_rows", { blockId: objectId, rows: [["First"], ["Second"]] });
+  assert.equal(batch.added, 2);
+  const objectSnapshot = (await call("read_doc", { blockIds: [objectId] })).blocks[0];
+  assert.deepEqual(objectSnapshot.tableData, [["Heading"], ["First"], ["Second"]]);
+  assert.deepEqual(objectSnapshot.tableColumnWidths, [240]);
   console.log("PASS: native table mutations, rich text, widths, revisions, larger tables and header-only tables");
 } finally {
   for (const socket of wss.clients) socket.terminate();

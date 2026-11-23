@@ -11109,7 +11109,7 @@ export function registerDocTools(
         const pending = captureDocUpdate(doc);
         const result = doc.transact(() => edit(block));
         await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(pending.finish()).toString("base64"));
-        const payload = { ok: true, blockId: params.blockId, ...result };
+        const payload = { blockId: params.blockId, ...result };
         return { ...text(payload), structuredContent: payload };
       } finally {
         doc.destroy();
@@ -11117,7 +11117,6 @@ export function registerDocTools(
       }
     },
   });
-
   const updateTableCellHandler = async (params: UpdateTableCellInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
     if (!workspaceId) {

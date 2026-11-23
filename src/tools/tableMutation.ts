@@ -13,7 +13,16 @@ type Block = Y.Map<unknown>;
 type Axis = "row" | "column";
 type Entry = { id: string; order: string };
 type Target = { workspaceId?: string; docId: string; blockId: string };
-type MutationResult = { index: number; rowId?: string; columnId?: string };
+type MutationResult = {
+  index: number;
+  ok?: true;
+  rowId?: string;
+  columnId?: string;
+  added?: number;
+  rowIds?: string[];
+  rowCount?: number;
+  columnCount?: number;
+};
 
 function record(value: unknown): Record<string, unknown> | undefined {
   if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
@@ -154,25 +163,21 @@ export function registerTableMutationTools(server: McpServer, deps: {
   const deltas = z.array(deps.delta);
   const richText = z.union([z.string(), deltas]);
 
-  function insert(axis: Axis, args: Target & { index?: number }, initial?: (count: number) => Array<string | TextDelta[]>, width?: number) {
+  function insertColumn(args: Target & { index?: number; header?: string | TextDelta[]; width?: number }) {
     return deps.mutate(args, block => {
       const table = tableLayout(block);
-      const { entries, write } = table[axis];
-      const opposite = table[axis === "row" ? "column" : "row"].entries;
+      const { entries, write } = table.column;
       const at = args.index ?? entries.length;
-      checkIndex(axis, at, entries.length);
-      const contents = initial?.(opposite.length);
-      const texts = opposite.map((_, i) => deps.makeCellText(contents?.[i] ?? "", axis === "row" ? at === 0 : i === 0));
+      checkIndex("column", at, entries.length);
+      const texts = table.row.entries.map((_, i) => deps.makeCellText(i === 0 ? args.header ?? "" : "", i === 0));
       const { order, replacementOrders } = insertionOrder(entries, at);
       const id = deps.generateId();
       if (replacementOrders) entries.forEach((entry, i) => write(entry.id, { order: replacementOrders[i] }));
-      const idField = axis === "row" ? "rowId" : "columnId";
-      write(id, { [idField]: id, order, ...(width === undefined ? {} : { width }) });
-      opposite.forEach(({ id: otherId }, i) => {
-        const key = axis === "row" ? `${id}:${otherId}` : `${otherId}:${id}`;
-        table.insertCell(key, texts[i]);
+      write(id, { columnId: id, order, ...(args.width === undefined ? {} : { width: args.width }) });
+      table.row.entries.forEach(({ id: rowId }, i) => {
+        table.insertCell(`${rowId}:${id}`, texts[i]);
       });
-      return { [idField]: id, index: at };
+      return { ok: true, columnId: id, index: at };
     });
   }
 
@@ -185,23 +190,42 @@ export function registerTableMutationTools(server: McpServer, deps: {
       const { id } = entries[args.index];
       remove(id);
       table.deleteCells(axis, id);
-      return { [axis === "row" ? "rowId" : "columnId"]: id, index: args.index };
+      return { ok: true, [axis === "row" ? "rowId" : "columnId"]: id, index: args.index };
     });
   }
 
-  server.registerTool("insert_table_row", {
-    title: "Insert Table Row",
-    description: "Insert a row into a native AFFiNE table while preserving the block ID and existing cells. The row is appended by default.",
+  server.registerTool("add_table_rows", {
+    title: "Add Table Rows",
+    description: "Add rows to an existing AFFiNE table, preserving its header, cells, and column widths. Append by default or insert at a zero-based index after the header.",
     inputSchema: {
-      ...target, index: insertIndex,
-      cells: z.array(z.string()).optional().describe("Provide one plain-text cell per column, or omit to create empty cells."),
-      cellDeltas: z.array(deltas).optional().describe('Provide one delta array per column instead of cells. For LinkedPage references use insert: " " and a pageId.'),
+      ...target,
+      index: z.number().int().min(1).optional().describe("Zero-based position of the first new row, from 1 through the current row count. Omit to append. Row 0 is the header."),
+      rows: z.array(z.array(richText)).min(1).describe("Rows to add. Each row must contain exactly one rich-text cell per existing column."),
     },
-  }, args => insert("row", args, count => {
-    if (args.cells !== undefined && args.cellDeltas !== undefined) throw new Error("Provide cells or cellDeltas, not both.");
-    const contents = args.cellDeltas ?? args.cells;
-    if (contents && contents.length !== count) throw new Error(`Row content must contain exactly ${count} cells.`);
-    return contents ?? [];
+  }, args => deps.mutate(args, block => {
+    const table = tableLayout(block);
+    const index = args.index ?? table.row.entries.length;
+    checkIndex("row", index, table.row.entries.length);
+    const texts = args.rows.map((cells, rowIndex) => {
+      if (cells.length !== table.column.entries.length) {
+        throw new Error(`Table row ${rowIndex} has ${cells.length} cells; expected ${table.column.entries.length} columns.`);
+      }
+      return cells.map(content => deps.makeCellText(content, false));
+    });
+    let orders: string[];
+    try {
+      orders = generateNKeysBetween(table.row.entries[index - 1]?.order ?? null, table.row.entries[index]?.order ?? null, texts.length);
+    } catch {
+      const replacement = generateNKeysBetween(null, null, table.row.entries.length + texts.length);
+      orders = replacement.splice(index, texts.length);
+      table.row.entries.forEach((entry, i) => table.row.write(entry.id, { order: replacement[i] }));
+    }
+    const rowIds = texts.map(() => deps.generateId());
+    rowIds.forEach((rowId, i) => {
+      table.row.write(rowId, { rowId, order: orders[i] });
+      table.column.entries.forEach(({ id: columnId }, j) => table.insertCell(`${rowId}:${columnId}`, texts[i][j]));
+    });
+    return { added: rowIds.length, rowIds, index, rowCount: table.row.entries.length + rowIds.length, columnCount: table.column.entries.length };
   }));
 
   server.registerTool("delete_table_row", {
@@ -218,7 +242,7 @@ export function registerTableMutationTools(server: McpServer, deps: {
       header: richText.optional().describe("Initial first-row cell. All other cells start empty."),
       width: deps.width.optional().describe("Width in pixels. Omit to use automatic sizing."),
     },
-  }, args => insert("column", args, () => [args.header ?? ""], args.width));
+  }, insertColumn);
 
   server.registerTool("delete_table_column", {
     title: "Delete Table Column",

@@ -182,9 +182,9 @@ imported as an inline equation in that block.
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note`/`image` accept `x`/`y`/`width`/`height`; for `image` they set `prop:xywh` plus `prop:width`/`prop:height`, attach the block to the `affine:surface` block (edgeless, not inside a note), and make it a valid connector endpoint. When only a position is supplied, the omitted dimensions default to 100 so bounds and rendered size agree; surface-parented images that omit geometry reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100 (note images keep `[0,0,0,0]`). An explicit `placement` (a note `parentId` or a note sibling) overrides the automatic surface attachment: the image keeps its geometry but stays in the document flow and is not listed by `get_edgeless_canvas`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, code block `language` and `preview` state, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
 | `update_blocks` | Edit up to 200 existing blocks in one document | Pass `updates` with the fields accepted by `update_block` and a distinct `blockId` in each entry. A single optional `expectedRevision` covers the batch. An invalid entry prevents every edit from being saved. Returns the number of changed blocks, `results` in input order, and `revision`. |
+| `add_table_rows` | Add rows to an existing native AFFiNE table | Accepts a nonempty `rows` array of rich-text cells matching the column count. Omit `index` to append, or insert at a zero-based position from 1 through the current row count. Preserves the header, existing cells, and column widths. Returns the resulting document `revision`. |
 | `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. Returns the resulting document `revision`. |
 | `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. Returns the resulting document `revision`. |
-| `insert_table_row` | Insert or append a row in place | Use a zero-based `index` or omit it to append. Optionally pass `cells` or `cellDeltas` with one entry per column. |
 | `delete_table_row` | Delete a row in place | Uses a zero-based `index`. The remaining header can stand alone. |
 | `insert_table_column` | Insert or append a column in place | Use a zero-based `index` or omit it to append. Accepts optional rich-text `header` and pixel `width` (60–4096). |
 | `delete_table_column` | Delete a column in place | Uses a zero-based `index`. Preserves other widths and cell formatting. |
@@ -196,10 +196,13 @@ imported as an inline equation in that block.
 
 For native tables, `append_block` accepts up to 1,000 rows, 100 columns,
 and 5,000 cells per creation request. The cell count bounds the generated
-Yjs update. Grow the existing block through the insert tools. All four
-structural tools accept `expectedRevision` and return `ok`, `blockId`,
-`revision`, `index`, and the affected row or column ID. They preserve other
-cell deltas and widths. The final remaining row and column are protected.
+Yjs update. Grow the existing block through `add_table_rows` and
+`insert_table_column`. The row and column deletion tools and
+`insert_table_column` return `ok`, `blockId`, `revision`, `index`, and the
+affected row or column ID. `add_table_rows` returns the inserted `rowIds`
+and the resulting dimensions. All four accept `expectedRevision` and
+preserve other cell deltas and widths. The final remaining row and column
+are protected.
 Feature and creation limit discovery is available through `docs.tableMutation`.
 
 Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. Transient metadata failures, including `Too many concurrent writings` and transport timeouts, receive up to three retries after 500, 1000, and 2000 ms. Each retry reloads the workspace root and skips the write if its timestamp is already current; saved page content is never replayed. If the timestamp still cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.

@@ -167,7 +167,7 @@ const OUTPUT_SPECS = {
   delete_table_column: fallible(spec({ ok: "boolean", blockId: "string", index: "number", columnId: "string", revision: "string" })),
   delete_table_row: fallible(spec({ ok: "boolean", blockId: "string", index: "number", rowId: "string", revision: "string" })),
   insert_table_column: fallible(spec({ ok: "boolean", blockId: "string", index: "number", columnId: "string", revision: "string" })),
-  insert_table_row: fallible(spec({ ok: "boolean", blockId: "string", index: "number", rowId: "string", revision: "string" })),
+  add_table_rows: spec({ added: "number", blockId: "string", index: "number", rowIds: "stringArray", rowCount: "number", columnCount: "number", revision: "string" }),
   update_table_cell: spec({ updated: "boolean", blockId: "string", row: "number", column: "number", rowId: "string", columnId: "string", previous: "object", cell: "object", revision: "string" }),
   update_table_column_widths: spec({ updated: "boolean", blockId: "string", rowCount: "number", columnCount: "number", columnIds: "stringArray", changedColumns: "unknownArray", previous: "object", table: "object", revision: "string" }),
   update_workspace: fallible(spec({ kind: "string", ok: "boolean", workspaceId: "string", id: "string", error: "string" }, true, ["kind", "ok"])),
