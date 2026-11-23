@@ -96,6 +96,7 @@ Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
 | `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, `linkedDocIds` for inline LinkedPage references, code block `language`/`preview` state (`preview` is `null` when unset), and image `sourceId`, `caption`, and `bounds` |
+| `find_blocks` | Find blocks by text, type, flavour, heading section, or linked page | Returns `{ blocks, revision }` with IDs, parent IDs, types, flavours, and snippets of at most 160 characters. |
 | `get_doc_revision` | Read the current document revision | Returns only `docId` and `revision`. The revision matches `read_doc`; a missing document has `revision: null`. |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients. Reports `blobUpload.filePath` so clients can tell whether `upload_blob` disk paths are enabled. |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
@@ -108,6 +109,15 @@ Parent and child IDs can refer to unselected blocks. The title is included
 when the page block is selected. Targeted reads cannot render Markdown.
 Both targeted reads and revision lookup reduce the MCP response size and
 still load the document snapshot from AFFiNE.
+
+`find_blocks` combines filters and returns matches in document order. Its
+`query` is a case-insensitive literal substring. `type` accepts a stored value
+such as `h2` or `bulleted`, or an editable kind such as `heading` or `list`.
+`headingText` matches the full heading text ignoring case and scopes the results
+to the heading and subsequent blocks up to the next heading of equal or higher
+rank. `linkedPageId` matches inline LinkedPage references and linked or synced
+document blocks. The default limit is 20 (range 1–200). A missing document
+returns an empty list and `revision: null`.
 
 ### Response size controls
 
@@ -284,6 +294,7 @@ imported as an inline equation in that block.
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note`/`image` accept `x`/`y`/`width`/`height`; for `image` they set `prop:xywh` plus `prop:width`/`prop:height`, attach the block to the `affine:surface` block (edgeless, not inside a note), and make it a valid connector endpoint. When only a position is supplied, the omitted dimensions default to 100 so bounds and rendered size agree; surface-parented images that omit geometry reuse their stored `prop:width`/`prop:height` and default only a missing dimension to 100 (note images keep `[0,0,0,0]`). An explicit `placement` (a note `parentId` or a note sibling) overrides the automatic surface attachment: the image keeps its geometry but stays in the document flow and is not listed by `get_edgeless_canvas`. `note` with `text` auto-creates a child paragraph. `code` accepts `language`, `caption`, and an optional `preview` boolean, for example to open an `html` block in Preview. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `edit_block_text` | Replace unique text spans in a paragraph, heading, quote, list, or code block | Applies 1–200 ordered edits and returns `{ updated: true, blockId, revision }`. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, code block `language` and `preview` state, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
 | `update_blocks` | Edit up to 200 existing blocks in one document | Pass `updates` with the fields accepted by `update_block` and a distinct `blockId` in each entry. A single optional `expectedRevision` covers the batch. An invalid entry prevents every edit from being saved. Returns the number of changed blocks, `results` in input order, and `revision`. |
 | `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. Returns the resulting document `revision`. |
@@ -325,6 +336,14 @@ relevant content and reconcile before retrying. See
 [concurrent writes](configuration-and-deployment.md#concurrent-writes).
 
 #### Formatting-preserving block text
+
+In `edit_block_text`, each `old_str` must occur exactly once in the plain text
+after the preceding edits. Plain `new_str` inherits the first matched
+character's inline attributes. Use an explicit delta array for different
+formatting, or an empty string to delete a span. The tool rejects an edit
+that cuts through a LinkedPage reference run or tries to extend a reference
+with plain replacement text. If an edit fails, the entire call is rejected
+before saving.
 
 Code blocks accept optional `preview: true` or `preview: false` in `append_block`.
 `update_block` accepts `language` and `preview` for existing code blocks without
@@ -400,10 +419,24 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 | `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
 | `add_database_rows` | Add many rows to a database block in one write | Atomic; each row is `{cells, linkedDocId?}` with the same cell rules as `add_database_row`. Optional `expectedRevision` rejects stale content before adding rows. |
 | `add_database_view` | Add a view (table or kanban) to an existing database block | Kanban requires `groupBy`: the name of a select/multi-select column; rejects duplicate view names; the new view inherits all current columns. Table views also support an empty stored columns array and return `groupBy: null` even when grouping input was supplied. `totalViews` includes unnamed views. Accepts optional `expectedRevision` from `read_doc` to reject stale edits before writing. |
+| `update_database_column` | Rename a column or edit select options | Use stable column and option IDs from `read_database_columns`. `optionChanges` accepts `{ action: "rename", optionId, name }` and `{ action: "delete", optionId }`. |
+| `delete_database_column` | Delete a non-title column and its cells | Also removes the column from view column lists. An active filter, sort, grouping or header dependency prevents deletion. |
+| `update_database_view` | Reorder or hide/show columns in an existing table or kanban view | `columnOrder` is a full list of IDs. `hiddenColumnIds` sets the entire hidden set. Use `[]` to show all or omit it to keep current visibility. |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
 | `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
+| `update_database_rows` | Update up to 200 distinct rows in one database | Each entry accepts `rowBlockId`, `cells` and optional `linkedDocId`. Uses the same cell rules as `update_database_row`, with shared `createOption` and `expectedRevision`. Validates the entire batch before one content write. Returns `{ updated, rowBlockIds, revision }` with row IDs in input order. |
+
+Database maintenance tools accept `expectedRevision` and return a compact
+result with `ok`, `blockId`, `revision`, and the affected column or view ID.
+Deleting an option selected by a row requires `force: true`. Forced
+removal clears matching single-select values and removes matching IDs from
+multi-select values. Options used by a view must be removed from that view
+first. The database title column is protected. For view order, include both
+stored view column IDs and any implicit columns listed by
+`read_database_columns`. Capability flags are `database.columnMutation`
+and `database.viewColumnMutation`.
 
 New rows created by `add_database_row`, `add_database_rows` and `compose_database_from_intent` record the
 authenticated AFFiNE account and creation time in native block metadata. Paragraphs

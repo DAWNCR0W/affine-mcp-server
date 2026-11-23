@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `export_doc_markdown` supports recent heading sections, heading-text lookup, and a Unicode character budget with explicit truncation.
 - `read_database_cells` supports compact display values, ANDed display-value filters, stable sorting, and a row limit. Capabilities and tool schemas advertise these controls.
 
+- `edit_block_text` makes targeted rich-text replacements without resending the full block.
+- `find_blocks` returns compact matches for text, heading sections, and page references.
+- `update_database_rows` applies a batch of existing-row edits in one document content write.
+- Added revision-checked database column and option maintenance and in-place view column visibility and ordering.
+
 ### Changed
 - Every `read_doc` result includes document-wide `totalBlockCount`, including missing documents (zero). This additive field is the sole intentional default content-response change; all other existing content-response fields remain unchanged.
 

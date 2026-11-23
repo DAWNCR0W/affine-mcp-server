@@ -52,7 +52,9 @@ import {
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
+import { registerDatabaseMutationTools } from "./databaseMutation.js";
 import { addBatch, compactSurfaceElement, isValidSurfaceIndex, type BatchItem } from "./surfaceBatch.js";
+import { applyBlockTextEdit, type BlockTextEdit } from "./editBlockText.js";
 import {
   AFFINE_LINKED_PAGE_REFERENCE_NODE,
   normalizeLinkedPageReferenceDeltas,
@@ -1433,6 +1435,50 @@ export function registerDocTools(
       }
     });
     return childIds;
+  }
+
+  /** Walk blocks in page order, using the same fallback roots as read_doc. */
+  function* orderedBlocks(blocks: Y.Map<any>) {
+    const root = findBlockIdByFlavour(blocks, "affine:page") ?? findBlockIdByFlavour(blocks, "affine:note");
+    const visited = new Set<string>();
+    for (const id of root ? [root, ...blocks.keys()] : blocks.keys()) {
+      const pending = [id];
+      while (pending.length > 0) {
+        const blockId = pending.pop()!;
+        if (visited.has(blockId)) continue;
+        visited.add(blockId);
+        const block = blocks.get(blockId);
+        if (!(block instanceof Y.Map)) continue;
+        yield { id: blockId, block };
+        const children = childIdsFrom(block.get("sys:children"));
+        for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]!);
+      }
+    }
+  }
+
+  function blockSnippet(text: string, matchIndex: number, matchLength: number): string {
+    const maxLength = 160;
+    if (text.length <= maxLength) return text;
+    const context = Math.max(0, Math.floor((maxLength - matchLength) / 2));
+    const start = Math.max(0, Math.min(matchIndex - context, text.length - maxLength));
+    const end = start + maxLength;
+    // Avoid returning half of a UTF-16 surrogate pair at either boundary.
+    const first = text.charCodeAt(start);
+    const last = text.charCodeAt(end - 1);
+    return text.slice(
+      start + Number(first >= 0xdc00 && first <= 0xdfff),
+      end - Number(last >= 0xd800 && last <= 0xdbff),
+    );
+  }
+
+  function linkedPageTextOffset(value: unknown, pageId: string): number {
+    if (!(value instanceof Y.Text)) return -1;
+    let offset = 0;
+    for (const { insert, attributes } of value.toDelta()) {
+      if (attributes?.reference?.type === "LinkedPage" && attributes.reference.pageId === pageId) return offset;
+      if (typeof insert === "string") offset += insert.length;
+    }
+    return -1;
   }
 
   function normalizeTag(rawTag: string): string {
@@ -6420,6 +6466,95 @@ export function registerDocTools(
     readDocHandler as any
   );
 
+  const findBlocksHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    query?: string;
+    type?: string;
+    flavour?: string;
+    headingText?: string;
+    linkedPageId?: string;
+    limit?: number;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    const doc = new Y.Doc();
+    const workspaceDoc = new Y.Doc();
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const workspaceSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (workspaceSnapshot.missing) Y.applyUpdate(workspaceDoc, Buffer.from(workspaceSnapshot.missing, "base64"));
+      const snapshot = await loadDoc(socket, workspaceId, parsed.docId);
+      if (!snapshot.missing) return text({ blocks: [], revision: null });
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const revision = documentRevision(doc, isDocumentRegistered(workspaceDoc, parsed.docId));
+      const blocks = doc.getMap("blocks");
+      const query = parsed.query === undefined
+        ? undefined
+        : new RegExp(parsed.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu");
+      const headingText = parsed.headingText?.toLowerCase();
+      let sectionLevel: number | undefined;
+      const matches = [];
+      for (const { id, block } of orderedBlocks(blocks)) {
+        const flavour = asStringOrNull(block.get("sys:flavour"));
+        const type = asStringOrNull(block.get("prop:type"));
+        const propText = block.get("prop:text");
+        const blockText = asText(propText);
+        const blockType = editableBlockType(block);
+        if (headingText !== undefined) {
+          if (blockType === "heading") {
+            const level = Number(type?.slice(1));
+            if (sectionLevel !== undefined && level <= sectionLevel) sectionLevel = undefined;
+            if (sectionLevel === undefined && blockText.toLowerCase() === headingText) sectionLevel = level;
+          }
+          if (sectionLevel === undefined) continue;
+        }
+        if (parsed.type !== undefined && parsed.type !== type && parsed.type !== blockType) continue;
+        if (parsed.flavour !== undefined && parsed.flavour !== flavour) continue;
+        let linkedPageOffset = -1;
+        if (parsed.linkedPageId !== undefined) {
+          linkedPageOffset = linkedPageTextOffset(propText, parsed.linkedPageId);
+          const linkedBlock = flavour === "affine:embed-linked-doc" || flavour === "affine:embed-synced-doc";
+          if (!(linkedBlock && block.get("prop:pageId") === parsed.linkedPageId) &&
+              linkedPageOffset === -1) continue;
+        }
+        const match = query?.exec(blockText);
+        if (query && !match) continue;
+        matches.push({
+          id, flavour, type, parentId: resolveBlockParentId(blocks, id),
+          snippet: blockSnippet(blockText, match?.index ?? Math.max(0, linkedPageOffset), match?.[0].length ?? 0),
+        });
+        if (matches.length >= (parsed.limit ?? 20)) break;
+      }
+      return text({ blocks: matches, revision });
+    } finally {
+      doc.destroy();
+      workspaceDoc.destroy();
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "find_blocks",
+    {
+      title: "Find Blocks",
+      description: "Find blocks in document order with short snippets and a document revision. Combine filters for plain text, block type or flavour, a heading section, or a linked page.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        query: z.string().min(1).max(1000).optional().describe("Case-insensitive substring of block plain text."),
+        type: z.string().min(1).optional().describe("Stored block type (e.g. h2 or bulleted) or editable block kind (e.g. heading or list)."),
+        flavour: z.string().min(1).optional().describe("Exact AFFiNE flavour, e.g. affine:list."),
+        headingText: z.string().min(1).optional().describe("Exact heading text, ignoring case. Includes the heading and subsequent blocks up to the next heading of the same or higher level."),
+        linkedPageId: z.string().min(1).optional().describe("Target page ID of an inline LinkedPage reference or a linked/synced document block."),
+        limit: z.number().int().min(1).max(200).optional().describe("Maximum blocks to return (default 20)."),
+      },
+    },
+    findBlocksHandler as any
+  );
+
   const getDocRevisionHandler = async (parsed: { workspaceId?: string; docId: string }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
@@ -6497,6 +6632,8 @@ export function registerDocTools(
         columnTypes: [...DATABASE_COLUMN_TYPE_VALUES],
         initialViewModes: [...APPEND_BLOCK_DATA_VIEW_MODE_VALUES],
         advancedViewMutation: false,
+        columnMutation: true,
+        viewColumnMutation: true,
         intentDrivenComposition: true,
         linkedDocRows: true,
       },
@@ -9295,44 +9432,56 @@ export function registerDocTools(
     readDatabaseColumnsHandler as any
   );
 
-  const updateDatabaseRowHandler = async (parsed: {
+  type DatabaseRowEdit = {
+    rowBlockId: string;
+    cells: Record<string, unknown>;
+    linkedDocId?: string;
+  };
+
+  function applyDatabaseRowEdit(
+    ctx: DatabaseDocContext,
+    databaseBlockId: string,
+    row: DatabaseRowEdit,
+    createOption: boolean,
+  ) {
+    const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, databaseBlockId, row.rowBlockId);
+    const rowCells = ensureDatabaseRowCells(ctx.cellsMap, row.rowBlockId);
+    let titleValue: string | TextDelta[] | null = null;
+
+    for (const [key, value] of Object.entries(row.cells)) {
+      const col = findDatabaseColumn(key, ctx);
+      if (!col) {
+        if (isTitleAliasKey(key)) {
+          titleValue = normalizeDatabaseRichTextValue(value);
+          continue;
+        }
+        throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
+      }
+
+      writeDatabaseCellValue(rowCells, col, value, createOption);
+      if (col.type === "title" || isTitleAliasKey(col.name)) {
+        titleValue = normalizeDatabaseRichTextValue(value);
+      }
+    }
+
+    if (row.linkedDocId) {
+      rowBlock.set("prop:text", makeLinkedDocText(row.linkedDocId));
+    } else if (titleValue !== null) {
+      rowBlock.set("prop:text", makeText(titleValue));
+    }
+  }
+
+  const updateDatabaseRowHandler = async (parsed: DatabaseRowEdit & {
     workspaceId?: string;
     docId: string;
     databaseBlockId: string;
-    rowBlockId: string;
-    cells: Record<string, unknown>;
     createOption?: boolean;
-    linkedDocId?: string;
   }) => {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      const rowBlock = getDatabaseRowBlock(ctx.blocks, ctx.dbBlock, parsed.databaseBlockId, parsed.rowBlockId);
-      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, parsed.rowBlockId);
-      let titleValue: string | TextDelta[] | null = null;
-
-      for (const [key, value] of Object.entries(parsed.cells)) {
-        const col = findDatabaseColumn(key, ctx);
-        if (!col) {
-          if (isTitleAliasKey(key)) {
-            titleValue = normalizeDatabaseRichTextValue(value);
-            continue;
-          }
-          throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
-        }
-
-        writeDatabaseCellValue(rowCells, col, value, parsed.createOption ?? true);
-        if (col.type === "title" || isTitleAliasKey(col.name)) {
-          titleValue = normalizeDatabaseRichTextValue(value);
-        }
-      }
-
-      if (parsed.linkedDocId) {
-        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
-      } else if (titleValue !== null) {
-        rowBlock.set("prop:text", makeText(titleValue));
-      }
+      applyDatabaseRowEdit(ctx, parsed.databaseBlockId, parsed, parsed.createOption ?? true);
 
       const delta = ctx.pendingUpdate.finish();
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
@@ -9343,6 +9492,7 @@ export function registerDocTools(
         cellCount: Object.keys(parsed.cells).length,
       });
     } finally {
+      ctx.doc.destroy();
       ctx.socket.disconnect();
     }
   };
@@ -9363,6 +9513,54 @@ export function registerDocTools(
       },
     },
     withWriteResponse("update_database_row", updateDatabaseRowHandler) as any
+  );
+
+  const updateDatabaseRowsHandler = async (parsed: {
+    workspaceId?: string;
+    docId: string;
+    databaseBlockId: string;
+    rows: DatabaseRowEdit[];
+    createOption?: boolean;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const rowBlockIds = parsed.rows.map(row => row.rowBlockId);
+    if (new Set(rowBlockIds).size !== rowBlockIds.length) throw new Error("Duplicate row block IDs.");
+    const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
+    try {
+      // Validate against a private snapshot so rows can share newly created
+      // select options. Discard the whole snapshot if any row fails.
+      ctx.doc.transact(() => {
+        for (const row of parsed.rows) {
+          applyDatabaseRowEdit(ctx, parsed.databaseBlockId, row, parsed.createOption ?? true);
+        }
+      });
+      const delta = ctx.pendingUpdate.finish();
+      await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      return text({ updated: rowBlockIds.length, rowBlockIds });
+    } finally {
+      ctx.doc.destroy();
+      ctx.socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "update_database_rows",
+    {
+      title: "Update Database Rows",
+      description: "Update 1–200 existing rows in one database and one content write. Uses the same cell value rules as update_database_row. An invalid row rejects the entire batch.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        databaseBlockId: z.string().min(1),
+        rows: z.array(z.object({
+          rowBlockId: z.string().min(1),
+          cells: z.record(z.unknown()).describe("Column names or IDs mapped to new cell values."),
+          linkedDocId: z.string().optional().describe("Link the row to an existing document by ID."),
+        }).strict()).min(1).max(200),
+        createOption: z.boolean().optional().describe("Create missing select or multi-select options (default true)."),
+      },
+    },
+    updateDatabaseRowsHandler as any
   );
 
   const composeDatabaseFromIntentCore = async (parsed: {
@@ -9536,6 +9734,26 @@ export function registerDocTools(
       placement?: AppendPlacement;
     }) => text(await composeDatabaseFromIntentCore(parsed)) as any
   );
+
+  // Existing database column, option and view column mutations.
+  registerDatabaseMutationTools(server, {
+    docId: DocId,
+    async mutate(params, edit) {
+      const workspaceId = params.workspaceId || defaults.workspaceId;
+      if (!workspaceId) throw new Error("workspaceId is required.");
+      const ctx = await loadDatabaseDocContext(workspaceId, params.docId, params.databaseBlockId);
+      try {
+        const result = ctx.doc.transact(() => edit(ctx.dbBlock));
+        const delta = ctx.pendingUpdate.finish();
+        await pushPageDocUpdate(ctx.socket, workspaceId, params.docId, Buffer.from(delta).toString("base64"));
+        const payload = { ok: true, blockId: params.databaseBlockId, ...result };
+        return { ...text(payload), structuredContent: payload };
+      } finally {
+        ctx.doc.destroy();
+        ctx.socket.disconnect();
+      }
+    },
+  });
 
   // ADD DATABASE COLUMN
   const addDatabaseColumnHandler = async (parsed: {
@@ -11196,6 +11414,64 @@ export function registerDocTools(
       socket.disconnect();
     }
   };
+
+  const editBlockTextHandler = async (params: {
+    workspaceId?: string;
+    docId: string;
+    blockId: string;
+    edits: BlockTextEdit[];
+  }) => {
+    const workspaceId = params.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required");
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const socket = await connectWorkspaceSocket(wsUrlFromGraphQLEndpoint(endpoint), cookie, bearer);
+    const doc = new Y.Doc();
+    try {
+      await joinWorkspace(socket, workspaceId);
+      const snapshot = await loadDoc(socket, workspaceId, params.docId);
+      if (!snapshot.missing) throw new Error(`Document '${params.docId}' not found or has no content.`);
+      Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
+      const block = findBlockById(doc.getMap("blocks"), params.blockId);
+      if (!block) throw new Error(`Block '${params.blockId}' not found.`);
+      if (!editableBlockType(block)) {
+        throw new Error("edit_block_text supports paragraph, heading, quote, list, and code blocks.");
+      }
+      const value = block.get("prop:text");
+      const pendingUpdate = captureDocUpdate(doc);
+      const blockText = value instanceof Y.Text ? value : makeText(asText(value));
+      if (!(value instanceof Y.Text)) block.set("prop:text", blockText);
+      let changed = false;
+      for (const [index, edit] of params.edits.entries()) {
+        const applied = doc.transact(() => applyBlockTextEdit(blockText, edit, index));
+        changed ||= applied;
+      }
+      if (changed) {
+        const delta = pendingUpdate.finish();
+        await pushPageDocUpdate(socket, workspaceId, params.docId, Buffer.from(delta).toString("base64"));
+      }
+      return text({ updated: true, blockId: params.blockId });
+    } finally {
+      doc.destroy();
+      socket.disconnect();
+    }
+  };
+  server.registerTool(
+    "edit_block_text",
+    {
+      title: "Edit Block Text",
+      description: "Replace exact, unique text spans in an existing paragraph, heading, quote, list, or code block. Edits apply in order and preserve surrounding formatting and references.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        docId: DocId,
+        blockId: z.string().min(1),
+        edits: z.array(z.object({
+          old_str: z.string().min(1).describe("Literal text that must occur exactly once after earlier edits."),
+          new_str: RichTextInput.describe("Replacement text inherits the first matched character's attributes. Pass deltas to set attributes explicitly."),
+        }).strict()).min(1).max(200),
+      },
+    },
+    editBlockTextHandler as any
+  );
 
   const updateTableCellHandler = async (params: UpdateTableCellInput) => {
     const workspaceId = params.workspaceId || defaults.workspaceId;
