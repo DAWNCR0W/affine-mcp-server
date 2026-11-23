@@ -11439,8 +11439,10 @@ export function registerDocTools(
         if (!snapshot.missing) throw new Error(`Document '${params.docId}' not found.`);
         Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
         const block = findBlockById(doc.getMap("blocks"), params.blockId);
-        if (!block || block.get("sys:flavour") !== "affine:table") {
-          throw new Error(`Block '${params.blockId}' must be an existing affine:table block.`);
+        if (!block) throw new Error(`Block '${params.blockId}' not found.`);
+        const flavour = block.get("sys:flavour");
+        if (flavour !== "affine:table") {
+          throw new Error(`Block '${params.blockId}' has flavour '${String(flavour)}' — this tool only mutates affine:table blocks.`);
         }
         const pending = captureDocUpdate(doc);
         const result = doc.transact(() => edit(block));
