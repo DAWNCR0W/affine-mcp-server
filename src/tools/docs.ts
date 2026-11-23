@@ -33,6 +33,7 @@ import {
 import { secureAffineId, secureRandomInt31 } from "../util/random.js";
 import { currentDocumentRevision, staleDocumentRevision } from "../toolCoordination.js";
 import { documentMutationRevision, documentRevision, isDocumentRegistered } from "../util/documentRevision.js";
+import { activeDocumentMutation } from "../util/documentMutation.js";
 import { ensureDocumentCreator, fetchCurrentUserId, readDocumentCreator } from "../util/docCreator.js";
 import {
   wsUrlFromGraphQLEndpoint,
@@ -7902,6 +7903,7 @@ export function registerDocTools(
         else appendWorkspacePageEntry(wsDoc, parsed.docId, newTitle);
         const delta = pendingUpdate.finish();
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
+        if (!page) activeDocumentMutation(workspaceId)?.recordRegistration();
       }
       if (pageUpdate) {
         try {

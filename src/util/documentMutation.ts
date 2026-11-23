@@ -32,6 +32,11 @@ export class DocumentMutation {
     }
   }
 
+  /** Record an explicit workspace registration after its write is acknowledged. */
+  recordRegistration(): void {
+    this.#registered = true;
+  }
+
   observeSnapshot(snapshot: string | undefined): void {
     if (this.#wrote) return;
     this.#doc?.destroy();
