@@ -87,6 +87,8 @@ const stale = (name, args) => unchanged(async () => {
 try {
   seedBlock("page", "affine:page", ["note"]);
   seedBlock("note", "affine:note").set("sys:parent", "page");
+  await rejects("add_table_rows", { blockId: "missing", rows: [["Cell"]] }, /Block 'missing' not found/);
+  await rejects("add_table_rows", { blockId: "note", rows: [["Cell"]] }, /only mutates affine:table/);
   const capability = await call("get_capabilities");
   assert.deepEqual(capability.docs.tableMutation, { rows: true, columns: true, maxRowsOnCreate: 1000 });
 
