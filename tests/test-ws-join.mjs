@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./require-destructive-test-safety.mjs";
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
