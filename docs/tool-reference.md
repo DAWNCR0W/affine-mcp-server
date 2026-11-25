@@ -19,7 +19,7 @@ the primary code. SDK-level input or schema validation can remain a native
 protocol error. Use the returned fields to decide whether to inspect, correct,
 or retry an operation; do not infer success from human-readable error text.
 
-Realtime tools select legacy joins for AFFiNE 0.27.4 and document batch joins for 0.27.5+. Batch sync defaults to protocol 1; lifecycle-activated workspaces require an explicit protocol-2 override for reads, and protocol-2 writes fail with `sync_protocol_unsupported`. See [WebSocket compatibility](configuration-and-deployment.md#websocket-compatibility) for overrides, version rejection, and lifecycle diagnostics.
+Realtime tools select legacy joins for AFFiNE 0.27.4 and document batch joins for 0.27.5-beta.3 and stable 0.27.5+ (beta.2 is unsupported). Batch sync defaults to protocol 1; lifecycle-activated workspaces require an explicit protocol-2 override for reads, and selecting protocol 2 rejects every mutating tool, including deletion, with `sync_protocol_unsupported`. See [WebSocket compatibility](configuration-and-deployment.md#websocket-compatibility) for overrides, version rejection, and lifecycle diagnostics.
 
 ## Workspace
 
