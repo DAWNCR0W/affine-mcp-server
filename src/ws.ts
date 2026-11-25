@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { captureDocUpdate } from "./util/docUpdate.js";
 import { io, Socket } from "socket.io-client";
 import { setTimeout as delay } from "node:timers/promises";
@@ -7,7 +8,8 @@ import { activeDocumentMutation } from "./util/documentMutation.js";
 
 export type WorkspaceSocket = Socket<any, any>;
 type JoinMode = 'legacy' | 'batch';
-type JoinSettings = { mode: JoinMode; clientVersion: string; protocolVersion: 1 | 2 };
+type JoinDetection = { mode: JoinMode; hint?: string };
+type JoinSettings = JoinDetection & { clientVersion: string; protocolVersion: 1 | 2 };
 type DocJoin = { docId: string; resolve: () => void; reject: (error: unknown) => void };
 type WorkspaceJoins = { docs: Map<string, Promise<void>>; pending: DocJoin[]; scheduled: boolean };
 type SocketState = { settings: JoinSettings; workspaces: Map<string, WorkspaceJoins> };
@@ -17,40 +19,87 @@ const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
 const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
 
 
-function joinSettings(mode: JoinMode): JoinSettings {
+function joinSettings(mode: JoinMode, hint?: string): JoinSettings {
   const protocol = process.env.AFFINE_WS_PROTOCOL_VERSION || '1';
   if (protocol !== '1' && protocol !== '2') {
     throw new ToolFailure('AFFINE_WS_PROTOCOL_VERSION must be 1 or 2.', 'invalid_config');
   }
   return {
-    mode,
+    mode, hint,
     clientVersion: process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION
       || (mode === 'batch' ? '0.27.5' : '0.26.0'),
     protocolVersion: Number(protocol) as 1 | 2,
   };
 }
 
-async function detectJoinMode(wsUrl: string): Promise<JoinMode> {
+// Discovery is optional and must not consume the socket's connection budget.
+const INFO_TIMEOUT_MS = 250;
+const INFO_CACHE_TTL_MS = 60000;
+const INFO_FAILURE_TTL_MS = 5000;
+const infoCache = new Map<string, { expires: number; result: Promise<JoinDetection> }>();
+const discoveryHint = 'Compatibility discovery was inconclusive. Check the server version and set AFFINE_WS_JOIN_MODE=legacy or batch explicitly (batch requires the beta.3 protocol contract).';
+
+function classifyJoinMode(compatibility: unknown): JoinDetection {
+  if (typeof compatibility !== 'string') return { mode: 'legacy', hint: discoveryHint };
+  const canary = /^(\d{4})\.(\d{1,2})\.(\d{1,2})-canary\.\d+$/.exec(compatibility);
+  if (canary) {
+    const [, year, month, day] = canary.map(Number);
+    const date = year * 10000 + month * 100 + day;
+    // 2026.8.17-canary.914 is v0.27.4. Legacy removal was 2026-09-08.
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && date < 20260908) return { mode: 'legacy' };
+    // First locally verified protocol-1/2 canary: v2026.11.25-canary.905.
+    // c471cfc (2026-11-16) initially supported only protocol 2. Do not guess
+    // the intervening daily tags or classify a date as a semantic major.
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && date >= 20261125) return { mode: 'batch' };
+    return { mode: 'legacy', hint: discoveryHint };
+  }
+  const version = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(compatibility);
+  if (!version) return { mode: 'legacy', hint: discoveryHint };
+  const [major, minor, patch] = version.slice(1, 4).map(Number);
+  if (major === 0 && minor === 27 && patch === 5 && version[4]) {
+    const beta = /^beta\.(\d+)$/.exec(version[4]);
+    if (!beta || Number(beta[1]) < 3) {
+      throw new ToolFailure(`AFFiNE ${compatibility} uses an unsupported or unverified pre-beta.3 batch contract. Use 0.27.5-beta.3 or later; changing the sync protocol cannot add the missing contract.`, 'sync_version_unsupported');
+    }
+  }
+  return { mode: major > 0 || minor > 27 || (minor === 27 && patch >= 5) ? 'batch' : 'legacy' };
+}
+
+async function detectJoinMode(wsUrl: string, headers: Record<string, string>): Promise<JoinDetection> {
   const override = process.env.AFFINE_WS_JOIN_MODE || 'auto';
-  if (override === 'legacy' || override === 'batch') return override;
+  if (override === 'legacy' || override === 'batch') return { mode: override };
   if (override !== 'auto') {
     throw new ToolFailure('AFFINE_WS_JOIN_MODE must be auto, legacy, or batch.', 'invalid_config');
   }
   const url = new URL('/info', wsUrl.replace(/^ws/, 'http'));
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(WS_CONNECT_TIMEOUT_MS), redirect: 'error' });
-    if (!response.ok) return 'legacy';
-    const info = await response.json() as { compatibility?: unknown };
-    // The boundary is >=0.27.5-0, so every prerelease of 0.27.5 qualifies.
-    const version = typeof info.compatibility === 'string'
-      ? /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(info.compatibility)
-      : null;
-    if (!version) return 'legacy';
-    const [major, minor, patch] = version.slice(1, 4).map(Number);
-    return major > 0 || minor > 27 || (minor === 27 && patch >= 5) ? 'batch' : 'legacy';
-  } catch {
-    // Older servers and proxies may not expose /info. Operators can force batch mode.
-    return 'legacy';
+  // Isolate authenticated decisions without retaining credentials in cache keys.
+  const key = url.origin + ':' + createHash('sha256').update(JSON.stringify(headers)).digest('hex');
+  const cached = infoCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.result;
+  const entry = { expires: Infinity, result: Promise.resolve<JoinDetection>({ mode: 'legacy' }) };
+  entry.result = (async () => {
+    let compatibility: unknown;
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(INFO_TIMEOUT_MS), redirect: 'error' });
+      if (response.ok) compatibility = (await response.json() as { compatibility?: unknown }).compatibility;
+      else await response.body?.cancel();
+    } catch {
+      // Older servers and proxies may not expose /info. Never follow redirects.
+    }
+    entry.expires = Date.now() + (compatibility === undefined ? INFO_FAILURE_TTL_MS : INFO_CACHE_TTL_MS);
+    return classifyJoinMode(compatibility);
+  })();
+  // Bound process-wide state even for clients connecting to many origins.
+  if (infoCache.size >= 100) infoCache.delete(infoCache.keys().next().value!);
+  infoCache.set(key, entry);
+  return entry.result;
+}
+
+/** Reject protocol-2 mutations before a tool can change local or remote state. */
+export function assertSyncWritable(socket?: WorkspaceSocket): void {
+  const protocol = socket ? socketState(socket).settings.protocolVersion : Number(process.env.AFFINE_WS_PROTOCOL_VERSION || '1');
+  if (protocol === 2) {
+    throw new ToolFailure('Protocol 2 is read-only in this client. Writes require AFFiNE lifecycle registration, which is not supported. Use protocol 1 only on workspaces whose lifecycle is inactive.', 'sync_protocol_unsupported');
   }
 }
 
@@ -190,7 +239,7 @@ async function emitWithAck<T>(
       cleanup();
       const error = new SocketAckTimeout(event, timeoutMs);
       if (event === 'space:join' || event === 'space:join-batch') {
-        error.message += ` (clientVersion ${payload.clientVersion}, protocol ${payload.protocolVersion ?? 'legacy'}). Check server compatibility and AFFINE_WS_JOIN_MODE; an unavailable /info endpoint requires an explicit mode.`;
+        error.message += ` (clientVersion ${payload.clientVersion}, protocol ${payload.protocolVersion ?? 'legacy'}). Check server compatibility and AFFINE_WS_JOIN_MODE; an unavailable /info endpoint requires an explicit mode.${socketStates.get(socket)?.settings.hint ? ` ${socketStates.get(socket)!.settings.hint}` : ''}`;
       }
       reject(error);
     }, timeoutMs);
@@ -231,12 +280,13 @@ export function wsUrlFromGraphQLEndpoint(endpoint: string): string {
 }
 
 export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bearer?: string): Promise<WorkspaceSocket> {
-  const settings = joinSettings(await detectJoinMode(wsUrl));
+  const extraHeaders: Record<string, string> = {};
+  if (cookie) extraHeaders['Cookie'] = cookie;
+  if (bearer) extraHeaders['Authorization'] = `Bearer ${bearer}`;
+  const detection = await detectJoinMode(wsUrl, extraHeaders);
+  const settings = joinSettings(detection.mode, detection.hint);
   return new Promise((resolve, reject) => {
     let settled = false;
-    const extraHeaders: Record<string, string> = {};
-    if (cookie) extraHeaders['Cookie'] = cookie;
-    if (bearer) extraHeaders['Authorization'] = `Bearer ${bearer}`;
     const socket = io(wsUrl, {
       transports: ['websocket'],
       path: '/socket.io/',
@@ -368,10 +418,8 @@ async function pushDocUpdateRaw(
   updateBase64: string,
   requireAcknowledgement = false,
 ): Promise<number> {
-  const { mode, protocolVersion } = socketState(socket).settings;
-  if (mode === 'batch' && protocolVersion === 2) {
-    throw new ToolFailure('Protocol 2 writes require AFFiNE lifecycle registration, which this client does not support. Use protocol 1 only on workspaces whose lifecycle is inactive.', 'sync_protocol_unsupported');
-  }
+  assertSyncWritable(socket);
+  const { mode } = socketState(socket).settings;
   try {
     return await emitWithAck<number>(
       socket,
@@ -558,6 +606,7 @@ export function deleteDoc(
   docId: string,
   options: DeleteDocOptions = {},
 ): Promise<DeleteDocResult> {
+  try { assertSyncWritable(socket); } catch (error) { return Promise.reject(error); }
   const timeoutMs = options.timeoutMs ?? WS_ACK_TIMEOUT_MS;
   const verificationIntervalMs = options.verificationIntervalMs ?? Math.min(250, timeoutMs);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {

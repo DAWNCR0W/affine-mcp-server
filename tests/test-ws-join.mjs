@@ -2,25 +2,50 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import { WebSocketServer } from 'ws';
 
+// A broken implementation or fixture must exit even if it leaves handles open.
+const watchdog = setTimeout(() => { console.error('WebSocket regression suite exceeded 30s'); process.exit(1); }, 30000);
+watchdog.unref();
+let testContext;
+const test = (name, run) => nodeTest(name, { timeout: 4000 }, async context => { testContext = context; await run(); });
+process.env.AFFINE_WS_CONNECT_TIMEOUT_MS = '500';
 process.env.AFFINE_WS_ACK_TIMEOUT_MS = '150';
 for (const name of ['AFFINE_WS_JOIN_MODE', 'AFFINE_WS_PROTOCOL_VERSION', 'AFFINE_WS_CLIENT_VERSION', 'AFFINE_CLIENT_VERSION']) delete process.env[name];
-const { connectWorkspaceSocket, joinWorkspace, ensureDocJoined, loadDoc, pushDocUpdate, pushPageDocUpdate } = await import('../dist/ws.js');
+const { connectWorkspaceSocket, joinWorkspace, ensureDocJoined, loadDoc, pushDocUpdate, pushPageDocUpdate, deleteDoc } = await import('../dist/ws.js');
 
 async function fixture(version, run, options = {}) {
   const events = [];
+  const infoHeaders = [], handshakeHeaders = [];
+  const sockets = [];
+  let cleanupPromise;
+  const cleanup = () => cleanupPromise ??= (async () => {
+    for (const socket of sockets) socket.disconnect();
+    for (const peer of wss.clients) peer.terminate();
+    server.closeAllConnections();
+    await new Promise(resolve => wss.close(resolve));
+    await new Promise(resolve => server.close(resolve));
+  })();
+  testContext.after(cleanup);
   let infoRequests = 0;
   const server = createServer((req, res) => {
     if (req.url === '/info') {
       infoRequests++;
+      infoHeaders.push(req.headers);
+      if (options.stallInfo) return;
+      if (options.failInfo) return res.writeHead(503).end();
+      if (options.redirectInfo) return res.writeHead(302, { Location: options.redirectInfo }).end();
+      if (options.cookie && req.headers.cookie !== options.cookie) return res.writeHead(401).end();
+      if (options.bearer && req.headers.authorization !== `Bearer ${options.bearer}`) return res.writeHead(401).end();
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify(version ? { compatibility: version } : {}));
+      res.end(JSON.stringify((options.version || version) ? { compatibility: options.version || version } : {}));
     } else { res.writeHead(404).end(); }
   });
   const wss = new WebSocketServer({ server });
-  wss.on('connection', peer => {
+  wss.on('connection', (peer, req) => {
+    handshakeHeaders.push(req.headers);
+    if (options.stallSocket) return;
     const joined = new Set();
     peer.send('0{"sid":"join-fixture","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}');
     peer.on('message', data => {
@@ -28,11 +53,14 @@ async function fixture(version, run, options = {}) {
       if (packet === '40') return peer.send('40{"sid":"join-socket"}');
       const match = /^42(\d+)(\[.*)$/s.exec(packet);
       if (!match) return;
-      const [event, payload] = JSON.parse(match[2]);
+      let event, payload;
+      try { [event, payload] = JSON.parse(match[2]); } catch { peer.close(1002, 'Invalid packet JSON'); return; }
       events.push({ event, payload });
       const ack = value => peer.send(`43${match[1]}${JSON.stringify([value])}`);
       if (options.disconnect === event) return peer.send('41');
       if (event === 'space:join' || event === 'space:join-batch') {
+        if (event === 'space:join-batch' && options.legacyOnly) return;
+        if (event === 'space:join-batch' && (!Array.isArray(payload?.spaces) || !payload.spaces.length || payload.spaces.some(s => !s || typeof s.spaceId !== 'string' || typeof s.docId !== 'string'))) return ack({ error: { message: 'Invalid batch shape' } });
         if (event === 'space:join' && options.batchOnly) return; // Original bug: no handler, no ack.
         if (options.stallJoin) return;
         if (options.joinAck !== undefined) return ack(options.joinAck);
@@ -56,18 +84,12 @@ async function fixture(version, run, options = {}) {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const url = `ws://127.0.0.1:${server.address().port}`;
-  const sockets = [];
-  const connect = async () => { const socket = await connectWorkspaceSocket(url); sockets.push(socket); return socket; };
-  try { await run({ connect, events, infoRequests: () => infoRequests }); }
-  finally {
-    for (const socket of sockets) socket.disconnect();
-    for (const peer of wss.clients) peer.terminate();
-    await new Promise(resolve => wss.close(resolve));
-    await new Promise(resolve => server.close(resolve));
-  }
+  const connect = async (cookie, bearer) => { const socket = await connectWorkspaceSocket(url, cookie, bearer); sockets.push(socket); return socket; };
+  try { await run({ connect, events, infoHeaders, handshakeHeaders, infoRequests: () => infoRequests, url: url.replace(/^ws/, 'http') + '/info' }); }
+  finally { await cleanup(); }
 }
 
-for (const version of ['0.27.4', undefined, 'invalid']) {
+for (const version of ['0.27.4', '2026.8.17-canary.914', undefined, 'invalid']) {
   test(`legacy selection for ${version ?? 'unadvertised server'}`, () => fixture(version, async ({ connect, events, infoRequests }) => {
     const socket = await connect();
     await joinWorkspace(socket, 'workspace');
@@ -76,9 +98,9 @@ for (const version of ['0.27.4', undefined, 'invalid']) {
     assert.deepEqual(events[0], { event: 'space:join', payload: { spaceType: 'workspace', spaceId: 'workspace', clientVersion: '0.26.0' } });
     assert.equal(events[2].payload.intent, undefined);
     assert.equal(infoRequests(), 1);
-  }));
+  }, { legacyOnly: true }));
 }
-for (const version of ['0.27.5-0', '0.27.5-beta.3', '0.27.5', '0.28.0', '1.0.0']) {
+for (const version of ['0.27.5-beta.3', '0.27.5', '0.28.0', '1.0.0', '2026.11.25-canary.905']) {
   test(`batch selection and document subscriptions for ${version}`, () => fixture(version, async ({ connect, events, infoRequests }) => {
     const socket = await connect();
     await joinWorkspace(socket, 'workspace');
@@ -115,6 +137,7 @@ test('legacy override reproduces ignored event and gives compatibility diagnosti
 for (const [label, joinAck, code, message] of [
   ['version rejection', { data: { success: false, protocolVersion: 1 } }, 'sync_version_rejected', /clientVersion.*AFFINE_WS_CLIENT_VERSION/],
   ['missing success', { data: { protocolVersion: 1 } }, 'sync_version_rejected', /rejected/],
+  ['missing protocol echo', { data: { success: true } }, 'sync_protocol_mismatch', /echoed sync protocol undefined instead of 1/],
   ['protocol mismatch', { data: { success: true, protocolVersion: 2 } }, 'sync_protocol_mismatch', /echoed sync protocol 2 instead of 1/],
   ['error ack', { error: { name: 'FORBIDDEN', code: 'FORBIDDEN', message: 'Permission denied' } }, 'FORBIDDEN', /Permission denied/],
   ['lifecycle mismatch', { error: { name: 'WORKSPACE_SYNC_UNAVAILABLE', code: 'WORKSPACE_SYNC_UNAVAILABLE', message: 'Sync unavailable' } }, 'WORKSPACE_SYNC_UNAVAILABLE', /Protocol 1.*lifecycle state/],
@@ -210,3 +233,118 @@ test('disconnect during a confirmed page write retains uncertain-write recovery'
     error => error.code === 'write_ack_uncertain' && /space:push-doc-update.*io server disconnect/.test(error.message),
   );
 }, { batchOnly: true, disconnect: 'space:push-doc-update' }));
+
+for (const version of ['0.27.5-0', '0.27.5-beta.2']) {
+  test(`pre-protocol batch ${version} fails explicitly before opening a socket`, () => fixture(version, async ({ connect, events, handshakeHeaders }) => {
+    await assert.rejects(connect(), error => error.code === 'sync_version_unsupported' && /pre-beta.3/.test(error.message));
+    assert.equal(handshakeHeaders.length, 0);
+    assert.deepEqual(events, []);
+  }));
+}
+
+test('uncertain transition canary retains legacy with an explicit diagnostic', () => fixture('2026.11.16-canary.1', async ({ connect }) => {
+  const socket = await connect();
+  await assert.rejects(joinWorkspace(socket, 'workspace'), /discovery was inconclusive.*AFFINE_WS_JOIN_MODE/);
+}, { stallJoin: true }));
+
+for (const failure of ['stallInfo', 'failInfo']) {
+  test(`${failure} is bounded, concurrent probes deduplicate, and failures expire`, () => {
+    const options = { [failure]: true };
+    return fixture('0.27.4', async ({ connect, events, infoRequests }) => {
+      const started = performance.now();
+      const sockets = await Promise.all([connect(), connect(), connect()]);
+      await Promise.all(sockets.map(socket => joinWorkspace(socket, 'workspace')));
+      assert(performance.now() - started < 900, 'optional discovery must not add a full connect timeout');
+      assert.equal(infoRequests(), 1);
+      await joinWorkspace(await connect(), 'workspace');
+      assert.equal(infoRequests(), 1, 'sequential connections reuse the failed probe decision');
+      options[failure] = false;
+      options.version = '0.27.5-beta.3';
+      const realNow = Date.now;
+      Date.now = () => realNow() + 6000;
+      try { await joinWorkspace(await connect(), 'workspace'); } finally { Date.now = realNow; }
+      assert.equal(infoRequests(), 2, 'failed decisions expire and discover upgrades');
+      assert.equal(events.at(-1).event, 'space:join-batch');
+    }, options);
+  });
+}
+
+test('successful discovery expires and discovers server upgrades', () => {
+  const options = {};
+  return fixture('0.27.4', async ({ connect, infoRequests, events }) => {
+    await joinWorkspace(await connect(), 'workspace');
+    await joinWorkspace(await connect(), 'workspace');
+    assert.equal(infoRequests(), 1);
+    options.version = '0.27.5-beta.3';
+    const realNow = Date.now;
+    Date.now = () => realNow() + 61000;
+    try { await joinWorkspace(await connect(), 'workspace'); } finally { Date.now = realNow; }
+    assert.equal(infoRequests(), 2);
+    assert.equal(events.at(-1).event, 'space:join-batch');
+  }, options);
+});
+
+test('stalled discovery plus stalled socket has separate bounded budgets', () => fixture('0.27.4', async ({ connect }) => {
+  const started = performance.now();
+  await assert.rejects(connect(), /socket connect timeout after 500ms/);
+  assert(performance.now() - started < 1100, 'total latency stays near 250ms discovery + 500ms connection');
+}, { stallInfo: true, stallSocket: true }));
+
+for (const kind of ['cookie', 'bearer']) {
+  test(`${kind} authenticated discovery reuses only resolved upstream socket credentials`, () => {
+    const credential = kind === 'cookie' ? 'session=synthetic-upstream' : 'synthetic-upstream-token';
+    return fixture('0.27.5-beta.3', async ({ connect, infoHeaders, handshakeHeaders }) => {
+      // A failed anonymous probe must not poison the authenticated cache entry.
+      (await connect()).disconnect();
+      const socket = await connect(kind === 'cookie' ? credential : undefined, kind === 'bearer' ? credential : undefined);
+      await joinWorkspace(socket, 'workspace');
+      const header = kind === 'cookie' ? 'cookie' : 'authorization';
+      const expected = kind === 'cookie' ? credential : `Bearer ${credential}`;
+      assert.equal(infoHeaders[0][header], undefined);
+      assert.equal(infoHeaders[1][header], expected);
+      assert.equal(handshakeHeaders[1][header], expected);
+      assert.equal(infoHeaders[1][kind === 'cookie' ? 'authorization' : 'cookie'], undefined);
+    }, { batchOnly: true, [kind]: credential });
+  });
+}
+
+test('authenticated discovery never follows redirects', () => fixture('0.27.5-beta.3', async target => {
+  await fixture('0.27.4', async ({ connect, infoRequests }) => {
+    const socket = await connect('session=synthetic-upstream', 'synthetic-upstream-token');
+    await joinWorkspace(socket, 'workspace');
+    assert.equal(infoRequests(), 1);
+    assert.equal(target.infoRequests(), 0);
+  }, { redirectInfo: target.url });
+}));
+
+test('protocol 2 rejects pushes, raw deletes and tool mutations before side effects', async () => {
+  process.env.AFFINE_WS_PROTOCOL_VERSION = '2';
+  try {
+    const { coordinateTool } = await import('../dist/toolCoordination.js');
+    const { deleteDocFromWorkspace } = await import('../dist/tools/docs.js');
+    await fixture('0.27.5-beta.3', async ({ connect, events }) => {
+      const socket = await connect();
+      await joinWorkspace(socket, 'workspace');
+      const before = events.length;
+      for (const operation of [
+        () => pushDocUpdate(socket, 'workspace', 'doc', 'AAA='),
+        () => pushPageDocUpdate(socket, 'workspace', 'doc', 'AAA='),
+        () => deleteDoc(socket, 'workspace', 'doc'),
+        () => deleteDocFromWorkspace(socket, 'workspace', 'doc'),
+      ]) await assert.rejects(operation(), error => error.code === 'sync_protocol_unsupported');
+      assert.equal(events.length, before, 'no mutation or preparatory read reaches the socket');
+      for (const name of ['append_markdown', 'delete_doc', 'create_doc', 'delete_workspace']) {
+        let called = false;
+        const { handler } = coordinateTool(name, {}, async () => { called = true; }, { endpoint: 'http://127.0.0.1/graphql' });
+        await assert.rejects(handler({ workspaceId: 'workspace' }, {}), error => error.code === 'sync_protocol_unsupported');
+        assert.equal(called, false, `${name} is rejected before its handler mutates local or remote state`);
+      }
+    });
+  } finally { delete process.env.AFFINE_WS_PROTOCOL_VERSION; }
+});
+
+test('malformed batch packets return an error acknowledgement', () => fixture('0.27.5-beta.3', async ({ connect }) => {
+  const socket = await connect();
+  const ack = await new Promise(resolve => socket.emit('space:join-batch', { spaceType: 'workspace', spaceId: 'workspace' }, resolve));
+  assert.equal(ack.error.message, 'Invalid batch shape');
+}));
