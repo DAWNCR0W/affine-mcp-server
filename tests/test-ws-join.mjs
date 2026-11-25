@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 
 process.env.AFFINE_WS_ACK_TIMEOUT_MS = '150';
 for (const name of ['AFFINE_WS_JOIN_MODE', 'AFFINE_WS_PROTOCOL_VERSION', 'AFFINE_WS_CLIENT_VERSION', 'AFFINE_CLIENT_VERSION']) delete process.env[name];
-const { connectWorkspaceSocket, joinWorkspace, ensureDocJoined, loadDoc, pushDocUpdate } = await import('../dist/ws.js');
+const { connectWorkspaceSocket, joinWorkspace, ensureDocJoined, loadDoc, pushDocUpdate, pushPageDocUpdate } = await import('../dist/ws.js');
 
 async function fixture(version, run, options = {}) {
   const events = [];
@@ -200,3 +200,13 @@ test('connected batch join timeout names its version and protocol', () => fixtur
   assert.equal(socket.connected, true);
   assert.equal(socket.listeners('disconnect').length, 1);
 }, { batchOnly: true, stallJoin: true }));
+
+
+test('disconnect during a confirmed page write retains uncertain-write recovery', () => fixture('0.27.5-beta.3', async ({ connect }) => {
+  const socket = await connect();
+  await joinWorkspace(socket, 'workspace');
+  await assert.rejects(
+    pushPageDocUpdate(socket, 'workspace', 'doc', 'AAA=', { requireAcknowledgement: true }),
+    error => error.code === 'write_ack_uncertain' && /space:push-doc-update.*io server disconnect/.test(error.message),
+  );
+}, { batchOnly: true, disconnect: 'space:push-doc-update' }));

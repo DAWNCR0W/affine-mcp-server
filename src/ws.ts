@@ -129,6 +129,12 @@ class SocketAckTimeout extends Error {
   }
 }
 
+class SocketAckDisconnected extends ToolFailure {
+  constructor(event: string, reason: string) {
+    super(`${event} failed because the socket disconnected: ${reason}. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable');
+  }
+}
+
 function ackErrorMessage(ack: any, fallback: string): string | null {
   const message = ack?.error?.message;
   if (typeof message === "string" && message.trim()) return message;
@@ -176,7 +182,7 @@ async function emitWithAck<T>(
       if (settled) return;
       settled = true;
       cleanup();
-      reject(new ToolFailure(`${event} failed because the socket disconnected: ${reason}. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable'));
+      reject(new SocketAckDisconnected(event, reason));
     };
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -387,16 +393,16 @@ async function pushDocUpdateRaw(
       },
     );
   } catch (error) {
-    if (requireAcknowledgement && error instanceof SocketAckTimeout && error.message.startsWith("space:push-doc-update timeout after ")) {
-      throw uncertainWriteAcknowledgement(docId);
+    if (requireAcknowledgement && (error instanceof SocketAckTimeout || error instanceof SocketAckDisconnected)) {
+      throw uncertainWriteAcknowledgement(docId, error instanceof SocketAckDisconnected ? error.message : undefined);
     }
     throw error;
   }
 }
 
-function uncertainWriteAcknowledgement(docId: string): ToolFailure {
+function uncertainWriteAcknowledgement(docId: string, disconnectReason?: string): ToolFailure {
   return new ToolFailure(
-    `AFFiNE may have applied the update to document ${docId}, but did not confirm it. Read the document before retrying.`,
+    `AFFiNE may have applied the update to document ${docId}, but did not confirm it. Read the document before retrying.${disconnectReason ? ` ${disconnectReason}` : ''}`,
     "write_ack_uncertain",
     `Read document ${docId} before retrying; the write may already have been applied.`,
   );
