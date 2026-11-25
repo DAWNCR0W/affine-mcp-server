@@ -41,6 +41,7 @@ import { documentMutationRevision, documentRevision, isDocumentRegistered } from
 import { activeDocumentMutation } from "../util/documentMutation.js";
 import { ensureDocumentCreator, fetchCurrentUserId, readDocumentCreator } from "../util/docCreator.js";
 import {
+  assertSyncWritable,
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
   joinWorkspace,
@@ -858,6 +859,7 @@ export async function deleteDocFromWorkspace(
   workspaceId: string,
   docId: string,
 ) {
+  assertSyncWritable(socket);
   if (docId === workspaceId) {
     throw new Error("delete_doc cannot delete the workspace metadata document; use delete_workspace instead.");
   }

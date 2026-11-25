@@ -6,7 +6,7 @@ import { documentRevision, isDocumentRegistered } from "./util/documentRevision.
 import { DocumentMutation, documentRevisionUnavailable, runDocumentMutation } from "./util/documentMutation.js";
 import { text, toolError } from "./util/mcp.js";
 import { writeCoordinator, WriteCoordinatorError } from "./util/writeCoordinator.js";
-import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from "./ws.js";
+import { assertSyncWritable, connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from "./ws.js";
 
 type Handler = (args: Record<string, any>, extra: any) => Promise<any>;
 
@@ -78,6 +78,7 @@ export function coordinateTool(
   return {
     inputSchema: schema,
     handler: async (args: Record<string, any>, extra: any) => {
+      if (write) assertSyncWritable();
       // Workspace administrative tools use id, not workspaceId.
       const workspaceId = name === "update_workspace" || name === "delete_workspace"
         ? args.id

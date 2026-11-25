@@ -239,6 +239,8 @@ instead of starting another full server process.
 
 Node.js 20.18.1 is the minimum supported runtime. CI validates the Node.js 20, 22, 24, and 26 release lines.
 
+Realtime sync supports AFFiNE 0.27.4 (legacy joins) and 0.27.5-beta.3 and stable 0.27.5+ (batch joins, verified with beta.3; beta.2 is unsupported). The server's `/info` compatibility version selects the join mode, with bounded authenticated discovery and an expiring cache. Date-form canaries use conservative date boundaries. Batch mode uses sync protocol 1 by default. Lifecycle-activated workspaces need an explicit protocol-2 override for reads; selecting protocol 2 rejects all mutating tools before they run, including document deletion. See [realtime configuration](docs/configuration-and-deployment.md#websocket-compatibility) for overrides and compatibility errors.
+
 | Target | Transport | Recommended auth | Recommended path |
 | --- | --- | --- | --- |
 | Claude Code | stdio | Saved config | [docs/client-setup.md#claude-code](docs/client-setup.md#claude-code) |

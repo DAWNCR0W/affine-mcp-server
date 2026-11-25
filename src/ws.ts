@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { captureDocUpdate } from "./util/docUpdate.js";
 import { io, Socket } from "socket.io-client";
 import { setTimeout as delay } from "node:timers/promises";
@@ -6,15 +7,185 @@ import { ToolFailure } from "./util/mcp.js";
 import { activeDocumentMutation } from "./util/documentMutation.js";
 
 export type WorkspaceSocket = Socket<any, any>;
-const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
+type JoinMode = 'legacy' | 'batch';
+type JoinDetection = { mode: JoinMode; hint?: string };
+type JoinSettings = JoinDetection & { clientVersion: string; protocolVersion: 1 | 2 };
+type DocJoin = { docId: string; resolve: () => void; reject: (error: unknown) => void };
+type WorkspaceJoins = { docs: Map<string, Promise<void>>; pending: DocJoin[]; scheduled: boolean };
+type SocketState = { settings: JoinSettings; workspaces: Map<string, WorkspaceJoins> };
+const socketStates = new WeakMap<WorkspaceSocket, SocketState>();
 const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS || 10000);
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
 const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+
+function joinSettings(mode: JoinMode, hint?: string): JoinSettings {
+  const protocol = process.env.AFFINE_WS_PROTOCOL_VERSION || '1';
+  if (protocol !== '1' && protocol !== '2') {
+    throw new ToolFailure('AFFINE_WS_PROTOCOL_VERSION must be 1 or 2.', 'invalid_config');
+  }
+  return {
+    mode, hint,
+    clientVersion: process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION
+      || (mode === 'batch' ? '0.27.5' : '0.26.0'),
+    protocolVersion: Number(protocol) as 1 | 2,
+  };
+}
+
+// Discovery is optional and must not consume the socket's connection budget.
+// The default allows a fresh TLS round trip through a CDN or reverse proxy.
+const DEFAULT_INFO_TIMEOUT_MS = 2000;
+function infoTimeoutMs(): number {
+  const configured = Number(process.env.AFFINE_WS_INFO_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_INFO_TIMEOUT_MS;
+}
+const INFO_CACHE_TTL_MS = 60000;
+const INFO_FAILURE_TTL_MS = 5000;
+const infoCache = new Map<string, { expires: number; result: Promise<JoinDetection> }>();
+const discoveryHint = 'Compatibility discovery was inconclusive. Check the server version and set AFFINE_WS_JOIN_MODE=legacy or batch explicitly (batch requires the beta.3 protocol contract).';
+
+function classifyJoinMode(compatibility: unknown): JoinDetection {
+  if (typeof compatibility !== 'string') return { mode: 'legacy', hint: discoveryHint };
+  const canary = /^(\d{4})\.(\d{1,2})\.(\d{1,2})-canary\.\d+$/.exec(compatibility);
+  if (canary) {
+    const [, year, month, day] = canary.map(Number);
+    const date = year * 10000 + month * 100 + day;
+    // 2026.8.17-canary.914 is v0.27.4. Legacy removal was 2026-09-08.
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && date < 20260908) return { mode: 'legacy' };
+    // First locally verified protocol-1/2 canary: v2026.11.25-canary.905.
+    // c471cfc (2026-11-16) initially supported only protocol 2. Do not guess
+    // the intervening daily tags or classify a date as a semantic major.
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && date >= 20261125) return { mode: 'batch' };
+    return { mode: 'legacy', hint: discoveryHint };
+  }
+  const version = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(compatibility);
+  if (!version) return { mode: 'legacy', hint: discoveryHint };
+  const [major, minor, patch] = version.slice(1, 4).map(Number);
+  if (major === 0 && minor === 27 && patch === 5 && version[4]) {
+    const beta = /^beta\.(\d+)$/.exec(version[4]);
+    if (!beta || Number(beta[1]) < 3) {
+      throw new ToolFailure(`AFFiNE ${compatibility} uses an unsupported or unverified pre-beta.3 batch contract. Use 0.27.5-beta.3 or later; changing the sync protocol cannot add the missing contract.`, 'sync_version_unsupported');
+    }
+  }
+  return { mode: major > 0 || minor > 27 || (minor === 27 && patch >= 5) ? 'batch' : 'legacy' };
+}
+
+async function detectJoinMode(wsUrl: string, headers: Record<string, string>): Promise<JoinDetection> {
+  const override = process.env.AFFINE_WS_JOIN_MODE || 'auto';
+  if (override === 'legacy' || override === 'batch') return { mode: override };
+  if (override !== 'auto') {
+    throw new ToolFailure('AFFINE_WS_JOIN_MODE must be auto, legacy, or batch.', 'invalid_config');
+  }
+  const url = new URL('/info', wsUrl.replace(/^ws/, 'http'));
+  // Isolate authenticated decisions without retaining credentials in cache keys.
+  const key = url.origin + ':' + createHash('sha256').update(JSON.stringify(headers)).digest('hex');
+  const cached = infoCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.result;
+  const entry = { expires: Infinity, result: Promise.resolve<JoinDetection>({ mode: 'legacy' }) };
+  entry.result = (async () => {
+    let compatibility: unknown;
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(infoTimeoutMs()), redirect: 'error' });
+      if (response.ok) compatibility = (await response.json() as { compatibility?: unknown }).compatibility;
+      else await response.body?.cancel();
+    } catch {
+      // Older servers and proxies may not expose /info. Never follow redirects.
+    }
+    entry.expires = Date.now() + (compatibility === undefined ? INFO_FAILURE_TTL_MS : INFO_CACHE_TTL_MS);
+    return classifyJoinMode(compatibility);
+  })();
+  // Bound process-wide state even for clients connecting to many origins.
+  if (infoCache.size >= 100) infoCache.delete(infoCache.keys().next().value!);
+  infoCache.set(key, entry);
+  return entry.result;
+}
+
+/** Reject protocol-2 mutations before a tool can change local or remote state. */
+export function assertSyncWritable(socket?: WorkspaceSocket): void {
+  const protocol = socket ? socketState(socket).settings.protocolVersion : Number(process.env.AFFINE_WS_PROTOCOL_VERSION || '1');
+  if (protocol === 2) {
+    throw new ToolFailure('Protocol 2 is read-only in this client. Writes require AFFiNE lifecycle registration, which is not supported. Use protocol 1 only on workspaces whose lifecycle is inactive.', 'sync_protocol_unsupported');
+  }
+}
+
+function socketState(socket: WorkspaceSocket, settings?: JoinSettings): SocketState {
+  let state = socketStates.get(socket);
+  if (!state) {
+    state = { settings: settings || joinSettings('legacy'), workspaces: new Map() };
+    socketStates.set(socket, state);
+    socket.on?.('disconnect', () => state!.workspaces.clear());
+  }
+  return state;
+}
+
+/** Deduplicate subscriptions on this socket and batch concurrent reads, at most 100 per request. */
+export function ensureDocJoined(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<void> {
+  const state = socketState(socket);
+  if (state.settings.mode === 'legacy') return Promise.resolve();
+  let workspace = state.workspaces.get(workspaceId);
+  if (!workspace) {
+    workspace = { docs: new Map(), pending: [], scheduled: false };
+    state.workspaces.set(workspaceId, workspace);
+  }
+  const existing = workspace.docs.get(docId);
+  if (existing) return existing;
+  const joins = workspace;
+  const promise = new Promise<void>((resolve, reject) => joins.pending.push({ docId, resolve, reject }));
+  joins.docs.set(docId, promise);
+  if (!joins.scheduled) {
+    joins.scheduled = true;
+    queueMicrotask(async () => {
+      while (joins.pending.length) {
+        const batch = joins.pending.splice(0, 100);
+        try {
+          await emitJoin(socket, workspaceId, batch.map(entry => entry.docId), state.settings);
+          for (const entry of batch) entry.resolve();
+        } catch (error) {
+          for (const entry of batch) {
+            joins.docs.delete(entry.docId);
+            entry.reject(error);
+          }
+        }
+      }
+      joins.scheduled = false;
+    });
+  }
+  return promise;
+}
+
+function emitJoin(socket: WorkspaceSocket, workspaceId: string, docIds: string[], settings: JoinSettings): Promise<void> {
+  const { mode, clientVersion, protocolVersion } = settings;
+  return emitWithAck<void>(socket, mode === 'batch' ? 'space:join-batch' : 'space:join',
+    mode === 'batch'
+      ? { spaces: docIds.map(docId => ({ spaceType: 'workspace', spaceId: workspaceId, docId })), clientVersion, protocolVersion }
+      : { spaceType: 'workspace', spaceId: workspaceId, clientVersion },
+    ack => {
+      const message = ackErrorMessage(ack, 'Workspace join failed.');
+      if (message) {
+        if (ack.error.code === 'WORKSPACE_SYNC_UNAVAILABLE' || ack.error.name === 'WORKSPACE_SYNC_UNAVAILABLE') {
+          throw new ToolFailure(`${message} Protocol ${protocolVersion} does not match the workspace lifecycle state. Confirm the server state before setting AFFINE_WS_PROTOCOL_VERSION; no migration was activated.`, 'WORKSPACE_SYNC_UNAVAILABLE');
+        }
+        throw new ToolFailure(message, String(ack.error.code || ack.error.name || 'sync_join_failed'));
+      }
+      if ((mode === 'batch' && ack?.data?.success !== true) || ack?.data?.success === false) {
+        throw new ToolFailure(`AFFiNE rejected ${mode} join with clientVersion ${clientVersion}. Check the server's client-version requirement and AFFINE_WS_CLIENT_VERSION (batch requires >=0.27.5-0).`, 'sync_version_rejected');
+      }
+      if (mode === 'batch' && ack.data.protocolVersion !== protocolVersion) {
+        throw new ToolFailure(`AFFiNE echoed sync protocol ${String(ack.data.protocolVersion)} instead of ${protocolVersion}. Check AFFINE_WS_PROTOCOL_VERSION and server compatibility.`, 'sync_protocol_mismatch');
+      }
+    });
+}
 
 class SocketAckTimeout extends Error {
   constructor(event: string, timeoutMs: number) {
     super(`${event} timeout after ${timeoutMs}ms`);
     this.name = "Error";
+  }
+}
+
+class SocketAckDisconnected extends ToolFailure {
+  constructor(event: string, reason: string) {
+    super(`${event} failed because the socket disconnected: ${reason}. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable');
   }
 }
 
@@ -42,25 +213,66 @@ function deleteRejected(ack: any): boolean {
     || ack?.data?.success === false;
 }
 
-function emitWithAck<T>(
+async function emitWithAck<T>(
   socket: WorkspaceSocket,
   event: string,
   payload: Record<string, any>,
   onAck: (ack: any) => T,
   timeoutMs: number = WS_ACK_TIMEOUT_MS,
 ): Promise<T> {
+  if (['space:load-doc', 'space:load-awarenesses', 'space:update-awareness'].includes(event)) {
+    // Waiting for the subscription counts against this operation's budget. The
+    // shared join promise is not cancelled, so other readers keep waiting on it.
+    const budgetMs = timeoutMs;
+    const deadline = performance.now() + budgetMs;
+    let joinTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        ensureDocJoined(socket, payload.spaceId, payload.docId),
+        new Promise<never>((_, reject) => {
+          joinTimer = setTimeout(() => reject(new SocketAckTimeout(event, budgetMs)), budgetMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(joinTimer);
+    }
+    timeoutMs = Math.ceil(deadline - performance.now());
+    if (timeoutMs <= 0) throw new SocketAckTimeout(event, budgetMs);
+  }
+  if (socket.connected === false) {
+    throw new ToolFailure(`${event} failed because the socket is disconnected. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable');
+  }
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off?.('disconnect', onDisconnect);
+    };
+    const onDisconnect = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new SocketAckDisconnected(event, reason));
+    };
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new SocketAckTimeout(event, timeoutMs));
+      cleanup();
+      const error = new SocketAckTimeout(event, timeoutMs);
+      if (event === 'space:join' || event === 'space:join-batch') {
+        error.message += ` (clientVersion ${payload.clientVersion}, protocol ${payload.protocolVersion ?? 'legacy'}). Check server compatibility and AFFINE_WS_JOIN_MODE; an unavailable /info endpoint requires an explicit mode.${socketStates.get(socket)?.settings.hint ? ` ${socketStates.get(socket)!.settings.hint}` : ''}`;
+      }
+      reject(error);
     }, timeoutMs);
 
+    socket.once?.('disconnect', onDisconnect);
     socket.emit(event, payload, (ack: any) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
+      if (ack?.error?.name === 'NOT_IN_SPACE' || ack?.error?.code === 'NOT_IN_SPACE') {
+        socketStates.get(socket)?.workspaces.clear();
+      }
       try {
         resolve(onAck(ack));
       } catch (err) {
@@ -89,17 +301,21 @@ export function wsUrlFromGraphQLEndpoint(endpoint: string): string {
 }
 
 export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bearer?: string): Promise<WorkspaceSocket> {
+  const extraHeaders: Record<string, string> = {};
+  if (cookie) extraHeaders['Cookie'] = cookie;
+  if (bearer) extraHeaders['Authorization'] = `Bearer ${bearer}`;
+  const detection = await detectJoinMode(wsUrl, extraHeaders);
+  const settings = joinSettings(detection.mode, detection.hint);
   return new Promise((resolve, reject) => {
     let settled = false;
-    const extraHeaders: Record<string, string> = {};
-    if (cookie) extraHeaders['Cookie'] = cookie;
-    if (bearer) extraHeaders['Authorization'] = `Bearer ${bearer}`;
     const socket = io(wsUrl, {
       transports: ['websocket'],
       path: '/socket.io/',
       extraHeaders: Object.keys(extraHeaders).length ? extraHeaders : undefined,
-      autoConnect: true
+      autoConnect: true,
+      reconnection: false,
     });
+    socketState(socket, settings);
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -130,16 +346,11 @@ export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bea
   });
 }
 
-export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string, clientVersion: string = DEFAULT_WS_CLIENT_VERSION) {
-  return emitWithAck<void>(
-    socket,
-    'space:join',
-    { spaceType: 'workspace', spaceId: workspaceId, clientVersion },
-    (ack) => {
-      const message = ackErrorMessage(ack, "join failed");
-      if (message) throw new Error(message);
-    },
-  );
+export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string, clientVersion?: string) {
+  const state = socketState(socket);
+  if (clientVersion) state.settings = { ...state.settings, clientVersion };
+  if (state.settings.mode === 'batch') return ensureDocJoined(socket, workspaceId, workspaceId);
+  return emitJoin(socket, workspaceId, [], state.settings);
 }
 
 type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
@@ -228,11 +439,16 @@ async function pushDocUpdateRaw(
   updateBase64: string,
   requireAcknowledgement = false,
 ): Promise<number> {
+  assertSyncWritable(socket);
+  const { mode } = socketState(socket).settings;
   try {
     return await emitWithAck<number>(
       socket,
       'space:push-doc-update',
-      { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64 },
+      { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64,
+        // Protocol 1 uses create for legacy upserts, including existing documents.
+        ...(mode === 'batch' ? { intent: 'create' } : {}),
+      },
       (ack) => {
         const message = ackErrorMessage(ack, "push-doc-update failed");
         if (message) throw new Error(message);
@@ -246,16 +462,16 @@ async function pushDocUpdateRaw(
       },
     );
   } catch (error) {
-    if (requireAcknowledgement && error instanceof SocketAckTimeout && error.message.startsWith("space:push-doc-update timeout after ")) {
-      throw uncertainWriteAcknowledgement(docId);
+    if (requireAcknowledgement && (error instanceof SocketAckTimeout || error instanceof SocketAckDisconnected)) {
+      throw uncertainWriteAcknowledgement(docId, error instanceof SocketAckDisconnected ? error.message : undefined);
     }
     throw error;
   }
 }
 
-function uncertainWriteAcknowledgement(docId: string): ToolFailure {
+function uncertainWriteAcknowledgement(docId: string, disconnectReason?: string): ToolFailure {
   return new ToolFailure(
-    `AFFiNE may have applied the update to document ${docId}, but did not confirm it. Read the document before retrying.`,
+    `AFFiNE may have applied the update to document ${docId}, but did not confirm it. Read the document before retrying.${disconnectReason ? ` ${disconnectReason}` : ''}`,
     "write_ack_uncertain",
     `Read document ${docId} before retrying; the write may already have been applied.`,
   );
@@ -411,6 +627,7 @@ export function deleteDoc(
   docId: string,
   options: DeleteDocOptions = {},
 ): Promise<DeleteDocResult> {
+  try { assertSyncWritable(socket); } catch (error) { return Promise.reject(error); }
   const timeoutMs = options.timeoutMs ?? WS_ACK_TIMEOUT_MS;
   const verificationIntervalMs = options.verificationIntervalMs ?? Math.min(250, timeoutMs);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
