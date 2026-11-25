@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Restore realtime reads and writes on AFFiNE 0.27.5+ by selecting `space:join-batch` per connection, subscribing to each document, and sending protocol-1 write intent. Retain legacy joins for 0.27.4 and expose join mode, protocol, and client-version overrides.
-- Bound and cache authenticated compatibility discovery, preserve legacy date-form canaries, reject unsupported pre-beta.3 batch servers explicitly, and prevent every mutation when protocol 2 is selected.
+- Bound (2 seconds by default, `AFFINE_WS_INFO_TIMEOUT_MS`) and cache authenticated compatibility discovery, preserve legacy date-form canaries, reject unsupported pre-beta.3 batch servers explicitly, and prevent every mutation when protocol 2 is selected.
 - Reject failed or mismatched join acknowledgements and report socket disconnects immediately, with compatibility guidance for join timeouts and workspace lifecycle mismatches.
 
 ## [3.15.0] - 2026-11-23

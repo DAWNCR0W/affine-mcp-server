@@ -13,6 +13,7 @@ let testContext;
 const test = (name, run) => nodeTest(name, { timeout: 4000 }, async context => { testContext = context; await run(); });
 process.env.AFFINE_WS_CONNECT_TIMEOUT_MS = '500';
 process.env.AFFINE_WS_ACK_TIMEOUT_MS = '150';
+process.env.AFFINE_WS_INFO_TIMEOUT_MS = '250';
 for (const name of ['AFFINE_WS_JOIN_MODE', 'AFFINE_WS_PROTOCOL_VERSION', 'AFFINE_WS_CLIENT_VERSION', 'AFFINE_CLIENT_VERSION']) delete process.env[name];
 const { connectWorkspaceSocket, joinWorkspace, ensureDocJoined, loadDoc, pushDocUpdate, pushPageDocUpdate, deleteDoc } = await import('../dist/ws.js');
 
@@ -35,6 +36,12 @@ async function fixture(version, run, options = {}) {
       infoRequests++;
       infoHeaders.push(req.headers);
       if (options.stallInfo) return;
+      if (options.infoDelayMs) {
+        return void setTimeout(() => {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ compatibility: options.version || version }));
+        }, options.infoDelayMs);
+      }
       if (options.failInfo) return res.writeHead(503).end();
       if (options.redirectInfo) return res.writeHead(302, { Location: options.redirectInfo }).end();
       if (options.cookie && req.headers.cookie !== options.cookie) return res.writeHead(401).end();
@@ -305,6 +312,15 @@ test('successful discovery expires and discovers server upgrades', () => {
     assert.equal(infoRequests(), 2);
     assert.equal(events.at(-1).event, 'space:join-batch');
   }, options);
+});
+
+test('a slow /info inside the configured budget still selects batch', () => {
+  const previous = process.env.AFFINE_WS_INFO_TIMEOUT_MS;
+  process.env.AFFINE_WS_INFO_TIMEOUT_MS = '1000';
+  return fixture('0.27.5-beta.3', async ({ connect, events }) => {
+    await joinWorkspace(await connect(), 'workspace');
+    assert.equal(events.at(-1).event, 'space:join-batch');
+  }, { batchOnly: true, infoDelayMs: 400 }).finally(() => { process.env.AFFINE_WS_INFO_TIMEOUT_MS = previous; });
 });
 
 test('stalled discovery plus stalled socket has separate bounded budgets', () => fixture('0.27.4', async ({ connect }) => {

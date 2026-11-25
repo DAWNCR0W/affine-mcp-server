@@ -33,7 +33,12 @@ function joinSettings(mode: JoinMode, hint?: string): JoinSettings {
 }
 
 // Discovery is optional and must not consume the socket's connection budget.
-const INFO_TIMEOUT_MS = 250;
+// The default allows a fresh TLS round trip through a CDN or reverse proxy.
+const DEFAULT_INFO_TIMEOUT_MS = 2000;
+function infoTimeoutMs(): number {
+  const configured = Number(process.env.AFFINE_WS_INFO_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_INFO_TIMEOUT_MS;
+}
 const INFO_CACHE_TTL_MS = 60000;
 const INFO_FAILURE_TTL_MS = 5000;
 const infoCache = new Map<string, { expires: number; result: Promise<JoinDetection> }>();
@@ -80,7 +85,7 @@ async function detectJoinMode(wsUrl: string, headers: Record<string, string>): P
   entry.result = (async () => {
     let compatibility: unknown;
     try {
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(INFO_TIMEOUT_MS), redirect: 'error' });
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(infoTimeoutMs()), redirect: 'error' });
       if (response.ok) compatibility = (await response.json() as { compatibility?: unknown }).compatibility;
       else await response.body?.cancel();
     } catch {
