@@ -6,10 +6,121 @@ import { ToolFailure } from "./util/mcp.js";
 import { activeDocumentMutation } from "./util/documentMutation.js";
 
 export type WorkspaceSocket = Socket<any, any>;
-const DEFAULT_WS_CLIENT_VERSION = process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION || '0.26.0';
+type JoinMode = 'legacy' | 'batch';
+type JoinSettings = { mode: JoinMode; clientVersion: string; protocolVersion: 1 | 2 };
+type DocJoin = { docId: string; resolve: () => void; reject: (error: unknown) => void };
+type WorkspaceJoins = { docs: Map<string, Promise<void>>; pending: DocJoin[]; scheduled: boolean };
+type SocketState = { settings: JoinSettings; workspaces: Map<string, WorkspaceJoins> };
+const socketStates = new WeakMap<WorkspaceSocket, SocketState>();
 const WS_CONNECT_TIMEOUT_MS = Number(process.env.AFFINE_WS_CONNECT_TIMEOUT_MS || 10000);
 const WS_ACK_TIMEOUT_MS = Number(process.env.AFFINE_WS_ACK_TIMEOUT_MS || 10000);
 const WORKSPACE_METADATA_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+
+function joinSettings(mode: JoinMode): JoinSettings {
+  const protocol = process.env.AFFINE_WS_PROTOCOL_VERSION || '1';
+  if (protocol !== '1' && protocol !== '2') {
+    throw new ToolFailure('AFFINE_WS_PROTOCOL_VERSION must be 1 or 2.', 'invalid_config');
+  }
+  return {
+    mode,
+    clientVersion: process.env.AFFINE_WS_CLIENT_VERSION || process.env.AFFINE_CLIENT_VERSION
+      || (mode === 'batch' ? '0.27.5' : '0.26.0'),
+    protocolVersion: Number(protocol) as 1 | 2,
+  };
+}
+
+async function detectJoinMode(wsUrl: string): Promise<JoinMode> {
+  const override = process.env.AFFINE_WS_JOIN_MODE || 'auto';
+  if (override === 'legacy' || override === 'batch') return override;
+  if (override !== 'auto') {
+    throw new ToolFailure('AFFINE_WS_JOIN_MODE must be auto, legacy, or batch.', 'invalid_config');
+  }
+  const url = new URL('/info', wsUrl.replace(/^ws/, 'http'));
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(WS_CONNECT_TIMEOUT_MS), redirect: 'error' });
+    if (!response.ok) return 'legacy';
+    const info = await response.json() as { compatibility?: unknown };
+    // The boundary is >=0.27.5-0, so every prerelease of 0.27.5 qualifies.
+    const version = typeof info.compatibility === 'string'
+      ? /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(info.compatibility)
+      : null;
+    if (!version) return 'legacy';
+    const [major, minor, patch] = version.slice(1, 4).map(Number);
+    return major > 0 || minor > 27 || (minor === 27 && patch >= 5) ? 'batch' : 'legacy';
+  } catch {
+    // Older servers and proxies may not expose /info. Operators can force batch mode.
+    return 'legacy';
+  }
+}
+
+function socketState(socket: WorkspaceSocket, settings?: JoinSettings): SocketState {
+  let state = socketStates.get(socket);
+  if (!state) {
+    state = { settings: settings || joinSettings('legacy'), workspaces: new Map() };
+    socketStates.set(socket, state);
+    socket.on?.('disconnect', () => state!.workspaces.clear());
+  }
+  return state;
+}
+
+/** Deduplicate subscriptions on this socket and batch concurrent reads, at most 100 per request. */
+export function ensureDocJoined(socket: WorkspaceSocket, workspaceId: string, docId: string): Promise<void> {
+  const state = socketState(socket);
+  if (state.settings.mode === 'legacy') return Promise.resolve();
+  let workspace = state.workspaces.get(workspaceId);
+  if (!workspace) {
+    workspace = { docs: new Map(), pending: [], scheduled: false };
+    state.workspaces.set(workspaceId, workspace);
+  }
+  const existing = workspace.docs.get(docId);
+  if (existing) return existing;
+  const joins = workspace;
+  const promise = new Promise<void>((resolve, reject) => joins.pending.push({ docId, resolve, reject }));
+  joins.docs.set(docId, promise);
+  if (!joins.scheduled) {
+    joins.scheduled = true;
+    queueMicrotask(async () => {
+      while (joins.pending.length) {
+        const batch = joins.pending.splice(0, 100);
+        try {
+          await emitJoin(socket, workspaceId, batch.map(entry => entry.docId), state.settings);
+          for (const entry of batch) entry.resolve();
+        } catch (error) {
+          for (const entry of batch) {
+            joins.docs.delete(entry.docId);
+            entry.reject(error);
+          }
+        }
+      }
+      joins.scheduled = false;
+    });
+  }
+  return promise;
+}
+
+function emitJoin(socket: WorkspaceSocket, workspaceId: string, docIds: string[], settings: JoinSettings): Promise<void> {
+  const { mode, clientVersion, protocolVersion } = settings;
+  return emitWithAck<void>(socket, mode === 'batch' ? 'space:join-batch' : 'space:join',
+    mode === 'batch'
+      ? { spaces: docIds.map(docId => ({ spaceType: 'workspace', spaceId: workspaceId, docId })), clientVersion, protocolVersion }
+      : { spaceType: 'workspace', spaceId: workspaceId, clientVersion },
+    ack => {
+      const message = ackErrorMessage(ack, 'Workspace join failed.');
+      if (message) {
+        if (ack.error.code === 'WORKSPACE_SYNC_UNAVAILABLE' || ack.error.name === 'WORKSPACE_SYNC_UNAVAILABLE') {
+          throw new ToolFailure(`${message} Protocol ${protocolVersion} does not match the workspace lifecycle state. Confirm the server state before setting AFFINE_WS_PROTOCOL_VERSION; no migration was activated.`, 'WORKSPACE_SYNC_UNAVAILABLE');
+        }
+        throw new ToolFailure(message, String(ack.error.code || ack.error.name || 'sync_join_failed'));
+      }
+      if ((mode === 'batch' && ack?.data?.success !== true) || ack?.data?.success === false) {
+        throw new ToolFailure(`AFFiNE rejected ${mode} join with clientVersion ${clientVersion}. Check the server's client-version requirement and AFFINE_WS_CLIENT_VERSION (batch requires >=0.27.5-0).`, 'sync_version_rejected');
+      }
+      if (mode === 'batch' && ack.data.protocolVersion !== protocolVersion) {
+        throw new ToolFailure(`AFFiNE echoed sync protocol ${String(ack.data.protocolVersion)} instead of ${protocolVersion}. Check AFFINE_WS_PROTOCOL_VERSION and server compatibility.`, 'sync_protocol_mismatch');
+      }
+    });
+}
 
 class SocketAckTimeout extends Error {
   constructor(event: string, timeoutMs: number) {
@@ -42,25 +153,50 @@ function deleteRejected(ack: any): boolean {
     || ack?.data?.success === false;
 }
 
-function emitWithAck<T>(
+async function emitWithAck<T>(
   socket: WorkspaceSocket,
   event: string,
   payload: Record<string, any>,
   onAck: (ack: any) => T,
   timeoutMs: number = WS_ACK_TIMEOUT_MS,
 ): Promise<T> {
+  if (['space:load-doc', 'space:load-awarenesses', 'space:update-awareness'].includes(event)) {
+    await ensureDocJoined(socket, payload.spaceId, payload.docId);
+  }
+  if (socket.connected === false) {
+    throw new ToolFailure(`${event} failed because the socket is disconnected. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable');
+  }
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off?.('disconnect', onDisconnect);
+    };
+    const onDisconnect = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new ToolFailure(`${event} failed because the socket disconnected: ${reason}. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable'));
+    };
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new SocketAckTimeout(event, timeoutMs));
+      cleanup();
+      const error = new SocketAckTimeout(event, timeoutMs);
+      if (event === 'space:join' || event === 'space:join-batch') {
+        error.message += ` (clientVersion ${payload.clientVersion}, protocol ${payload.protocolVersion ?? 'legacy'}). Check server compatibility and AFFINE_WS_JOIN_MODE; an unavailable /info endpoint requires an explicit mode.`;
+      }
+      reject(error);
     }, timeoutMs);
 
+    socket.once?.('disconnect', onDisconnect);
     socket.emit(event, payload, (ack: any) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
+      if (ack?.error?.name === 'NOT_IN_SPACE' || ack?.error?.code === 'NOT_IN_SPACE') {
+        socketStates.get(socket)?.workspaces.clear();
+      }
       try {
         resolve(onAck(ack));
       } catch (err) {
@@ -89,6 +225,7 @@ export function wsUrlFromGraphQLEndpoint(endpoint: string): string {
 }
 
 export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bearer?: string): Promise<WorkspaceSocket> {
+  const settings = joinSettings(await detectJoinMode(wsUrl));
   return new Promise((resolve, reject) => {
     let settled = false;
     const extraHeaders: Record<string, string> = {};
@@ -98,8 +235,10 @@ export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bea
       transports: ['websocket'],
       path: '/socket.io/',
       extraHeaders: Object.keys(extraHeaders).length ? extraHeaders : undefined,
-      autoConnect: true
+      autoConnect: true,
+      reconnection: false,
     });
+    socketState(socket, settings);
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -130,16 +269,11 @@ export async function connectWorkspaceSocket(wsUrl: string, cookie?: string, bea
   });
 }
 
-export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string, clientVersion: string = DEFAULT_WS_CLIENT_VERSION) {
-  return emitWithAck<void>(
-    socket,
-    'space:join',
-    { spaceType: 'workspace', spaceId: workspaceId, clientVersion },
-    (ack) => {
-      const message = ackErrorMessage(ack, "join failed");
-      if (message) throw new Error(message);
-    },
-  );
+export async function joinWorkspace(socket: WorkspaceSocket, workspaceId: string, clientVersion?: string) {
+  const state = socketState(socket);
+  if (clientVersion) state.settings = { ...state.settings, clientVersion };
+  if (state.settings.mode === 'batch') return ensureDocJoined(socket, workspaceId, workspaceId);
+  return emitJoin(socket, workspaceId, [], state.settings);
 }
 
 type LoadDocResult = { missing?: string; state?: string; timestamp?: number; notFound?: true };
@@ -228,11 +362,18 @@ async function pushDocUpdateRaw(
   updateBase64: string,
   requireAcknowledgement = false,
 ): Promise<number> {
+  const { mode, protocolVersion } = socketState(socket).settings;
+  if (mode === 'batch' && protocolVersion === 2) {
+    throw new ToolFailure('Protocol 2 writes require AFFiNE lifecycle registration, which this client does not support. Use protocol 1 only on workspaces whose lifecycle is inactive.', 'sync_protocol_unsupported');
+  }
   try {
     return await emitWithAck<number>(
       socket,
       'space:push-doc-update',
-      { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64 },
+      { spaceType: 'workspace', spaceId: workspaceId, docId, update: updateBase64,
+        // Protocol 1 uses create for legacy upserts, including existing documents.
+        ...(mode === 'batch' ? { intent: 'create' } : {}),
+      },
       (ack) => {
         const message = ackErrorMessage(ack, "push-doc-update failed");
         if (message) throw new Error(message);

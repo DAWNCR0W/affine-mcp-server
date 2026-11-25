@@ -103,6 +103,7 @@
     "test-url-safety.mjs": "fast",
     "test-workspace-discovery.mjs": "fast",
     "test-write-coordinator.mjs": "fast",
+    "test-ws-join.mjs": "fast",
     "test-yjs-update-deltas.mjs": "fast"
   },
   "suites": {
@@ -166,6 +167,7 @@
       "test-url-safety.mjs",
       "test-workspace-discovery.mjs",
       "test-write-coordinator.mjs",
+      "test-ws-join.mjs",
       "test-yjs-update-deltas.mjs"
     ],
     "e2e": [
