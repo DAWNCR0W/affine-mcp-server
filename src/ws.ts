@@ -216,7 +216,23 @@ async function emitWithAck<T>(
   timeoutMs: number = WS_ACK_TIMEOUT_MS,
 ): Promise<T> {
   if (['space:load-doc', 'space:load-awarenesses', 'space:update-awareness'].includes(event)) {
-    await ensureDocJoined(socket, payload.spaceId, payload.docId);
+    // Waiting for the subscription counts against this operation's budget. The
+    // shared join promise is not cancelled, so other readers keep waiting on it.
+    const budgetMs = timeoutMs;
+    const deadline = performance.now() + budgetMs;
+    let joinTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        ensureDocJoined(socket, payload.spaceId, payload.docId),
+        new Promise<never>((_, reject) => {
+          joinTimer = setTimeout(() => reject(new SocketAckTimeout(event, budgetMs)), budgetMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(joinTimer);
+    }
+    timeoutMs = Math.ceil(deadline - performance.now());
+    if (timeoutMs <= 0) throw new SocketAckTimeout(event, budgetMs);
   }
   if (socket.connected === false) {
     throw new ToolFailure(`${event} failed because the socket is disconnected. Reconnect before further operations; read back pending writes before retrying.`, 'upstream_unavailable');

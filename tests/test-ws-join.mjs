@@ -68,9 +68,12 @@ async function fixture(version, run, options = {}) {
         if (event === 'space:join-batch') {
           for (const space of payload.spaces) joined.add(`${space.spaceId}:${space.docId}`);
         }
-        return ack({ data: { success: true, ...(event === 'space:join-batch' ? { protocolVersion: payload.protocolVersion } : {}) } });
+        const joinAck = () => ack({ data: { success: true, ...(event === 'space:join-batch' ? { protocolVersion: payload.protocolVersion } : {}) } });
+        if (options.joinDelayMs) return void setTimeout(joinAck, options.joinDelayMs);
+        return joinAck();
       }
       if (event === 'space:load-doc') {
+        if (options.stallLoad) return;
         const key = `${payload.spaceId}:${payload.docId}`;
         if (options.revokeOnce) { joined.delete(key); options.revokeOnce = false; }
         if (options.batchOnly && !joined.has(key)) return ack({ error: { name: 'NOT_IN_SPACE', code: 'NOT_IN_SPACE', message: 'Document is not subscribed' } });
@@ -223,6 +226,25 @@ test('connected batch join timeout names its version and protocol', () => fixtur
   await assert.rejects(joinWorkspace(socket, 'workspace'), /space:join-batch timeout after 150ms.*clientVersion 0.27.5, protocol 1.*server compatibility/);
   assert.equal(socket.connected, true);
   assert.equal(socket.listeners('disconnect').length, 1);
+}, { batchOnly: true, stallJoin: true }));
+
+test('subscription wait counts against the read budget', () => fixture('0.27.5-beta.3', async ({ connect, events }) => {
+  const socket = await connect();
+  const started = performance.now();
+  await assert.rejects(loadDoc(socket, 'workspace', 'slow-doc'), /space:load-doc timeout after \d+ms/);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 220, `read took ${Math.round(elapsed)}ms, expected one 150ms budget`);
+  assert.equal(events.filter(e => e.event === 'space:load-doc').length, 1);
+}, { batchOnly: true, joinDelayMs: 120, stallLoad: true }));
+
+test('a read whose budget ends during the join is not sent and leaves the shared join running', () => fixture('0.27.5-beta.3', async ({ connect, events }) => {
+  const socket = await connect();
+  const read = loadDoc(socket, 'workspace', 'stalled-doc');
+  const sharedJoin = ensureDocJoined(socket, 'workspace', 'stalled-doc');
+  await assert.rejects(read, /space:load-doc timeout after 150ms/);
+  await assert.rejects(sharedJoin, /space:join-batch timeout after 150ms/);
+  assert.equal(events.filter(e => e.event === 'space:join-batch').length, 1);
+  assert.equal(events.filter(e => e.event === 'space:load-doc').length, 0);
 }, { batchOnly: true, stallJoin: true }));
 
 
