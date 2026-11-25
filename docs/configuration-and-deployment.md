@@ -85,7 +85,7 @@ from the saved config file:
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AFFINE_CLIENT_VERSION` | No | `0.26.0` | AFFiNE web-client version sent as the `x-affine-version` header on GraphQL/REST requests. Servers that gate on client version reject sign-in with `403 UNSUPPORTED_CLIENT_VERSION` when it is too low; raise this if your deployment pins a higher minimum. Also used as the fallback default for `AFFINE_WS_CLIENT_VERSION` |
+| `AFFINE_CLIENT_VERSION` | No | `0.26.0` | AFFiNE web-client version sent as the `x-affine-version` header on GraphQL/REST requests. Servers that gate on client version reject sign-in with `403 UNSUPPORTED_CLIENT_VERSION` when it is too low; raise this if your deployment pins a higher minimum. Also used as the fallback override for `AFFINE_WS_CLIENT_VERSION`; an explicit value below `0.27.5-0` is rejected by batch servers |
 | `XDG_CONFIG_HOME` | No | `~/.config` | Changes the parent directory used for the saved `affine-mcp/config` file |
 
 ### Blob upload safeguards
@@ -185,9 +185,15 @@ These controls are environment-only and are not read from the saved config file.
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AFFINE_WS_CLIENT_VERSION` | No | `AFFINE_CLIENT_VERSION` (else `0.26.0`) | Environment-only AFFiNE client version sent during workspace socket connection; falls back to `AFFINE_CLIENT_VERSION` when unset |
+| `AFFINE_WS_JOIN_MODE` | No | `auto` | Environment-only `auto`, `legacy`, or `batch`. Auto reads `/info` once per connection and uses batch for compatibility `>=0.27.5-0`, including prereleases. Missing, invalid, or unreachable version metadata falls back to legacy. Force batch when a proxy hides `/info`. |
+| `AFFINE_WS_PROTOCOL_VERSION` | No | `1` | Environment-only batch sync protocol `1` or `2`. Protocol 1 matches the 0.27.5-beta.3 web client and requires an inactive workspace lifecycle. Protocol 2 requires lifecycle activation and supports reads only here; writes fail explicitly. No migration is activated automatically. |
+| `AFFINE_WS_CLIENT_VERSION` | No | `AFFINE_CLIENT_VERSION` (else batch `0.27.5`, legacy `0.26.0`) | Environment-only AFFiNE web-client version sent on join. This overrides `AFFINE_CLIENT_VERSION`; batch servers require `>=0.27.5-0`. Raising the version alone does not change the join mode. |
 | `AFFINE_WS_CONNECT_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket connection |
 | `AFFINE_WS_ACK_TIMEOUT_MS` | No | `10000` | Environment-only milliseconds to wait for a workspace socket acknowledgement. Automatic registration reads share this budget across all attempts and delays. |
+
+Batch joins subscribe to the workspace root and each document before reads, in batches of up to 100 entries. Subscriptions are scoped to the socket and reset after disconnect or `NOT_IN_SPACE`. Short-lived tool sockets do not reconnect automatically. Protocol-1 pushes send `intent: create` for both new documents and existing-document updates, matching AFFiNE's legacy upsert semantics.
+
+A join timeout names the event, client version, and protocol. Check `/info` visibility and `AFFINE_WS_JOIN_MODE` before increasing the timeout. `sync_version_rejected` means the join was not accepted (check the client-version requirement); `sync_protocol_mismatch` means the server echoed another protocol. `WORKSPACE_SYNC_UNAVAILABLE` means the selected protocol does not match workspace lifecycle activation. Confirm the server state before changing `AFFINE_WS_PROTOCOL_VERSION`.
 
 ## Auth strategy matrix
 

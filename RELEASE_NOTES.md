@@ -1,5 +1,13 @@
 # Release Notes
 
+## Unreleased
+
+### Compatibility
+- Realtime synchronization supports AFFiNE 0.27.4 and the 0.27.5 batch gateway (verified with 0.27.5-beta.3). Earlier release sections below describe their original validation targets.
+- Select the join mode from each server's `/info` compatibility version, using batch joins for `>=0.27.5-0`. If a proxy hides `/info`, set `AFFINE_WS_JOIN_MODE=batch` explicitly.
+- Batch mode defaults to client version `0.27.5` and sync protocol 1, matching the beta.3 web client. Existing client-version overrides remain supported. Protocol 2 can be selected for reads on lifecycle-activated workspaces; protocol-2 writes are rejected because lifecycle registration is not implemented. No migration is activated automatically.
+- See [realtime configuration](docs/configuration-and-deployment.md#websocket-compatibility) for overrides and diagnostics.
+
 ## Version 3.15.0 (2026-11-23)
 
 ### Highlights
